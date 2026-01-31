@@ -1,0 +1,28 @@
+[package]
+name = "conicmark-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core algorithms for circle/ring calibration target detection"
+
+[dependencies]
+nalgebra = { workspace = true }
+image = { workspace = true }
+imageproc = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+approx = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+rand = { workspace = true }
+
+# TODO Milestone 3: add criterion benchmarks
+# [[bench]]
+# name = "conic_bench"
+# harness = false
+#
+# [dev-dependencies]
+# criterion = "0.5"

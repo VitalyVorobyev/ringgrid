@@ -19,25 +19,64 @@ pub mod refine;
 pub mod codebook;
 pub mod codec;
 
+/// Ellipse parameters for serialization.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EllipseParams {
+    /// Semi-axes [a, b] in pixels.
+    pub semi_axes: [f64; 2],
+    /// Rotation angle in radians.
+    pub angle: f64,
+}
+
+/// Per-marker debug/diagnostic info (optional, included when `--debug` is used).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MarkerDebug {
+    /// Number of edge points used for outer ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_edge_count: Option<usize>,
+    /// Number of edge points used for inner ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_edge_count: Option<usize>,
+    /// RMS Sampson distance of the outer ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_fit_rms: Option<f64>,
+    /// RMS Sampson distance of the inner ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_fit_rms: Option<f64>,
+    /// Raw 16-bit word read from the code band.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_word: Option<u16>,
+    /// Hamming distance of the codec match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec_dist: Option<u8>,
+    /// Margin of the codec match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec_margin: Option<u8>,
+}
+
 /// A detected marker with its refined center and optional ID.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
     /// Marker center in image coordinates (pixels), after center-bias correction.
-    pub center: [f64; 2],
-    /// Semi-axes of the outer ellipse [a, b] in pixels.
-    pub semi_axes: [f64; 2],
-    /// Rotation angle of the outer ellipse in radians.
-    pub angle: f64,
+    pub center_xy: [f64; 2],
+    /// Outer ellipse parameters (semi-axes and angle).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ellipse_params: Option<EllipseParams>,
     /// Decoded marker ID, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<u32>,
-    /// Residual of the dual-ring fit (RMS pixel error).
-    pub fit_residual: f64,
+    /// Codec confidence in [0, 1], if decoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Per-marker debug/diagnostic info.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug: Option<MarkerDebug>,
 }
 
 /// Full detection result for a single image.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
-    pub markers: Vec<DetectedMarker>,
+    pub detected_markers: Vec<DetectedMarker>,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
 }
@@ -45,7 +84,7 @@ pub struct DetectionResult {
 impl DetectionResult {
     pub fn empty(width: u32, height: u32) -> Self {
         Self {
-            markers: Vec::new(),
+            detected_markers: Vec::new(),
             image_size: [width, height],
         }
     }

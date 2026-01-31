@@ -147,7 +147,7 @@ fn run_detect(
     // 10. codec::decode_marker_id (per marker)
 
     let result = ringgrid_core::DetectionResult::empty(w, h);
-    tracing::info!("Detected {} markers (pipeline is stub)", result.markers.len());
+    tracing::info!("Detected {} markers (pipeline is stub)", result.detected_markers.len());
 
     let json = serde_json::to_string_pretty(&result)?;
     std::fs::write(out_path, &json)?;

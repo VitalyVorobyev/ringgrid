@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/conicmark-core",
-    "crates/conicmark-cli",
+    "crates/ringgrid-core",
+    "crates/ringgrid-cli",
 ]
 
 [workspace.dependencies]

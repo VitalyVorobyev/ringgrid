@@ -9,6 +9,41 @@
 use nalgebra::{Matrix3, Vector6, DMatrix};
 use serde::{Deserialize, Serialize};
 
+// ── Error type ─────────────────────────────────────────────────────────────
+
+/// Errors that can occur during conic/ellipse fitting.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConicError {
+    /// Too few points for the requested operation.
+    TooFewPoints { needed: usize, got: usize },
+    /// The fitted conic is degenerate (e.g., a line pair or point).
+    DegenerateConic,
+    /// The fitted conic is not an ellipse (hyperbola or parabola).
+    NotAnEllipse,
+    /// Numerical failure (singular matrix, etc.).
+    NumericalFailure(String),
+    /// RANSAC could not find enough inliers.
+    InsufficientInliers { needed: usize, found: usize },
+}
+
+impl std::fmt::Display for ConicError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooFewPoints { needed, got } => {
+                write!(f, "too few points: need {}, got {}", needed, got)
+            }
+            Self::DegenerateConic => write!(f, "degenerate conic"),
+            Self::NotAnEllipse => write!(f, "conic is not an ellipse"),
+            Self::NumericalFailure(msg) => write!(f, "numerical failure: {}", msg),
+            Self::InsufficientInliers { needed, found } => {
+                write!(f, "insufficient inliers: need {}, found {}", needed, found)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConicError {}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 /// General conic: A x² + B xy + C y² + D x + E y + F = 0
@@ -366,6 +401,37 @@ pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)>
     Some((conic, ellipse))
 }
 
+/// Fit an ellipse, returning a detailed error on failure.
+pub fn try_fit_ellipse_direct(points: &[[f64; 2]]) -> Result<(ConicCoeffs, Ellipse), ConicError> {
+    let n = points.len();
+    if n < 6 {
+        return Err(ConicError::TooFewPoints { needed: 6, got: n });
+    }
+    fit_ellipse_direct(points).ok_or_else(|| {
+        // Try to distinguish the failure mode
+        if n < 6 {
+            ConicError::TooFewPoints { needed: 6, got: n }
+        } else {
+            ConicError::NumericalFailure("direct fit returned None".into())
+        }
+    })
+}
+
+/// Fit an ellipse robustly via RANSAC, returning detailed errors.
+pub fn try_fit_ellipse_ransac(
+    points: &[[f64; 2]],
+    config: &RansacConfig,
+) -> Result<RansacResult, ConicError> {
+    let n = points.len();
+    if n < 6 {
+        return Err(ConicError::TooFewPoints { needed: 6, got: n });
+    }
+    fit_ellipse_ransac(points, config).ok_or(ConicError::InsufficientInliers {
+        needed: config.min_inliers,
+        found: 0,
+    })
+}
+
 /// Solve the generalized eigenvalue problem M a = λ C1 a for the 3×3 case.
 ///
 /// Finds the eigenvector of C1⁻¹ M corresponding to the unique eigenvalue
@@ -607,6 +673,11 @@ pub fn fit_ellipse_ransac(
             best_conic = Some(conic);
             best_ellipse = Some(ellipse);
             best_mask = mask;
+
+            // Early exit: if >90% of points are inliers, stop searching
+            if best_inlier_count * 10 > n * 9 {
+                break;
+            }
         }
     }
 
@@ -957,5 +1028,130 @@ mod tests {
                 i, e.angle, fitted.angle
             );
         }
+    }
+
+    #[test]
+    fn test_partial_arc_fit() {
+        // Fit from only a quarter of the ellipse (partial arc)
+        let e = make_test_ellipse();
+        let all_pts = e.sample_points(400);
+        // Keep only points in the first quadrant relative to center
+        let arc_pts: Vec<[f64; 2]> = all_pts
+            .into_iter()
+            .filter(|&[x, y]| x > e.cx && y > e.cy)
+            .collect();
+        assert!(arc_pts.len() >= 20, "need enough arc points");
+
+        let (_conic, fitted) = fit_ellipse_direct(&arc_pts)
+            .expect("partial arc fit should succeed");
+
+        // Partial arc fits are less accurate, allow larger tolerance
+        assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
+        assert_relative_eq!(fitted.cy, e.cy, epsilon = 5.0);
+        assert_relative_eq!(fitted.a, e.a, epsilon = 5.0);
+        assert_relative_eq!(fitted.b, e.b, epsilon = 5.0);
+    }
+
+    #[test]
+    fn test_strong_noise_fit() {
+        let e = make_test_ellipse();
+        let mut pts = e.sample_points(500);
+        let mut rng = StdRng::seed_from_u64(2024);
+        let noise_sigma = 2.0; // Strong: ~6% of semi-major axis
+
+        for p in &mut pts {
+            p[0] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[1] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+        }
+
+        let result = fit_ellipse_direct(&pts);
+        assert!(result.is_some(), "fit should succeed even with strong noise");
+        let (_conic, fitted) = result.unwrap();
+        // Allow generous tolerances
+        assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
+        assert_relative_eq!(fitted.cy, e.cy, epsilon = 5.0);
+    }
+
+    #[test]
+    fn test_degenerate_inputs_dont_panic() {
+        // Duplicate points
+        let pts: Vec<[f64; 2]> = vec![[1.0, 1.0]; 10];
+        assert!(fit_ellipse_direct(&pts).is_none());
+
+        // Two clusters
+        let mut pts2: Vec<[f64; 2]> = vec![[0.0, 0.0]; 5];
+        pts2.extend(vec![[100.0, 100.0]; 5]);
+        assert!(fit_ellipse_direct(&pts2).is_none());
+
+        // Empty
+        let empty: Vec<[f64; 2]> = vec![];
+        assert!(fit_ellipse_direct(&empty).is_none());
+
+        // Exactly 6 collinear
+        let line: Vec<[f64; 2]> = (0..6).map(|i| [i as f64 * 10.0, 0.0]).collect();
+        assert!(fit_ellipse_direct(&line).is_none());
+    }
+
+    #[test]
+    fn test_try_fit_error_types() {
+        // Too few points
+        let pts = vec![[1.0, 2.0], [3.0, 4.0]];
+        let err = try_fit_ellipse_direct(&pts).unwrap_err();
+        assert!(matches!(err, ConicError::TooFewPoints { needed: 6, got: 2 }));
+
+        // Valid fit should succeed
+        let e = make_test_ellipse();
+        let pts = e.sample_points(50);
+        let result = try_fit_ellipse_direct(&pts);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ransac_early_exit() {
+        // With all clean points, RANSAC should exit early
+        let e = make_test_ellipse();
+        let pts = e.sample_points(200);
+        let config = RansacConfig {
+            max_iters: 10000, // many iterations, but should exit early
+            inlier_threshold: 0.5,
+            min_inliers: 6,
+            seed: 42,
+        };
+        // Should succeed quickly (early exit at 90% inliers)
+        let result = fit_ellipse_ransac(&pts, &config).expect("should succeed");
+        assert_eq!(result.num_inliers, 200);
+    }
+
+    #[test]
+    fn test_ransac_partial_arc_with_outliers() {
+        let e = make_test_ellipse();
+        let all_pts = e.sample_points(400);
+        // Keep only a half-arc
+        let mut arc_pts: Vec<[f64; 2]> = all_pts
+            .into_iter()
+            .filter(|&[_, y]| y > e.cy)
+            .collect();
+
+        // Add outliers
+        let mut rng = StdRng::seed_from_u64(333);
+        for _ in 0..20 {
+            arc_pts.push([
+                rng.gen_range(0.0..200.0),
+                rng.gen_range(0.0..200.0),
+            ]);
+        }
+
+        let config = RansacConfig {
+            max_iters: 1000,
+            inlier_threshold: 1.0,
+            min_inliers: 10,
+            seed: 42,
+        };
+
+        let result = fit_ellipse_ransac(&arc_pts, &config)
+            .expect("RANSAC should succeed on partial arc");
+
+        assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 5.0);
+        assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 5.0);
     }
 }

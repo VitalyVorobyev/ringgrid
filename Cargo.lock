@@ -313,34 +313,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
-name = "conicmark-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "conicmark-core",
- "image",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "conicmark-core"
-version = "0.1.0"
-dependencies = [
- "approx",
- "image",
- "imageproc",
- "nalgebra 0.33.2",
- "rand 0.8.5",
- "rayon",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "core2"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1202,6 +1174,34 @@ name = "rgb"
 version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
+
+[[package]]
+name = "ringgrid-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "image",
+ "ringgrid-core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ringgrid-core"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "image",
+ "imageproc",
+ "nalgebra 0.33.2",
+ "rand 0.8.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
+]
 
 [[package]]
 name = "rustversion"

@@ -1,8 +1,8 @@
 [package]
-name = "conicmark-core"
+name = "ringgrid-core"
 version = "0.1.0"
 edition = "2021"
-description = "Core algorithms for circle/ring calibration target detection"
+description = "Core algorithms for ringgrid circle/ring calibration target detection"
 
 [dependencies]
 nalgebra = { workspace = true }

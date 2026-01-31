@@ -1,4 +1,4 @@
-//! ConicMark Core — algorithms for circle/ring calibration target detection.
+//! ringgrid-core — algorithms for circle/ring calibration target detection.
 //!
 //! Designed for Scheimpflug cameras with strong anisotropic defocus blur.
 //! The pipeline stages are:
@@ -16,6 +16,7 @@ pub mod edges;
 pub mod conic;
 pub mod lattice;
 pub mod refine;
+pub mod codebook;
 pub mod codec;
 
 /// A detected marker with its refined center and optional ID.

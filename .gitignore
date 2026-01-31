@@ -1,4 +1,6 @@
 /target
+.venv/
+tools/out/
 **/*.rs.bk
 *.swp
 *.swo

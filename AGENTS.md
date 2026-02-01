@@ -81,13 +81,14 @@ Outputs in `tools/out/synth_001/`:
 cargo run -- detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json \
-  --debug tools/out/synth_001/debug_0000.json \
+  --debug-json tools/out/synth_001/debug_0000.json \
   --marker-diameter 32.0
 ```
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- `--debug` currently writes the same JSON payload as `--out` (both are `DetectionResult`).
+- `--debug-json` writes `ringgrid.debug.v1` (versioned, comprehensive debug dump).
+- `--debug` is deprecated (alias for `--debug-json`).
 
 ### 4) Score detections
 
@@ -121,6 +122,14 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
     --image tools/out/synth_001/img_0000.png \
     --gt tools/out/synth_001/gt_0000.json \
     --out tools/out/synth_001/viz_0000.png
+  ```
+
+- Visual sanity check (detection debug overlay):
+  ```bash
+  python3 tools/viz_detect_debug.py \
+    --image tools/out/synth_001/img_0000.png \
+    --debug_json tools/out/synth_001/debug_0000.json \
+    --out tools/out/synth_001/det_overlay_0000.png
   ```
 
 ## Conventions for new milestones / prompts

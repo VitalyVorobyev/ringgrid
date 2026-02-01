@@ -62,9 +62,7 @@ pub fn estimate_vanishing_line(_graph: &[MarkerNode]) -> Option<VanishingLine> {
 /// line at infinity [0, 0, 1], removing the projective component.
 ///
 /// Stub — returns identity for now.
-pub fn affine_rectification_homography(
-    _vanishing_line: &VanishingLine,
-) -> nalgebra::Matrix3<f64> {
+pub fn affine_rectification_homography(_vanishing_line: &VanishingLine) -> nalgebra::Matrix3<f64> {
     // TODO Milestone 2: implement H = [[1,0,0],[0,1,0],[l1,l2,l3]]
     nalgebra::Matrix3::identity()
 }

@@ -8,7 +8,9 @@ type CliResult<T> = Result<T, CliError>;
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
-#[command(about = "Detect circle/ring calibration targets in images (hex lattice, 16-sector coded rings)")]
+#[command(
+    about = "Detect circle/ring calibration targets in images (hex lattice, 16-sector coded rings)"
+)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -27,9 +29,21 @@ enum Commands {
         #[arg(long)]
         out: PathBuf,
 
-        /// Path to write debug information (JSON).
+        /// DEPRECATED: use --debug-json. Writes a versioned debug dump (JSON).
         #[arg(long)]
         debug: Option<PathBuf>,
+
+        /// Path to write a comprehensive versioned debug dump (JSON).
+        #[arg(long)]
+        debug_json: Option<PathBuf>,
+
+        /// Include edge point arrays in debug dump (can get large).
+        #[arg(long)]
+        debug_store_points: bool,
+
+        /// Maximum number of candidates to record in the debug dump.
+        #[arg(long, default_value = "300")]
+        debug_max_candidates: usize,
 
         /// Expected marker outer diameter in pixels (for parameter tuning).
         #[arg(long, default_value = "32.0")]
@@ -81,6 +95,9 @@ fn main() -> CliResult<()> {
             image: image_path,
             out,
             debug,
+            debug_json,
+            debug_store_points,
+            debug_max_candidates,
             marker_diameter,
             ransac_thresh_px,
             ransac_iters,
@@ -90,6 +107,9 @@ fn main() -> CliResult<()> {
             &image_path,
             &out,
             debug.as_deref(),
+            debug_json.as_deref(),
+            debug_store_points,
+            debug_max_candidates,
             marker_diameter,
             ransac_thresh_px,
             ransac_iters,
@@ -133,15 +153,24 @@ fn run_board_info() -> CliResult<()> {
     println!("  name:           {}", BOARD_NAME);
     println!("  markers:        {}", BOARD_N);
     println!("  pitch:          {} mm", BOARD_PITCH_MM);
-    println!("  board size:     {}x{} mm", BOARD_SIZE_MM[0], BOARD_SIZE_MM[1]);
+    println!(
+        "  board size:     {}x{} mm",
+        BOARD_SIZE_MM[0], BOARD_SIZE_MM[1]
+    );
 
     if BOARD_N > 0 {
-        println!("  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
-            BOARD_XY_MM[0][0], BOARD_XY_MM[0][1], BOARD_QR[0][0], BOARD_QR[0][1]);
-        println!("  marker {}:    ({:.1}, {:.1}) mm  [q={}, r={}]",
+        println!(
+            "  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
+            BOARD_XY_MM[0][0], BOARD_XY_MM[0][1], BOARD_QR[0][0], BOARD_QR[0][1]
+        );
+        println!(
+            "  marker {}:    ({:.1}, {:.1}) mm  [q={}, r={}]",
             BOARD_N - 1,
-            BOARD_XY_MM[BOARD_N - 1][0], BOARD_XY_MM[BOARD_N - 1][1],
-            BOARD_QR[BOARD_N - 1][0], BOARD_QR[BOARD_N - 1][1]);
+            BOARD_XY_MM[BOARD_N - 1][0],
+            BOARD_XY_MM[BOARD_N - 1][1],
+            BOARD_QR[BOARD_N - 1][0],
+            BOARD_QR[BOARD_N - 1][1]
+        );
     }
 
     Ok(())
@@ -152,7 +181,10 @@ fn run_board_info() -> CliResult<()> {
 fn run_decode_test(word_str: &str) -> CliResult<()> {
     use ringgrid_core::codec::{Codebook, Match};
 
-    let word_str = word_str.trim().trim_start_matches("0x").trim_start_matches("0X");
+    let word_str = word_str
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     let word = u16::from_str_radix(word_str, 16)
         .map_err(|e| -> CliError { format!("invalid hex word: {}", e).into() })?;
 
@@ -177,6 +209,9 @@ fn run_detect(
     image_path: &std::path::Path,
     out_path: &std::path::Path,
     debug_path: Option<&std::path::Path>,
+    debug_json_path: Option<&std::path::Path>,
+    debug_store_points: bool,
+    debug_max_candidates: usize,
     marker_diameter: f64,
     ransac_thresh_px: f64,
     ransac_iters: usize,
@@ -216,10 +251,32 @@ fn run_detect(
     config.ransac_homography.inlier_threshold = ransac_thresh_px;
     config.ransac_homography.max_iters = ransac_iters;
 
-    // Run detection pipeline
-    let result = ringgrid_core::ring::detect_rings(&gray, &config);
+    // Run detection pipeline (optionally with debug dump)
+    let deprecated_debug_path = debug_path;
+    let debug_out_path = debug_json_path.or(deprecated_debug_path);
 
-    let n_with_id = result.detected_markers.iter().filter(|m| m.id.is_some()).count();
+    if deprecated_debug_path.is_some() && debug_json_path.is_none() {
+        tracing::warn!("--debug is deprecated; use --debug-json instead");
+    }
+
+    let (result, debug_dump) = if debug_out_path.is_some() {
+        let dbg_cfg = ringgrid_core::ring::DebugCollectConfig {
+            image_path: Some(image_path.display().to_string()),
+            marker_diameter_px: marker_diameter,
+            max_candidates: debug_max_candidates,
+            store_points: debug_store_points,
+        };
+        let (r, d) = ringgrid_core::ring::detect_rings_with_debug(&gray, &config, &dbg_cfg);
+        (r, Some(d))
+    } else {
+        (ringgrid_core::ring::detect_rings(&gray, &config), None)
+    };
+
+    let n_with_id = result
+        .detected_markers
+        .iter()
+        .filter(|m| m.id.is_some())
+        .count();
     tracing::info!(
         "Detected {} markers ({} with ID)",
         result.detected_markers.len(),
@@ -229,8 +286,10 @@ fn run_detect(
     if let Some(ref stats) = result.ransac {
         tracing::info!(
             "Homography: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
-            stats.n_inliers, stats.n_candidates,
-            stats.mean_err_px, stats.p95_err_px,
+            stats.n_inliers,
+            stats.n_candidates,
+            stats.mean_err_px,
+            stats.p95_err_px,
         );
     }
 
@@ -239,11 +298,12 @@ fn run_detect(
     std::fs::write(out_path, &json)?;
     tracing::info!("Results written to {}", out_path.display());
 
-    // Write debug output (same data, full detail)
-    if let Some(debug_path) = debug_path {
-        let debug_json = serde_json::to_string_pretty(&result)?;
+    // Write debug dump (versioned schema)
+    if let Some(debug_path) = debug_out_path {
+        let dump = debug_dump.expect("debug dump present when debug_out_path is set");
+        let debug_json = serde_json::to_string_pretty(&dump)?;
         std::fs::write(debug_path, &debug_json)?;
-        tracing::info!("Debug info written to {}", debug_path.display());
+        tracing::info!("Debug dump written to {}", debug_path.display());
     }
 
     Ok(())

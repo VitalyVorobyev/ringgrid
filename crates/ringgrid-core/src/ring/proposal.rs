@@ -117,11 +117,7 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
                 while r <= config.r_max {
                     let vx = x as f32 + sign * dx * r;
                     let vy = y as f32 + sign * dy * r;
-                    if vx >= 0.0
-                        && vx < (w - 1) as f32
-                        && vy >= 0.0
-                        && vy < (h - 1) as f32
-                    {
+                    if vx >= 0.0 && vx < (w - 1) as f32 && vy >= 0.0 && vy < (h - 1) as f32 {
                         bilinear_add(&mut accum, w, vx, vy, mag);
                     }
                     r += 1.0;
@@ -132,12 +128,8 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
 
     // Smooth accumulator with Gaussian blur
     // Convert to ImageBuffer<Luma<f32>> for imageproc
-    let accum_img = image::ImageBuffer::<image::Luma<f32>, Vec<f32>>::from_raw(
-        w,
-        h,
-        accum,
-    )
-    .expect("accumulator dimensions match");
+    let accum_img = image::ImageBuffer::<image::Luma<f32>, Vec<f32>>::from_raw(w, h, accum)
+        .expect("accumulator dimensions match");
     let smoothed = imageproc::filter::gaussian_blur_f32(&accum_img, config.accum_sigma);
 
     // Find max in smoothed accumulator
@@ -171,9 +163,7 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
                     let nx = x + dx;
                     let ny = y + dy;
                     let nidx = ny as usize * w as usize + nx as usize;
-                    if smoothed_data[nidx] > val
-                        || (smoothed_data[nidx] == val && nidx < idx)
-                    {
+                    if smoothed_data[nidx] > val || (smoothed_data[nidx] == val && nidx < idx) {
                         is_max = false;
                         break 'outer;
                     }
@@ -240,10 +230,7 @@ mod tests {
         };
 
         let proposals = find_proposals(&img, &config);
-        assert!(
-            !proposals.is_empty(),
-            "should find at least one proposal"
-        );
+        assert!(!proposals.is_empty(), "should find at least one proposal");
 
         // Best proposal should be near the true center
         let best = &proposals[0];
@@ -251,7 +238,11 @@ mod tests {
         assert!(
             err < 5.0,
             "best proposal ({}, {}) should be within 5 px of true center ({}, {}), error = {}",
-            best.x, best.y, cx, cy, err
+            best.x,
+            best.y,
+            cx,
+            cy,
+            err
         );
     }
 }

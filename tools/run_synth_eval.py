@@ -86,7 +86,7 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug", str(debug_path),
+                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
         else:
@@ -95,7 +95,7 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug", str(debug_path),
+                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
 

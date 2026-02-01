@@ -12,16 +12,17 @@
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
-pub mod preprocess;
-pub mod edges;
-pub mod conic;
-pub mod lattice;
-pub mod refine;
+pub mod board_spec;
 pub mod codebook;
 pub mod codec;
-pub mod ring;
-pub mod board_spec;
+pub mod conic;
+pub mod debug_dump;
+pub mod edges;
 pub mod homography;
+pub mod lattice;
+pub mod preprocess;
+pub mod refine;
+pub mod ring;
 
 /// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

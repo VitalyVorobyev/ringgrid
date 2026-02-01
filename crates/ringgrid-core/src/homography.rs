@@ -74,7 +74,10 @@ fn normalize_points(pts: &[[f64; 2]]) -> (Matrix3<f64>, Vec<[f64; 2]>) {
 
     let t = Matrix3::new(s, 0.0, -s * cx, 0.0, s, -s * cy, 0.0, 0.0, 1.0);
 
-    let normalized: Vec<[f64; 2]> = pts.iter().map(|p| [s * (p[0] - cx), s * (p[1] - cy)]).collect();
+    let normalized: Vec<[f64; 2]> = pts
+        .iter()
+        .map(|p| [s * (p[0] - cx), s * (p[1] - cy)])
+        .collect();
 
     (t, normalized)
 }
@@ -148,9 +151,7 @@ pub fn estimate_homography_dlt(
     }
     let h_vec: Vec<f64> = (0..9).map(|j| eig.eigenvectors[(j, min_idx)]).collect();
     let h_norm = Matrix3::new(
-        h_vec[0], h_vec[1], h_vec[2],
-        h_vec[3], h_vec[4], h_vec[5],
-        h_vec[6], h_vec[7], h_vec[8],
+        h_vec[0], h_vec[1], h_vec[2], h_vec[3], h_vec[4], h_vec[5], h_vec[6], h_vec[7], h_vec[8],
     );
 
     // Denormalize: H = T_dst^-1 * H_norm * T_src
@@ -329,11 +330,7 @@ mod tests {
 
     fn make_test_homography() -> Matrix3<f64> {
         // Scale + translate + mild perspective
-        Matrix3::new(
-            3.5, 0.1, 640.0,
-            -0.05, 3.3, 480.0,
-            0.0001, -0.00005, 1.0,
-        )
+        Matrix3::new(3.5, 0.1, 640.0, -0.05, 3.3, 480.0, 0.0001, -0.00005, 1.0)
     }
 
     #[test]

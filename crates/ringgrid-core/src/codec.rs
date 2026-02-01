@@ -159,7 +159,9 @@ mod tests {
                     rotate_left_16(w, k),
                     w,
                     "codeword {} (0x{:04X}) is rotationally symmetric at k={}",
-                    i, w, k
+                    i,
+                    w,
+                    k
                 );
             }
         }
@@ -186,7 +188,9 @@ mod tests {
                     rotate_left_16(wi, k),
                     wj,
                     "codeword {} and {} collide under rotation {}",
-                    i, j, k
+                    i,
+                    j,
+                    k
                 );
             }
         }
@@ -218,7 +222,8 @@ mod tests {
         assert!(
             observed_min >= CODEBOOK_MIN_CYCLIC_DIST as u8,
             "observed min cyclic dist {} < claimed {}",
-            observed_min, CODEBOOK_MIN_CYCLIC_DIST
+            observed_min,
+            CODEBOOK_MIN_CYCLIC_DIST
         );
     }
 
@@ -272,7 +277,11 @@ mod tests {
             obs ^= 1u16 << bit;
 
             let m = cb.match_word(obs);
-            assert!(m.dist <= 1, "1-bit flip should give dist <= 1, got {}", m.dist);
+            assert!(
+                m.dist <= 1,
+                "1-bit flip should give dist <= 1, got {}",
+                m.dist
+            );
             if m.id == id {
                 correct += 1;
             }
@@ -307,7 +316,11 @@ mod tests {
             obs ^= (1u16 << bit1) | (1u16 << bit2);
 
             let m = cb.match_word(obs);
-            assert!(m.dist <= 2, "2-bit flip should give dist <= 2, got {}", m.dist);
+            assert!(
+                m.dist <= 2,
+                "2-bit flip should give dist <= 2, got {}",
+                m.dist
+            );
             if m.id == id {
                 correct += 1;
             }
@@ -326,7 +339,10 @@ mod tests {
 
         // Exact match: high confidence
         let m = cb.match_word(w);
-        assert!(m.confidence > 0.0, "exact match should have positive confidence");
+        assert!(
+            m.confidence > 0.0,
+            "exact match should have positive confidence"
+        );
 
         // Far-away word (all bits flipped): low distance to complement
         let flipped = !w;

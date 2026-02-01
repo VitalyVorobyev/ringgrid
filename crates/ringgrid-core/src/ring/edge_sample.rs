@@ -50,6 +50,10 @@ pub struct EdgeSampleResult {
     pub outer_radius: f32,
     /// Median inner radius from ray measurements.
     pub inner_radius: f32,
+    /// Per-ray outer radii for rays where both edges were found.
+    pub outer_radii: Vec<f32>,
+    /// Per-ray inner radii for rays where both edges were found.
+    pub inner_radii: Vec<f32>,
     /// Number of rays with both edges found.
     pub n_good_rays: usize,
     /// Total rays attempted.
@@ -75,10 +79,7 @@ pub fn bilinear_sample_u8(img: &GrayImage, x: f32, y: f32) -> f32 {
     let p10 = img.get_pixel(x0 + 1, y0)[0] as f32 / 255.0;
     let p01 = img.get_pixel(x0, y0 + 1)[0] as f32 / 255.0;
     let p11 = img.get_pixel(x0 + 1, y0 + 1)[0] as f32 / 255.0;
-    (1.0 - fx) * (1.0 - fy) * p00
-        + fx * (1.0 - fy) * p10
-        + (1.0 - fx) * fy * p01
-        + fx * fy * p11
+    (1.0 - fx) * (1.0 - fy) * p00 + fx * (1.0 - fy) * p10 + (1.0 - fx) * fy * p01 + fx * fy * p11
 }
 
 /// Sample edges along radial rays from a candidate center.
@@ -199,11 +200,13 @@ pub fn sample_edges(
         return None;
     }
 
-    // Median radii
-    outer_radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    inner_radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median_outer = outer_radii[outer_radii.len() / 2];
-    let median_inner = inner_radii[inner_radii.len() / 2];
+    // Median radii (use sorted copies; keep original order for debug)
+    let mut outer_sorted = outer_radii.clone();
+    let mut inner_sorted = inner_radii.clone();
+    outer_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    inner_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_outer = outer_sorted[outer_sorted.len() / 2];
+    let median_inner = inner_sorted[inner_sorted.len() / 2];
 
     Some(EdgeSampleResult {
         center,
@@ -211,18 +214,15 @@ pub fn sample_edges(
         inner_points,
         outer_radius: median_outer,
         inner_radius: median_inner,
+        outer_radii,
+        inner_radii,
         n_good_rays: n_good,
         n_total_rays: config.n_rays,
     })
 }
 
 /// Refine edge position using parabolic interpolation on the gradient profile.
-fn refine_edge_position(
-    radii: &[f32],
-    profile: &[f32],
-    idx: usize,
-    _is_inner: bool,
-) -> f32 {
+fn refine_edge_position(radii: &[f32], profile: &[f32], idx: usize, _is_inner: bool) -> f32 {
     // Compute gradients
     if idx == 0 || idx + 2 >= profile.len() {
         // Can't do parabolic fit, return midpoint

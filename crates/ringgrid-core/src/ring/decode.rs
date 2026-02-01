@@ -9,8 +9,8 @@
 
 use image::GrayImage;
 
-use crate::conic::Ellipse;
 use crate::codec::Codebook;
+use crate::conic::Ellipse;
 
 use super::edge_sample::bilinear_sample_u8;
 
@@ -60,8 +60,29 @@ pub struct DecodeResult {
     pub rotation: u8,
     /// Per-sector average intensities (for debug).
     pub sector_intensities: [f32; 16],
+    /// Threshold used to binarize sector intensities.
+    pub threshold: f32,
     /// Whether the inverted polarity was used.
     pub inverted: bool,
+}
+
+/// Debug/diagnostic information about a decode attempt.
+#[derive(Debug, Clone)]
+pub struct DecodeDiagnostics {
+    pub sector_intensities: [f32; 16],
+    pub threshold: f32,
+    /// Word formed by thresholding `sector_intensities`.
+    pub word: u16,
+    /// Word actually matched against the codebook (possibly inverted).
+    pub used_word: u16,
+    pub inverted_used: bool,
+    pub best_id: usize,
+    pub best_rotation: u8,
+    pub best_dist: u8,
+    pub margin: u8,
+    pub decode_confidence: f32,
+    /// If rejected, why.
+    pub reject_reason: Option<String>,
 }
 
 /// Decode a marker ID from the image using the fitted outer ellipse.
@@ -79,9 +100,36 @@ pub fn decode_marker(
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
 ) -> Option<DecodeResult> {
+    decode_marker_with_diagnostics(gray, outer_ellipse, config).0
+}
+
+/// Decode a marker and return (accepted_result, diagnostics).
+///
+/// The detection pipeline uses the accepted result; debug tools can use the
+/// returned diagnostics even when decoding is rejected.
+pub fn decode_marker_with_diagnostics(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
     // Validate ellipse
     if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
-        return None;
+        return (
+            None,
+            DecodeDiagnostics {
+                sector_intensities: [0.0; 16],
+                threshold: 0.0,
+                word: 0,
+                used_word: 0,
+                inverted_used: false,
+                best_id: 0,
+                best_rotation: 0,
+                best_dist: u8::MAX,
+                margin: 0,
+                decode_confidence: 0.0,
+                reject_reason: Some("invalid_ellipse".to_string()),
+            },
+        );
     }
 
     let cx = outer_ellipse.cx;
@@ -139,7 +187,22 @@ pub fn decode_marker(
     // Check that there is reasonable contrast
     let contrast = sorted[15] - sorted[0];
     if contrast < 0.03 {
-        return None;
+        return (
+            None,
+            DecodeDiagnostics {
+                sector_intensities,
+                threshold: (sorted[0] + sorted[15]) / 2.0,
+                word: 0,
+                used_word: 0,
+                inverted_used: false,
+                best_id: 0,
+                best_rotation: 0,
+                best_dist: u8::MAX,
+                margin: 0,
+                decode_confidence: 0.0,
+                reject_reason: Some("low_contrast".to_string()),
+            },
+        );
     }
 
     // Initial threshold: midpoint of range
@@ -180,21 +243,46 @@ pub fn decode_marker(
     let m_inverted = cb.match_word(!word);
 
     // Pick the better match
-    let (best_match, used_word, inverted) =
-        if m_normal.confidence >= m_inverted.confidence {
-            (m_normal, word, false)
-        } else {
-            (m_inverted, !word, true)
-        };
+    let (best_match, used_word, inverted) = if m_normal.confidence >= m_inverted.confidence {
+        (m_normal, word, false)
+    } else {
+        (m_inverted, !word, true)
+    };
 
     // Reject if quality too low
     if best_match.dist > config.max_decode_dist
         || best_match.confidence < config.min_decode_confidence
     {
-        return None;
+        let reason = if best_match.dist > config.max_decode_dist {
+            format!(
+                "dist_too_high({}>{})",
+                best_match.dist, config.max_decode_dist
+            )
+        } else {
+            format!(
+                "confidence_too_low({:.3}<{:.3})",
+                best_match.confidence, config.min_decode_confidence
+            )
+        };
+        return (
+            None,
+            DecodeDiagnostics {
+                sector_intensities,
+                threshold,
+                word,
+                used_word,
+                inverted_used: inverted,
+                best_id: best_match.id,
+                best_rotation: best_match.rotation,
+                best_dist: best_match.dist,
+                margin: best_match.margin,
+                decode_confidence: best_match.confidence,
+                reject_reason: Some(reason),
+            },
+        );
     }
 
-    Some(DecodeResult {
+    let result = DecodeResult {
         id: best_match.id,
         confidence: best_match.confidence,
         raw_word: used_word,
@@ -202,8 +290,25 @@ pub fn decode_marker(
         margin: best_match.margin,
         rotation: best_match.rotation,
         sector_intensities,
+        threshold,
         inverted,
-    })
+    };
+
+    let diag = DecodeDiagnostics {
+        sector_intensities,
+        threshold,
+        word,
+        used_word,
+        inverted_used: inverted,
+        best_id: best_match.id,
+        best_rotation: best_match.rotation,
+        best_dist: best_match.dist,
+        margin: best_match.margin,
+        decode_confidence: best_match.confidence,
+        reject_reason: None,
+    };
+
+    (Some(result), diag)
 }
 
 #[cfg(test)]
@@ -246,12 +351,15 @@ mod tests {
                 } else if r >= 0.76 && r <= 0.89 {
                     // Code band
                     let angle = yn.atan2(xn);
-                    let sector =
-                        ((angle / (2.0 * std::f64::consts::PI) + 0.5) * 16.0) as i32 % 16;
+                    let sector = ((angle / (2.0 * std::f64::consts::PI) + 0.5) * 16.0) as i32 % 16;
                     let sector = if sector < 0 { sector + 16 } else { sector } as u32;
                     let bit = (codeword >> sector) & 1;
                     let bright = if inverted { bit == 0 } else { bit == 1 };
-                    if bright { 220u8 } else { 40u8 }
+                    if bright {
+                        220u8
+                    } else {
+                        40u8
+                    }
                 } else {
                     200u8 // background
                 };
@@ -297,7 +405,10 @@ mod tests {
         let config = DecodeConfig::default();
 
         let result = decode_marker(&img, &ellipse, &config);
-        assert!(result.is_some(), "should decode successfully with inverted polarity");
+        assert!(
+            result.is_some(),
+            "should decode successfully with inverted polarity"
+        );
         let result = result.unwrap();
         assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
         assert!(result.inverted, "should use inverted polarity");

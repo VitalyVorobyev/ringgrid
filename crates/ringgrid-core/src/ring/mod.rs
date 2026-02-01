@@ -7,9 +7,9 @@
 //! 4. **Decode** – ellipse-guided 16-sector sampling + codebook matching.
 //! 5. **Detect** – orchestrates the above into `DetectionResult`.
 
-pub mod proposal;
-pub mod edge_sample;
 pub mod decode;
 pub mod detect;
+pub mod edge_sample;
+pub mod proposal;
 
-pub use detect::{detect_rings, DetectConfig};
+pub use detect::{detect_rings, detect_rings_with_debug, DebugCollectConfig, DetectConfig};

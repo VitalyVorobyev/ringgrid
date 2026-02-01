@@ -6,7 +6,7 @@
 //! - Algebraic and geometric residual computation.
 //! - RANSAC wrapper for outlier-robust fitting.
 
-use nalgebra::{Matrix3, Vector6, DMatrix};
+use nalgebra::{DMatrix, Matrix3, Vector6};
 use serde::{Deserialize, Serialize};
 
 // ── Error type ─────────────────────────────────────────────────────────────
@@ -212,9 +212,15 @@ pub fn conic_to_ellipse(c: &ConicCoeffs) -> Option<Ellipse> {
 
     // Matrix form: M = [[A, B/2, D/2], [B/2, C, E/2], [D/2, E/2, F]]
     let m = Matrix3::new(
-        a,         b / 2.0,       d / 2.0,
-        b / 2.0,   c_coeff,       e / 2.0,
-        d / 2.0,   e / 2.0,       f,
+        a,
+        b / 2.0,
+        d / 2.0,
+        b / 2.0,
+        c_coeff,
+        e / 2.0,
+        d / 2.0,
+        e / 2.0,
+        f,
     );
     let det_m = m.determinant();
 
@@ -360,11 +366,7 @@ pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)>
 
     // Constraint matrix for the ellipse condition: 4AC − B² > 0
     //   C1 = [[0, 0, 2], [0, -1, 0], [2, 0, 0]]
-    let c1 = Matrix3::new(
-        0.0,  0.0, 2.0,
-        0.0, -1.0, 0.0,
-        2.0,  0.0, 0.0,
-    );
+    let c1 = Matrix3::new(0.0, 0.0, 2.0, 0.0, -1.0, 0.0, 2.0, 0.0, 0.0);
 
     // Solve the reduced eigensystem:
     //   (S11 − S12 S22⁻¹ S21) a1 = λ C1 a1
@@ -440,10 +442,7 @@ pub fn try_fit_ellipse_ransac(
 /// Uses explicit eigenvalue computation via the characteristic polynomial
 /// (cubic formula) and inverse iteration for eigenvectors, avoiding the
 /// SymmetricEigen pitfall (C1⁻¹ M is not symmetric in general).
-fn solve_gep_3x3(
-    system: &Matrix3<f64>,
-    _c1: &Matrix3<f64>,
-) -> Option<nalgebra::Vector3<f64>> {
+fn solve_gep_3x3(system: &Matrix3<f64>, _c1: &Matrix3<f64>) -> Option<nalgebra::Vector3<f64>> {
     // Compute eigenvalues of `system` = C1⁻¹ M via characteristic polynomial.
     // For a 3x3 matrix A, the characteristic polynomial is:
     //   λ³ - tr(A) λ² + (sum of 2x2 minors) λ - det(A) = 0
@@ -451,9 +450,10 @@ fn solve_gep_3x3(
     let tr = a[(0, 0)] + a[(1, 1)] + a[(2, 2)];
 
     // Sum of 2×2 principal minors (cofactors of diagonal)
-    let minor_sum = a[(0, 0)] * a[(1, 1)] - a[(0, 1)] * a[(1, 0)]
-        + a[(0, 0)] * a[(2, 2)] - a[(0, 2)] * a[(2, 0)]
-        + a[(1, 1)] * a[(2, 2)] - a[(1, 2)] * a[(2, 1)];
+    let minor_sum = a[(0, 0)] * a[(1, 1)] - a[(0, 1)] * a[(1, 0)] + a[(0, 0)] * a[(2, 2)]
+        - a[(0, 2)] * a[(2, 0)]
+        + a[(1, 1)] * a[(2, 2)]
+        - a[(1, 2)] * a[(2, 1)];
 
     let det = a.determinant();
 
@@ -597,12 +597,7 @@ fn normalization_params(points: &[[f64; 2]]) -> (f64, f64, f64, f64) {
 /// If normalized coords are x' = s(x − mx), y' = s(y − my), then the conic
 /// A'x'² + B'x'y' + C'y'² + D'x' + E'y' + F' = 0 transforms back via
 /// substitution.
-fn denormalize_conic(
-    c: &Vector6<f64>,
-    mx: f64,
-    my: f64,
-    s: f64,
-) -> [f64; 6] {
+fn denormalize_conic(c: &Vector6<f64>, mx: f64, my: f64, s: f64) -> [f64; 6] {
     let [a_, b_, c_, d_, e_, f_] = [c[0], c[1], c[2], c[3], c[4], c[5]];
     let s2 = s * s;
 
@@ -613,12 +608,8 @@ fn denormalize_conic(
     let c = c_ * s2;
     let d = -2.0 * a_ * s2 * mx - b_ * s2 * my + d_ * s;
     let e = -b_ * s2 * mx - 2.0 * c_ * s2 * my + e_ * s;
-    let f = a_ * s2 * mx * mx
-        + b_ * s2 * mx * my
-        + c_ * s2 * my * my
-        - d_ * s * mx
-        - e_ * s * my
-        + f_;
+    let f =
+        a_ * s2 * mx * mx + b_ * s2 * mx * my + c_ * s2 * my * my - d_ * s * mx - e_ * s * my + f_;
 
     [a, b, c, d, e, f]
 }
@@ -629,10 +620,7 @@ fn denormalize_conic(
 ///
 /// Samples 6-point minimal subsets, fits via direct least squares, and selects
 /// the model with the most inliers. Final model is re-fit to all inliers.
-pub fn fit_ellipse_ransac(
-    points: &[[f64; 2]],
-    config: &RansacConfig,
-) -> Option<RansacResult> {
+pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<RansacResult> {
     use rand::prelude::*;
 
     let n = points.len();
@@ -823,7 +811,11 @@ mod tests {
         assert_relative_eq!(fitted.angle, e.angle, epsilon = 1e-6);
 
         let rms = rms_algebraic_distance(&conic, &pts);
-        assert!(rms < 1e-10, "RMS algebraic distance should be ~0, got {}", rms);
+        assert!(
+            rms < 1e-10,
+            "RMS algebraic distance should be ~0, got {}",
+            rms
+        );
     }
 
     #[test]
@@ -892,10 +884,7 @@ mod tests {
 
         // Add 20 random outliers
         for _ in 0..20 {
-            pts.push([
-                rng.gen_range(0.0..200.0),
-                rng.gen_range(0.0..200.0),
-            ]);
+            pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
         }
 
         let config = RansacConfig {
@@ -905,7 +894,8 @@ mod tests {
             seed: 42,
         };
 
-        let result = fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed with outliers");
+        let result =
+            fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed with outliers");
 
         // Should recover the original ellipse despite 20% outliers
         assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 0.5);
@@ -914,7 +904,11 @@ mod tests {
         assert_relative_eq!(result.ellipse.b, e.b, epsilon = 0.5);
 
         // Most true points should be inliers
-        assert!(result.num_inliers >= 60, "expected >= 60 inliers, got {}", result.num_inliers);
+        assert!(
+            result.num_inliers >= 60,
+            "expected >= 60 inliers, got {}",
+            result.num_inliers
+        );
     }
 
     #[test]
@@ -932,10 +926,7 @@ mod tests {
 
         // Add 50 outliers
         for _ in 0..50 {
-            pts.push([
-                rng.gen_range(20.0..180.0),
-                rng.gen_range(20.0..160.0),
-            ]);
+            pts.push([rng.gen_range(20.0..180.0), rng.gen_range(20.0..160.0)]);
         }
 
         let config = RansacConfig {
@@ -945,8 +936,8 @@ mod tests {
             seed: 42,
         };
 
-        let result = fit_ellipse_ransac(&pts, &config)
-            .expect("RANSAC should succeed with noise + outliers");
+        let result =
+            fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed with noise + outliers");
 
         assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 2.0);
         assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 2.0);
@@ -984,7 +975,11 @@ mod tests {
         // Points on the ellipse should have ~0 Sampson distance
         for &[x, y] in &pts {
             let d = e.sampson_distance(x, y);
-            assert!(d < 1e-8, "Sampson distance on ellipse should be ~0, got {}", d);
+            assert!(
+                d < 1e-8,
+                "Sampson distance on ellipse should be ~0, got {}",
+                d
+            );
         }
 
         // Center should have nonzero distance
@@ -997,17 +992,45 @@ mod tests {
         let e = make_test_ellipse();
         let pts = e.sample_points(100);
         let rms = rms_sampson_distance(&e, &pts);
-        assert!(rms < 1e-8, "RMS Sampson distance for exact points should be ~0, got {}", rms);
+        assert!(
+            rms < 1e-8,
+            "RMS Sampson distance for exact points should be ~0, got {}",
+            rms
+        );
     }
 
     #[test]
     fn test_various_ellipses() {
         // Test fitting with different aspect ratios and orientations
         let test_cases = vec![
-            Ellipse { cx: 50.0, cy: 50.0, a: 40.0, b: 10.0, angle: 0.0 },       // very elongated, axis-aligned
-            Ellipse { cx: 200.0, cy: 150.0, a: 25.0, b: 24.0, angle: 1.0 },     // nearly circular
-            Ellipse { cx: 300.0, cy: 100.0, a: 50.0, b: 20.0, angle: -0.7 },    // tilted
-            Ellipse { cx: 10.0, cy: 10.0, a: 8.0, b: 5.0, angle: std::f64::consts::FRAC_PI_4 }, // small, 45°
+            Ellipse {
+                cx: 50.0,
+                cy: 50.0,
+                a: 40.0,
+                b: 10.0,
+                angle: 0.0,
+            }, // very elongated, axis-aligned
+            Ellipse {
+                cx: 200.0,
+                cy: 150.0,
+                a: 25.0,
+                b: 24.0,
+                angle: 1.0,
+            }, // nearly circular
+            Ellipse {
+                cx: 300.0,
+                cy: 100.0,
+                a: 50.0,
+                b: 20.0,
+                angle: -0.7,
+            }, // tilted
+            Ellipse {
+                cx: 10.0,
+                cy: 10.0,
+                a: 8.0,
+                b: 5.0,
+                angle: std::f64::consts::FRAC_PI_4,
+            }, // small, 45°
         ];
 
         for (i, e) in test_cases.iter().enumerate() {
@@ -1025,7 +1048,9 @@ mod tests {
             assert!(
                 angle_diff < 1e-4,
                 "angle mismatch for case {}: expected {}, got {}",
-                i, e.angle, fitted.angle
+                i,
+                e.angle,
+                fitted.angle
             );
         }
     }
@@ -1042,8 +1067,8 @@ mod tests {
             .collect();
         assert!(arc_pts.len() >= 20, "need enough arc points");
 
-        let (_conic, fitted) = fit_ellipse_direct(&arc_pts)
-            .expect("partial arc fit should succeed");
+        let (_conic, fitted) =
+            fit_ellipse_direct(&arc_pts).expect("partial arc fit should succeed");
 
         // Partial arc fits are less accurate, allow larger tolerance
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
@@ -1065,7 +1090,10 @@ mod tests {
         }
 
         let result = fit_ellipse_direct(&pts);
-        assert!(result.is_some(), "fit should succeed even with strong noise");
+        assert!(
+            result.is_some(),
+            "fit should succeed even with strong noise"
+        );
         let (_conic, fitted) = result.unwrap();
         // Allow generous tolerances
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
@@ -1097,7 +1125,10 @@ mod tests {
         // Too few points
         let pts = vec![[1.0, 2.0], [3.0, 4.0]];
         let err = try_fit_ellipse_direct(&pts).unwrap_err();
-        assert!(matches!(err, ConicError::TooFewPoints { needed: 6, got: 2 }));
+        assert!(matches!(
+            err,
+            ConicError::TooFewPoints { needed: 6, got: 2 }
+        ));
 
         // Valid fit should succeed
         let e = make_test_ellipse();
@@ -1127,18 +1158,12 @@ mod tests {
         let e = make_test_ellipse();
         let all_pts = e.sample_points(400);
         // Keep only a half-arc
-        let mut arc_pts: Vec<[f64; 2]> = all_pts
-            .into_iter()
-            .filter(|&[_, y]| y > e.cy)
-            .collect();
+        let mut arc_pts: Vec<[f64; 2]> = all_pts.into_iter().filter(|&[_, y]| y > e.cy).collect();
 
         // Add outliers
         let mut rng = StdRng::seed_from_u64(333);
         for _ in 0..20 {
-            arc_pts.push([
-                rng.gen_range(0.0..200.0),
-                rng.gen_range(0.0..200.0),
-            ]);
+            arc_pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
         }
 
         let config = RansacConfig {
@@ -1148,8 +1173,8 @@ mod tests {
             seed: 42,
         };
 
-        let result = fit_ellipse_ransac(&arc_pts, &config)
-            .expect("RANSAC should succeed on partial arc");
+        let result =
+            fit_ellipse_ransac(&arc_pts, &config).expect("RANSAC should succeed on partial arc");
 
         assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 5.0);
         assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 5.0);

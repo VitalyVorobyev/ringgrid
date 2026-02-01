@@ -28,6 +28,7 @@ tools/
   run_synth_eval.py     # End-to-end: generate → detect → score
   score_detect.py       # Score ringgrid detect JSON vs synthetic GT
   viz_debug.py          # Visualize GT overlay for synthetic samples
+  viz_detect_debug.py   # Visualize ringgrid.debug.v1 overlays
 docs/
   ARCHITECTURE.md       # Background + notes (includes planned milestones)
 ```
@@ -64,7 +65,7 @@ python3 tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 
 target/release/ringgrid detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json \
-  --debug tools/out/synth_001/debug_0000.json \
+  --debug-json tools/out/synth_001/debug_0000.json \
   --marker-diameter 32.0
 ```
 
@@ -90,7 +91,8 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 - `ringgrid detect`
   - Required: `--image <path> --out <path>`
-  - Optional: `--debug <path>`
+  - Debug: `--debug-json <path>` (versioned dump), `--debug-store-points`, `--debug-max-candidates <n>`
+  - Deprecated: `--debug <path>` (alias for `--debug-json`)
   - Tuning: `--marker-diameter <px>`
   - Global filter: `--ransac-thresh-px <px>`, `--ransac-iters <n>`, `--no-global-filter`
   - Refinement: `--no-refine`
@@ -118,7 +120,32 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
   - `fit`: edge/fit quality metrics
   - `decode`: optional `{ observed_word, best_id, best_rotation, best_dist, margin, decode_confidence }`
 
-Note: `--debug` currently writes the same JSON payload as `--out`.
+### Debug dump JSON (`--debug-json`)
+
+`ringgrid detect --debug-json ...` writes a versioned debug object with:
+
+- `schema_version: "ringgrid.debug.v1"`
+- `image`, `board`, `params`
+- `stages` (proposals → fit/decode → dedup → ransac → refine → final)
+
+This file is intended for manual inspection and is distinct from `--out`.
+
+### Manual inspection (debug overlay)
+
+Produce a comprehensive debug dump (optionally including edge points), then render an overlay:
+
+```bash
+target/release/ringgrid detect \
+  --image tools/out/synth_001/img_0000.png \
+  --out tools/out/synth_001/det_0000.json \
+  --debug-json tools/out/synth_001/debug_0000.json \
+  --debug-store-points
+
+python3 tools/viz_detect_debug.py \
+  --image tools/out/synth_001/img_0000.png \
+  --debug_json tools/out/synth_001/debug_0000.json \
+  --out tools/out/synth_001/det_overlay_0000.png
+```
 
 ### Synthetic ground truth (`tools/gen_synth.py`)
 

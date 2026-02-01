@@ -452,6 +452,7 @@ def generate_one_sample(
     codebook: list[int],
     blur_px: float,
     projective: bool,
+    tilt_strength: float,
     seed: int,
     stress_inner_confusion: bool = False,
 ) -> dict:
@@ -466,7 +467,7 @@ def generate_one_sample(
     code_band_outer = pitch_mm * 0.58
     code_band_inner = pitch_mm * 0.42
 
-    tilt = 0.3 if projective else 0.0
+    tilt = float(tilt_strength) if projective else 0.0
     H = make_random_homography(rng, img_w, img_h, board_mm, tilt_strength=tilt)
 
     # Render
@@ -522,6 +523,8 @@ def generate_one_sample(
         "inner_radius_mm": inner_radius,
         "homography": H.tolist(),
         "blur_px": blur_px,
+        "projective": projective,
+        "tilt_strength": tilt,
         "stress_inner_confusion": stress_inner_confusion,
         "seed": seed + idx,
         "n_markers": len(markers),
@@ -558,6 +561,15 @@ def main() -> None:
     )
     parser.add_argument("--projective", action="store_true", default=True)
     parser.add_argument("--no_projective", dest="projective", action="store_false")
+    parser.add_argument(
+        "--tilt_strength",
+        type=float,
+        default=0.3,
+        help=(
+            "Projective tilt strength used by the homography sampler (0 disables perspective). "
+            "Larger values produce stronger projective distortion."
+        ),
+    )
     parser.add_argument("--codebook", type=str, default="tools/codebook.json")
     args = parser.parse_args()
 
@@ -599,6 +611,7 @@ def main() -> None:
             codebook=codebook,
             blur_px=args.blur_px,
             projective=args.projective,
+            tilt_strength=args.tilt_strength,
             seed=args.seed,
             stress_inner_confusion=args.stress_inner_confusion,
         )

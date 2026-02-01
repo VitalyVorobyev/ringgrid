@@ -45,6 +45,12 @@ def main():
         action="store_true",
         help="Enable gen_synth stress mode that increases inner-edge confusion.",
     )
+    parser.add_argument(
+        "--tilt_strength",
+        type=float,
+        default=0.3,
+        help="Projective tilt strength passed through to tools/gen_synth.py (larger => stronger perspective).",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -62,6 +68,7 @@ def main():
             "--n_images", str(args.n),
             "--blur_px", str(args.blur_px),
             "--codebook", args.codebook,
+            "--tilt_strength", str(args.tilt_strength),
         ]
         if args.stress_inner_confusion:
             gen_cmd.append("--stress-inner-confusion")

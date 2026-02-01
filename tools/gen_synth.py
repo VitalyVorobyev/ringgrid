@@ -456,10 +456,10 @@ def generate_one_sample(
     markers = generate_hex_lattice(board_mm, pitch_mm, n_markers)
 
     # Marker geometry (in mm)
-    outer_radius = pitch_mm * 0.42
-    inner_radius = pitch_mm * 0.28
-    code_band_outer = pitch_mm * 0.38
-    code_band_inner = pitch_mm * 0.30
+    outer_radius = pitch_mm * 0.6
+    inner_radius = pitch_mm * 0.4
+    code_band_outer = pitch_mm * 0.58
+    code_band_inner = pitch_mm * 0.42
 
     tilt = 0.3 if projective else 0.0
     H = make_random_homography(rng, img_w, img_h, board_mm, tilt_strength=tilt)
@@ -536,14 +536,14 @@ def generate_one_sample(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic ringgrid datasets")
     parser.add_argument("--out_dir", type=str, default="tools/out/synth_001")
-    parser.add_argument("--n_images", type=int, default=10)
+    parser.add_argument("--n_images", type=int, default=3)
     parser.add_argument("--img_w", type=int, default=1280)
     parser.add_argument("--img_h", type=int, default=960)
     parser.add_argument("--board_mm", type=float, default=200.0)
-    parser.add_argument("--pitch_mm", type=float, default=5.0)
+    parser.add_argument("--pitch_mm", type=float, default=8.0)
     parser.add_argument("--n_markers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--blur_px", type=float, default=10.0)
+    parser.add_argument("--blur_px", type=float, default=1.0)
     parser.add_argument("--projective", action="store_true", default=True)
     parser.add_argument("--no_projective", dest="projective", action="store_false")
     parser.add_argument("--codebook", type=str, default="tools/codebook.json")

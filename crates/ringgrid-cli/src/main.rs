@@ -31,8 +31,8 @@ enum Commands {
         #[arg(long)]
         debug: Option<PathBuf>,
 
-        /// Expected marker outer diameter in pixels (for band-pass tuning).
-        #[arg(long, default_value = "20.0")]
+        /// Expected marker outer diameter in pixels (for parameter tuning).
+        #[arg(long, default_value = "32.0")]
         marker_diameter: f64,
     },
 
@@ -62,8 +62,8 @@ fn main() -> CliResult<()> {
             image: image_path,
             out,
             debug,
-            marker_diameter: _marker_diameter,
-        } => run_detect(&image_path, &out, debug.as_deref()),
+            marker_diameter,
+        } => run_detect(&image_path, &out, debug.as_deref(), marker_diameter),
 
         Commands::CodebookInfo => run_codebook_info(),
 
@@ -120,6 +120,7 @@ fn run_detect(
     image_path: &std::path::Path,
     out_path: &std::path::Path,
     debug_path: Option<&std::path::Path>,
+    marker_diameter: f64,
 ) -> CliResult<()> {
     tracing::info!("Loading image: {}", image_path.display());
 
@@ -131,43 +132,35 @@ fn run_detect(
 
     tracing::info!("Image size: {}x{}", w, h);
 
-    // ── Placeholder pipeline ───────────────────────────────────────────
-    // TODO Milestone 2: replace with real pipeline
-    //
-    // Real pipeline stages:
-    // 1. preprocess::normalize_illumination
-    // 2. preprocess::bandpass_filter
-    // 3. edges::detect_edges
-    // 4. edges::group_arcs
-    // 5. conic::fit_ellipse_ransac (per arc group)
-    // 6. lattice::build_neighbor_graph
-    // 7. lattice::estimate_vanishing_line
-    // 8. lattice::affine_rectification_homography
-    // 9. refine::refine_marker (per marker)
-    // 10. codec::decode_marker_id (per marker)
+    // Configure detection parameters from marker_diameter
+    let r_outer = marker_diameter as f32 / 2.0;
+    let mut config = ringgrid_core::ring::DetectConfig::default();
 
-    let result = ringgrid_core::DetectionResult::empty(w, h);
-    tracing::info!("Detected {} markers (pipeline is stub)", result.detected_markers.len());
+    // Scale proposal search radii
+    config.proposal.r_min = (r_outer * 0.4).max(2.0);
+    config.proposal.r_max = r_outer * 1.7;
+    config.proposal.nms_radius = r_outer * 0.8;
 
+    // Scale edge sampling range
+    config.edge_sample.r_max = r_outer * 2.0;
+    config.edge_sample.r_min = 1.5;
+
+    // Scale ellipse validation
+    config.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
+    config.max_semi_axis = r_outer as f64 * 2.5;
+
+    // Run detection pipeline
+    let result = ringgrid_core::ring::detect_rings(&gray, &config);
+    tracing::info!("Detected {} markers", result.detected_markers.len());
+
+    // Write results
     let json = serde_json::to_string_pretty(&result)?;
     std::fs::write(out_path, &json)?;
     tracing::info!("Results written to {}", out_path.display());
 
+    // Write debug output (same data, full detail)
     if let Some(debug_path) = debug_path {
-        let debug_info = serde_json::json!({
-            "image_path": image_path.to_string_lossy(),
-            "image_size": [w, h],
-            "pipeline_stages": [
-                {"name": "preprocess", "status": "stub"},
-                {"name": "edges", "status": "stub"},
-                {"name": "conic_fit", "status": "stub"},
-                {"name": "lattice", "status": "stub"},
-                {"name": "refine", "status": "stub"},
-                {"name": "codec", "status": "stub"},
-            ],
-            "detected_markers": [],
-        });
-        let debug_json = serde_json::to_string_pretty(&debug_info)?;
+        let debug_json = serde_json::to_string_pretty(&result)?;
         std::fs::write(debug_path, &debug_json)?;
         tracing::info!("Debug info written to {}", debug_path.display());
     }

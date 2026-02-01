@@ -10,6 +10,7 @@
 //!    affine-rectification homography for center-bias correction.
 //! 5. **Refine** – per-marker shared-center dual-ring Levenberg–Marquardt refinement.
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
+//! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
 pub mod preprocess;
 pub mod edges;
@@ -18,59 +19,82 @@ pub mod lattice;
 pub mod refine;
 pub mod codebook;
 pub mod codec;
+pub mod ring;
 
-/// Ellipse parameters for serialization.
+/// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EllipseParams {
+    /// Center (x, y) in image pixels.
+    pub center_xy: [f64; 2],
     /// Semi-axes [a, b] in pixels.
     pub semi_axes: [f64; 2],
     /// Rotation angle in radians.
     pub angle: f64,
 }
 
-/// Per-marker debug/diagnostic info (optional, included when `--debug` is used).
+/// Fit quality metrics for a detected marker.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct MarkerDebug {
-    /// Number of edge points used for outer ellipse fit.
+pub struct FitMetrics {
+    /// Total number of radial rays cast.
+    pub n_angles_total: usize,
+    /// Number of rays where both inner and outer ring edges were found.
+    pub n_angles_with_both_edges: usize,
+    /// Number of outer edge points used for ellipse fit.
+    pub n_points_outer: usize,
+    /// Number of inner edge points used for ellipse fit.
+    pub n_points_inner: usize,
+    /// RANSAC inlier ratio for outer ellipse fit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub outer_edge_count: Option<usize>,
-    /// Number of edge points used for inner ellipse fit.
+    pub ransac_inlier_ratio_outer: Option<f32>,
+    /// RANSAC inlier ratio for inner ellipse fit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub inner_edge_count: Option<usize>,
-    /// RMS Sampson distance of the outer ellipse fit.
+    pub ransac_inlier_ratio_inner: Option<f32>,
+    /// RMS Sampson residual for outer ellipse fit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub outer_fit_rms: Option<f64>,
-    /// RMS Sampson distance of the inner ellipse fit.
+    pub rms_residual_outer: Option<f64>,
+    /// RMS Sampson residual for inner ellipse fit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub inner_fit_rms: Option<f64>,
-    /// Raw 16-bit word read from the code band.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_word: Option<u16>,
-    /// Hamming distance of the codec match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codec_dist: Option<u8>,
-    /// Margin of the codec match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codec_margin: Option<u8>,
+    pub rms_residual_inner: Option<f64>,
+}
+
+/// Decode quality metrics for a detected marker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DecodeMetrics {
+    /// Raw 16-bit word sampled from the code band.
+    pub observed_word: u16,
+    /// Best-matching codebook entry index.
+    pub best_id: usize,
+    /// Cyclic rotation that produced the best match.
+    pub best_rotation: u8,
+    /// Hamming distance to the best-matching codeword.
+    pub best_dist: u8,
+    /// Margin: second_best_dist - best_dist.
+    pub margin: u8,
+    /// Confidence heuristic in [0, 1].
+    pub decode_confidence: f32,
 }
 
 /// A detected marker with its refined center and optional ID.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
-    /// Marker center in image coordinates (pixels), after center-bias correction.
-    pub center_xy: [f64; 2],
-    /// Outer ellipse parameters (semi-axes and angle).
+    /// Decoded marker ID (codebook index), or None if decoding was rejected.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ellipse_params: Option<EllipseParams>,
-    /// Decoded marker ID, if available.
+    pub id: Option<usize>,
+    /// Combined detection + decode confidence in [0, 1].
+    pub confidence: f32,
+    /// Marker center in image coordinates (pixels).
+    pub center: [f64; 2],
+    /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<u32>,
-    /// Codec confidence in [0, 1], if decoded.
+    pub ellipse_outer: Option<EllipseParams>,
+    /// Inner ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<f32>,
-    /// Per-marker debug/diagnostic info.
+    pub ellipse_inner: Option<EllipseParams>,
+    /// Fit quality metrics.
+    pub fit: FitMetrics,
+    /// Decode metrics (present if decoding was attempted).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub debug: Option<MarkerDebug>,
+    pub decode: Option<DecodeMetrics>,
 }
 
 /// Full detection result for a single image.

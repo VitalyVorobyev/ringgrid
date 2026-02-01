@@ -46,6 +46,11 @@ def main():
         help="Enable gen_synth stress mode that increases inner-edge confusion.",
     )
     parser.add_argument(
+        "--stress_outer_confusion",
+        action="store_true",
+        help="Enable gen_synth stress mode that increases outer-edge confusion.",
+    )
+    parser.add_argument(
         "--tilt_strength",
         type=float,
         default=0.3,
@@ -72,6 +77,8 @@ def main():
         ]
         if args.stress_inner_confusion:
             gen_cmd.append("--stress-inner-confusion")
+        if args.stress_outer_confusion:
+            gen_cmd.append("--stress-outer-confusion")
         result = subprocess.run(gen_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"gen_synth.py failed:\n{result.stderr}")

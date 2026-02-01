@@ -1,0 +1,468 @@
+//! Outer edge estimation from a center prior and expected marker scale.
+//!
+//! The outer edge can be confused with stronger inner-ring or code-band edges
+//! under blur/high contrast. This estimator anchors the search to the expected
+//! outer radius (derived from `marker_diameter`) and aggregates radial edge
+//! responses over theta, similarly to the inner estimator.
+
+use image::GrayImage;
+
+use crate::marker_spec::AngularAggregator;
+
+use super::edge_sample::bilinear_sample_u8_checked;
+use super::inner_estimate::Polarity;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OuterGradPolarity {
+    /// Intensity increases as radius increases (dark → light).
+    DarkToLight,
+    /// Intensity decreases as radius increases (light → dark).
+    LightToDark,
+    /// Try both and pick the more coherent peak.
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OuterStatus {
+    Ok,
+    Rejected,
+    Failed,
+}
+
+#[derive(Debug, Clone)]
+pub struct OuterHypothesis {
+    pub r_outer_px: f32,
+    pub peak_strength: f32,
+    pub theta_consistency: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct OuterEstimate {
+    pub r_outer_expected_px: f32,
+    pub search_window_px: [f32; 2],
+    pub polarity: Option<Polarity>,
+    pub hypotheses: Vec<OuterHypothesis>,
+    pub status: OuterStatus,
+    pub reason: Option<String>,
+    pub radial_response_agg: Option<Vec<f32>>,
+    pub r_samples: Option<Vec<f32>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OuterEstimationConfig {
+    /// Search half-width around the expected outer radius, in pixels.
+    pub search_halfwidth_px: f32,
+    /// Number of radial samples used to build the aggregated response.
+    pub radial_samples: usize,
+    /// Number of theta samples (rays).
+    pub theta_samples: usize,
+    /// Aggregation method across theta.
+    pub aggregator: AngularAggregator,
+    /// Expected polarity of `dI/dr` at the outer edge.
+    pub grad_polarity: OuterGradPolarity,
+    /// Minimum fraction of theta samples required for an estimate.
+    pub min_theta_coverage: f32,
+    /// Minimum fraction of theta samples that must agree with the selected peak.
+    pub min_theta_consistency: f32,
+    /// If set, emit up to two hypotheses (best + runner-up) when runner-up is comparable.
+    pub allow_two_hypotheses: bool,
+    /// Runner-up must be at least this fraction of the best peak strength.
+    pub second_peak_min_rel: f32,
+    /// Per-theta local refinement half-width around the chosen radius.
+    pub refine_halfwidth_px: f32,
+}
+
+impl Default for OuterEstimationConfig {
+    fn default() -> Self {
+        Self {
+            search_halfwidth_px: 4.0,
+            radial_samples: 64,
+            theta_samples: 48,
+            aggregator: AngularAggregator::Median,
+            grad_polarity: OuterGradPolarity::DarkToLight,
+            min_theta_coverage: 0.6,
+            min_theta_consistency: 0.35,
+            allow_two_hypotheses: true,
+            second_peak_min_rel: 0.85,
+            refine_halfwidth_px: 1.0,
+        }
+    }
+}
+
+fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    match *agg {
+        AngularAggregator::Median => values[values.len() / 2],
+        AngularAggregator::TrimmedMean { trim_fraction } => {
+            let tf = trim_fraction.clamp(0.0, 0.45);
+            let k = (values.len() as f32 * tf).floor() as usize;
+            let start = k.min(values.len());
+            let end = values.len().saturating_sub(k).max(start);
+            let slice = &values[start..end];
+            if slice.is_empty() {
+                values[values.len() / 2]
+            } else {
+                slice.iter().sum::<f32>() / slice.len() as f32
+            }
+        }
+    }
+}
+
+fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
+    let mut peaks = Vec::with_capacity(curves.len());
+    for d in curves {
+        let idx = match pol {
+            Polarity::Pos => d
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(i, _)| i)
+                .unwrap(),
+            Polarity::Neg => d
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(i, _)| i)
+                .unwrap(),
+        };
+        peaks.push(r_samples[idx]);
+    }
+    peaks
+}
+
+fn find_local_peaks(score: &[f32]) -> Vec<usize> {
+    if score.len() < 3 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for i in 1..(score.len() - 1) {
+        if score[i].is_finite() && score[i] >= score[i - 1] && score[i] >= score[i + 1] {
+            out.push(i);
+        }
+    }
+    out
+}
+
+pub fn estimate_outer_from_prior(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    cfg: &OuterEstimationConfig,
+    store_response: bool,
+) -> OuterEstimate {
+    let r_expected = r_outer_expected_px.max(1.0);
+    let hw = cfg.search_halfwidth_px.max(0.5);
+    let mut window = [r_expected - hw, r_expected + hw];
+    window[0] = window[0].max(1.0);
+    if window[1] <= window[0] + 1e-3 {
+        return OuterEstimate {
+            r_outer_expected_px: r_expected,
+            search_window_px: window,
+            polarity: None,
+            hypotheses: Vec::new(),
+            status: OuterStatus::Failed,
+            reason: Some("invalid_search_window".to_string()),
+            radial_response_agg: None,
+            r_samples: None,
+        };
+    }
+
+    let n_r = cfg.radial_samples.max(7);
+    let n_t = cfg.theta_samples.max(8);
+    let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
+    let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
+
+    let cx = center_prior[0];
+    let cy = center_prior[1];
+
+    // Collect derivative curves per theta (only for in-bounds rays).
+    let mut curves: Vec<Vec<f32>> = Vec::new();
+    for ti in 0..n_t {
+        let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
+        let dx = theta.cos();
+        let dy = theta.sin();
+
+        let mut i_vals = Vec::with_capacity(n_r);
+        let mut ok = true;
+        for &r in &r_samples {
+            let x = cx + dx * r;
+            let y = cy + dy * r;
+            let samp = match bilinear_sample_u8_checked(gray, x, y) {
+                Some(v) => v,
+                None => {
+                    ok = false;
+                    break;
+                }
+            };
+            i_vals.push(samp);
+        }
+        if !ok {
+            continue;
+        }
+
+        // dI/dr via central differences
+        let mut d = vec![0.0f32; n_r];
+        for ri in 0..n_r {
+            if ri == 0 {
+                d[ri] = (i_vals[1] - i_vals[0]) / r_step;
+            } else if ri + 1 == n_r {
+                d[ri] = (i_vals[n_r - 1] - i_vals[n_r - 2]) / r_step;
+            } else {
+                d[ri] = (i_vals[ri + 1] - i_vals[ri - 1]) / (2.0 * r_step);
+            }
+        }
+
+        // Light smoothing
+        if n_r >= 5 {
+            let mut d2 = d.clone();
+            for ri in 1..(n_r - 1) {
+                d2[ri] = (d[ri - 1] + d[ri] + d[ri + 1]) / 3.0;
+            }
+            d = d2;
+        }
+
+        curves.push(d);
+    }
+
+    let coverage = curves.len() as f32 / n_t as f32;
+    if curves.is_empty() || coverage < cfg.min_theta_coverage {
+        return OuterEstimate {
+            r_outer_expected_px: r_expected,
+            search_window_px: window,
+            polarity: None,
+            hypotheses: Vec::new(),
+            status: OuterStatus::Failed,
+            reason: Some(format!(
+                "insufficient_theta_coverage({:.2}<{:.2})",
+                coverage, cfg.min_theta_coverage
+            )),
+            radial_response_agg: None,
+            r_samples: if store_response {
+                Some(r_samples)
+            } else {
+                None
+            },
+        };
+    }
+
+    let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
+        OuterGradPolarity::DarkToLight => vec![Polarity::Pos],
+        OuterGradPolarity::LightToDark => vec![Polarity::Neg],
+        OuterGradPolarity::Auto => vec![Polarity::Pos, Polarity::Neg],
+    };
+
+    let mut best: Option<(OuterEstimate, f32)> = None;
+
+    for pol in polarity_candidates {
+        // Aggregate at each r sample
+        let mut agg_resp = vec![0.0f32; n_r];
+        let mut scratch: Vec<f32> = Vec::with_capacity(curves.len());
+        for ri in 0..n_r {
+            scratch.clear();
+            for d in &curves {
+                scratch.push(d[ri]);
+            }
+            agg_resp[ri] = aggregate(&mut scratch, &cfg.aggregator);
+        }
+
+        // Convert to a score where "larger is better" regardless of polarity.
+        let score_vec: Vec<f32> = match pol {
+            Polarity::Pos => agg_resp.clone(),
+            Polarity::Neg => agg_resp.iter().map(|v| -v).collect(),
+        };
+
+        // Candidate peaks: local maxima in score_vec.
+        let mut peaks = find_local_peaks(&score_vec);
+        if peaks.is_empty() {
+            // Fallback: global max if no local maxima found.
+            if let Some((idx, _)) = score_vec
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            {
+                peaks.push(idx);
+            }
+        }
+
+        // Sort peaks by score desc.
+        peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
+
+        // Per-theta peaks (for consistency checks)
+        let per_theta = per_theta_peak_r(&curves, &r_samples, pol);
+
+        let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
+        let mut best_strength = None::<f32>;
+
+        for &pi in &peaks {
+            if pi == 0 || pi + 1 == n_r {
+                continue;
+            }
+            let r_star = r_samples[pi];
+            let peak_strength = agg_resp[pi].abs();
+            if best_strength.is_none() {
+                best_strength = Some(peak_strength);
+            } else if !cfg.allow_two_hypotheses {
+                break;
+            } else if let Some(bs) = best_strength {
+                if peak_strength < (cfg.second_peak_min_rel.clamp(0.0, 1.0) * bs) {
+                    break;
+                }
+            }
+
+            let delta = (4.0 * r_step).max(0.75);
+            let n_close = per_theta
+                .iter()
+                .filter(|&&r| (r - r_star).abs() <= delta)
+                .count();
+            let theta_consistency = n_close as f32 / per_theta.len().max(1) as f32;
+
+            if theta_consistency < cfg.min_theta_consistency {
+                continue;
+            }
+
+            hypotheses.push(OuterHypothesis {
+                r_outer_px: r_star,
+                peak_strength,
+                theta_consistency,
+            });
+
+            if hypotheses.len() >= 2 {
+                break;
+            }
+        }
+
+        if hypotheses.is_empty() {
+            continue;
+        }
+
+        let primary = &hypotheses[0];
+        let score = primary.peak_strength * primary.theta_consistency;
+
+        let est = OuterEstimate {
+            r_outer_expected_px: r_expected,
+            search_window_px: window,
+            polarity: Some(pol),
+            hypotheses,
+            status: OuterStatus::Ok,
+            reason: None,
+            radial_response_agg: if store_response {
+                Some(agg_resp)
+            } else {
+                None
+            },
+            r_samples: if store_response {
+                Some(r_samples.clone())
+            } else {
+                None
+            },
+        };
+
+        match &best {
+            Some((_, best_score)) if *best_score >= score => {}
+            _ => {
+                best = Some((est, score));
+            }
+        }
+    }
+
+    best.map(|(e, _)| e).unwrap_or(OuterEstimate {
+        r_outer_expected_px: r_expected,
+        search_window_px: window,
+        polarity: None,
+        hypotheses: Vec::new(),
+        status: OuterStatus::Failed,
+        reason: Some("no_polarity_candidates".to_string()),
+        radial_response_agg: None,
+        r_samples: if store_response {
+            Some(r_samples)
+        } else {
+            None
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{GrayImage, Luma};
+
+    fn blur_gray(img: &GrayImage, sigma: f32) -> GrayImage {
+        let (w, h) = img.dimensions();
+        let mut f = image::ImageBuffer::<Luma<f32>, Vec<f32>>::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                f.put_pixel(x, y, Luma([img.get_pixel(x, y)[0] as f32 / 255.0]));
+            }
+        }
+        let blurred = imageproc::filter::gaussian_blur_f32(&f, sigma);
+        let mut out = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let v = blurred.get_pixel(x, y)[0].clamp(0.0, 1.0);
+                out.put_pixel(x, y, Luma([(v * 255.0).round() as u8]));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn outer_estimator_prefers_expected_outer_over_strong_inner_edge() {
+        // Synthetic circular marker:
+        // - Outer edge at r_outer (weak contrast)
+        // - Strong edge at r_strong (< r_outer), simulating inner/code edges.
+        let w = 128u32;
+        let h = 128u32;
+        let cx = 64.0f32;
+        let cy = 64.0f32;
+        let r_outer = 30.0f32;
+        let r_strong = 22.0f32;
+
+        let mut img = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let r = (dx * dx + dy * dy).sqrt();
+                let mut val = 0.85f32;
+
+                // Outer dark band (weak)
+                if (r - r_outer).abs() <= 1.5 {
+                    val = 0.40;
+                }
+
+                // Strong inner dark band
+                if (r - r_strong).abs() <= 1.5 {
+                    val = 0.05;
+                }
+
+                img.put_pixel(x, y, Luma([(val * 255.0).round() as u8]));
+            }
+        }
+        let img = blur_gray(&img, 1.0);
+
+        let cfg = OuterEstimationConfig {
+            search_halfwidth_px: 4.0,
+            radial_samples: 64,
+            theta_samples: 64,
+            aggregator: AngularAggregator::Median,
+            grad_polarity: OuterGradPolarity::DarkToLight,
+            min_theta_coverage: 0.5,
+            min_theta_consistency: 0.35,
+            allow_two_hypotheses: true,
+            second_peak_min_rel: 0.7,
+            refine_halfwidth_px: 1.0,
+        };
+
+        // If we search around r_outer, we should land near r_outer, not the stronger inner edge.
+        let est = estimate_outer_from_prior(&img, [cx, cy], r_outer, &cfg, true);
+        assert_eq!(est.status, OuterStatus::Ok, "outer estimate failed: {:?}", est.reason);
+        assert_eq!(est.polarity, Some(Polarity::Pos));
+        let r_found = est.hypotheses[0].r_outer_px;
+        assert!(
+            (r_found - r_outer).abs() < 2.0,
+            "r_found {:.2} should be near expected {:.2}",
+            r_found,
+            r_outer
+        );
+    }
+}

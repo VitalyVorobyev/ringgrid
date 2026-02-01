@@ -256,6 +256,7 @@ def render_board(
     code_band_outer_mm: float,
     code_band_inner_mm: float,
     stress_inner_confusion: bool = False,
+    stress_outer_confusion: bool = False,
 ) -> np.ndarray:
     """Render the board into a float64 image [0, 1].
 
@@ -303,15 +304,27 @@ def render_board(
         dist_sq = dx * dx + dy * dy
 
         # Outer ring edge: dark ring at outer_radius
-        ring_width = outer_radius_mm * (0.16 if stress_inner_confusion else 0.12)
-        outer_mask = (dist_sq >= (outer_radius_mm - ring_width) ** 2) & \
-                     (dist_sq <= (outer_radius_mm + ring_width) ** 2)
-        img_flat[outer_mask] = 0.1  # dark
+        outer_ring_width = outer_radius_mm * (0.16 if stress_inner_confusion else 0.12)
+        inner_ring_width = outer_ring_width
+        outer_ring_val = 0.1
+        inner_ring_val = 0.1
+
+        if stress_outer_confusion:
+            # Stress case: make the outer boundary weaker so the sampler is
+            # tempted to lock onto the (strong) code-band boundary instead.
+            outer_ring_width = outer_radius_mm * 0.06
+            outer_ring_val = 0.35
+            inner_ring_width = outer_radius_mm * (0.18 if stress_inner_confusion else 0.14)
+            inner_ring_val = 0.05
+
+        outer_mask = (dist_sq >= (outer_radius_mm - outer_ring_width) ** 2) & \
+                     (dist_sq <= (outer_radius_mm + outer_ring_width) ** 2)
+        img_flat[outer_mask] = outer_ring_val
 
         # Inner ring edge: dark ring at inner_radius
-        inner_mask = (dist_sq >= (inner_radius_mm - ring_width) ** 2) & \
-                     (dist_sq <= (inner_radius_mm + ring_width) ** 2)
-        img_flat[inner_mask] = 0.1  # dark
+        inner_mask = (dist_sq >= (inner_radius_mm - inner_ring_width) ** 2) & \
+                     (dist_sq <= (inner_radius_mm + inner_ring_width) ** 2)
+        img_flat[inner_mask] = inner_ring_val
 
         # Code band: between code_band_inner and code_band_outer
         code_mask = (dist_sq >= code_band_inner_mm ** 2) & \
@@ -324,7 +337,7 @@ def render_board(
             sector = ((angles / (2 * math.pi) + 0.5) * 16).astype(int) % 16
             # Look up code bits
             bits = np.array([(cw >> s) & 1 for s in range(16)])
-            if stress_inner_confusion:
+            if stress_inner_confusion or stress_outer_confusion:
                 pixel_vals = np.where(bits[sector] == 1, 1.0, 0.0)
             else:
                 pixel_vals = np.where(bits[sector] == 1, 0.9, 0.15)
@@ -455,6 +468,7 @@ def generate_one_sample(
     tilt_strength: float,
     seed: int,
     stress_inner_confusion: bool = False,
+    stress_outer_confusion: bool = False,
 ) -> dict:
     """Generate one synthetic image + ground truth."""
     rng = np.random.RandomState(seed + idx)
@@ -475,6 +489,7 @@ def generate_one_sample(
         img_w, img_h, markers, codebook, H,
         outer_radius, inner_radius, code_band_outer, code_band_inner,
         stress_inner_confusion=stress_inner_confusion,
+        stress_outer_confusion=stress_outer_confusion,
     )
 
     # Post-processing
@@ -526,6 +541,7 @@ def generate_one_sample(
         "projective": projective,
         "tilt_strength": tilt,
         "stress_inner_confusion": stress_inner_confusion,
+        "stress_outer_confusion": stress_outer_confusion,
         "seed": seed + idx,
         "n_markers": len(markers),
         "markers": gt_markers,
@@ -558,6 +574,11 @@ def main() -> None:
         "--stress-inner-confusion",
         action="store_true",
         help="Stress case: increase code-band contrast and edge thickness to confuse inner edge sampling",
+    )
+    parser.add_argument(
+        "--stress-outer-confusion",
+        action="store_true",
+        help="Stress case: weaken outer boundary and increase code-band contrast to confuse outer edge selection",
     )
     parser.add_argument("--projective", action="store_true", default=True)
     parser.add_argument("--no_projective", dest="projective", action="store_false")
@@ -614,6 +635,7 @@ def main() -> None:
             tilt_strength=args.tilt_strength,
             seed=args.seed,
             stress_inner_confusion=args.stress_inner_confusion,
+            stress_outer_confusion=args.stress_outer_confusion,
         )
         vis = sum(1 for m in gt["markers"] if m["visible"])
         print(f"  [{i+1}/{args.n_images}] {gt['image_file']}: "

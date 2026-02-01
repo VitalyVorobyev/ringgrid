@@ -259,6 +259,7 @@ fn run_detect(
     // Configure detection parameters from marker_diameter
     let r_outer = marker_diameter as f32 / 2.0;
     let mut config = ringgrid_core::ring::DetectConfig::default();
+    config.marker_diameter_px = marker_diameter as f32;
 
     // Scale proposal search radii
     config.proposal.r_min = (r_outer * 0.4).max(2.0);
@@ -268,6 +269,7 @@ fn run_detect(
     // Scale edge sampling range
     config.edge_sample.r_max = r_outer * 2.0;
     config.edge_sample.r_min = 1.5;
+    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
 
     // Scale ellipse validation
     config.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);

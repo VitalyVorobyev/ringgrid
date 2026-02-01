@@ -13,9 +13,12 @@ use crate::{
     DecodeMetrics, DetectedMarker, DetectionResult, EllipseParams, FitMetrics, RansacStats,
 };
 
-use super::decode::{decode_marker, decode_marker_with_diagnostics, DecodeConfig};
-use super::edge_sample::{sample_edges, EdgeSampleConfig, EdgeSampleResult};
+use super::decode::{decode_marker_with_diagnostics, DecodeConfig};
+use super::edge_sample::{bilinear_sample_u8_checked, EdgeSampleConfig, EdgeSampleResult};
 use super::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus, Polarity};
+use super::outer_estimate::{
+    estimate_outer_from_prior, OuterEstimate, OuterEstimationConfig, OuterStatus,
+};
 use super::proposal::{find_proposals, ProposalConfig};
 
 /// Debug collection options for `detect_rings_with_debug`.
@@ -65,6 +68,10 @@ impl Default for CompletionParams {
 /// Top-level detection configuration.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
+    /// Expected marker outer diameter in pixels (for scale-anchored edge extraction).
+    pub marker_diameter_px: f32,
+    /// Outer edge estimation configuration (anchored on `marker_diameter_px`).
+    pub outer_estimation: OuterEstimationConfig,
     pub proposal: ProposalConfig,
     pub edge_sample: EdgeSampleConfig,
     pub decode: DecodeConfig,
@@ -89,6 +96,8 @@ pub struct DetectConfig {
 impl Default for DetectConfig {
     fn default() -> Self {
         Self {
+            marker_diameter_px: 32.0,
+            outer_estimation: OuterEstimationConfig::default(),
             proposal: ProposalConfig::default(),
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
@@ -103,14 +112,6 @@ impl Default for DetectConfig {
             refine_with_h: true,
         }
     }
-}
-
-/// Fit the outer ellipse from edge points.
-fn fit_outer_ellipse(
-    edge: &EdgeSampleResult,
-    config: &DetectConfig,
-) -> Option<(Ellipse, Option<crate::conic::RansacResult>)> {
-    fit_outer_ellipse_with_reason(edge, config).ok()
 }
 
 fn fit_outer_ellipse_with_reason(
@@ -177,6 +178,270 @@ fn ellipse_to_params(e: &Ellipse) -> EllipseParams {
     }
 }
 
+fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
+    (config.marker_diameter_px * 0.5).max(2.0)
+}
+
+fn mean_axis_px_from_params(params: &EllipseParams) -> f32 {
+    ((params.semi_axes[0] + params.semi_axes[1]) * 0.5) as f32
+}
+
+fn mean_axis_px_from_marker(marker: &DetectedMarker) -> Option<f32> {
+    marker.ellipse_outer.as_ref().map(mean_axis_px_from_params)
+}
+
+fn median_outer_radius_from_neighbors_px(
+    projected_center: [f64; 2],
+    markers: &[DetectedMarker],
+    k: usize,
+) -> Option<f32> {
+    let mut candidates: Vec<(f64, f32)> = Vec::new();
+    for m in markers {
+        let r = match mean_axis_px_from_marker(m) {
+            Some(v) if v.is_finite() && v > 1.0 => v,
+            _ => continue,
+        };
+        let dx = m.center[0] - projected_center[0];
+        let dy = m.center[1] - projected_center[1];
+        let d2 = dx * dx + dy * dy;
+        if d2.is_finite() {
+            candidates.push((d2, r));
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let radii: Vec<f32> = candidates
+        .iter()
+        .take(k.max(1).min(candidates.len()))
+        .map(|(_, r)| *r)
+        .collect();
+    Some(median_f32(&radii))
+}
+
+fn sample_outer_edge_points(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r0: f32,
+    pol: Polarity,
+    edge_cfg: &EdgeSampleConfig,
+    refine_halfwidth_px: f32,
+) -> (Vec<[f64; 2]>, Vec<f32>) {
+    let n_t = edge_cfg.n_rays.max(8);
+    let cx = center_prior[0];
+    let cy = center_prior[1];
+
+    let refine_hw = refine_halfwidth_px.max(0.0).min(4.0);
+    let refine_step = edge_cfg.r_step.clamp(0.25, 1.0);
+    let n_ref = ((refine_hw / refine_step).ceil() as i32).max(1);
+
+    let mut outer_points = Vec::with_capacity(n_t);
+    let mut outer_radii = Vec::with_capacity(n_t);
+
+    for ti in 0..n_t {
+        let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
+        let dx = theta.cos();
+        let dy = theta.sin();
+
+        let mut best_score = f32::NEG_INFINITY;
+        let mut best_r = None::<f32>;
+
+        for k in -n_ref..=n_ref {
+            let r = r0 + k as f32 * refine_step;
+            if r < edge_cfg.r_min || r > edge_cfg.r_max {
+                continue;
+            }
+
+            // dI/dr at r via small central difference
+            let h = 0.25f32;
+            if r <= h {
+                continue;
+            }
+
+            let x1 = cx + dx * (r + h);
+            let y1 = cy + dy * (r + h);
+            let x0 = cx + dx * (r - h);
+            let y0 = cy + dy * (r - h);
+            let i1 = match bilinear_sample_u8_checked(gray, x1, y1) {
+                Some(v) => v,
+                None => continue,
+            };
+            let i0 = match bilinear_sample_u8_checked(gray, x0, y0) {
+                Some(v) => v,
+                None => continue,
+            };
+            let d = (i1 - i0) / (2.0 * h);
+
+            let score = match pol {
+                Polarity::Pos => d,
+                Polarity::Neg => -d,
+            };
+
+            if score > best_score {
+                best_score = score;
+                best_r = Some(r);
+            }
+        }
+
+        let r = match best_r {
+            Some(r) if best_score.is_finite() && best_score > 0.0 => r,
+            _ => continue,
+        };
+
+        // Ring depth check across the chosen edge.
+        let band = 2.0f32;
+        let x_in = cx + dx * (r - band);
+        let y_in = cy + dy * (r - band);
+        let x_out = cx + dx * (r + band);
+        let y_out = cy + dy * (r + band);
+        let i_in = match bilinear_sample_u8_checked(gray, x_in, y_in) {
+            Some(v) => v,
+            None => continue,
+        };
+        let i_out = match bilinear_sample_u8_checked(gray, x_out, y_out) {
+            Some(v) => v,
+            None => continue,
+        };
+        let signed_depth = match pol {
+            Polarity::Pos => i_out - i_in,
+            Polarity::Neg => i_in - i_out,
+        };
+        if signed_depth < edge_cfg.min_ring_depth {
+            continue;
+        }
+
+        let x = cx + dx * r;
+        let y = cy + dy * r;
+        outer_points.push([x as f64, y as f64]);
+        outer_radii.push(r);
+    }
+
+    (outer_points, outer_radii)
+}
+
+fn median_f32(values: &[f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted[sorted.len() / 2]
+}
+
+struct OuterFitCandidate {
+    edge: EdgeSampleResult,
+    outer: Ellipse,
+    outer_ransac: Option<crate::conic::RansacResult>,
+    outer_estimate: OuterEstimate,
+    chosen_hypothesis: usize,
+    decode_result: Option<super::decode::DecodeResult>,
+    decode_diag: super::decode::DecodeDiagnostics,
+    score: f32,
+}
+
+fn fit_outer_ellipse_robust_with_reason(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    config: &DetectConfig,
+    edge_cfg: &EdgeSampleConfig,
+    store_response: bool,
+) -> Result<OuterFitCandidate, String> {
+    let r_expected = r_outer_expected_px.max(2.0);
+
+    let mut outer_cfg = config.outer_estimation.clone();
+    outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
+
+    let outer_estimate = estimate_outer_from_prior(gray, center_prior, r_expected, &outer_cfg, store_response);
+    if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
+        return Err(format!(
+            "outer_estimate:{}",
+            outer_estimate
+                .reason
+                .as_deref()
+                .unwrap_or("unknown_failure")
+        ));
+    }
+
+    let pol = outer_estimate.polarity.ok_or_else(|| "outer_estimate:no_polarity".to_string())?;
+
+    let mut best: Option<OuterFitCandidate> = None;
+
+    for (hi, hyp) in outer_estimate.hypotheses.iter().enumerate() {
+        let (outer_points, outer_radii) = sample_outer_edge_points(
+            gray,
+            center_prior,
+            hyp.r_outer_px,
+            pol,
+            edge_cfg,
+            outer_cfg.refine_halfwidth_px,
+        );
+
+        if outer_points.len() < edge_cfg.min_rays_with_ring {
+            continue;
+        }
+
+        let outer_radius = median_f32(&outer_radii);
+        let edge = EdgeSampleResult {
+            center: center_prior,
+            outer_points,
+            inner_points: Vec::new(),
+            outer_radius,
+            inner_radius: 0.0,
+            outer_radii,
+            inner_radii: Vec::new(),
+            n_good_rays: 0,
+            n_total_rays: edge_cfg.n_rays.max(8),
+        };
+        // The outer edge sampler only records rays where an outer edge is found.
+        let mut edge = edge;
+        edge.n_good_rays = edge.outer_points.len();
+
+        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let (decode_result, decode_diag) = decode_marker_with_diagnostics(gray, &outer, &config.decode);
+
+        let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
+        let inlier_ratio = outer_ransac
+            .as_ref()
+            .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+            .unwrap_or(1.0);
+        let residual = rms_sampson_distance(&outer, &edge.outer_points) as f32;
+
+        let mean_axis = ((outer.a + outer.b) * 0.5) as f32;
+        let size_err = ((mean_axis - r_expected).abs() / r_expected.max(1.0)).min(2.0);
+        let size_score = (1.0 - size_err).clamp(0.0, 1.0);
+
+        let decode_score = decode_diag.decode_confidence;
+
+        let score = 2.0 * decode_score + 0.7 * (arc_cov * inlier_ratio) + 0.3 * size_score - 0.05 * residual;
+
+        let cand = OuterFitCandidate {
+            edge,
+            outer,
+            outer_ransac,
+            outer_estimate: outer_estimate.clone(),
+            chosen_hypothesis: hi,
+            decode_result,
+            decode_diag,
+            score,
+        };
+
+        match &best {
+            Some(b) if b.score >= cand.score => {}
+            _ => {
+                best = Some(cand);
+            }
+        }
+    }
+
+    best.ok_or_else(|| "outer_fit:no_valid_hypothesis".to_string())
+}
+
 /// Run the full ring detection pipeline.
 pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let (w, h) = gray.dimensions();
@@ -189,17 +454,25 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
     let mut markers: Vec<DetectedMarker> = Vec::new();
 
     for proposal in &proposals {
-        // Stage 2: Sample radial edges
-        let edge = match sample_edges(gray, [proposal.x, proposal.y], &config.edge_sample) {
-            Some(er) => er,
-            None => continue,
+        // Stage 2-4: Robust outer edge extraction → outer fit → decode
+        let fit = match fit_outer_ellipse_robust_with_reason(
+            gray,
+            [proposal.x, proposal.y],
+            marker_outer_radius_expected_px(config),
+            config,
+            &config.edge_sample,
+            false,
+        ) {
+            Ok(v) => v,
+            Err(_) => continue,
         };
-
-        // Stage 3: Fit outer ellipse
-        let (outer, outer_ransac) = match fit_outer_ellipse(&edge, config) {
-            Some(r) => r,
-            None => continue,
-        };
+        let OuterFitCandidate {
+            edge,
+            outer,
+            outer_ransac,
+            decode_result,
+            ..
+        } = fit;
 
         // Compute center
         let center = compute_center(&outer);
@@ -217,9 +490,6 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
             rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
             rms_residual_inner: None,
         };
-
-        // Stage 4: Decode
-        let decode_result = decode_marker(gray, &outer, &config.decode);
 
         // Stage 4b: Inner edge estimation (only for decoded candidates)
         let inner_params = if decode_result.is_some() {
@@ -412,26 +682,15 @@ pub fn detect_rings_with_debug(
             None
         };
 
-        // Edge sampling
-        let edge = match sample_edges(gray, [proposal.x, proposal.y], &config.edge_sample) {
-            Some(er) => er,
-            None => {
-                if let Some(cd) = cand_debug.as_mut() {
-                    cd.decision = dbg::DecisionDebugV1 {
-                        status: dbg::DecisionStatusV1::Rejected,
-                        reason: "edge_sample:insufficient_ring_rays".to_string(),
-                    };
-                }
-                if let Some(cd) = cand_debug {
-                    stage1.candidates.push(cd);
-                }
-                continue;
-            }
-        };
-
-        // Fit outer ellipse
-        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
-            Ok(r) => r,
+        let fit = match fit_outer_ellipse_robust_with_reason(
+            gray,
+            [proposal.x, proposal.y],
+            marker_outer_radius_expected_px(config),
+            config,
+            &config.edge_sample,
+            debug_cfg.store_points,
+        ) {
+            Ok(v) => v,
             Err(reason) => {
                 if let Some(cd) = cand_debug.as_mut() {
                     cd.decision = dbg::DecisionDebugV1 {
@@ -445,6 +704,17 @@ pub fn detect_rings_with_debug(
                 continue;
             }
         };
+
+        let OuterFitCandidate {
+            edge,
+            outer,
+            outer_ransac,
+            outer_estimate,
+            chosen_hypothesis,
+            decode_result,
+            decode_diag,
+            ..
+        } = fit;
 
         let center = compute_center(&outer);
 
@@ -461,9 +731,6 @@ pub fn detect_rings_with_debug(
             rms_residual_inner: None,
         };
 
-        // Decode + diagnostics
-        let (decode_result, decode_diag) =
-            decode_marker_with_diagnostics(gray, &outer, &config.decode);
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let derived_id = decode_result.as_ref().map(|d| d.id);
 
@@ -521,9 +788,45 @@ pub fn detect_rings_with_debug(
                 edges: dbg::RingEdgesDebugV1 {
                     n_angles_total: edge.n_total_rays,
                     n_angles_with_both: edge.n_good_rays,
-                    inner_peak_r: Some(edge.inner_radii.clone()),
+                    inner_peak_r: if edge.inner_radii.is_empty() {
+                        None
+                    } else {
+                        Some(edge.inner_radii.clone())
+                    },
                     outer_peak_r: Some(edge.outer_radii.clone()),
                 },
+                outer_estimation: Some({
+                    let chosen = outer_estimate.hypotheses.get(chosen_hypothesis);
+                    dbg::OuterEstimationDebugV1 {
+                        r_outer_expected_px: outer_estimate.r_outer_expected_px,
+                        search_window_px: outer_estimate.search_window_px,
+                        r_outer_found_px: chosen.map(|h| h.r_outer_px),
+                        polarity: outer_estimate.polarity.map(|p| match p {
+                            Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
+                            Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
+                        }),
+                        peak_strength: chosen.map(|h| h.peak_strength),
+                        theta_consistency: chosen.map(|h| h.theta_consistency),
+                        status: match outer_estimate.status {
+                            OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
+                            OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
+                            OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
+                        },
+                        reason: outer_estimate.reason.clone(),
+                        hypotheses: outer_estimate
+                            .hypotheses
+                            .iter()
+                            .map(|h| dbg::OuterHypothesisDebugV1 {
+                                r_outer_px: h.r_outer_px,
+                                peak_strength: h.peak_strength,
+                                theta_consistency: h.theta_consistency,
+                            })
+                            .collect(),
+                        chosen_hypothesis: Some(chosen_hypothesis),
+                        radial_response_agg: outer_estimate.radial_response_agg.clone(),
+                        r_samples: outer_estimate.r_samples.clone(),
+                    }
+                }),
                 ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
                     center_xy: [outer.cx as f32, outer.cy as f32],
                     semi_axes: [outer.a as f32, outer.b as f32],
@@ -774,7 +1077,7 @@ pub fn detect_rings_with_debug(
             codebook_n: CODEBOOK_N,
         },
         params: dbg::ParamsDebugV1 {
-            marker_diameter_px: debug_cfg.marker_diameter_px,
+            marker_diameter_px: config.marker_diameter_px as f64,
             proposal: dbg::ProposalParamsV1 {
                 r_min: config.proposal.r_min,
                 r_max: config.proposal.r_max,
@@ -791,6 +1094,28 @@ pub fn detect_rings_with_debug(
                 min_ring_depth: config.edge_sample.min_ring_depth,
                 min_rays_with_ring: config.edge_sample.min_rays_with_ring,
             },
+            outer_estimation: Some(dbg::OuterEstimationParamsV1 {
+                search_halfwidth_px: config.outer_estimation.search_halfwidth_px,
+                radial_samples: config.outer_estimation.radial_samples,
+                theta_samples: config.outer_estimation.theta_samples,
+                aggregator: config.outer_estimation.aggregator,
+                grad_polarity: match config.outer_estimation.grad_polarity {
+                    super::outer_estimate::OuterGradPolarity::DarkToLight => {
+                        dbg::OuterGradPolarityParamsV1::DarkToLight
+                    }
+                    super::outer_estimate::OuterGradPolarity::LightToDark => {
+                        dbg::OuterGradPolarityParamsV1::LightToDark
+                    }
+                    super::outer_estimate::OuterGradPolarity::Auto => {
+                        dbg::OuterGradPolarityParamsV1::Auto
+                    }
+                },
+                min_theta_coverage: config.outer_estimation.min_theta_coverage,
+                min_theta_consistency: config.outer_estimation.min_theta_consistency,
+                allow_two_hypotheses: config.outer_estimation.allow_two_hypotheses,
+                second_peak_min_rel: config.outer_estimation.second_peak_min_rel,
+                refine_halfwidth_px: config.outer_estimation.refine_halfwidth_px,
+            }),
             decode: dbg::DecodeParamsV1 {
                 code_band_ratio: config.decode.code_band_ratio,
                 samples_per_sector: config.decode.samples_per_sector,
@@ -1132,25 +1457,52 @@ fn refine_with_homography_with_debug(
             continue;
         }
 
-        let edge = match sample_edges(
+        let r_expected = mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
+
+        let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
             [prior[0] as f32, prior[1] as f32],
+            r_expected,
+            config,
             &config.edge_sample,
+            false,
         ) {
-            Some(er) => er,
-            None => {
-                refined.push(m.clone());
-                continue;
-            }
-        };
-
-        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
-            Ok(r) => r,
+            Ok(v) => v,
             Err(_) => {
                 refined.push(m.clone());
                 continue;
             }
         };
+        let edge = fit_cand.edge;
+        let outer = fit_cand.outer;
+        let outer_ransac = fit_cand.outer_ransac;
+        let decode_result = fit_cand.decode_result.filter(|d| d.id == id);
+
+        let mean_axis_new = ((outer.a + outer.b) * 0.5) as f32;
+        let scale_ok = mean_axis_new.is_finite()
+            && mean_axis_new >= (r_expected * 0.75)
+            && mean_axis_new <= (r_expected * 1.33);
+        if decode_result.is_none() || !scale_ok {
+            // Refinement is best-effort and must not degrade decoded detections.
+            refined.push(m.clone());
+            refined_dbg.push(dbg::RefinedMarkerDebugV1 {
+                id,
+                prior_center_xy: [prior[0] as f32, prior[1] as f32],
+                refined_center_xy: [m.center[0] as f32, m.center[1] as f32],
+                ellipse_outer: m.ellipse_outer.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
+                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
+                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
+                    angle: p.angle as f32,
+                }),
+                ellipse_inner: m.ellipse_inner.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
+                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
+                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
+                    angle: p.angle as f32,
+                }),
+                fit: m.fit.clone(),
+            });
+            continue;
+        }
 
         let center = compute_center(&outer);
 
@@ -1181,7 +1533,6 @@ fn refine_with_homography_with_debug(
             None
         };
 
-        let decode_result = decode_marker(gray, &outer, &config.decode);
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
             observed_word: d.raw_word,
@@ -1386,27 +1737,35 @@ fn refine_with_homography(
             continue;
         }
 
-        // Re-run edge sampling around the H-projected center
-        let edge = match sample_edges(
+        let r_expected = mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
+
+        let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
             [prior[0] as f32, prior[1] as f32],
+            r_expected,
+            config,
             &config.edge_sample,
+            false,
         ) {
-            Some(er) => er,
-            None => {
+            Ok(v) => v,
+            Err(_) => {
                 refined.push(m.clone());
                 continue;
             }
         };
+        let edge = fit_cand.edge;
+        let outer = fit_cand.outer;
+        let outer_ransac = fit_cand.outer_ransac;
+        let decode_result = fit_cand.decode_result.filter(|d| d.id == id);
 
-        // Re-fit outer ellipse
-        let (outer, outer_ransac) = match fit_outer_ellipse(&edge, config) {
-            Some(r) => r,
-            None => {
-                refined.push(m.clone());
-                continue;
-            }
-        };
+        let mean_axis_new = ((outer.a + outer.b) * 0.5) as f32;
+        let scale_ok = mean_axis_new.is_finite()
+            && mean_axis_new >= (r_expected * 0.75)
+            && mean_axis_new <= (r_expected * 1.33);
+        if decode_result.is_none() || !scale_ok {
+            refined.push(m.clone());
+            continue;
+        }
 
         let center = compute_center(&outer);
 
@@ -1437,8 +1796,6 @@ fn refine_with_homography(
             None
         };
 
-        // Re-decode with new ellipse
-        let decode_result = decode_marker(gray, &outer, &config.decode);
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
             observed_word: d.raw_word,
@@ -1616,21 +1973,27 @@ fn complete_with_h(
         attempted_fits += 1;
         stats.n_attempted += 1;
 
-        // Local ring fit at the H-projected center.
-        let edge = match sample_edges(
+        let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
+            .unwrap_or(marker_outer_radius_expected_px(config));
+
+        // Robust local ring fit at the H-projected center.
+        let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
             [projected_center[0] as f32, projected_center[1] as f32],
+            r_expected,
+            config,
             &edge_cfg,
+            store_points_in_debug,
         ) {
-            Some(e) => e,
-            None => {
+            Ok(v) => v,
+            Err(reason) => {
                 stats.n_failed_fit += 1;
                 if let Some(a) = attempts.as_mut() {
                     a.push(CompletionAttemptRecord {
                         id,
                         projected_center_xy: proj_xy_f32,
                         status: CompletionAttemptStatus::FailedFit,
-                        reason: Some("edge_sample:insufficient_ring_rays".to_string()),
+                        reason: Some(reason),
                         reproj_err_px: None,
                         fit_confidence: None,
                         fit: None,
@@ -1639,32 +2002,88 @@ fn complete_with_h(
                 continue;
             }
         };
+        let OuterFitCandidate {
+            edge,
+            outer,
+            outer_ransac,
+            outer_estimate,
+            chosen_hypothesis,
+            decode_result,
+            ..
+        } = fit_cand;
 
         let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
-        let mk_fit_dbg = |center_xy_fit: [f32; 2],
-                          ellipse_outer: Option<dbg::EllipseParamsDebugV1>,
-                          inlier_ratio_outer: Option<f32>,
-                          mean_resid_outer: Option<f32>,
-                          valid_outer: bool| {
-            dbg::RingFitDebugV1 {
-                center_xy_fit,
+        let center = compute_center(&outer);
+        let inlier_ratio = outer_ransac
+            .as_ref()
+            .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+            .unwrap_or(1.0);
+        let fit_confidence = (arc_cov * inlier_ratio).clamp(0.0, 1.0);
+        let mean_axis_new = ((outer.a + outer.b) * 0.5) as f32;
+        let scale_ok = mean_axis_new.is_finite()
+            && mean_axis_new >= (r_expected * 0.75)
+            && mean_axis_new <= (r_expected * 1.33);
+
+        let fit_dbg_pre_gates = if record_debug {
+            Some(dbg::RingFitDebugV1 {
+                center_xy_fit: [center[0] as f32, center[1] as f32],
                 edges: dbg::RingEdgesDebugV1 {
                     n_angles_total: edge.n_total_rays,
                     n_angles_with_both: edge.n_good_rays,
-                    inner_peak_r: Some(edge.inner_radii.clone()),
+                    inner_peak_r: if edge.inner_radii.is_empty() {
+                        None
+                    } else {
+                        Some(edge.inner_radii.clone())
+                    },
                     outer_peak_r: Some(edge.outer_radii.clone()),
                 },
-                ellipse_outer,
+                outer_estimation: Some({
+                    let chosen = outer_estimate.hypotheses.get(chosen_hypothesis);
+                    dbg::OuterEstimationDebugV1 {
+                        r_outer_expected_px: outer_estimate.r_outer_expected_px,
+                        search_window_px: outer_estimate.search_window_px,
+                        r_outer_found_px: chosen.map(|h| h.r_outer_px),
+                        polarity: outer_estimate.polarity.map(|p| match p {
+                            Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
+                            Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
+                        }),
+                        peak_strength: chosen.map(|h| h.peak_strength),
+                        theta_consistency: chosen.map(|h| h.theta_consistency),
+                        status: match outer_estimate.status {
+                            OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
+                            OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
+                            OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
+                        },
+                        reason: outer_estimate.reason.clone(),
+                        hypotheses: outer_estimate
+                            .hypotheses
+                            .iter()
+                            .map(|h| dbg::OuterHypothesisDebugV1 {
+                                r_outer_px: h.r_outer_px,
+                                peak_strength: h.peak_strength,
+                                theta_consistency: h.theta_consistency,
+                            })
+                            .collect(),
+                        chosen_hypothesis: Some(chosen_hypothesis),
+                        radial_response_agg: outer_estimate.radial_response_agg.clone(),
+                        r_samples: outer_estimate.r_samples.clone(),
+                    }
+                }),
+                ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
+                    center_xy: [outer.cx as f32, outer.cy as f32],
+                    semi_axes: [outer.a as f32, outer.b as f32],
+                    angle: outer.angle as f32,
+                }),
                 ellipse_inner: None,
                 inner_estimation: None,
                 metrics: dbg::RingFitMetricsDebugV1 {
                     inlier_ratio_inner: None,
-                    inlier_ratio_outer,
+                    inlier_ratio_outer: Some(inlier_ratio),
                     mean_resid_inner: None,
-                    mean_resid_outer,
+                    mean_resid_outer: Some(rms_sampson_distance(&outer, &edge.outer_points) as f32),
                     arc_coverage: arc_cov,
                     valid_inner: false,
-                    valid_outer,
+                    valid_outer: true,
                 },
                 points_outer: if store_points_in_debug {
                     Some(
@@ -1686,57 +2105,7 @@ fn complete_with_h(
                 } else {
                     None
                 },
-            }
-        };
-
-        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
-            Ok(r) => r,
-            Err(reason) => {
-                stats.n_failed_fit += 1;
-                if let Some(a) = attempts.as_mut() {
-                    let fit_dbg = if record_debug {
-                        Some(mk_fit_dbg(
-                            [projected_center[0] as f32, projected_center[1] as f32],
-                            None,
-                            None,
-                            None,
-                            false,
-                        ))
-                    } else {
-                        None
-                    };
-                    a.push(CompletionAttemptRecord {
-                        id,
-                        projected_center_xy: proj_xy_f32,
-                        status: CompletionAttemptStatus::FailedFit,
-                        reason: Some(reason),
-                        reproj_err_px: None,
-                        fit_confidence: None,
-                        fit: fit_dbg,
-                    });
-                }
-                continue;
-            }
-        };
-
-        let center = compute_center(&outer);
-        let inlier_ratio = outer_ransac
-            .as_ref()
-            .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-            .unwrap_or(1.0);
-        let fit_confidence = (arc_cov * inlier_ratio).clamp(0.0, 1.0);
-        let fit_dbg_pre_gates = if record_debug {
-            Some(mk_fit_dbg(
-                [center[0] as f32, center[1] as f32],
-                Some(dbg::EllipseParamsDebugV1 {
-                    center_xy: [outer.cx as f32, outer.cy as f32],
-                    semi_axes: [outer.a as f32, outer.b as f32],
-                    angle: outer.angle as f32,
-                }),
-                Some(inlier_ratio),
-                Some(rms_sampson_distance(&outer, &edge.outer_points) as f32),
-                true,
-            ))
+            })
         } else {
             None
         };
@@ -1747,24 +2116,34 @@ fn complete_with_h(
             (dx * dx + dy * dy).sqrt() as f32
         };
 
+        let mut added_reason: Option<String> = None;
+
         // Optional decode check: if decoding succeeds but disagrees with the expected ID,
         // it's likely we snapped to a neighboring marker.
-        let decode_result = decode_marker(gray, &outer, &config.decode);
         if let Some(ref d) = decode_result {
             if d.id != id {
-                stats.n_failed_gate += 1;
-                if let Some(a) = attempts.as_mut() {
-                    a.push(CompletionAttemptRecord {
-                        id,
-                        projected_center_xy: proj_xy_f32,
-                        status: CompletionAttemptStatus::FailedGate,
-                        reason: Some(format!("decode_mismatch(expected={}, got={})", id, d.id)),
-                        reproj_err_px: Some(reproj_err),
-                        fit_confidence: Some(fit_confidence),
-                        fit: fit_dbg_pre_gates.clone(),
-                    });
+                // If we are extremely consistent with H and the ring fit is strong, accept
+                // by H only (do not attach mismatched decode fields).
+                let accept_by_h = reproj_err <= (params.reproj_gate_px * 0.35).max(0.75)
+                    && fit_confidence >= params.min_fit_confidence.max(0.60)
+                    && arc_cov >= params.min_arc_coverage.max(0.45)
+                    && scale_ok;
+                if !accept_by_h {
+                    stats.n_failed_gate += 1;
+                    if let Some(a) = attempts.as_mut() {
+                        a.push(CompletionAttemptRecord {
+                            id,
+                            projected_center_xy: proj_xy_f32,
+                            status: CompletionAttemptStatus::FailedGate,
+                            reason: Some(format!("decode_mismatch(expected={}, got={})", id, d.id)),
+                            reproj_err_px: Some(reproj_err),
+                            fit_confidence: Some(fit_confidence),
+                            fit: fit_dbg_pre_gates.clone(),
+                        });
+                    }
+                    continue;
                 }
-                continue;
+                added_reason = Some(format!("decode_mismatch_accepted(expected={}, got={})", id, d.id));
             }
         }
 
@@ -1823,6 +2202,24 @@ fn complete_with_h(
             }
             continue;
         }
+        if !scale_ok {
+            stats.n_failed_gate += 1;
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::FailedGate,
+                    reason: Some(format!(
+                        "scale_gate(mean_axis={:.2}, expected={:.2})",
+                        mean_axis_new, r_expected
+                    )),
+                    reproj_err_px: Some(reproj_err),
+                    fit_confidence: Some(fit_confidence),
+                    fit: fit_dbg_pre_gates.clone(),
+                });
+            }
+            continue;
+        }
 
         // Inner estimation (only for accepted completions, unless we're recording debug).
         let inner_est = if record_debug || store_points_in_debug {
@@ -1869,7 +2266,7 @@ fn complete_with_h(
             rms_residual_inner: None,
         };
 
-        let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
+        let decode_metrics = decode_result.as_ref().filter(|d| d.id == id).map(|d| DecodeMetrics {
             observed_word: d.raw_word,
             best_id: d.id,
             best_rotation: d.rotation,
@@ -1878,9 +2275,9 @@ fn complete_with_h(
             decode_confidence: d.confidence,
         });
 
-        let confidence = decode_result
+        let confidence = decode_metrics
             .as_ref()
-            .map(|d| d.confidence)
+            .map(|d| d.decode_confidence)
             .unwrap_or(fit_confidence);
 
         markers.push(DetectedMarker {
@@ -1905,9 +2302,45 @@ fn complete_with_h(
                     edges: dbg::RingEdgesDebugV1 {
                         n_angles_total: edge.n_total_rays,
                         n_angles_with_both: edge.n_good_rays,
-                        inner_peak_r: Some(edge.inner_radii.clone()),
+                        inner_peak_r: if edge.inner_radii.is_empty() {
+                            None
+                        } else {
+                            Some(edge.inner_radii.clone())
+                        },
                         outer_peak_r: Some(edge.outer_radii.clone()),
                     },
+                    outer_estimation: Some({
+                        let chosen = outer_estimate.hypotheses.get(chosen_hypothesis);
+                        dbg::OuterEstimationDebugV1 {
+                            r_outer_expected_px: outer_estimate.r_outer_expected_px,
+                            search_window_px: outer_estimate.search_window_px,
+                            r_outer_found_px: chosen.map(|h| h.r_outer_px),
+                            polarity: outer_estimate.polarity.map(|p| match p {
+                                Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
+                                Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
+                            }),
+                            peak_strength: chosen.map(|h| h.peak_strength),
+                            theta_consistency: chosen.map(|h| h.theta_consistency),
+                            status: match outer_estimate.status {
+                                OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
+                                OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
+                                OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
+                            },
+                            reason: outer_estimate.reason.clone(),
+                            hypotheses: outer_estimate
+                                .hypotheses
+                                .iter()
+                                .map(|h| dbg::OuterHypothesisDebugV1 {
+                                    r_outer_px: h.r_outer_px,
+                                    peak_strength: h.peak_strength,
+                                    theta_consistency: h.theta_consistency,
+                                })
+                                .collect(),
+                            chosen_hypothesis: Some(chosen_hypothesis),
+                            radial_response_agg: outer_estimate.radial_response_agg.clone(),
+                            r_samples: outer_estimate.r_samples.clone(),
+                        }
+                    }),
                     ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
                         center_xy: [outer.cx as f32, outer.cy as f32],
                         semi_axes: [outer.a as f32, outer.b as f32],
@@ -1975,7 +2408,7 @@ fn complete_with_h(
                 id,
                 projected_center_xy: proj_xy_f32,
                 status: CompletionAttemptStatus::Added,
-                reason: None,
+                reason: added_reason,
                 reproj_err_px: Some(reproj_err),
                 fit_confidence: Some(fit_confidence),
                 fit: fit_dbg,

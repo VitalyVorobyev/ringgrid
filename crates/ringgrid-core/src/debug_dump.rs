@@ -43,6 +43,8 @@ pub struct ParamsDebugV1 {
 
     pub proposal: ProposalParamsV1,
     pub edge_sample: EdgeSampleParamsV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_estimation: Option<OuterEstimationParamsV1>,
     pub decode: DecodeParamsV1,
     pub marker_spec: crate::marker_spec::MarkerSpec,
 
@@ -82,6 +84,28 @@ pub struct EdgeSampleParamsV1 {
     pub r_step: f32,
     pub min_ring_depth: f32,
     pub min_rays_with_ring: usize,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OuterGradPolarityParamsV1 {
+    DarkToLight,
+    LightToDark,
+    Auto,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OuterEstimationParamsV1 {
+    pub search_halfwidth_px: f32,
+    pub radial_samples: usize,
+    pub theta_samples: usize,
+    pub aggregator: crate::marker_spec::AngularAggregator,
+    pub grad_polarity: OuterGradPolarityParamsV1,
+    pub min_theta_coverage: f32,
+    pub min_theta_consistency: f32,
+    pub allow_two_hypotheses: bool,
+    pub second_peak_min_rel: f32,
+    pub refine_halfwidth_px: f32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -170,6 +194,8 @@ pub struct RingFitDebugV1 {
     pub center_xy_fit: [f32; 2],
     pub edges: RingEdgesDebugV1,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_estimation: Option<OuterEstimationDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<EllipseParamsDebugV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_inner: Option<EllipseParamsDebugV1>,
@@ -244,6 +270,46 @@ pub struct InnerEstimationDebugV1 {
     pub status: InnerEstimationStatusDebugV1,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radial_response_agg: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r_samples: Option<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OuterEstimationStatusDebugV1 {
+    Ok,
+    Rejected,
+    Failed,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OuterHypothesisDebugV1 {
+    pub r_outer_px: f32,
+    pub peak_strength: f32,
+    pub theta_consistency: f32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OuterEstimationDebugV1 {
+    pub r_outer_expected_px: f32,
+    pub search_window_px: [f32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r_outer_found_px: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<InnerPolarityDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_strength: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theta_consistency: Option<f32>,
+    pub status: OuterEstimationStatusDebugV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hypotheses: Vec<OuterHypothesisDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_hypothesis: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub radial_response_agg: Option<Vec<f32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -460,6 +526,7 @@ mod tests {
                     min_ring_depth: 0.08,
                     min_rays_with_ring: 16,
                 },
+                outer_estimation: None,
                 decode: DecodeParamsV1 {
                     code_band_ratio: 0.76,
                     samples_per_sector: 5,

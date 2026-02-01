@@ -169,6 +169,29 @@ def completion_added_ids(debug: dict[str, Any]) -> set[int]:
     return out
 
 
+def ring_fit_debug_for_id(debug: dict[str, Any], marker_id: int) -> dict[str, Any] | None:
+    """Best-effort lookup of RingFitDebug for an id.
+
+    Prefer stage1 (proposal-based detection); fall back to completion attempt
+    fit debug when the id is only present due to homography-guided completion.
+    """
+    c = find_stage1_candidate_for_id(debug, marker_id)
+    if c:
+        rf = c.get("ring_fit")
+        if rf:
+            return rf
+
+    for a in completion_attempts(debug):
+        mid = a.get("id")
+        if mid is None or int(mid) != int(marker_id):
+            continue
+        fit = a.get("fit")
+        if fit:
+            return fit
+
+    return None
+
+
 def plot_completion(
     ax,
     debug: dict[str, Any],
@@ -199,6 +222,15 @@ def plot_completion(
             color = style.completion_projected_skipped
 
         ax.plot(float(cx), float(cy), "x", color=color, markersize=6, alpha=alpha)
+        if status == "added":
+            add_id_label(
+                ax,
+                float(cx),
+                float(cy),
+                str(mid),
+                style,
+                text_color=style.completion_added_text,
+            )
 
         if show_ellipses:
             fit = a.get("fit")
@@ -467,12 +499,26 @@ def main() -> None:
     if args.id is not None:
         title += f" id={args.id}"
 
-        # Add inner estimation metrics (if available) to the title.
-        c = find_stage1_candidate_for_id(debug, args.id)
-        inner = None
-        if c:
-            rf = c.get("ring_fit") or {}
-            inner = rf.get("inner_estimation")
+        # Add inner/outer estimation metrics (if available) to the title.
+        rf = ring_fit_debug_for_id(debug, args.id) or {}
+        inner = rf.get("inner_estimation")
+        outer = rf.get("outer_estimation")
+        if outer:
+            status = outer.get("status")
+            r_found = outer.get("r_outer_found_px")
+            tc = outer.get("theta_consistency")
+            ps = outer.get("peak_strength")
+            reason = outer.get("reason")
+            chosen = outer.get("chosen_hypothesis")
+            title += (
+                f"\nouter: status={status}"
+                f" r={r_found if r_found is not None else 'NA'}"
+                f" tc={tc if tc is not None else 'NA'}"
+                f" ps={ps if ps is not None else 'NA'}"
+                f" hyp={chosen if chosen is not None else 'NA'}"
+            )
+            if reason:
+                title += f" ({reason})"
         if inner:
             status = inner.get("status")
             r_found = inner.get("r_inner_found")
@@ -492,11 +538,24 @@ def main() -> None:
     # If focusing on a marker id and the debug contains the aggregated radial
     # response curve, plot it as an inset.
     if args.id is not None:
-        c = find_stage1_candidate_for_id(debug, args.id)
-        inner = None
-        if c:
-            rf = c.get("ring_fit") or {}
-            inner = rf.get("inner_estimation")
+        rf = ring_fit_debug_for_id(debug, args.id) or {}
+        inner = rf.get("inner_estimation")
+        outer = rf.get("outer_estimation")
+        if outer and outer.get("radial_response_agg") is not None and outer.get("r_samples") is not None:
+            try:
+                from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+                r_samples = outer["r_samples"]
+                resp = outer["radial_response_agg"]
+                inset = inset_axes(ax, width="35%", height="25%", loc="upper left", borderpad=1.0)
+                inset.plot(r_samples, resp, color="cyan", linewidth=1.0)
+                inset.set_title("outer dI/dr (agg)", fontsize=8, color="white")
+                inset.tick_params(axis="both", labelsize=7, colors="white")
+                inset.grid(True, alpha=0.2)
+                inset.set_facecolor((0, 0, 0, 0.35))
+            except Exception:
+                pass
+
         if inner and inner.get("radial_response_agg") is not None and inner.get("r_samples") is not None:
             try:
                 from mpl_toolkits.axes_grid1.inset_locator import inset_axes

@@ -34,10 +34,29 @@ enum Commands {
         /// Expected marker outer diameter in pixels (for parameter tuning).
         #[arg(long, default_value = "32.0")]
         marker_diameter: f64,
+
+        /// RANSAC inlier threshold in pixels for homography fitting.
+        #[arg(long, default_value = "5.0")]
+        ransac_thresh_px: f64,
+
+        /// Maximum RANSAC iterations for homography.
+        #[arg(long, default_value = "2000")]
+        ransac_iters: usize,
+
+        /// Disable global homography filtering.
+        #[arg(long)]
+        no_global_filter: bool,
+
+        /// Disable refinement using fitted homography.
+        #[arg(long)]
+        no_refine: bool,
     },
 
     /// Print embedded codebook statistics.
     CodebookInfo,
+
+    /// Print embedded board specification.
+    BoardInfo,
 
     /// Decode a 16-bit word against the embedded codebook.
     DecodeTest {
@@ -63,9 +82,24 @@ fn main() -> CliResult<()> {
             out,
             debug,
             marker_diameter,
-        } => run_detect(&image_path, &out, debug.as_deref(), marker_diameter),
+            ransac_thresh_px,
+            ransac_iters,
+            no_global_filter,
+            no_refine,
+        } => run_detect(
+            &image_path,
+            &out,
+            debug.as_deref(),
+            marker_diameter,
+            ransac_thresh_px,
+            ransac_iters,
+            no_global_filter,
+            no_refine,
+        ),
 
         Commands::CodebookInfo => run_codebook_info(),
+
+        Commands::BoardInfo => run_board_info(),
 
         Commands::DecodeTest { word } => run_decode_test(&word),
     }
@@ -85,6 +119,29 @@ fn run_codebook_info() -> CliResult<()> {
     if CODEBOOK_N > 0 {
         println!("  first codeword:       0x{:04X}", CODEBOOK[0]);
         println!("  last codeword:        0x{:04X}", CODEBOOK[CODEBOOK_N - 1]);
+    }
+
+    Ok(())
+}
+
+// ── board-info ────────────────────────────────────────────────────────
+
+fn run_board_info() -> CliResult<()> {
+    use ringgrid_core::board_spec::*;
+
+    println!("ringgrid embedded board specification");
+    println!("  name:           {}", BOARD_NAME);
+    println!("  markers:        {}", BOARD_N);
+    println!("  pitch:          {} mm", BOARD_PITCH_MM);
+    println!("  board size:     {}x{} mm", BOARD_SIZE_MM[0], BOARD_SIZE_MM[1]);
+
+    if BOARD_N > 0 {
+        println!("  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
+            BOARD_XY_MM[0][0], BOARD_XY_MM[0][1], BOARD_QR[0][0], BOARD_QR[0][1]);
+        println!("  marker {}:    ({:.1}, {:.1}) mm  [q={}, r={}]",
+            BOARD_N - 1,
+            BOARD_XY_MM[BOARD_N - 1][0], BOARD_XY_MM[BOARD_N - 1][1],
+            BOARD_QR[BOARD_N - 1][0], BOARD_QR[BOARD_N - 1][1]);
     }
 
     Ok(())
@@ -121,6 +178,10 @@ fn run_detect(
     out_path: &std::path::Path,
     debug_path: Option<&std::path::Path>,
     marker_diameter: f64,
+    ransac_thresh_px: f64,
+    ransac_iters: usize,
+    no_global_filter: bool,
+    no_refine: bool,
 ) -> CliResult<()> {
     tracing::info!("Loading image: {}", image_path.display());
 
@@ -149,9 +210,29 @@ fn run_detect(
     config.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
     config.max_semi_axis = r_outer as f64 * 2.5;
 
+    // Global filter and refinement options
+    config.use_global_filter = !no_global_filter;
+    config.refine_with_h = !no_refine;
+    config.ransac_homography.inlier_threshold = ransac_thresh_px;
+    config.ransac_homography.max_iters = ransac_iters;
+
     // Run detection pipeline
     let result = ringgrid_core::ring::detect_rings(&gray, &config);
-    tracing::info!("Detected {} markers", result.detected_markers.len());
+
+    let n_with_id = result.detected_markers.iter().filter(|m| m.id.is_some()).count();
+    tracing::info!(
+        "Detected {} markers ({} with ID)",
+        result.detected_markers.len(),
+        n_with_id,
+    );
+
+    if let Some(ref stats) = result.ransac {
+        tracing::info!(
+            "Homography: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
+            stats.n_inliers, stats.n_candidates,
+            stats.mean_err_px, stats.p95_err_px,
+        );
+    }
 
     // Write results
     let json = serde_json::to_string_pretty(&result)?;

@@ -85,6 +85,7 @@ def main():
     ax.set_xlim(0, gt["image_size"][0])
     ax.set_ylim(gt["image_size"][1], 0)
     ax.set_aspect("equal")
+    plt.show()
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out, dpi=args.dpi, bbox_inches="tight")

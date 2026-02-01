@@ -28,11 +28,11 @@ def load_gt(path: str) -> list[dict]:
     return [m for m in data["markers"] if m.get("visible", True)]
 
 
-def load_pred(path: str) -> list[dict]:
-    """Load predicted (detected) markers."""
+def load_pred(path: str) -> tuple[list[dict], dict]:
+    """Load predicted (detected) markers and metadata."""
     with open(path) as f:
         data = json.load(f)
-    return data["detected_markers"]
+    return data["detected_markers"], data
 
 
 def dist2(a: list, b: list) -> float:
@@ -177,6 +177,11 @@ def score(
     }
 
 
+def extract_ransac_stats(pred_data: dict) -> dict | None:
+    """Extract RANSAC/homography stats from prediction metadata."""
+    return pred_data.get("ransac")
+
+
 def print_report(result: dict) -> None:
     """Print a human-readable report."""
     print("=" * 60)
@@ -219,6 +224,15 @@ def print_report(result: dict) -> None:
         for fp in fps[:10]:
             print(f"  pred_id={fp['pred_id']:4d} conf={fp['confidence']:.3f} at ({fp['center'][0]:.0f}, {fp['center'][1]:.0f})")
 
+    rs = result.get("ransac_stats")
+    if rs:
+        print(f"\nHomography RANSAC:")
+        print(f"  candidates:    {rs['n_candidates']}")
+        print(f"  inliers:       {rs['n_inliers']}")
+        print(f"  threshold:     {rs['threshold_px']:.1f} px")
+        print(f"  mean reproj:   {rs['mean_err_px']:.2f} px")
+        print(f"  p95 reproj:    {rs['p95_err_px']:.2f} px")
+
     print()
 
 
@@ -231,9 +245,15 @@ def main():
     args = parser.parse_args()
 
     gt_markers = load_gt(args.gt)
-    pred_markers = load_pred(args.pred)
+    pred_markers, pred_data = load_pred(args.pred)
 
     result = score(gt_markers, pred_markers, gate=args.gate)
+
+    # Attach RANSAC stats from prediction file if present
+    ransac_stats = extract_ransac_stats(pred_data)
+    if ransac_stats:
+        result["ransac_stats"] = ransac_stats
+
     print_report(result)
 
     if args.out:

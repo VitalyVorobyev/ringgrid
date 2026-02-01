@@ -168,6 +168,17 @@ def main():
         if all_ce:
             print(f"Avg center error:    {sum(all_ce)/len(all_ce):.2f} px")
 
+        # Aggregate RANSAC stats
+        all_ransac = [r["ransac_stats"] for r in all_results if r.get("ransac_stats")]
+        avg_reproj = None
+        if all_ransac:
+            avg_reproj = sum(rs["mean_err_px"] for rs in all_ransac) / len(all_ransac)
+            avg_p95 = sum(rs["p95_err_px"] for rs in all_ransac) / len(all_ransac)
+            avg_inliers = sum(rs["n_inliers"] for rs in all_ransac) / len(all_ransac)
+            print(f"Avg RANSAC inliers:  {avg_inliers:.0f}")
+            print(f"Avg reproj error:    {avg_reproj:.2f} px")
+            print(f"Avg reproj p95:      {avg_p95:.2f} px")
+
         # Write aggregate
         agg = {
             "n_images": n,
@@ -177,6 +188,7 @@ def main():
             "avg_fp": avg_fp,
             "avg_miss": avg_miss,
             "avg_center_error": sum(all_ce) / len(all_ce) if all_ce else None,
+            "avg_reproj_error": avg_reproj,
             "per_image": all_results,
         }
         agg_path = det_dir / "aggregate.json"

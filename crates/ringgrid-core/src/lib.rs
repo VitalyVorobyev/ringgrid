@@ -20,6 +20,8 @@ pub mod refine;
 pub mod codebook;
 pub mod codec;
 pub mod ring;
+pub mod board_spec;
+pub mod homography;
 
 /// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -97,12 +99,33 @@ pub struct DetectedMarker {
     pub decode: Option<DecodeMetrics>,
 }
 
+/// RANSAC statistics for homography fitting.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RansacStats {
+    /// Number of decoded candidates fed to RANSAC.
+    pub n_candidates: usize,
+    /// Number of inliers after RANSAC.
+    pub n_inliers: usize,
+    /// Inlier threshold in pixels.
+    pub threshold_px: f64,
+    /// Mean reprojection error of inliers (pixels).
+    pub mean_err_px: f64,
+    /// 95th percentile reprojection error (pixels).
+    pub p95_err_px: f64,
+}
+
 /// Full detection result for a single image.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
     pub detected_markers: Vec<DetectedMarker>,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
+    /// Fitted board-to-image homography (3x3, row-major), if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homography: Option<[[f64; 3]; 3]>,
+    /// RANSAC statistics, if homography was fitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ransac: Option<RansacStats>,
 }
 
 impl DetectionResult {
@@ -110,6 +133,8 @@ impl DetectionResult {
         Self {
             detected_markers: Vec::new(),
             image_size: [width, height],
+            homography: None,
+            ransac: None,
         }
     }
 }

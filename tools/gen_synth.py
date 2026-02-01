@@ -558,6 +558,23 @@ def main() -> None:
     lattice = generate_hex_lattice(args.board_mm, args.pitch_mm, args.n_markers)
     print(f"Hex lattice: {len(lattice)} markers (pitch={args.pitch_mm}mm, board={args.board_mm}mm)")
 
+    # Emit board_spec.json alongside generated images
+    board_spec = {
+        "name": f"ringgrid_{int(args.board_mm)}mm_hex",
+        "board_size_mm": [args.board_mm, args.board_mm],
+        "pitch_mm": args.pitch_mm,
+        "origin_mm": [0.0, 0.0],
+        "n_markers": len(lattice),
+        "markers": [
+            {"id": i, "q": q, "r": r, "xy_mm": [round(x, 4), round(y, 4)]}
+            for i, (q, r, x, y) in enumerate(lattice)
+        ],
+    }
+    board_spec_path = out_dir / "board_spec.json"
+    with open(board_spec_path, "w") as f:
+        json.dump(board_spec, f, indent=2)
+    print(f"Board spec written to {board_spec_path}")
+
     for i in range(args.n_images):
         gt = generate_one_sample(
             idx=i,

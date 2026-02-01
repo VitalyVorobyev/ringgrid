@@ -48,6 +48,8 @@ pub struct ParamsDebugV1 {
     pub outer_estimation: Option<OuterEstimationParamsV1>,
     pub decode: DecodeParamsV1,
     pub marker_spec: crate::marker_spec::MarkerSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nl_refine: Option<NlRefineParamsV1>,
 
     pub min_semi_axis: f64,
     pub max_semi_axis: f64,
@@ -136,8 +138,81 @@ pub struct StagesDebugV1 {
     pub stage4_refine: Option<RefineDebugV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage5_completion: Option<CompletionDebugV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage6_nl_refine: Option<NlRefineDebugV1>,
     #[serde(rename = "final")]
     pub final_: FinalDebugV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NlRefineParamsV1 {
+    pub enabled: bool,
+    pub max_iters: usize,
+    pub huber_delta_mm: f64,
+    pub min_points: usize,
+    pub reject_shift_mm: f64,
+    pub enable_h_refit: bool,
+    pub h_refit_iters: usize,
+    pub marker_outer_radius_mm: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NlRefineDebugV1 {
+    pub enabled: bool,
+    pub params: NlRefineParamsV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h_used: Option<[[f64; 3]; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h_refit: Option<[[f64; 3]; 3]>,
+    pub stats: NlRefineStatsDebugV1,
+    pub refined_markers: Vec<NlRefinedMarkerDebugV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NlRefineStatsDebugV1 {
+    pub n_inliers: usize,
+    pub n_refined: usize,
+    pub n_failed: usize,
+    pub mean_before_mm: f64,
+    pub mean_after_mm: f64,
+    pub p95_before_mm: f64,
+    pub p95_after_mm: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NlRefineStatusDebugV1 {
+    Ok,
+    Rejected,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NlRefinedMarkerDebugV1 {
+    pub id: usize,
+    pub n_points: usize,
+    pub init_center_board_mm: [f64; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refined_center_board_mm: Option<[f64; 2]>,
+    pub center_img_before: [f64; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_img_after: Option<[f64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_rms_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_rms_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta_center_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_img: Option<Vec<[f32; 2]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_board_mm: Option<Vec<[f32; 2]>>,
+    pub status: NlRefineStatusDebugV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -536,6 +611,7 @@ mod tests {
                     min_decode_confidence: 0.15,
                 },
                 marker_spec: crate::marker_spec::MarkerSpec::default(),
+                nl_refine: None,
                 min_semi_axis: 3.0,
                 max_semi_axis: 15.0,
                 max_aspect_ratio: 3.0,
@@ -590,6 +666,7 @@ mod tests {
                 },
                 stage4_refine: None,
                 stage5_completion: None,
+                stage6_nl_refine: None,
                 final_: FinalDebugV1 {
                     h_final: None,
                     detections: Vec::new(),

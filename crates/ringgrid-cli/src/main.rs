@@ -80,6 +80,34 @@ enum Commands {
         /// Completion ROI radius in pixels for edge sampling (default: 0.75 * marker_diameter, clamped).
         #[arg(long)]
         complete_roi_radius: Option<f64>,
+
+        /// Disable non-linear per-marker refinement in board plane.
+        #[arg(long)]
+        no_nl_refine: bool,
+
+        /// NL refine: maximum solver iterations.
+        #[arg(long, default_value = "20")]
+        nl_max_iters: usize,
+
+        /// NL refine: Huber delta in board units (mm).
+        #[arg(long, default_value = "0.2")]
+        nl_huber_delta_mm: f64,
+
+        /// NL refine: minimum number of edge points required.
+        #[arg(long, default_value = "6")]
+        nl_min_points: usize,
+
+        /// NL refine: reject if refined center shifts more than this (mm) in board coordinates.
+        #[arg(long, default_value = "1.0")]
+        nl_reject_shift_mm: f64,
+
+        /// NL refine: enable a single homography refit from refined centers.
+        #[arg(long, default_value = "true")]
+        nl_h_refit: bool,
+
+        /// NL refine: disable homography refit from refined centers.
+        #[arg(long, conflicts_with = "nl_h_refit")]
+        no_nl_h_refit: bool,
     },
 
     /// Print embedded codebook statistics.
@@ -123,6 +151,13 @@ fn main() -> CliResult<()> {
             complete_reproj_gate,
             complete_min_conf,
             complete_roi_radius,
+            no_nl_refine,
+            nl_max_iters,
+            nl_huber_delta_mm,
+            nl_min_points,
+            nl_reject_shift_mm,
+            nl_h_refit,
+            no_nl_h_refit,
         } => run_detect(
             &image_path,
             &out,
@@ -139,6 +174,13 @@ fn main() -> CliResult<()> {
             complete_reproj_gate,
             complete_min_conf,
             complete_roi_radius,
+            no_nl_refine,
+            nl_max_iters,
+            nl_huber_delta_mm,
+            nl_min_points,
+            nl_reject_shift_mm,
+            nl_h_refit,
+            no_nl_h_refit,
         ),
 
         Commands::CodebookInfo => run_codebook_info(),
@@ -246,6 +288,13 @@ fn run_detect(
     complete_reproj_gate: f64,
     complete_min_conf: f32,
     complete_roi_radius: Option<f64>,
+    no_nl_refine: bool,
+    nl_max_iters: usize,
+    nl_huber_delta_mm: f64,
+    nl_min_points: usize,
+    nl_reject_shift_mm: f64,
+    nl_h_refit: bool,
+    no_nl_h_refit: bool,
 ) -> CliResult<()> {
     tracing::info!("Loading image: {}", image_path.display());
 
@@ -290,6 +339,14 @@ fn run_detect(
     config.completion.min_fit_confidence = complete_min_conf;
     config.completion.roi_radius_px =
         complete_roi_radius.unwrap_or((marker_diameter * 0.75).clamp(24.0, 80.0)) as f32;
+
+    // Non-linear refinement options (board-plane circle fit)
+    config.nl_refine.enabled = !no_nl_refine;
+    config.nl_refine.max_iters = nl_max_iters;
+    config.nl_refine.huber_delta_mm = nl_huber_delta_mm;
+    config.nl_refine.min_points = nl_min_points;
+    config.nl_refine.reject_thresh_mm = nl_reject_shift_mm;
+    config.nl_refine.enable_h_refit = nl_h_refit && !no_nl_h_refit;
 
     // Run detection pipeline (optionally with debug dump)
     let deprecated_debug_path = debug_path;

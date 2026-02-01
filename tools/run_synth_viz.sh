@@ -93,6 +93,7 @@ if [[ -n "${SHOW:-}" ]]; then
   "${py[@]}" tools/viz_detect_debug.py \
     --image "$img" \
     --debug_json "$dbg" \
+    --stage stage6_nl_refine \
     "$@"
 else
   "${py[@]}" tools/viz_detect_debug.py \

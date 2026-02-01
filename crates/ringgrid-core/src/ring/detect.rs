@@ -9,6 +9,7 @@ use crate::conic::{
 use crate::debug_dump as dbg;
 use crate::homography::{self, project, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
+use crate::refine;
 use crate::{
     DecodeMetrics, DetectedMarker, DetectionResult, EllipseParams, FitMetrics, RansacStats,
 };
@@ -91,6 +92,8 @@ pub struct DetectConfig {
     pub ransac_homography: RansacHomographyConfig,
     /// Enable one-iteration refinement using H.
     pub refine_with_h: bool,
+    /// Non-linear per-marker refinement using board-plane circle fits.
+    pub nl_refine: refine::RefineParams,
 }
 
 impl Default for DetectConfig {
@@ -110,6 +113,7 @@ impl Default for DetectConfig {
             use_global_filter: true,
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
+            nl_refine: refine::RefineParams::default(),
         }
     }
 }
@@ -585,12 +589,63 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
         }
     }
 
-    // Refit H after refinement if we have enough markers
-    let (final_h, final_ransac) = if config.refine_with_h && final_markers.len() >= 10 {
-        refit_homography(&final_markers, &config.ransac_homography)
+    // Stage 9: Non-linear refinement in board plane (optional).
+    let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
+    if config.nl_refine.enabled {
+        if let Some(h0) = h_current {
+            let _ = refine::refine_markers_circle_board(
+                gray,
+                &h0,
+                &mut final_markers,
+                &config.nl_refine,
+                false,
+            );
+
+            if config.nl_refine.enable_h_refit && final_markers.len() >= 10 {
+                let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
+                let mut h_prev = h0;
+                let mut mean_prev = mean_reproj_error_px(&h_prev, &final_markers);
+                for _ in 0..max_iters {
+                    let Some((h_next, _stats1)) =
+                        refit_homography_matrix(&final_markers, &config.ransac_homography)
+                    else {
+                        break;
+                    };
+
+                    let mean_next = mean_reproj_error_px(&h_next, &final_markers);
+                    if mean_next.is_finite() && (mean_next < mean_prev || !mean_prev.is_finite()) {
+                        h_current = Some(h_next);
+                        h_prev = h_next;
+                        mean_prev = mean_next;
+
+                        let _ = refine::refine_markers_circle_board(
+                            gray,
+                            &h_prev,
+                            &mut final_markers,
+                            &config.nl_refine,
+                            false,
+                        );
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Final H: refit after refinement if enabled (or keep the original RANSAC H).
+    let final_h_matrix = if config.refine_with_h && final_markers.len() >= 10 {
+        refit_homography_matrix(&final_markers, &config.ransac_homography)
+            .map(|(h, _stats)| h)
+            .or(h_current)
     } else {
-        (h_result.map(|r| matrix3_to_array(&r.h)), ransac_stats)
+        h_current
     };
+    let final_h = final_h_matrix.as_ref().map(matrix3_to_array);
+    let final_ransac = final_h_matrix
+        .as_ref()
+        .and_then(|h| compute_h_stats(h, &final_markers, config.ransac_homography.inlier_threshold))
+        .or(ransac_stats);
 
     tracing::info!(
         "{} markers after global filter{}",
@@ -1045,14 +1100,184 @@ pub fn detect_rings_with_debug(
         notes: Vec::new(),
     };
 
-    // Refit H after refinement if we have enough markers
-    let did_refit = config.refine_with_h && final_markers.len() >= 10;
-    let (final_h, final_ransac) = if did_refit {
-        let (h_arr, stats) = refit_homography(&final_markers, &config.ransac_homography);
-        (h_arr, stats)
-    } else {
-        (h_result.map(|r| matrix3_to_array(&r.h)), ransac_stats)
+    // Stage 6: Non-linear refinement in board plane (optional).
+    let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
+    let mut nl_refine_debug = dbg::NlRefineDebugV1 {
+        enabled: config.nl_refine.enabled && h_current.is_some(),
+        params: dbg::NlRefineParamsV1 {
+            enabled: config.nl_refine.enabled,
+            max_iters: config.nl_refine.max_iters,
+            huber_delta_mm: config.nl_refine.huber_delta_mm,
+            min_points: config.nl_refine.min_points,
+            reject_shift_mm: config.nl_refine.reject_thresh_mm,
+            enable_h_refit: config.nl_refine.enable_h_refit,
+            h_refit_iters: config.nl_refine.h_refit_iters,
+            marker_outer_radius_mm: crate::board_spec::marker_outer_radius_mm() as f64,
+        },
+        h_used: h_current.as_ref().map(matrix3_to_array),
+        h_refit: None,
+        stats: dbg::NlRefineStatsDebugV1 {
+            n_inliers: 0,
+            n_refined: 0,
+            n_failed: 0,
+            mean_before_mm: 0.0,
+            mean_after_mm: 0.0,
+            p95_before_mm: 0.0,
+            p95_after_mm: 0.0,
+        },
+        refined_markers: Vec::new(),
+        notes: Vec::new(),
     };
+
+    if config.nl_refine.enabled {
+        if let Some(h0) = h_current {
+            let (stats0, records0) = refine::refine_markers_circle_board(
+                gray,
+                &h0,
+                &mut final_markers,
+                &config.nl_refine,
+                debug_cfg.store_points,
+            );
+
+            nl_refine_debug.stats = dbg::NlRefineStatsDebugV1 {
+                n_inliers: stats0.n_inliers,
+                n_refined: stats0.n_refined,
+                n_failed: stats0.n_failed,
+                mean_before_mm: stats0.mean_before_mm,
+                mean_after_mm: stats0.mean_after_mm,
+                p95_before_mm: stats0.p95_before_mm,
+                p95_after_mm: stats0.p95_after_mm,
+            };
+            nl_refine_debug.refined_markers = records0
+                .into_iter()
+                .map(|r| dbg::NlRefinedMarkerDebugV1 {
+                    id: r.id,
+                    n_points: r.n_points,
+                    init_center_board_mm: r.init_center_board_mm,
+                    refined_center_board_mm: r.refined_center_board_mm,
+                    center_img_before: r.center_img_before,
+                    center_img_after: r.center_img_after,
+                    before_rms_mm: r.before_rms_mm,
+                    after_rms_mm: r.after_rms_mm,
+                    delta_center_mm: r.delta_center_mm,
+                    edge_points_img: r.edge_points_img,
+                    edge_points_board_mm: r.edge_points_board_mm,
+                    status: match r.status {
+                        refine::MarkerRefineStatus::Ok => dbg::NlRefineStatusDebugV1::Ok,
+                        refine::MarkerRefineStatus::Rejected => {
+                            dbg::NlRefineStatusDebugV1::Rejected
+                        }
+                        refine::MarkerRefineStatus::Failed => dbg::NlRefineStatusDebugV1::Failed,
+                        refine::MarkerRefineStatus::Skipped => dbg::NlRefineStatusDebugV1::Skipped,
+                    },
+                    reason: r.reason,
+                })
+                .collect();
+
+            if config.nl_refine.enable_h_refit && final_markers.len() >= 10 {
+                let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
+                let mut h_prev = h0;
+                let mut mean_prev = mean_reproj_error_px(&h_prev, &final_markers);
+                for iter in 0..max_iters {
+                    let Some((h_next, _stats1)) =
+                        refit_homography_matrix(&final_markers, &config.ransac_homography)
+                    else {
+                        nl_refine_debug
+                            .notes
+                            .push(format!("h_refit_iter{}:refit_failed", iter));
+                        break;
+                    };
+
+                    let mean_next = mean_reproj_error_px(&h_next, &final_markers);
+                    if mean_next.is_finite() && (mean_next < mean_prev || !mean_prev.is_finite()) {
+                        nl_refine_debug.h_refit = Some(matrix3_to_array(&h_next));
+                        nl_refine_debug.notes.push(format!(
+                            "h_refit_iter{}:accepted mean_err_px {:.3} -> {:.3}",
+                            iter, mean_prev, mean_next
+                        ));
+
+                        h_current = Some(h_next);
+                        h_prev = h_next;
+                        mean_prev = mean_next;
+
+                        let (stats_i, records_i) = refine::refine_markers_circle_board(
+                            gray,
+                            &h_prev,
+                            &mut final_markers,
+                            &config.nl_refine,
+                            debug_cfg.store_points,
+                        );
+                        nl_refine_debug.stats = dbg::NlRefineStatsDebugV1 {
+                            n_inliers: stats_i.n_inliers,
+                            n_refined: stats_i.n_refined,
+                            n_failed: stats_i.n_failed,
+                            mean_before_mm: stats_i.mean_before_mm,
+                            mean_after_mm: stats_i.mean_after_mm,
+                            p95_before_mm: stats_i.p95_before_mm,
+                            p95_after_mm: stats_i.p95_after_mm,
+                        };
+                        nl_refine_debug.refined_markers = records_i
+                            .into_iter()
+                            .map(|r| dbg::NlRefinedMarkerDebugV1 {
+                                id: r.id,
+                                n_points: r.n_points,
+                                init_center_board_mm: r.init_center_board_mm,
+                                refined_center_board_mm: r.refined_center_board_mm,
+                                center_img_before: r.center_img_before,
+                                center_img_after: r.center_img_after,
+                                before_rms_mm: r.before_rms_mm,
+                                after_rms_mm: r.after_rms_mm,
+                                delta_center_mm: r.delta_center_mm,
+                                edge_points_img: r.edge_points_img,
+                                edge_points_board_mm: r.edge_points_board_mm,
+                                status: match r.status {
+                                    refine::MarkerRefineStatus::Ok => {
+                                        dbg::NlRefineStatusDebugV1::Ok
+                                    }
+                                    refine::MarkerRefineStatus::Rejected => {
+                                        dbg::NlRefineStatusDebugV1::Rejected
+                                    }
+                                    refine::MarkerRefineStatus::Failed => {
+                                        dbg::NlRefineStatusDebugV1::Failed
+                                    }
+                                    refine::MarkerRefineStatus::Skipped => {
+                                        dbg::NlRefineStatusDebugV1::Skipped
+                                    }
+                                },
+                                reason: r.reason,
+                            })
+                            .collect();
+                    } else {
+                        nl_refine_debug.notes.push(format!(
+                            "h_refit_iter{}:rejected mean_err_px {:.3} -> {:.3}",
+                            iter, mean_prev, mean_next
+                        ));
+                        break;
+                    }
+                }
+            }
+        } else {
+            nl_refine_debug
+                .notes
+                .push("skipped_no_homography".to_string());
+        }
+    }
+
+    // Final H: refit after refinement if we have enough markers.
+    let did_refit = config.refine_with_h && final_markers.len() >= 10;
+    let final_h_matrix = if did_refit {
+        refit_homography_matrix(&final_markers, &config.ransac_homography)
+            .map(|(h, _stats)| h)
+            .or(h_current)
+    } else {
+        h_current
+    };
+    let final_h = final_h_matrix.as_ref().map(matrix3_to_array);
+    let final_ransac = final_h_matrix
+        .as_ref()
+        .and_then(|h| compute_h_stats(h, &final_markers, config.ransac_homography.inlier_threshold))
+        .or(ransac_stats);
+
     if did_refit {
         if let Some(ref mut rd) = refine_debug {
             rd.h_refit = final_h;
@@ -1129,6 +1354,7 @@ pub fn detect_rings_with_debug(
                 min_decode_confidence: config.decode.min_decode_confidence,
             },
             marker_spec: config.marker_spec.clone(),
+            nl_refine: Some(nl_refine_debug.params.clone()),
             min_semi_axis: config.min_semi_axis,
             max_semi_axis: config.max_semi_axis,
             max_aspect_ratio: config.max_aspect_ratio,
@@ -1153,6 +1379,7 @@ pub fn detect_rings_with_debug(
             stage3_ransac: ransac_debug,
             stage4_refine: refine_debug,
             stage5_completion: Some(completion_debug),
+            stage6_nl_refine: Some(nl_refine_debug),
             final_: dbg::FinalDebugV1 {
                 h_final: result.homography,
                 detections: result.detected_markers.clone(),
@@ -2521,6 +2748,100 @@ fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
         [m[(1, 0)], m[(1, 1)], m[(1, 2)]],
         [m[(2, 0)], m[(2, 1)], m[(2, 2)]],
     ]
+}
+
+fn array_to_matrix3(m: &[[f64; 3]; 3]) -> nalgebra::Matrix3<f64> {
+    nalgebra::Matrix3::new(
+        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
+    )
+}
+
+fn mean_reproj_error_px(h: &nalgebra::Matrix3<f64>, markers: &[DetectedMarker]) -> f64 {
+    let mut sum = 0.0f64;
+    let mut n = 0usize;
+    for m in markers {
+        let Some(id) = m.id else {
+            continue;
+        };
+        let Some(xy) = board_spec::xy_mm(id) else {
+            continue;
+        };
+        let err = homography::reprojection_error(
+            h,
+            &[xy[0] as f64, xy[1] as f64],
+            &[m.center[0], m.center[1]],
+        );
+        if err.is_finite() {
+            sum += err;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        f64::NAN
+    } else {
+        sum / n as f64
+    }
+}
+
+fn compute_h_stats(
+    h: &nalgebra::Matrix3<f64>,
+    markers: &[DetectedMarker],
+    thresh_px: f64,
+) -> Option<RansacStats> {
+    let mut errors: Vec<f64> = Vec::new();
+    for m in markers {
+        let Some(id) = m.id else {
+            continue;
+        };
+        let Some(xy) = board_spec::xy_mm(id) else {
+            continue;
+        };
+        let err = homography::reprojection_error(
+            h,
+            &[xy[0] as f64, xy[1] as f64],
+            &[m.center[0], m.center[1]],
+        );
+        if err.is_finite() {
+            errors.push(err);
+        }
+    }
+    if errors.len() < 4 {
+        return None;
+    }
+
+    let mut inlier_errors: Vec<f64> = errors.iter().copied().filter(|&e| e <= thresh_px).collect();
+    inlier_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let mean_err = if inlier_errors.is_empty() {
+        0.0
+    } else {
+        inlier_errors.iter().sum::<f64>() / inlier_errors.len() as f64
+    };
+    let p95_err = if inlier_errors.is_empty() {
+        0.0
+    } else {
+        let idx = ((inlier_errors.len() as f64 * 0.95) as usize).min(inlier_errors.len() - 1);
+        inlier_errors[idx]
+    };
+
+    Some(RansacStats {
+        n_candidates: errors.len(),
+        n_inliers: inlier_errors.len(),
+        threshold_px: thresh_px,
+        mean_err_px: mean_err,
+        p95_err_px: p95_err,
+    })
+}
+
+fn refit_homography_matrix(
+    markers: &[DetectedMarker],
+    config: &RansacHomographyConfig,
+) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
+    let (h_arr, stats) = refit_homography(markers, config);
+    match (h_arr, stats) {
+        (Some(h_arr), Some(stats)) => Some((array_to_matrix3(&h_arr), stats)),
+        _ => None,
+    }
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within dedup_radius.

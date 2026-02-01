@@ -98,6 +98,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
   - Global filter: `--ransac-thresh-px <px>`, `--ransac-iters <n>`, `--no-global-filter`
   - Refinement: `--no-refine`
   - Completion (runs only when a homography is available): `--no-complete`, `--complete-reproj-gate <px>`, `--complete-min-conf <0..1>`, `--complete-roi-radius <px>`
+  - NL refine (runs only when a homography is available): `--no-nl-refine`, `--nl-max-iters <n>`, `--nl-huber-delta-mm <mm>`, `--nl-min-points <n>`, `--nl-reject-shift-mm <mm>`, `--nl-h-refit` (optional; off by default), `--no-nl-h-refit`
 - `ringgrid codebook-info` — print embedded codebook stats.
 - `ringgrid board-info` — print embedded board spec summary.
 - `ringgrid decode-test --word 0xABCD` — decode a raw 16-bit word against the embedded codebook.
@@ -122,13 +123,15 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
   - `fit`: edge/fit quality metrics
   - `decode`: optional `{ observed_word, best_id, best_rotation, best_dist, margin, decode_confidence }` (may be absent for completion-assigned IDs)
 
+Note: when NL refinement is enabled, `center` may be updated by board-plane circle fitting while `ellipse_*` remains the fitted ellipse geometry (centers may not coincide).
+
 ### Debug dump JSON (`--debug-json`)
 
 `ringgrid detect --debug-json ...` writes a versioned debug object with:
 
 - `schema_version: "ringgrid.debug.v1"`
 - `image`, `board`, `params`
-- `stages` (proposals → fit/decode → dedup → ransac → refine → final)
+- `stages` (proposals → fit/decode → dedup → ransac → refine → completion → nl_refine → final)
 
 This file is intended for manual inspection and is distinct from `--out`.
 
@@ -147,6 +150,16 @@ python3 tools/viz_detect_debug.py \
   --image tools/out/synth_001/img_0000.png \
   --debug_json tools/out/synth_001/debug_0000.json \
   --out tools/out/synth_001/det_overlay_0000.png
+```
+
+Overlay NL refinement shifts (before/after centers):
+
+```bash
+python3 tools/viz_detect_debug.py \
+  --image tools/out/synth_001/img_0000.png \
+  --debug_json tools/out/synth_001/debug_0000.json \
+  --stage stage6_nl_refine \
+  --out tools/out/synth_001/nl_refine_overlay_0000.png
 ```
 
 Inspect the homography-guided completion stage (projected centers and per-ID decisions):

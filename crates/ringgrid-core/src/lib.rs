@@ -19,6 +19,7 @@ pub mod conic;
 pub mod debug_dump;
 pub mod homography;
 pub mod marker_spec;
+pub mod refine;
 pub mod ring;
 
 /// Ellipse parameters for serialization (center + geometry).

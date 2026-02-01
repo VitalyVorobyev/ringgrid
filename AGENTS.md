@@ -89,6 +89,7 @@ Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
 - `--debug-json` writes `ringgrid.debug.v1` (versioned, comprehensive debug dump).
 - `--debug` is deprecated (alias for `--debug-json`).
+- NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine` or enable H-refit via `--nl-h-refit`.
 
 ### 4) Score detections
 

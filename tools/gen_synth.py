@@ -604,11 +604,19 @@ def main() -> None:
     print(f"Hex lattice: {len(lattice)} markers (pitch={args.pitch_mm}mm, board={args.board_mm}mm)")
 
     # Emit board_spec.json alongside generated images
+    marker_outer_radius = args.pitch_mm * 0.6
+    marker_inner_radius = args.pitch_mm * 0.4
+    marker_code_band_outer_radius = args.pitch_mm * 0.58
+    marker_code_band_inner_radius = args.pitch_mm * 0.42
     board_spec = {
         "name": f"ringgrid_{int(args.board_mm)}mm_hex",
         "board_size_mm": [args.board_mm, args.board_mm],
         "pitch_mm": args.pitch_mm,
         "origin_mm": [0.0, 0.0],
+        "marker_outer_radius_mm": marker_outer_radius,
+        "marker_inner_radius_mm": marker_inner_radius,
+        "marker_code_band_outer_radius_mm": marker_code_band_outer_radius,
+        "marker_code_band_inner_radius_mm": marker_code_band_inner_radius,
         "n_markers": len(lattice),
         "markers": [
             {"id": i, "q": q, "r": r, "xy_mm": [round(x, 4), round(y, 4)]}

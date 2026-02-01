@@ -8,12 +8,14 @@ use crate::conic::{
 };
 use crate::debug_dump as dbg;
 use crate::homography::{self, project, RansacHomographyConfig};
+use crate::marker_spec::MarkerSpec;
 use crate::{
     DecodeMetrics, DetectedMarker, DetectionResult, EllipseParams, FitMetrics, RansacStats,
 };
 
 use super::decode::{decode_marker, decode_marker_with_diagnostics, DecodeConfig};
 use super::edge_sample::{sample_edges, EdgeSampleConfig, EdgeSampleResult};
+use super::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus, Polarity};
 use super::proposal::{find_proposals, ProposalConfig};
 
 /// Debug collection options for `detect_rings_with_debug`.
@@ -31,6 +33,7 @@ pub struct DetectConfig {
     pub proposal: ProposalConfig,
     pub edge_sample: EdgeSampleConfig,
     pub decode: DecodeConfig,
+    pub marker_spec: MarkerSpec,
     /// Minimum semi-axis for a valid outer ellipse.
     pub min_semi_axis: f64,
     /// Maximum semi-axis for a valid outer ellipse.
@@ -53,6 +56,7 @@ impl Default for DetectConfig {
             proposal: ProposalConfig::default(),
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
+            marker_spec: MarkerSpec::default(),
             min_semi_axis: 3.0,
             max_semi_axis: 15.0,
             max_aspect_ratio: 3.0,
@@ -64,33 +68,18 @@ impl Default for DetectConfig {
     }
 }
 
-/// Fit outer and inner ellipses from edge points.
-///
-/// Returns (outer, inner, outer_ransac_result, inner_ransac_result).
-fn fit_ring_ellipses(
+/// Fit the outer ellipse from edge points.
+fn fit_outer_ellipse(
     edge: &EdgeSampleResult,
     config: &DetectConfig,
-) -> Option<(
-    Ellipse,
-    Option<Ellipse>,
-    Option<crate::conic::RansacResult>,
-    Option<crate::conic::RansacResult>,
-)> {
-    fit_ring_ellipses_with_reason(edge, config).ok()
+) -> Option<(Ellipse, Option<crate::conic::RansacResult>)> {
+    fit_outer_ellipse_with_reason(edge, config).ok()
 }
 
-fn fit_ring_ellipses_with_reason(
+fn fit_outer_ellipse_with_reason(
     edge: &EdgeSampleResult,
     config: &DetectConfig,
-) -> Result<
-    (
-        Ellipse,
-        Option<Ellipse>,
-        Option<crate::conic::RansacResult>,
-        Option<crate::conic::RansacResult>,
-    ),
-    String,
-> {
+) -> Result<(Ellipse, Option<crate::conic::RansacResult>), String> {
     // Fit outer ellipse
     let ransac_config = RansacConfig {
         max_iters: 200,
@@ -130,50 +119,16 @@ fn fit_ring_ellipses_with_reason(
         return Err("fit_outer:invalid_ellipse".to_string());
     }
 
-    // Fit inner ellipse (optional)
-    let (inner, inner_ransac) = if edge.inner_points.len() >= 8 {
-        match try_fit_ellipse_ransac(&edge.inner_points, &ransac_config) {
-            Ok(r) => {
-                if r.ellipse.is_valid()
-                    && r.ellipse.a >= 1.0
-                    && r.ellipse.aspect_ratio() < config.max_aspect_ratio
-                {
-                    (Some(r.ellipse), Some(r))
-                } else {
-                    (None, None)
-                }
-            }
-            Err(_) => match fit_ellipse_direct(&edge.inner_points) {
-                Some((_, e)) if e.is_valid() && e.a >= 1.0 => (Some(e), None),
-                _ => (None, None),
-            },
-        }
-    } else if edge.inner_points.len() >= 6 {
-        match fit_ellipse_direct(&edge.inner_points) {
-            Some((_, e)) if e.is_valid() && e.a >= 1.0 => (Some(e), None),
-            _ => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-
-    Ok((outer, inner, outer_ransac, inner_ransac))
+    Ok((outer, outer_ransac))
 }
 
-/// Compute the marker center as a weighted average of inner and outer ellipse centers.
-fn compute_center(outer: &Ellipse, inner: Option<&Ellipse>, edge: &EdgeSampleResult) -> [f64; 2] {
-    if let Some(inner) = inner {
-        // Weight by number of points (more points = more reliable)
-        let w_outer = edge.outer_points.len() as f64;
-        let w_inner = edge.inner_points.len() as f64;
-        let w_total = w_outer + w_inner;
-        [
-            (outer.cx * w_outer + inner.cx * w_inner) / w_total,
-            (outer.cy * w_outer + inner.cy * w_inner) / w_total,
-        ]
-    } else {
-        [outer.cx, outer.cy]
-    }
+/// Marker center used by the detector.
+///
+/// We use the outer ellipse center as the base estimate. Inner edge estimation
+/// is constrained to be concentric with the outer ellipse and is not allowed
+/// to bias the center when unreliable.
+fn compute_center(outer: &Ellipse) -> [f64; 2] {
+    [outer.cx, outer.cy]
 }
 
 /// Helper to create EllipseParams from a conic Ellipse.
@@ -203,35 +158,50 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
             None => continue,
         };
 
-        // Stage 3: Fit ellipses
-        let (outer, inner, outer_ransac, inner_ransac) = match fit_ring_ellipses(&edge, config) {
+        // Stage 3: Fit outer ellipse
+        let (outer, outer_ransac) = match fit_outer_ellipse(&edge, config) {
             Some(r) => r,
             None => continue,
         };
 
         // Compute center
-        let center = compute_center(&outer, inner.as_ref(), &edge);
+        let center = compute_center(&outer);
 
         // Compute fit metrics
         let fit = FitMetrics {
             n_angles_total: edge.n_total_rays,
             n_angles_with_both_edges: edge.n_good_rays,
             n_points_outer: edge.outer_points.len(),
-            n_points_inner: edge.inner_points.len(),
+            n_points_inner: 0,
             ransac_inlier_ratio_outer: outer_ransac
                 .as_ref()
                 .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: inner_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.inner_points.len().max(1) as f32),
+            ransac_inlier_ratio_inner: None,
             rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: inner
-                .as_ref()
-                .map(|ie| rms_sampson_distance(ie, &edge.inner_points)),
+            rms_residual_inner: None,
         };
 
         // Stage 4: Decode
         let decode_result = decode_marker(gray, &outer, &config.decode);
+
+        // Stage 4b: Inner edge estimation (only for decoded candidates)
+        let inner_params = if decode_result.is_some() {
+            let est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
+            if est.status == InnerStatus::Ok {
+                let s = est
+                    .r_inner_found
+                    .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+                Some(EllipseParams {
+                    center_xy: [outer.cx, outer.cy],
+                    semi_axes: [outer.a * s, outer.b * s],
+                    angle: outer.angle,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Build marker
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
@@ -250,7 +220,7 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
             confidence,
             center,
             ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner.as_ref().map(|ie| ellipse_to_params(ie)),
+            ellipse_inner: inner_params,
             fit,
             decode: decode_metrics,
         };
@@ -414,41 +384,36 @@ pub fn detect_rings_with_debug(
             }
         };
 
-        // Fit
-        let (outer, inner, outer_ransac, inner_ransac) =
-            match fit_ring_ellipses_with_reason(&edge, config) {
-                Ok(r) => r,
-                Err(reason) => {
-                    if let Some(cd) = cand_debug.as_mut() {
-                        cd.decision = dbg::DecisionDebugV1 {
-                            status: dbg::DecisionStatusV1::Rejected,
-                            reason,
-                        };
-                    }
-                    if let Some(cd) = cand_debug {
-                        stage1.candidates.push(cd);
-                    }
-                    continue;
+        // Fit outer ellipse
+        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
+            Ok(r) => r,
+            Err(reason) => {
+                if let Some(cd) = cand_debug.as_mut() {
+                    cd.decision = dbg::DecisionDebugV1 {
+                        status: dbg::DecisionStatusV1::Rejected,
+                        reason,
+                    };
                 }
-            };
+                if let Some(cd) = cand_debug {
+                    stage1.candidates.push(cd);
+                }
+                continue;
+            }
+        };
 
-        let center = compute_center(&outer, inner.as_ref(), &edge);
+        let center = compute_center(&outer);
 
         let fit_metrics = FitMetrics {
             n_angles_total: edge.n_total_rays,
             n_angles_with_both_edges: edge.n_good_rays,
             n_points_outer: edge.outer_points.len(),
-            n_points_inner: edge.inner_points.len(),
+            n_points_inner: 0,
             ransac_inlier_ratio_outer: outer_ransac
                 .as_ref()
                 .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: inner_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.inner_points.len().max(1) as f32),
+            ransac_inlier_ratio_inner: None,
             rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: inner
-                .as_ref()
-                .map(|ie| rms_sampson_distance(ie, &edge.inner_points)),
+            rms_residual_inner: None,
         };
 
         // Decode + diagnostics
@@ -466,12 +431,37 @@ pub fn detect_rings_with_debug(
             decode_confidence: d.confidence,
         });
 
+        let inner_est = if decode_result.is_some() {
+            Some(estimate_inner_scale_from_outer(
+                gray,
+                &outer,
+                &config.marker_spec,
+                debug_cfg.store_points,
+            ))
+        } else {
+            None
+        };
+        let inner_params = inner_est.as_ref().and_then(|est| {
+            if est.status == InnerStatus::Ok {
+                let s = est
+                    .r_inner_found
+                    .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+                Some(EllipseParams {
+                    center_xy: [outer.cx, outer.cy],
+                    semi_axes: [outer.a * s, outer.b * s],
+                    angle: outer.angle,
+                })
+            } else {
+                None
+            }
+        });
+
         let marker = DetectedMarker {
             id: derived_id,
             confidence,
             center,
             ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner.as_ref().map(|ie| ellipse_to_params(ie)),
+            ellipse_inner: inner_params.clone(),
             fit: fit_metrics.clone(),
             decode: decode_metrics,
         };
@@ -494,10 +484,29 @@ pub fn detect_rings_with_debug(
                     semi_axes: [outer.a as f32, outer.b as f32],
                     angle: outer.angle as f32,
                 }),
-                ellipse_inner: inner.as_ref().map(|ie| dbg::EllipseParamsDebugV1 {
-                    center_xy: [ie.cx as f32, ie.cy as f32],
-                    semi_axes: [ie.a as f32, ie.b as f32],
-                    angle: ie.angle as f32,
+                ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
+                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
+                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
+                    angle: p.angle as f32,
+                }),
+                inner_estimation: inner_est.as_ref().map(|est| dbg::InnerEstimationDebugV1 {
+                    r_inner_expected: est.r_inner_expected,
+                    search_window: est.search_window,
+                    r_inner_found: est.r_inner_found,
+                    polarity: est.polarity.map(|p| match p {
+                        Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
+                        Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
+                    }),
+                    peak_strength: est.peak_strength,
+                    theta_consistency: est.theta_consistency,
+                    status: match est.status {
+                        InnerStatus::Ok => dbg::InnerEstimationStatusDebugV1::Ok,
+                        InnerStatus::Rejected => dbg::InnerEstimationStatusDebugV1::Rejected,
+                        InnerStatus::Failed => dbg::InnerEstimationStatusDebugV1::Failed,
+                    },
+                    reason: est.reason.clone(),
+                    radial_response_agg: est.radial_response_agg.clone(),
+                    r_samples: est.r_samples.clone(),
                 }),
                 metrics: dbg::RingFitMetricsDebugV1 {
                     inlier_ratio_inner: fit_metrics.ransac_inlier_ratio_inner,
@@ -505,7 +514,7 @@ pub fn detect_rings_with_debug(
                     mean_resid_inner: fit_metrics.rms_residual_inner.map(|v| v as f32),
                     mean_resid_outer: fit_metrics.rms_residual_outer.map(|v| v as f32),
                     arc_coverage: arc_cov,
-                    valid_inner: inner.is_some(),
+                    valid_inner: inner_params.is_some(),
                     valid_outer: true,
                 },
                 points_outer: if debug_cfg.store_points {
@@ -678,6 +687,7 @@ pub fn detect_rings_with_debug(
                 max_decode_dist: config.decode.max_decode_dist,
                 min_decode_confidence: config.decode.min_decode_confidence,
             },
+            marker_spec: config.marker_spec.clone(),
             min_semi_axis: config.min_semi_axis,
             max_semi_axis: config.max_semi_axis,
             max_aspect_ratio: config.max_aspect_ratio,
@@ -1018,32 +1028,41 @@ fn refine_with_homography_with_debug(
             }
         };
 
-        let (outer, inner, outer_ransac, inner_ransac) =
-            match fit_ring_ellipses_with_reason(&edge, config) {
-                Ok(r) => r,
-                Err(_) => {
-                    refined.push(m.clone());
-                    continue;
-                }
-            };
+        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
+            Ok(r) => r,
+            Err(_) => {
+                refined.push(m.clone());
+                continue;
+            }
+        };
 
-        let center = compute_center(&outer, inner.as_ref(), &edge);
+        let center = compute_center(&outer);
 
         let fit = FitMetrics {
             n_angles_total: edge.n_total_rays,
             n_angles_with_both_edges: edge.n_good_rays,
             n_points_outer: edge.outer_points.len(),
-            n_points_inner: edge.inner_points.len(),
+            n_points_inner: 0,
             ransac_inlier_ratio_outer: outer_ransac
                 .as_ref()
                 .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: inner_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.inner_points.len().max(1) as f32),
+            ransac_inlier_ratio_inner: None,
             rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: inner
-                .as_ref()
-                .map(|ie| rms_sampson_distance(ie, &edge.inner_points)),
+            rms_residual_inner: None,
+        };
+
+        let inner_est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
+        let inner_params = if inner_est.status == InnerStatus::Ok {
+            let s = inner_est
+                .r_inner_found
+                .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+            Some(EllipseParams {
+                center_xy: [outer.cx, outer.cy],
+                semi_axes: [outer.a * s, outer.b * s],
+                angle: outer.angle,
+            })
+        } else {
+            None
         };
 
         let decode_result = decode_marker(gray, &outer, &config.decode);
@@ -1062,7 +1081,7 @@ fn refine_with_homography_with_debug(
             confidence,
             center,
             ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner.as_ref().map(|ie| ellipse_to_params(ie)),
+            ellipse_inner: inner_params.clone(),
             fit: fit.clone(),
             decode: decode_metrics,
         };
@@ -1076,10 +1095,10 @@ fn refine_with_homography_with_debug(
                 semi_axes: [outer.a as f32, outer.b as f32],
                 angle: outer.angle as f32,
             }),
-            ellipse_inner: inner.as_ref().map(|ie| dbg::EllipseParamsDebugV1 {
-                center_xy: [ie.cx as f32, ie.cy as f32],
-                semi_axes: [ie.a as f32, ie.b as f32],
-                angle: ie.angle as f32,
+            ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
+                center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
+                semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
+                angle: p.angle as f32,
             }),
             fit,
         });
@@ -1264,8 +1283,8 @@ fn refine_with_homography(
             }
         };
 
-        // Re-fit ellipses
-        let (outer, inner, outer_ransac, inner_ransac) = match fit_ring_ellipses(&edge, config) {
+        // Re-fit outer ellipse
+        let (outer, outer_ransac) = match fit_outer_ellipse(&edge, config) {
             Some(r) => r,
             None => {
                 refined.push(m.clone());
@@ -1273,23 +1292,33 @@ fn refine_with_homography(
             }
         };
 
-        let center = compute_center(&outer, inner.as_ref(), &edge);
+        let center = compute_center(&outer);
 
         let fit = FitMetrics {
             n_angles_total: edge.n_total_rays,
             n_angles_with_both_edges: edge.n_good_rays,
             n_points_outer: edge.outer_points.len(),
-            n_points_inner: edge.inner_points.len(),
+            n_points_inner: 0,
             ransac_inlier_ratio_outer: outer_ransac
                 .as_ref()
                 .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: inner_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.inner_points.len().max(1) as f32),
+            ransac_inlier_ratio_inner: None,
             rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: inner
-                .as_ref()
-                .map(|ie| rms_sampson_distance(ie, &edge.inner_points)),
+            rms_residual_inner: None,
+        };
+
+        let inner_est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
+        let inner_params = if inner_est.status == InnerStatus::Ok {
+            let s = inner_est
+                .r_inner_found
+                .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+            Some(EllipseParams {
+                center_xy: [outer.cx, outer.cy],
+                semi_axes: [outer.a * s, outer.b * s],
+                angle: outer.angle,
+            })
+        } else {
+            None
         };
 
         // Re-decode with new ellipse
@@ -1310,7 +1339,7 @@ fn refine_with_homography(
             confidence,
             center,
             ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner.as_ref().map(|ie| ellipse_to_params(ie)),
+            ellipse_inner: inner_params,
             fit,
             decode: decode_metrics,
         });

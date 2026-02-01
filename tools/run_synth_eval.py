@@ -40,6 +40,11 @@ def main():
     parser.add_argument("--out_dir", type=str, default="tools/out/eval_run", help="Output directory")
     parser.add_argument("--codebook", type=str, default="tools/codebook.json", help="Codebook JSON path")
     parser.add_argument("--skip_gen", action="store_true", help="Skip image generation (reuse existing)")
+    parser.add_argument(
+        "--stress_inner_confusion",
+        action="store_true",
+        help="Enable gen_synth stress mode that increases inner-edge confusion.",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -58,6 +63,8 @@ def main():
             "--blur_px", str(args.blur_px),
             "--codebook", args.codebook,
         ]
+        if args.stress_inner_confusion:
+            gen_cmd.append("--stress-inner-confusion")
         result = subprocess.run(gen_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"gen_synth.py failed:\n{result.stderr}")

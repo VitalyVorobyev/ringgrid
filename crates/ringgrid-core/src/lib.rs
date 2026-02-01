@@ -20,6 +20,7 @@ pub mod debug_dump;
 pub mod edges;
 pub mod homography;
 pub mod lattice;
+pub mod marker_spec;
 pub mod preprocess;
 pub mod refine;
 pub mod ring;

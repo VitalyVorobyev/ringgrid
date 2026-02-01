@@ -20,6 +20,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -37,6 +38,41 @@ def maybe_use_agg(out_path: str | None) -> None:
 def load_json(path: str) -> dict[str, Any]:
     with open(path) as f:
         return json.load(f)
+
+
+@dataclass(frozen=True)
+class PlotStyle:
+    # Candidates / points
+    candidate_accepted: str = "lime"
+    candidate_rejected: str = "red"
+    candidate_ransac_outlier: str = "magenta"
+    candidate_prior: str = "deepskyblue"
+
+    # Geometry
+    ellipse_outer: str = "lime"
+    ellipse_inner: str = "cyan"
+
+    # Labels (use outline for contrast)
+    id_text: str = "white"
+    id_text_outline: str = "black"
+
+    # Misc
+    warning_text: str = "white"
+
+
+def add_id_label(ax, x: float, y: float, text: str, style: PlotStyle) -> None:
+    import matplotlib.patheffects as pe
+
+    ax.text(
+        x + 4,
+        y - 4,
+        text,
+        fontsize=6,
+        color=style.id_text,
+        ha="left",
+        va="bottom",
+        path_effects=[pe.Stroke(linewidth=2.5, foreground=style.id_text_outline), pe.Normal()],
+    )
 
 
 def sample_ellipse_xy(ell: dict[str, Any], n: int = 128) -> tuple[list[float], list[float]]:
@@ -73,6 +109,14 @@ def iter_stage_candidates(debug: dict[str, Any], stage_name: str) -> Iterable[di
         yield c
 
 
+def find_stage1_candidate_for_id(debug: dict[str, Any], marker_id: int) -> dict[str, Any] | None:
+    for c in iter_stage_candidates(debug, "stage1_fit_decode"):
+        did = (c.get("derived", {}) or {}).get("id")
+        if did is not None and int(did) == int(marker_id):
+            return c
+    return None
+
+
 def find_final_marker(debug: dict[str, Any], marker_id: int) -> dict[str, Any] | None:
     final_ = debug.get("stages", {}).get("final", {})
     for m in final_.get("detections", []) or []:
@@ -100,6 +144,175 @@ def compute_zoom_window(center_xy: list[float], img_w: int, img_h: int, zoom: fl
     y0 = max(0.0, cy - half)
     y1 = min(float(img_h), cy + half)
     return x0, x1, y0, y1
+
+
+def plot_candidates(
+    ax,
+    debug: dict[str, Any],
+    stage: str,
+    *,
+    marker_id: int | None,
+    only_inliers: bool,
+    inlier_ids: set[int],
+    outlier_ids: set[int],
+    alpha: float,
+    style: PlotStyle,
+) -> None:
+    stage_name = "stage0_proposals" if stage == "stage0_proposals" else "stage1_fit_decode"
+    for c in iter_stage_candidates(debug, stage_name):
+        prop = c.get("proposal", {})
+        x, y = prop.get("center_xy", [None, None])
+        if x is None or y is None:
+            continue
+
+        status = (c.get("decision", {}) or {}).get("status", "rejected")
+        derived_id = (c.get("derived", {}) or {}).get("id")
+
+        if marker_id is not None and derived_id is not None and int(derived_id) != int(marker_id):
+            continue
+        if only_inliers and derived_id is not None and int(derived_id) not in inlier_ids:
+            continue
+
+        color = style.candidate_accepted if status == "accepted" else style.candidate_rejected
+        if stage == "stage3_ransac" and derived_id is not None:
+            did = int(derived_id)
+            if did in outlier_ids:
+                color = style.candidate_ransac_outlier
+            elif did in inlier_ids:
+                color = style.candidate_accepted
+
+        ax.plot(float(x), float(y), "o", color=color, markersize=3, alpha=alpha)
+
+
+def plot_stage1_ellipses_for_id(
+    ax,
+    debug: dict[str, Any],
+    marker_id: int,
+    *,
+    alpha: float,
+    style: PlotStyle,
+) -> None:
+    for c in iter_stage_candidates(debug, "stage1_fit_decode"):
+        derived_id = (c.get("derived", {}) or {}).get("id")
+        if derived_id is None or int(derived_id) != int(marker_id):
+            continue
+        rf = c.get("ring_fit")
+        if not rf:
+            break
+        for key, color in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
+            ell = rf.get(key)
+            if ell:
+                xs, ys = sample_ellipse_xy(ell)
+                ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=alpha)
+        break
+
+
+def plot_refine(
+    ax,
+    debug: dict[str, Any],
+    *,
+    marker_id: int | None,
+    only_inliers: bool,
+    inlier_ids: set[int],
+    alpha: float,
+    show_ellipses: bool,
+    style: PlotStyle,
+) -> None:
+    refine = debug.get("stages", {}).get("stage4_refine")
+    if not refine:
+        return
+
+    for m in refine.get("refined_markers", []) or []:
+        mid = m.get("id")
+        if marker_id is not None and mid != marker_id:
+            continue
+        if only_inliers and mid is not None and int(mid) not in inlier_ids:
+            continue
+
+        px, py = m.get("prior_center_xy", [None, None])
+        rx, ry = m.get("refined_center_xy", [None, None])
+        if px is not None and py is not None:
+            ax.plot(float(px), float(py), "x", color=style.candidate_prior, markersize=6, alpha=alpha)
+        if rx is not None and ry is not None:
+            ax.plot(float(rx), float(ry), "o", color=style.candidate_accepted, markersize=4, alpha=alpha)
+            if mid is not None:
+                add_id_label(ax, float(rx), float(ry), str(mid), style)
+
+        if show_ellipses:
+            for key, color in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
+                ell = m.get(key)
+                if ell:
+                    xs, ys = sample_ellipse_xy(ell)
+                    ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=alpha)
+
+
+def plot_final(
+    ax,
+    debug: dict[str, Any],
+    *,
+    marker_id: int | None,
+    only_inliers: bool,
+    inlier_ids: set[int],
+    alpha: float,
+    show_ellipses: bool,
+    style: PlotStyle,
+) -> None:
+    final_ = debug.get("stages", {}).get("final", {})
+    for m in final_.get("detections", []) or []:
+        mid = m.get("id")
+        if marker_id is not None and mid != marker_id:
+            continue
+        if only_inliers and mid is not None and int(mid) not in inlier_ids:
+            continue
+
+        cx, cy = m.get("center", [None, None])
+        if cx is None or cy is None:
+            continue
+
+        ax.plot(float(cx), float(cy), "o", color=style.candidate_accepted, markersize=4, alpha=alpha)
+        if mid is not None:
+            add_id_label(ax, float(cx), float(cy), str(mid), style)
+
+        if show_ellipses:
+            for key, color in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
+                ell = m.get(key)
+                if ell:
+                    xs, ys = sample_ellipse_xy(ell)
+                    ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=alpha)
+
+
+def plot_edge_points_for_id(
+    ax,
+    debug: dict[str, Any],
+    marker_id: int,
+    *,
+    alpha: float,
+    style: PlotStyle,
+) -> None:
+    points_drawn = False
+    for c in iter_stage_candidates(debug, "stage1_fit_decode"):
+        derived_id = (c.get("derived", {}) or {}).get("id")
+        if derived_id is None or int(derived_id) != int(marker_id):
+            continue
+        rf = c.get("ring_fit")
+        if not rf:
+            continue
+        for key, color in (("points_outer", style.ellipse_outer), ("points_inner", style.ellipse_inner)):
+            pts = rf.get(key)
+            if pts:
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                ax.plot(xs, ys, ".", color=color, markersize=1.5, alpha=alpha)
+                points_drawn = True
+        break
+    if not points_drawn:
+        ax.text(
+            10,
+            20,
+            "edge points not present (run with --debug-store-points)",
+            color=style.warning_text,
+            fontsize=10,
+        )
 
 
 def main() -> None:
@@ -130,6 +343,8 @@ def main() -> None:
     maybe_use_agg(args.out)
     import matplotlib.pyplot as plt
 
+    style = PlotStyle()
+
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
     if schema_version != "ringgrid.debug.v1":
@@ -145,133 +360,111 @@ def main() -> None:
     img_w = int(debug.get("image", {}).get("width", img.shape[1]))
     img_h = int(debug.get("image", {}).get("height", img.shape[0]))
 
-    fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
     ax.imshow(img, cmap="gray")
 
     title = f"ringgrid debug overlay ({args.stage})"
     if args.id is not None:
         title += f" id={args.id}"
+
+        # Add inner estimation metrics (if available) to the title.
+        c = find_stage1_candidate_for_id(debug, args.id)
+        inner = None
+        if c:
+            rf = c.get("ring_fit") or {}
+            inner = rf.get("inner_estimation")
+        if inner:
+            status = inner.get("status")
+            r_found = inner.get("r_inner_found")
+            tc = inner.get("theta_consistency")
+            ps = inner.get("peak_strength")
+            reason = inner.get("reason")
+            title += (
+                f"\ninner: status={status}"
+                f" r={r_found if r_found is not None else 'NA'}"
+                f" tc={tc if tc is not None else 'NA'}"
+                f" ps={ps if ps is not None else 'NA'}"
+            )
+            if reason:
+                title += f" ({reason})"
     ax.set_title(title)
+
+    # If focusing on a marker id and the debug contains the aggregated radial
+    # response curve, plot it as an inset.
+    if args.id is not None:
+        c = find_stage1_candidate_for_id(debug, args.id)
+        inner = None
+        if c:
+            rf = c.get("ring_fit") or {}
+            inner = rf.get("inner_estimation")
+        if inner and inner.get("radial_response_agg") is not None and inner.get("r_samples") is not None:
+            try:
+                from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+                r_samples = inner["r_samples"]
+                resp = inner["radial_response_agg"]
+                inset = inset_axes(ax, width="35%", height="25%", loc="lower left", borderpad=1.0)
+                inset.plot(r_samples, resp, color="white", linewidth=1.0)
+                inset.set_title("inner dI/dr (agg)", fontsize=8, color="white")
+                inset.tick_params(axis="both", labelsize=7, colors="white")
+                inset.grid(True, alpha=0.2)
+                inset.set_facecolor((0, 0, 0, 0.35))
+            except Exception:
+                # Inset plotting is best-effort (backend/toolkit availability).
+                pass
 
     # Helpers for ransac inlier/outlier sets (ids)
     ransac = debug.get("stages", {}).get("stage3_ransac", {})
-    inlier_ids = set(ransac.get("inlier_ids", []) or [])
-    outlier_ids = set(ransac.get("outlier_ids", []) or [])
+    inlier_ids = set(int(x) for x in (ransac.get("inlier_ids", []) or []))
+    outlier_ids = set(int(x) for x in (ransac.get("outlier_ids", []) or []))
 
     # Candidate scatter
     if args.show_candidates and args.stage in ("stage0_proposals", "stage1_fit_decode", "stage3_ransac"):
-        stage_name = "stage0_proposals" if args.stage == "stage0_proposals" else "stage1_fit_decode"
-        for c in iter_stage_candidates(debug, stage_name):
-            prop = c.get("proposal", {})
-            x, y = prop.get("center_xy", [None, None])
-            if x is None or y is None:
-                continue
-
-            status = (c.get("decision", {}) or {}).get("status", "rejected")
-            derived_id = (c.get("derived", {}) or {}).get("id")
-
-            if args.id is not None and derived_id is not None and int(derived_id) != int(args.id):
-                continue
-            if args.only_inliers and derived_id is not None and int(derived_id) not in inlier_ids:
-                continue
-
-            color = "green" if status == "accepted" else "red"
-            if args.stage == "stage3_ransac" and derived_id is not None:
-                if int(derived_id) in outlier_ids:
-                    color = "magenta"
-                elif int(derived_id) in inlier_ids:
-                    color = "green"
-
-            ax.plot(float(x), float(y), "o", color=color, markersize=3, alpha=args.alpha)
+        plot_candidates(
+            ax,
+            debug,
+            args.stage,
+            marker_id=args.id,
+            only_inliers=args.only_inliers,
+            inlier_ids=inlier_ids,
+            outlier_ids=outlier_ids,
+            alpha=args.alpha,
+            style=style,
+        )
 
     # Refine stage overlay
     if args.stage == "stage4_refine":
-        refine = debug.get("stages", {}).get("stage4_refine")
-        if refine:
-            for m in refine.get("refined_markers", []) or []:
-                mid = m.get("id")
-                if args.id is not None and mid != args.id:
-                    continue
-                if args.only_inliers and mid is not None and int(mid) not in inlier_ids:
-                    continue
-                px, py = m.get("prior_center_xy", [None, None])
-                rx, ry = m.get("refined_center_xy", [None, None])
-                if px is not None and py is not None:
-                    ax.plot(float(px), float(py), "x", color="yellow", markersize=6, alpha=args.alpha)
-                if rx is not None and ry is not None:
-                    ax.plot(float(rx), float(ry), "o", color="green", markersize=4, alpha=args.alpha)
-                    ax.text(float(rx) + 4, float(ry) - 4, str(mid), fontsize=6, color="yellow")
-
-                if args.show_ellipses:
-                    for key, color in (("ellipse_outer", "lime"), ("ellipse_inner", "cyan")):
-                        ell = m.get(key)
-                        if ell:
-                            xs, ys = sample_ellipse_xy(ell)
-                            ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=args.alpha)
+        plot_refine(
+            ax,
+            debug,
+            marker_id=args.id,
+            only_inliers=args.only_inliers,
+            inlier_ids=inlier_ids,
+            alpha=args.alpha,
+            show_ellipses=args.show_ellipses,
+            style=style,
+        )
 
     # Final detections overlay
     if args.stage == "final":
-        final_ = debug.get("stages", {}).get("final", {})
-        for m in final_.get("detections", []) or []:
-            mid = m.get("id")
-            if args.id is not None and mid != args.id:
-                continue
-            if args.only_inliers and mid is not None and int(mid) not in inlier_ids:
-                continue
-
-            cx, cy = m.get("center", [None, None])
-            if cx is None or cy is None:
-                continue
-
-            ax.plot(float(cx), float(cy), "o", color="green", markersize=4, alpha=args.alpha)
-            if mid is not None:
-                ax.text(float(cx) + 4, float(cy) - 4, str(mid), fontsize=6, color="yellow")
-
-            if args.show_ellipses:
-                for key, color in (("ellipse_outer", "lime"), ("ellipse_inner", "cyan")):
-                    ell = m.get(key)
-                    if ell:
-                        xs, ys = sample_ellipse_xy(ell)
-                        ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=args.alpha)
+        plot_final(
+            ax,
+            debug,
+            marker_id=args.id,
+            only_inliers=args.only_inliers,
+            inlier_ids=inlier_ids,
+            alpha=args.alpha,
+            show_ellipses=args.show_ellipses,
+            style=style,
+        )
 
     # If focusing on an id and not in final/refine stage, draw stage1 ellipses if available.
     if args.id is not None and args.show_ellipses and args.stage in ("stage0_proposals", "stage1_fit_decode", "stage3_ransac"):
-        for c in iter_stage_candidates(debug, "stage1_fit_decode"):
-            derived_id = (c.get("derived", {}) or {}).get("id")
-            if derived_id is None or int(derived_id) != int(args.id):
-                continue
-            rf = c.get("ring_fit")
-            if not rf:
-                break
-            for key, color in (("ellipse_outer", "lime"), ("ellipse_inner", "cyan")):
-                ell = rf.get(key)
-                if ell:
-                    xs, ys = sample_ellipse_xy(ell)
-                    ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=args.alpha)
-            break
+        plot_stage1_ellipses_for_id(ax, debug, args.id, alpha=args.alpha, style=style)
 
     # Optional edge points when focusing on an id
     if args.show_edge_points and args.id is not None:
-        # Prefer refine stage points if present, otherwise stage1 candidate ring_fit points
-        # (Stage1 data is keyed by candidate index; we match by derived id.)
-        points_drawn = False
-        for c in iter_stage_candidates(debug, "stage1_fit_decode"):
-            derived_id = (c.get("derived", {}) or {}).get("id")
-            if derived_id is None or int(derived_id) != int(args.id):
-                continue
-            rf = c.get("ring_fit")
-            if not rf:
-                continue
-            for key, color in (("points_outer", "lime"), ("points_inner", "cyan")):
-                pts = rf.get(key)
-                if pts:
-                    xs = [p[0] for p in pts]
-                    ys = [p[1] for p in pts]
-                    ax.plot(xs, ys, ".", color=color, markersize=1.5, alpha=args.alpha)
-                    points_drawn = True
-            break
-        if not points_drawn:
-            ax.text(10, 20, "edge points not present (run with --debug-store-points)", color="white", fontsize=10)
+        plot_edge_points_for_id(ax, debug, args.id, alpha=args.alpha, style=style)
 
     # Default axes extents in image coordinates
     ax.set_xlim(0, img_w)
@@ -299,6 +492,7 @@ def main() -> None:
             ax.set_xlim(x0, x1)
             ax.set_ylim(y1, y0)  # invert y for image coords
     ax.set_aspect("equal")
+    fig.tight_layout()
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)

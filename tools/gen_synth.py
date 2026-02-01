@@ -255,6 +255,7 @@ def render_board(
     inner_radius_mm: float,
     code_band_outer_mm: float,
     code_band_inner_mm: float,
+    stress_inner_confusion: bool = False,
 ) -> np.ndarray:
     """Render the board into a float64 image [0, 1].
 
@@ -302,7 +303,7 @@ def render_board(
         dist_sq = dx * dx + dy * dy
 
         # Outer ring edge: dark ring at outer_radius
-        ring_width = outer_radius_mm * 0.12
+        ring_width = outer_radius_mm * (0.16 if stress_inner_confusion else 0.12)
         outer_mask = (dist_sq >= (outer_radius_mm - ring_width) ** 2) & \
                      (dist_sq <= (outer_radius_mm + ring_width) ** 2)
         img_flat[outer_mask] = 0.1  # dark
@@ -323,7 +324,10 @@ def render_board(
             sector = ((angles / (2 * math.pi) + 0.5) * 16).astype(int) % 16
             # Look up code bits
             bits = np.array([(cw >> s) & 1 for s in range(16)])
-            pixel_vals = np.where(bits[sector] == 1, 0.9, 0.15)
+            if stress_inner_confusion:
+                pixel_vals = np.where(bits[sector] == 1, 1.0, 0.0)
+            else:
+                pixel_vals = np.where(bits[sector] == 1, 0.9, 0.15)
             img_flat[code_mask] = pixel_vals
 
     return img_flat.reshape(img_h, img_w)
@@ -449,6 +453,7 @@ def generate_one_sample(
     blur_px: float,
     projective: bool,
     seed: int,
+    stress_inner_confusion: bool = False,
 ) -> dict:
     """Generate one synthetic image + ground truth."""
     rng = np.random.RandomState(seed + idx)
@@ -468,6 +473,7 @@ def generate_one_sample(
     img = render_board(
         img_w, img_h, markers, codebook, H,
         outer_radius, inner_radius, code_band_outer, code_band_inner,
+        stress_inner_confusion=stress_inner_confusion,
     )
 
     # Post-processing
@@ -516,6 +522,7 @@ def generate_one_sample(
         "inner_radius_mm": inner_radius,
         "homography": H.tolist(),
         "blur_px": blur_px,
+        "stress_inner_confusion": stress_inner_confusion,
         "seed": seed + idx,
         "n_markers": len(markers),
         "markers": gt_markers,
@@ -544,6 +551,11 @@ def main() -> None:
     parser.add_argument("--n_markers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--blur_px", type=float, default=1.0)
+    parser.add_argument(
+        "--stress-inner-confusion",
+        action="store_true",
+        help="Stress case: increase code-band contrast and edge thickness to confuse inner edge sampling",
+    )
     parser.add_argument("--projective", action="store_true", default=True)
     parser.add_argument("--no_projective", dest="projective", action="store_false")
     parser.add_argument("--codebook", type=str, default="tools/codebook.json")
@@ -588,6 +600,7 @@ def main() -> None:
             blur_px=args.blur_px,
             projective=args.projective,
             seed=args.seed,
+            stress_inner_confusion=args.stress_inner_confusion,
         )
         vis = sum(1 for m in gt["markers"] if m["visible"])
         print(f"  [{i+1}/{args.n_images}] {gt['image_file']}: "

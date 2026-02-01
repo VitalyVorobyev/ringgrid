@@ -82,6 +82,33 @@ pub fn bilinear_sample_u8(img: &GrayImage, x: f32, y: f32) -> f32 {
     (1.0 - fx) * (1.0 - fy) * p00 + fx * (1.0 - fy) * p10 + (1.0 - fx) * fy * p01 + fx * fy * p11
 }
 
+/// Sample a grayscale image at sub-pixel position using bilinear interpolation.
+/// Returns intensity in [0, 1] or `None` if sampling is out of bounds.
+#[inline]
+pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32> {
+    let (w, h) = img.dimensions();
+    if x < 0.0 || y < 0.0 {
+        return None;
+    }
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    if x0 + 1 >= w || y0 + 1 >= h {
+        return None;
+    }
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let p00 = img.get_pixel(x0, y0)[0] as f32 / 255.0;
+    let p10 = img.get_pixel(x0 + 1, y0)[0] as f32 / 255.0;
+    let p01 = img.get_pixel(x0, y0 + 1)[0] as f32 / 255.0;
+    let p11 = img.get_pixel(x0 + 1, y0 + 1)[0] as f32 / 255.0;
+    Some(
+        (1.0 - fx) * (1.0 - fy) * p00
+            + fx * (1.0 - fy) * p10
+            + (1.0 - fx) * fy * p01
+            + fx * fy * p11,
+    )
+}
+
 /// Sample edges along radial rays from a candidate center.
 ///
 /// Returns `None` if insufficient rays have valid ring detections.

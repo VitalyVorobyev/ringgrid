@@ -10,6 +10,7 @@
 pub mod decode;
 pub mod detect;
 pub mod edge_sample;
+pub mod inner_estimate;
 pub mod proposal;
 
 pub use detect::{detect_rings, detect_rings_with_debug, DebugCollectConfig, DetectConfig};

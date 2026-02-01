@@ -38,10 +38,9 @@ synth_dir="$1"
 idx="$2"
 shift 2
 
-declare -a viz_extra=()
+# Optional: pass through extra args to tools/viz_detect_debug.py (recommended with a `--` separator).
 if [[ $# -gt 0 && "${1:-}" == "--" ]]; then
   shift
-  viz_extra=("$@")
 fi
 
 printf -v idx4 "%04d" "$idx"
@@ -94,13 +93,13 @@ if [[ -n "${SHOW:-}" ]]; then
   "${py[@]}" tools/viz_detect_debug.py \
     --image "$img" \
     --debug_json "$dbg" \
-    ${viz_extra[@]+"${viz_extra[@]}"}
+    "$@"
 else
   "${py[@]}" tools/viz_detect_debug.py \
     --image "$img" \
     --debug_json "$dbg" \
     --out "$overlay" \
-    ${viz_extra[@]+"${viz_extra[@]}"}
+    "$@"
 fi
 
 echo "Wrote:"

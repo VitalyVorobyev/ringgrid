@@ -19,13 +19,18 @@ import json
 import math
 import sys
 from pathlib import Path
+from typing import Any, Optional
 
 
-def load_gt(path: str) -> list[dict]:
-    """Load ground truth markers (visible only)."""
+def load_gt_data(path: str) -> dict[str, Any]:
+    """Load ground truth JSON."""
     with open(path) as f:
-        data = json.load(f)
-    return [m for m in data["markers"] if m.get("visible", True)]
+        return json.load(f)
+
+
+def visible_gt_markers(gt_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Load ground truth markers (visible only)."""
+    return [m for m in gt_data["markers"] if m.get("visible", True)]
 
 
 def load_pred(path: str) -> tuple[list[dict], dict]:
@@ -40,10 +45,43 @@ def dist2(a: list, b: list) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
+def pred_inner_outer_ratio(pred_marker: dict[str, Any]) -> Optional[float]:
+    eo = pred_marker.get("ellipse_outer")
+    ei = pred_marker.get("ellipse_inner")
+    if not eo or not ei:
+        return None
+    oa, ob = (eo.get("semi_axes") or [None, None])[:2]
+    ia, ib = (ei.get("semi_axes") or [None, None])[:2]
+    if oa is None or ob is None or ia is None or ib is None:
+        return None
+    oa = float(oa)
+    ob = float(ob)
+    ia = float(ia)
+    ib = float(ib)
+    if oa <= 0.0 or ob <= 0.0:
+        return None
+    return 0.5 * ((ia / oa) + (ib / ob))
+
+
+def stats_1d(xs: list[float]) -> dict[str, float]:
+    if not xs:
+        return {}
+    xs = sorted(xs)
+    return {
+        "mean": sum(xs) / len(xs),
+        "median": xs[len(xs) // 2],
+        "p95": xs[int(0.95 * len(xs))],
+        "max": xs[-1],
+    }
+
+
 def score(
     gt_markers: list[dict],
     pred_markers: list[dict],
     gate: float = 8.0,
+    *,
+    expected_inner_ratio: Optional[float] = None,
+    inner_ratio_tol: float = 0.08,
 ) -> dict:
     """Score predictions against ground truth.
 
@@ -157,7 +195,7 @@ def score(
     # Also count predictions without ID as FP
     n_pred_no_id = sum(1 for m in pred_markers if m.get("id") is None)
 
-    return {
+    result = {
         "n_gt": n_gt,
         "n_pred": n_pred,
         "n_pred_with_id": n_pred_with_id,
@@ -175,6 +213,48 @@ def score(
         )[:20],
         "gate_px": gate,
     }
+
+    if expected_inner_ratio is not None:
+        pred_with_both = sum(
+            1
+            for m in pred_markers
+            if m.get("ellipse_outer") is not None and m.get("ellipse_inner") is not None
+        )
+
+        rows = []
+        ratios = []
+        abs_errs = []
+        for _, pred_idx, center_err in matches:
+            m = pred_markers[pred_idx]
+            ratio = pred_inner_outer_ratio(m)
+            if ratio is None:
+                continue
+            ae = abs(ratio - expected_inner_ratio)
+            ratios.append(ratio)
+            abs_errs.append(ae)
+            rows.append(
+                {
+                    "id": m.get("id"),
+                    "pred_ratio": ratio,
+                    "abs_err": ae,
+                    "center_err_px": center_err,
+                    "confidence": m.get("confidence", 0.0),
+                }
+            )
+
+        rows.sort(key=lambda r: -r["abs_err"])
+
+        result["inner_ratio"] = {
+            "expected": expected_inner_ratio,
+            "tol": inner_ratio_tol,
+            "n_pred_with_both_ellipses": pred_with_both,
+            "n_tp_with_both_ellipses": len(ratios),
+            "ratio_stats": stats_1d(ratios),
+            "abs_err_stats": stats_1d(abs_errs),
+            "worst5": rows[:5],
+        }
+
+    return result
 
 
 def extract_ransac_stats(pred_data: dict) -> dict | None:
@@ -233,6 +313,27 @@ def print_report(result: dict) -> None:
         print(f"  mean reproj:   {rs['mean_err_px']:.2f} px")
         print(f"  p95 reproj:    {rs['p95_err_px']:.2f} px")
 
+    ir = result.get("inner_ratio")
+    if ir:
+        print("\nInner/outer ellipse ratio (TP only):")
+        print(f"  expected:      {ir['expected']:.4f}")
+        print(f"  tol:           {ir['tol']:.4f}")
+        print(f"  pred w/ both:  {ir['n_pred_with_both_ellipses']}")
+        print(f"  TP w/ both:    {ir['n_tp_with_both_ellipses']}")
+        ars = ir.get("abs_err_stats", {}) or {}
+        if ars:
+            print(f"  abs_err mean:  {ars['mean']:.4f}")
+            print(f"  abs_err p95:   {ars['p95']:.4f}")
+            print(f"  abs_err max:   {ars['max']:.4f}")
+        worst = ir.get("worst5") or []
+        if worst:
+            print("  worst5:")
+            for r in worst:
+                tag = " !!" if r["abs_err"] > ir["tol"] else ""
+                print(
+                    f"    id={r['id']:4d} ratio={r['pred_ratio']:.4f} abs_err={r['abs_err']:.4f}{tag}"
+                )
+
     print()
 
 
@@ -242,12 +343,50 @@ def main():
     parser.add_argument("--pred", required=True, help="Path to detection result JSON")
     parser.add_argument("--gate", type=float, default=8.0, help="Max center distance for matching (px)")
     parser.add_argument("--out", type=str, default=None, help="Optional: write scores JSON to this path")
+    parser.add_argument(
+        "--check-inner-ratio",
+        action="store_true",
+        help="Compute inner/outer ellipse ratio stats (requires ellipse_outer+ellipse_inner in predictions).",
+    )
+    parser.add_argument(
+        "--inner-ratio-tol",
+        type=float,
+        default=0.08,
+        help="Tolerance for flagging |ratio-expected| outliers (used with --check-inner-ratio).",
+    )
     args = parser.parse_args()
 
-    gt_markers = load_gt(args.gt)
+    gt_data = load_gt_data(args.gt)
+    gt_markers = visible_gt_markers(gt_data)
     pred_markers, pred_data = load_pred(args.pred)
 
-    result = score(gt_markers, pred_markers, gate=args.gate)
+    expected_ratio = None
+    if args.check_inner_ratio:
+        inner_mm = gt_data.get("inner_radius_mm")
+        outer_mm = gt_data.get("outer_radius_mm")
+        stress = bool(gt_data.get("stress_inner_confusion", False))
+        if inner_mm is not None and outer_mm is not None and float(outer_mm) > 0.0:
+            # Keep in sync with the detector's marker spec and the synthetic renderer:
+            # - gen_synth draws rings with width `outer_radius * 0.12` (or 0.16 in stress mode)
+            # - the detector's outer/inner ellipses correspond to the *outer/inner boundary*
+            #   of the merged dark band, i.e. (inner_radius - ring_width) / (outer_radius + ring_width).
+            ring_width = float(outer_mm) * (0.16 if stress else 0.12)
+            denom = float(outer_mm) + ring_width
+            if denom > 0.0:
+                expected_ratio = (float(inner_mm) - ring_width) / denom
+        else:
+            print(
+                "WARNING: GT missing inner_radius_mm/outer_radius_mm; skipping inner ratio stats.",
+                file=sys.stderr,
+            )
+
+    result = score(
+        gt_markers,
+        pred_markers,
+        gate=args.gate,
+        expected_inner_ratio=expected_ratio,
+        inner_ratio_tol=args.inner_ratio_tol,
+    )
 
     # Attach RANSAC stats from prediction file if present
     ransac_stats = extract_ransac_stats(pred_data)

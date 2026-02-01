@@ -44,6 +44,7 @@ pub struct ParamsDebugV1 {
     pub proposal: ProposalParamsV1,
     pub edge_sample: EdgeSampleParamsV1,
     pub decode: DecodeParamsV1,
+    pub marker_spec: crate::marker_spec::MarkerSpec,
 
     pub min_semi_axis: f64,
     pub max_semi_axis: f64,
@@ -170,6 +171,8 @@ pub struct RingFitDebugV1 {
     pub ellipse_outer: Option<EllipseParamsDebugV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_inner: Option<EllipseParamsDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_estimation: Option<InnerEstimationDebugV1>,
     pub metrics: RingFitMetricsDebugV1,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub points_outer: Option<Vec<[f32; 2]>>,
@@ -207,6 +210,42 @@ pub struct RingFitMetricsDebugV1 {
     pub arc_coverage: f32,
     pub valid_inner: bool,
     pub valid_outer: bool,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InnerPolarityDebugV1 {
+    Pos,
+    Neg,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InnerEstimationStatusDebugV1 {
+    Ok,
+    Rejected,
+    Failed,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InnerEstimationDebugV1 {
+    pub r_inner_expected: f32,
+    pub search_window: [f32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r_inner_found: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<InnerPolarityDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_strength: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theta_consistency: Option<f32>,
+    pub status: InnerEstimationStatusDebugV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radial_response_agg: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r_samples: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -370,6 +409,7 @@ mod tests {
                     max_decode_dist: 3,
                     min_decode_confidence: 0.15,
                 },
+                marker_spec: crate::marker_spec::MarkerSpec::default(),
                 min_semi_axis: 3.0,
                 max_semi_axis: 15.0,
                 max_aspect_ratio: 3.0,

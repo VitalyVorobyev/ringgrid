@@ -64,6 +64,22 @@ enum Commands {
         /// Disable refinement using fitted homography.
         #[arg(long)]
         no_refine: bool,
+
+        /// Disable homography-guided completion (fitting missing IDs at H-projected locations).
+        #[arg(long)]
+        no_complete: bool,
+
+        /// Completion reprojection gate in pixels (tight).
+        #[arg(long, default_value = "3.0")]
+        complete_reproj_gate: f64,
+
+        /// Minimum completion fit confidence in [0, 1].
+        #[arg(long, default_value = "0.45")]
+        complete_min_conf: f32,
+
+        /// Completion ROI radius in pixels for edge sampling (default: 0.75 * marker_diameter, clamped).
+        #[arg(long)]
+        complete_roi_radius: Option<f64>,
     },
 
     /// Print embedded codebook statistics.
@@ -103,6 +119,10 @@ fn main() -> CliResult<()> {
             ransac_iters,
             no_global_filter,
             no_refine,
+            no_complete,
+            complete_reproj_gate,
+            complete_min_conf,
+            complete_roi_radius,
         } => run_detect(
             &image_path,
             &out,
@@ -115,6 +135,10 @@ fn main() -> CliResult<()> {
             ransac_iters,
             no_global_filter,
             no_refine,
+            no_complete,
+            complete_reproj_gate,
+            complete_min_conf,
+            complete_roi_radius,
         ),
 
         Commands::CodebookInfo => run_codebook_info(),
@@ -217,6 +241,10 @@ fn run_detect(
     ransac_iters: usize,
     no_global_filter: bool,
     no_refine: bool,
+    no_complete: bool,
+    complete_reproj_gate: f64,
+    complete_min_conf: f32,
+    complete_roi_radius: Option<f64>,
 ) -> CliResult<()> {
     tracing::info!("Loading image: {}", image_path.display());
 
@@ -250,6 +278,13 @@ fn run_detect(
     config.refine_with_h = !no_refine;
     config.ransac_homography.inlier_threshold = ransac_thresh_px;
     config.ransac_homography.max_iters = ransac_iters;
+
+    // Homography-guided completion options
+    config.completion.enable = !no_complete;
+    config.completion.reproj_gate_px = complete_reproj_gate as f32;
+    config.completion.min_fit_confidence = complete_min_conf;
+    config.completion.roi_radius_px =
+        complete_roi_radius.unwrap_or((marker_diameter * 0.75).clamp(24.0, 80.0)) as f32;
 
     // Run detection pipeline (optionally with debug dump)
     let deprecated_debug_path = debug_path;

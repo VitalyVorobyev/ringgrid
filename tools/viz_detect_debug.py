@@ -52,6 +52,13 @@ class PlotStyle:
     ellipse_outer: str = "lime"
     ellipse_inner: str = "cyan"
 
+    # Completion (H-guided)
+    completion_projected_added: str = "cyan"
+    completion_projected_failed: str = "red"
+    completion_projected_skipped: str = "gray"
+    completion_added_marker: str = "cyan"
+    completion_added_text: str = "cyan"
+
     # Labels (use outline for contrast)
     id_text: str = "white"
     id_text_outline: str = "black"
@@ -60,7 +67,16 @@ class PlotStyle:
     warning_text: str = "white"
 
 
-def add_id_label(ax, x: float, y: float, text: str, style: PlotStyle) -> None:
+def add_id_label(
+    ax,
+    x: float,
+    y: float,
+    text: str,
+    style: PlotStyle,
+    *,
+    text_color: str | None = None,
+    outline_color: str | None = None,
+) -> None:
     import matplotlib.patheffects as pe
 
     ax.text(
@@ -68,10 +84,13 @@ def add_id_label(ax, x: float, y: float, text: str, style: PlotStyle) -> None:
         y - 4,
         text,
         fontsize=6,
-        color=style.id_text,
+        color=text_color or style.id_text,
         ha="left",
         va="bottom",
-        path_effects=[pe.Stroke(linewidth=2.5, foreground=style.id_text_outline), pe.Normal()],
+        path_effects=[
+            pe.Stroke(linewidth=2.5, foreground=outline_color or style.id_text_outline),
+            pe.Normal(),
+        ],
     )
 
 
@@ -133,6 +152,62 @@ def refine_entry_for_id(debug: dict[str, Any], marker_id: int) -> dict[str, Any]
         if m.get("id") == marker_id:
             return m
     return None
+
+
+def completion_attempts(debug: dict[str, Any]) -> list[dict[str, Any]]:
+    stage = debug.get("stages", {}).get("stage5_completion")
+    if not stage:
+        return []
+    return stage.get("attempted", []) or []
+
+
+def completion_added_ids(debug: dict[str, Any]) -> set[int]:
+    out: set[int] = set()
+    for a in completion_attempts(debug):
+        if a.get("status") == "added":
+            out.add(int(a.get("id")))
+    return out
+
+
+def plot_completion(
+    ax,
+    debug: dict[str, Any],
+    *,
+    marker_id: int | None,
+    alpha: float,
+    show_ellipses: bool,
+    style: PlotStyle,
+) -> None:
+    for a in completion_attempts(debug):
+        mid = a.get("id")
+        if mid is None:
+            continue
+        mid = int(mid)
+        if marker_id is not None and mid != int(marker_id):
+            continue
+
+        cx, cy = a.get("projected_center_xy", [None, None])
+        if cx is None or cy is None:
+            continue
+
+        status = a.get("status")
+        if status == "added":
+            color = style.completion_projected_added
+        elif status in ("failed_fit", "failed_gate"):
+            color = style.completion_projected_failed
+        else:
+            color = style.completion_projected_skipped
+
+        ax.plot(float(cx), float(cy), "x", color=color, markersize=6, alpha=alpha)
+
+        if show_ellipses:
+            fit = a.get("fit")
+            if fit:
+                for key, ecolor in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
+                    ell = fit.get(key)
+                    if ell:
+                        xs, ys = sample_ellipse_xy(ell)
+                        ax.plot(xs, ys, "-", color=ecolor, linewidth=1.0, alpha=alpha)
 
 
 def compute_zoom_window(center_xy: list[float], img_w: int, img_h: int, zoom: float) -> tuple[float, float, float, float]:
@@ -253,6 +328,7 @@ def plot_final(
     marker_id: int | None,
     only_inliers: bool,
     inlier_ids: set[int],
+    completion_added: set[int],
     alpha: float,
     show_ellipses: bool,
     style: PlotStyle,
@@ -269,9 +345,18 @@ def plot_final(
         if cx is None or cy is None:
             continue
 
-        ax.plot(float(cx), float(cy), "o", color=style.candidate_accepted, markersize=4, alpha=alpha)
+        is_completion = mid is not None and int(mid) in completion_added
+        dot_color = style.completion_added_marker if is_completion else style.candidate_accepted
+        ax.plot(float(cx), float(cy), "o", color=dot_color, markersize=4, alpha=alpha)
         if mid is not None:
-            add_id_label(ax, float(cx), float(cy), str(mid), style)
+            add_id_label(
+                ax,
+                float(cx),
+                float(cy),
+                str(mid),
+                style,
+                text_color=style.completion_added_text if is_completion else None,
+            )
 
         if show_ellipses:
             for key, color in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
@@ -324,7 +409,14 @@ def main() -> None:
         "--stage",
         type=str,
         default="final",
-        choices=["final", "stage0_proposals", "stage1_fit_decode", "stage3_ransac", "stage4_refine"],
+        choices=[
+            "final",
+            "stage0_proposals",
+            "stage1_fit_decode",
+            "stage3_ransac",
+            "stage4_refine",
+            "stage5_completion",
+        ],
     )
     parser.add_argument("--only-inliers", action="store_true")
     parser.add_argument("--id", type=int, default=None, help="Focus on a single decoded id")
@@ -334,11 +426,19 @@ def main() -> None:
     parser.add_argument("--show-candidates", dest="show_candidates", action="store_true", default=True)
     parser.add_argument("--no-candidates", dest="show_candidates", action="store_false")
     parser.add_argument("--show-edge-points", action="store_true", default=False)
+    parser.add_argument(
+        "--show-completion",
+        action="store_true",
+        default=False,
+        help="Overlay homography-guided completion projected centers (if present in debug dump).",
+    )
     parser.add_argument("--alpha", type=float, default=0.8)
     args = parser.parse_args()
 
     if args.id is not None and args.zoom is None:
         args.zoom = 4.0
+    if args.stage == "stage5_completion":
+        args.show_completion = True
 
     maybe_use_agg(args.out)
     import matplotlib.pyplot as plt
@@ -417,6 +517,7 @@ def main() -> None:
     ransac = debug.get("stages", {}).get("stage3_ransac", {})
     inlier_ids = set(int(x) for x in (ransac.get("inlier_ids", []) or []))
     outlier_ids = set(int(x) for x in (ransac.get("outlier_ids", []) or []))
+    comp_added = completion_added_ids(debug)
 
     # Candidate scatter
     if args.show_candidates and args.stage in ("stage0_proposals", "stage1_fit_decode", "stage3_ransac"):
@@ -453,6 +554,18 @@ def main() -> None:
             marker_id=args.id,
             only_inliers=args.only_inliers,
             inlier_ids=inlier_ids,
+            completion_added=comp_added,
+            alpha=args.alpha,
+            show_ellipses=args.show_ellipses,
+            style=style,
+        )
+
+    # Completion overlay (projected centers + optional fit ellipses)
+    if args.show_completion and args.stage in ("final", "stage5_completion"):
+        plot_completion(
+            ax,
+            debug,
+            marker_id=args.id,
             alpha=args.alpha,
             show_ellipses=args.show_ellipses,
             style=style,

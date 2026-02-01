@@ -13,6 +13,7 @@ Robust ring-grid calibration target detector in **Rust** (no OpenCV).
 - 16-sector decoding with cyclic rotation matching (tries all 16 rotations) and inverted-polarity fallback.
 - Deduplication (by center proximity, then by best confidence per ID).
 - Optional global homography RANSAC filter using the embedded board spec, plus a 1-iteration “refine-with-H” pass.
+- Homography-guided completion pass to fit missing board IDs at H-projected locations (optional; conservative gates).
 - Python tools for synthetic data generation, scoring, and visualization.
 
 ## Repository structure
@@ -96,6 +97,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
   - Tuning: `--marker-diameter <px>`
   - Global filter: `--ransac-thresh-px <px>`, `--ransac-iters <n>`, `--no-global-filter`
   - Refinement: `--no-refine`
+  - Completion (runs only when a homography is available): `--no-complete`, `--complete-reproj-gate <px>`, `--complete-min-conf <0..1>`, `--complete-roi-radius <px>`
 - `ringgrid codebook-info` — print embedded codebook stats.
 - `ringgrid board-info` — print embedded board spec summary.
 - `ringgrid decode-test --word 0xABCD` — decode a raw 16-bit word against the embedded codebook.
@@ -112,13 +114,13 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
   - `homography`: optional `[[f64;3];3]` (row-major), present when fitted
   - `ransac`: optional RANSAC stats, present when fitted
 - Per marker (`DetectedMarker`):
-  - `id`: optional (absent if decoding rejected)
+  - `id`: optional (present when decoded, or when accepted by homography-guided completion)
   - `confidence`: `0..1`
   - `center`: `[x, y]` in pixels
   - `ellipse_outer`: optional `{ center_xy, semi_axes, angle }`
   - `ellipse_inner`: optional `{ center_xy, semi_axes, angle }`
   - `fit`: edge/fit quality metrics
-  - `decode`: optional `{ observed_word, best_id, best_rotation, best_dist, margin, decode_confidence }`
+  - `decode`: optional `{ observed_word, best_id, best_rotation, best_dist, margin, decode_confidence }` (may be absent for completion-assigned IDs)
 
 ### Debug dump JSON (`--debug-json`)
 
@@ -145,6 +147,16 @@ python3 tools/viz_detect_debug.py \
   --image tools/out/synth_001/img_0000.png \
   --debug_json tools/out/synth_001/debug_0000.json \
   --out tools/out/synth_001/det_overlay_0000.png
+```
+
+Inspect the homography-guided completion stage (projected centers and per-ID decisions):
+
+```bash
+python3 tools/viz_detect_debug.py \
+  --image tools/out/synth_001/img_0000.png \
+  --debug_json tools/out/synth_001/debug_0000.json \
+  --stage stage5_completion \
+  --out tools/out/synth_001/completion_overlay_0000.png
 ```
 
 ### Synthetic ground truth (`tools/gen_synth.py`)

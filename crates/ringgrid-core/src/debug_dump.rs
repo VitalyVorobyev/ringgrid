@@ -109,6 +109,8 @@ pub struct StagesDebugV1 {
     pub stage3_ransac: RansacDebugV1,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage4_refine: Option<RefineDebugV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage5_completion: Option<CompletionDebugV1>,
     #[serde(rename = "final")]
     pub final_: FinalDebugV1,
 }
@@ -355,6 +357,62 @@ pub struct RefinedMarkerDebugV1 {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionDebugV1 {
+    pub enabled: bool,
+    pub params: CompletionParamsDebugV1,
+    pub attempted: Vec<CompletionAttemptDebugV1>,
+    pub stats: CompletionStatsDebugV1,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionParamsDebugV1 {
+    pub roi_radius_px: f32,
+    pub reproj_gate_px: f32,
+    pub min_fit_confidence: f32,
+    pub min_arc_coverage: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<usize>,
+    pub image_margin_px: f32,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionAttemptStatusDebugV1 {
+    Added,
+    SkippedPresent,
+    SkippedOob,
+    FailedFit,
+    FailedGate,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionAttemptDebugV1 {
+    pub id: usize,
+    pub projected_center_xy: [f32; 2],
+    pub status: CompletionAttemptStatusDebugV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reproj_err_px: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit_confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<RingFitDebugV1>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionStatsDebugV1 {
+    pub n_candidates_total: usize,
+    pub n_in_image: usize,
+    pub n_attempted: usize,
+    pub n_added: usize,
+    pub n_failed_fit: usize,
+    pub n_failed_gate: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FinalDebugV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h_final: Option<[[f64; 3]; 3]>,
@@ -463,6 +521,7 @@ mod tests {
                     notes: Vec::new(),
                 },
                 stage4_refine: None,
+                stage5_completion: None,
                 final_: FinalDebugV1 {
                     h_final: None,
                     detections: Vec::new(),

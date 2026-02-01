@@ -545,7 +545,7 @@ def generate_one_sample(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic ringgrid datasets")
-    parser.add_argument("--out_dir", type=str, default="tools/out/synth_001")
+    parser.add_argument("--out_dir", type=str, default="tools/out/synth_002")
     parser.add_argument("--n_images", type=int, default=3)
     parser.add_argument("--img_w", type=int, default=1280)
     parser.add_argument("--img_h", type=int, default=960)
@@ -564,7 +564,7 @@ def main() -> None:
     parser.add_argument(
         "--tilt_strength",
         type=float,
-        default=0.3,
+        default=0.9,
         help=(
             "Projective tilt strength used by the homography sampler (0 disables perspective). "
             "Larger values produce stronger projective distortion."

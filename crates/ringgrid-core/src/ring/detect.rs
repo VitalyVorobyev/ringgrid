@@ -27,6 +27,41 @@ pub struct DebugCollectConfig {
     pub store_points: bool,
 }
 
+/// Configuration for homography-guided completion: attempt local fits for
+/// missing IDs at H-projected board locations.
+#[derive(Debug, Clone)]
+pub struct CompletionParams {
+    /// Enable completion (runs only when a valid homography is available).
+    pub enable: bool,
+    /// Radial sampling extent (pixels) used for edge sampling around the prior center.
+    pub roi_radius_px: f32,
+    /// Maximum allowed reprojection error (pixels) between the fitted center and
+    /// the H-projected board center.
+    pub reproj_gate_px: f32,
+    /// Minimum fit confidence in [0, 1].
+    pub min_fit_confidence: f32,
+    /// Minimum arc coverage (fraction of rays with both edges found).
+    pub min_arc_coverage: f32,
+    /// Optional cap on how many completion fits to attempt (in ID order).
+    pub max_attempts: Option<usize>,
+    /// Skip attempts whose projected center is too close to the image boundary.
+    pub image_margin_px: f32,
+}
+
+impl Default for CompletionParams {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            roi_radius_px: 24.0,
+            reproj_gate_px: 3.0,
+            min_fit_confidence: 0.45,
+            min_arc_coverage: 0.35,
+            max_attempts: None,
+            image_margin_px: 10.0,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
@@ -34,6 +69,7 @@ pub struct DetectConfig {
     pub edge_sample: EdgeSampleConfig,
     pub decode: DecodeConfig,
     pub marker_spec: MarkerSpec,
+    pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
     pub min_semi_axis: f64,
     /// Maximum semi-axis for a valid outer ellipse.
@@ -57,6 +93,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            completion: CompletionParams::default(),
             min_semi_axis: 3.0,
             max_semi_axis: 15.0,
             max_aspect_ratio: 3.0,
@@ -251,7 +288,7 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
     let h_matrix = h_result.as_ref().map(|r| &r.h);
 
     // Stage 7: Optional refinement using H
-    let final_markers = if config.refine_with_h {
+    let mut final_markers = if config.refine_with_h {
         if let Some(h) = h_matrix {
             if filtered.len() >= 10 {
                 refine_with_homography(gray, &filtered, h, config)
@@ -264,6 +301,14 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
     } else {
         filtered
     };
+
+    // Stage 8: Homography-guided completion (only when H exists)
+    if config.completion.enable {
+        if let Some(h) = h_matrix {
+            let (_stats, _attempts) =
+                complete_with_h(gray, h, &mut final_markers, config, false, false);
+        }
+    }
 
     // Refit H after refinement if we have enough markers
     let (final_h, final_ransac) = if config.refine_with_h && final_markers.len() >= 10 {
@@ -610,7 +655,7 @@ pub fn detect_rings_with_debug(
     let h_matrix = h_result.as_ref().map(|r| &r.h);
 
     // Stage 4: refine (optional)
-    let (final_markers, mut refine_debug) = if config.refine_with_h {
+    let (mut final_markers, mut refine_debug) = if config.refine_with_h {
         if let Some(h) = h_matrix {
             if filtered.len() >= 10 {
                 let (refined, refine_dbg) =
@@ -624,6 +669,72 @@ pub fn detect_rings_with_debug(
         }
     } else {
         (filtered, None)
+    };
+
+    // Stage 5: completion (optional, only when H exists)
+    let (completion_stats, completion_attempts) = if config.completion.enable {
+        if let Some(h) = h_matrix {
+            complete_with_h(
+                gray,
+                h,
+                &mut final_markers,
+                config,
+                debug_cfg.store_points,
+                true,
+            )
+        } else {
+            (CompletionStats::default(), Some(Vec::new()))
+        }
+    } else {
+        (CompletionStats::default(), Some(Vec::new()))
+    };
+
+    let completion_debug = dbg::CompletionDebugV1 {
+        enabled: config.completion.enable && h_matrix.is_some(),
+        params: dbg::CompletionParamsDebugV1 {
+            roi_radius_px: config.completion.roi_radius_px,
+            reproj_gate_px: config.completion.reproj_gate_px,
+            min_fit_confidence: config.completion.min_fit_confidence,
+            min_arc_coverage: config.completion.min_arc_coverage,
+            max_attempts: config.completion.max_attempts,
+            image_margin_px: config.completion.image_margin_px,
+        },
+        attempted: completion_attempts
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| dbg::CompletionAttemptDebugV1 {
+                id: a.id,
+                projected_center_xy: a.projected_center_xy,
+                status: match a.status {
+                    CompletionAttemptStatus::Added => dbg::CompletionAttemptStatusDebugV1::Added,
+                    CompletionAttemptStatus::SkippedPresent => {
+                        dbg::CompletionAttemptStatusDebugV1::SkippedPresent
+                    }
+                    CompletionAttemptStatus::SkippedOob => {
+                        dbg::CompletionAttemptStatusDebugV1::SkippedOob
+                    }
+                    CompletionAttemptStatus::FailedFit => {
+                        dbg::CompletionAttemptStatusDebugV1::FailedFit
+                    }
+                    CompletionAttemptStatus::FailedGate => {
+                        dbg::CompletionAttemptStatusDebugV1::FailedGate
+                    }
+                },
+                reason: a.reason,
+                reproj_err_px: a.reproj_err_px,
+                fit_confidence: a.fit_confidence,
+                fit: a.fit,
+            })
+            .collect(),
+        stats: dbg::CompletionStatsDebugV1 {
+            n_candidates_total: completion_stats.n_candidates_total,
+            n_in_image: completion_stats.n_in_image,
+            n_attempted: completion_stats.n_attempted,
+            n_added: completion_stats.n_added,
+            n_failed_fit: completion_stats.n_failed_fit,
+            n_failed_gate: completion_stats.n_failed_gate,
+        },
+        notes: Vec::new(),
     };
 
     // Refit H after refinement if we have enough markers
@@ -711,10 +822,15 @@ pub fn detect_rings_with_debug(
             stage2_dedup: dedup_debug,
             stage3_ransac: ransac_debug,
             stage4_refine: refine_debug,
+            stage5_completion: Some(completion_debug),
             final_: dbg::FinalDebugV1 {
                 h_final: result.homography,
                 detections: result.detected_markers.clone(),
-                notes: Vec::new(),
+                notes: if completion_stats.n_added > 0 {
+                    vec![format!("completion_added={}", completion_stats.n_added)]
+                } else {
+                    Vec::new()
+                },
             },
         },
     };
@@ -1348,6 +1464,543 @@ fn refine_with_homography(
     refined
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompletionAttemptStatus {
+    Added,
+    SkippedPresent,
+    SkippedOob,
+    FailedFit,
+    FailedGate,
+}
+
+#[derive(Debug, Clone)]
+struct CompletionAttemptRecord {
+    id: usize,
+    projected_center_xy: [f32; 2],
+    status: CompletionAttemptStatus,
+    reason: Option<String>,
+    reproj_err_px: Option<f32>,
+    fit_confidence: Option<f32>,
+    fit: Option<dbg::RingFitDebugV1>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompletionStats {
+    n_candidates_total: usize,
+    n_in_image: usize,
+    n_attempted: usize,
+    n_added: usize,
+    n_failed_fit: usize,
+    n_failed_gate: usize,
+}
+
+/// Try to complete missing IDs using a fitted homography.
+///
+/// This is intentionally conservative: it only runs when H exists and rejects
+/// any fit that deviates from the H-projected center by more than a tight gate.
+fn complete_with_h(
+    gray: &GrayImage,
+    h: &nalgebra::Matrix3<f64>,
+    markers: &mut Vec<DetectedMarker>,
+    config: &DetectConfig,
+    store_points_in_debug: bool,
+    record_debug: bool,
+) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
+    use crate::board_spec;
+    use std::collections::HashSet;
+
+    let params = &config.completion;
+    if !params.enable {
+        return (
+            CompletionStats::default(),
+            if record_debug { Some(Vec::new()) } else { None },
+        );
+    }
+
+    let (w, h_img) = gray.dimensions();
+    let w_f = w as f64;
+    let h_f = h_img as f64;
+
+    let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
+    let safe_margin = roi_radius + params.image_margin_px.max(0.0) as f64;
+
+    // Build fast lookup for already-present IDs.
+    let present_ids: HashSet<usize> = markers.iter().filter_map(|m| m.id).collect();
+
+    // Completion uses a slightly relaxed edge sampler threshold to allow partial arcs.
+    let mut edge_cfg = config.edge_sample.clone();
+    edge_cfg.r_max = roi_radius as f32;
+    edge_cfg.min_rays_with_ring = ((edge_cfg.n_rays as f32) * params.min_arc_coverage)
+        .ceil()
+        .max(6.0) as usize;
+    edge_cfg.min_rays_with_ring = edge_cfg.min_rays_with_ring.min(edge_cfg.n_rays);
+
+    let mut stats = CompletionStats {
+        n_candidates_total: board_spec::n_markers(),
+        ..Default::default()
+    };
+
+    let mut attempts: Option<Vec<CompletionAttemptRecord>> = if record_debug {
+        Some(Vec::with_capacity(board_spec::n_markers()))
+    } else {
+        None
+    };
+
+    let mut attempted_fits = 0usize;
+
+    for id in 0..board_spec::n_markers() {
+        let projected_center = if let Some(xy) = board_spec::xy_mm(id) {
+            project(h, xy[0] as f64, xy[1] as f64)
+        } else {
+            [f64::NAN, f64::NAN]
+        };
+
+        let proj_xy_f32 = [projected_center[0] as f32, projected_center[1] as f32];
+
+        if present_ids.contains(&id) {
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::SkippedPresent,
+                    reason: None,
+                    reproj_err_px: None,
+                    fit_confidence: None,
+                    fit: None,
+                });
+            }
+            continue;
+        }
+
+        if !projected_center[0].is_finite() || !projected_center[1].is_finite() {
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::SkippedOob,
+                    reason: Some("projected_center_nan".to_string()),
+                    reproj_err_px: None,
+                    fit_confidence: None,
+                    fit: None,
+                });
+            }
+            continue;
+        }
+
+        // Keep away from boundaries so `sample_edges` cannot read out-of-bounds.
+        if projected_center[0] < safe_margin
+            || projected_center[0] >= (w_f - safe_margin)
+            || projected_center[1] < safe_margin
+            || projected_center[1] >= (h_f - safe_margin)
+        {
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::SkippedOob,
+                    reason: Some("projected_center_outside_safe_bounds".to_string()),
+                    reproj_err_px: None,
+                    fit_confidence: None,
+                    fit: None,
+                });
+            }
+            continue;
+        }
+        stats.n_in_image += 1;
+
+        if let Some(max) = params.max_attempts {
+            if attempted_fits >= max {
+                break;
+            }
+        }
+        attempted_fits += 1;
+        stats.n_attempted += 1;
+
+        // Local ring fit at the H-projected center.
+        let edge = match sample_edges(
+            gray,
+            [projected_center[0] as f32, projected_center[1] as f32],
+            &edge_cfg,
+        ) {
+            Some(e) => e,
+            None => {
+                stats.n_failed_fit += 1;
+                if let Some(a) = attempts.as_mut() {
+                    a.push(CompletionAttemptRecord {
+                        id,
+                        projected_center_xy: proj_xy_f32,
+                        status: CompletionAttemptStatus::FailedFit,
+                        reason: Some("edge_sample:insufficient_ring_rays".to_string()),
+                        reproj_err_px: None,
+                        fit_confidence: None,
+                        fit: None,
+                    });
+                }
+                continue;
+            }
+        };
+
+        let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
+        let mk_fit_dbg = |center_xy_fit: [f32; 2],
+                          ellipse_outer: Option<dbg::EllipseParamsDebugV1>,
+                          inlier_ratio_outer: Option<f32>,
+                          mean_resid_outer: Option<f32>,
+                          valid_outer: bool| {
+            dbg::RingFitDebugV1 {
+                center_xy_fit,
+                edges: dbg::RingEdgesDebugV1 {
+                    n_angles_total: edge.n_total_rays,
+                    n_angles_with_both: edge.n_good_rays,
+                    inner_peak_r: Some(edge.inner_radii.clone()),
+                    outer_peak_r: Some(edge.outer_radii.clone()),
+                },
+                ellipse_outer,
+                ellipse_inner: None,
+                inner_estimation: None,
+                metrics: dbg::RingFitMetricsDebugV1 {
+                    inlier_ratio_inner: None,
+                    inlier_ratio_outer,
+                    mean_resid_inner: None,
+                    mean_resid_outer,
+                    arc_coverage: arc_cov,
+                    valid_inner: false,
+                    valid_outer,
+                },
+                points_outer: if store_points_in_debug {
+                    Some(
+                        edge.outer_points
+                            .iter()
+                            .map(|p| [p[0] as f32, p[1] as f32])
+                            .collect(),
+                    )
+                } else {
+                    None
+                },
+                points_inner: if store_points_in_debug {
+                    Some(
+                        edge.inner_points
+                            .iter()
+                            .map(|p| [p[0] as f32, p[1] as f32])
+                            .collect(),
+                    )
+                } else {
+                    None
+                },
+            }
+        };
+
+        let (outer, outer_ransac) = match fit_outer_ellipse_with_reason(&edge, config) {
+            Ok(r) => r,
+            Err(reason) => {
+                stats.n_failed_fit += 1;
+                if let Some(a) = attempts.as_mut() {
+                    let fit_dbg = if record_debug {
+                        Some(mk_fit_dbg(
+                            [projected_center[0] as f32, projected_center[1] as f32],
+                            None,
+                            None,
+                            None,
+                            false,
+                        ))
+                    } else {
+                        None
+                    };
+                    a.push(CompletionAttemptRecord {
+                        id,
+                        projected_center_xy: proj_xy_f32,
+                        status: CompletionAttemptStatus::FailedFit,
+                        reason: Some(reason),
+                        reproj_err_px: None,
+                        fit_confidence: None,
+                        fit: fit_dbg,
+                    });
+                }
+                continue;
+            }
+        };
+
+        let center = compute_center(&outer);
+        let inlier_ratio = outer_ransac
+            .as_ref()
+            .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+            .unwrap_or(1.0);
+        let fit_confidence = (arc_cov * inlier_ratio).clamp(0.0, 1.0);
+        let fit_dbg_pre_gates = if record_debug {
+            Some(mk_fit_dbg(
+                [center[0] as f32, center[1] as f32],
+                Some(dbg::EllipseParamsDebugV1 {
+                    center_xy: [outer.cx as f32, outer.cy as f32],
+                    semi_axes: [outer.a as f32, outer.b as f32],
+                    angle: outer.angle as f32,
+                }),
+                Some(inlier_ratio),
+                Some(rms_sampson_distance(&outer, &edge.outer_points) as f32),
+                true,
+            ))
+        } else {
+            None
+        };
+
+        let reproj_err = {
+            let dx = center[0] - projected_center[0];
+            let dy = center[1] - projected_center[1];
+            (dx * dx + dy * dy).sqrt() as f32
+        };
+
+        // Optional decode check: if decoding succeeds but disagrees with the expected ID,
+        // it's likely we snapped to a neighboring marker.
+        let decode_result = decode_marker(gray, &outer, &config.decode);
+        if let Some(ref d) = decode_result {
+            if d.id != id {
+                stats.n_failed_gate += 1;
+                if let Some(a) = attempts.as_mut() {
+                    a.push(CompletionAttemptRecord {
+                        id,
+                        projected_center_xy: proj_xy_f32,
+                        status: CompletionAttemptStatus::FailedGate,
+                        reason: Some(format!("decode_mismatch(expected={}, got={})", id, d.id)),
+                        reproj_err_px: Some(reproj_err),
+                        fit_confidence: Some(fit_confidence),
+                        fit: fit_dbg_pre_gates.clone(),
+                    });
+                }
+                continue;
+            }
+        }
+
+        // Gates: arc coverage, fit confidence, reprojection error.
+        if arc_cov < params.min_arc_coverage {
+            stats.n_failed_gate += 1;
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::FailedGate,
+                    reason: Some(format!(
+                        "arc_coverage({:.2}<{:.2})",
+                        arc_cov, params.min_arc_coverage
+                    )),
+                    reproj_err_px: Some(reproj_err),
+                    fit_confidence: Some(fit_confidence),
+                    fit: fit_dbg_pre_gates.clone(),
+                });
+            }
+            continue;
+        }
+        if fit_confidence < params.min_fit_confidence {
+            stats.n_failed_gate += 1;
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::FailedGate,
+                    reason: Some(format!(
+                        "fit_confidence({:.2}<{:.2})",
+                        fit_confidence, params.min_fit_confidence
+                    )),
+                    reproj_err_px: Some(reproj_err),
+                    fit_confidence: Some(fit_confidence),
+                    fit: fit_dbg_pre_gates.clone(),
+                });
+            }
+            continue;
+        }
+        if (reproj_err as f64) > (params.reproj_gate_px as f64) {
+            stats.n_failed_gate += 1;
+            if let Some(a) = attempts.as_mut() {
+                a.push(CompletionAttemptRecord {
+                    id,
+                    projected_center_xy: proj_xy_f32,
+                    status: CompletionAttemptStatus::FailedGate,
+                    reason: Some(format!(
+                        "reproj_err({:.2}>{:.2})",
+                        reproj_err, params.reproj_gate_px
+                    )),
+                    reproj_err_px: Some(reproj_err),
+                    fit_confidence: Some(fit_confidence),
+                    fit: fit_dbg_pre_gates.clone(),
+                });
+            }
+            continue;
+        }
+
+        // Inner estimation (only for accepted completions, unless we're recording debug).
+        let inner_est = if record_debug || store_points_in_debug {
+            Some(estimate_inner_scale_from_outer(
+                gray,
+                &outer,
+                &config.marker_spec,
+                store_points_in_debug,
+            ))
+        } else {
+            Some(estimate_inner_scale_from_outer(
+                gray,
+                &outer,
+                &config.marker_spec,
+                false,
+            ))
+        };
+        let inner_params = inner_est.as_ref().and_then(|est| {
+            if est.status == InnerStatus::Ok {
+                let s = est
+                    .r_inner_found
+                    .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+                Some(EllipseParams {
+                    center_xy: [outer.cx, outer.cy],
+                    semi_axes: [outer.a * s, outer.b * s],
+                    angle: outer.angle,
+                })
+            } else {
+                None
+            }
+        });
+
+        // Build fit metrics and marker.
+        let fit = FitMetrics {
+            n_angles_total: edge.n_total_rays,
+            n_angles_with_both_edges: edge.n_good_rays,
+            n_points_outer: edge.outer_points.len(),
+            n_points_inner: 0,
+            ransac_inlier_ratio_outer: outer_ransac
+                .as_ref()
+                .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
+            ransac_inlier_ratio_inner: None,
+            rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
+            rms_residual_inner: None,
+        };
+
+        let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
+            observed_word: d.raw_word,
+            best_id: d.id,
+            best_rotation: d.rotation,
+            best_dist: d.dist,
+            margin: d.margin,
+            decode_confidence: d.confidence,
+        });
+
+        let confidence = decode_result
+            .as_ref()
+            .map(|d| d.confidence)
+            .unwrap_or(fit_confidence);
+
+        markers.push(DetectedMarker {
+            id: Some(id),
+            confidence,
+            center,
+            ellipse_outer: Some(ellipse_to_params(&outer)),
+            ellipse_inner: inner_params.clone(),
+            fit: fit.clone(),
+            decode: decode_metrics,
+        });
+
+        stats.n_added += 1;
+        tracing::debug!("Completion added id={} reproj_err={:.2}px", id, reproj_err);
+
+        if let Some(a) = attempts.as_mut() {
+            // Best-effort ring fit debug for manual inspection.
+            let fit_dbg = if record_debug {
+                let arc_cov_dbg = arc_cov;
+                Some(dbg::RingFitDebugV1 {
+                    center_xy_fit: [center[0] as f32, center[1] as f32],
+                    edges: dbg::RingEdgesDebugV1 {
+                        n_angles_total: edge.n_total_rays,
+                        n_angles_with_both: edge.n_good_rays,
+                        inner_peak_r: Some(edge.inner_radii.clone()),
+                        outer_peak_r: Some(edge.outer_radii.clone()),
+                    },
+                    ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
+                        center_xy: [outer.cx as f32, outer.cy as f32],
+                        semi_axes: [outer.a as f32, outer.b as f32],
+                        angle: outer.angle as f32,
+                    }),
+                    ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
+                        center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
+                        semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
+                        angle: p.angle as f32,
+                    }),
+                    inner_estimation: inner_est.as_ref().map(|est| dbg::InnerEstimationDebugV1 {
+                        r_inner_expected: est.r_inner_expected,
+                        search_window: est.search_window,
+                        r_inner_found: est.r_inner_found,
+                        polarity: est.polarity.map(|p| match p {
+                            Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
+                            Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
+                        }),
+                        peak_strength: est.peak_strength,
+                        theta_consistency: est.theta_consistency,
+                        status: match est.status {
+                            InnerStatus::Ok => dbg::InnerEstimationStatusDebugV1::Ok,
+                            InnerStatus::Rejected => dbg::InnerEstimationStatusDebugV1::Rejected,
+                            InnerStatus::Failed => dbg::InnerEstimationStatusDebugV1::Failed,
+                        },
+                        reason: est.reason.clone(),
+                        radial_response_agg: est.radial_response_agg.clone(),
+                        r_samples: est.r_samples.clone(),
+                    }),
+                    metrics: dbg::RingFitMetricsDebugV1 {
+                        inlier_ratio_inner: None,
+                        inlier_ratio_outer: fit.ransac_inlier_ratio_outer,
+                        mean_resid_inner: None,
+                        mean_resid_outer: fit.rms_residual_outer.map(|v| v as f32),
+                        arc_coverage: arc_cov_dbg,
+                        valid_inner: inner_params.is_some(),
+                        valid_outer: true,
+                    },
+                    points_outer: if store_points_in_debug {
+                        Some(
+                            edge.outer_points
+                                .iter()
+                                .map(|p| [p[0] as f32, p[1] as f32])
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    },
+                    points_inner: if store_points_in_debug {
+                        Some(
+                            edge.inner_points
+                                .iter()
+                                .map(|p| [p[0] as f32, p[1] as f32])
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    },
+                })
+            } else {
+                None
+            };
+
+            a.push(CompletionAttemptRecord {
+                id,
+                projected_center_xy: proj_xy_f32,
+                status: CompletionAttemptStatus::Added,
+                reason: None,
+                reproj_err_px: Some(reproj_err),
+                fit_confidence: Some(fit_confidence),
+                fit: fit_dbg,
+            });
+        }
+    }
+
+    if stats.n_added > 0 {
+        tracing::info!(
+            "Completion: added {} markers (attempted {}, in_image {})",
+            stats.n_added,
+            stats.n_attempted,
+            stats.n_in_image
+        );
+    } else {
+        tracing::info!(
+            "Completion: added 0 markers (attempted {}, in_image {})",
+            stats.n_attempted,
+            stats.n_in_image
+        );
+    }
+
+    (stats, attempts)
+}
+
 /// Refit homography using refined marker centers, return (H_array, stats).
 fn refit_homography(
     markers: &[DetectedMarker],
@@ -1458,6 +2111,8 @@ fn dedup_markers(mut markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedM
 mod tests {
     use super::*;
     use image::GrayImage;
+    use image::Luma;
+    use nalgebra::Matrix3;
 
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
@@ -1478,5 +2133,59 @@ mod tests {
         assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V1);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
+    }
+
+    #[test]
+    fn completion_adds_marker_at_h_projected_center() {
+        use crate::board_spec;
+
+        let w = 128u32;
+        let h = 128u32;
+
+        // Choose an ID that exists on the embedded board and project it to the
+        // image center with an affine homography.
+        let id = 0usize;
+        let xy = board_spec::xy_mm(id).expect("board has id=0");
+        let tx = 64.0 - xy[0] as f64;
+        let ty = 64.0 - xy[1] as f64;
+        let h_matrix = Matrix3::new(1.0, 0.0, tx, 0.0, 1.0, ty, 0.0, 0.0, 1.0);
+
+        // Render a simple concentric ring at the projected center (no code band).
+        let mut img = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - 64.0;
+                let dy = y as f32 - 64.0;
+                let r = (dx * dx + dy * dy).sqrt();
+
+                let bg = 0.85f32;
+                let dark = 0.12f32;
+                let v = if (12.0..=18.0).contains(&r) { dark } else { bg };
+                img.put_pixel(x, y, Luma([(v * 255.0).round() as u8]));
+            }
+        }
+
+        let mut cfg = DetectConfig::default();
+        cfg.use_global_filter = true;
+        cfg.refine_with_h = false;
+
+        // Make ellipse validation compatible with our synthetic ring radius.
+        cfg.min_semi_axis = 6.0;
+        cfg.max_semi_axis = 30.0;
+
+        // Completion should attempt only this ID and should not be blocked by decoding.
+        cfg.completion.enable = true;
+        cfg.completion.max_attempts = Some(1);
+        cfg.completion.roi_radius_px = 24.0;
+        cfg.completion.reproj_gate_px = 3.0;
+        cfg.completion.min_arc_coverage = 0.6;
+        cfg.completion.min_fit_confidence = 0.6;
+        cfg.decode.min_decode_confidence = 1.0; // force decode rejection (avoid mismatch gate)
+
+        let mut markers: Vec<DetectedMarker> = Vec::new();
+        let (stats, _attempts) = complete_with_h(&img, &h_matrix, &mut markers, &cfg, false, false);
+        assert_eq!(stats.n_added, 1, "expected one completion addition");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].id, Some(id));
     }
 }

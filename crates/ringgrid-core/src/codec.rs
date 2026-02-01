@@ -24,12 +24,7 @@ fn popcount(x: u16) -> u8 {
 /// Cyclic left rotation of a 16-bit word by `k` positions.
 #[inline]
 pub fn rotate_left_16(word: u16, k: u32) -> u16 {
-    let k = k % 16;
-    if k == 0 {
-        word
-    } else {
-        (word << k) | (word >> (16 - k))
-    }
+    word.rotate_left(k % 16)
 }
 
 /// Return the canonical form (minimum over all cyclic rotations).

@@ -145,7 +145,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 No CI configuration is checked into this repo. Run locally:
 ```bash
 cargo fmt --all
-cargo clippy --all-targets
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 

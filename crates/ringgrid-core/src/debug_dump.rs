@@ -6,10 +6,11 @@
 //! when explicitly requested by the CLI.
 
 use crate::{DetectedMarker, FitMetrics};
+use serde::{Deserialize, Serialize};
 
 pub const DEBUG_SCHEMA_V1: &str = "ringgrid.debug.v1";
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDumpV1 {
     pub schema_version: String,
     pub image: ImageDebugV1,
@@ -18,7 +19,7 @@ pub struct DebugDumpV1 {
     pub stages: StagesDebugV1,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageDebugV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -26,10 +27,10 @@ pub struct ImageDebugV1 {
     pub height: u32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoardDebugV1 {
     pub pitch_mm: f32,
-    /// Convenience scalar for square boards (typically equals board_size_mm[0]).
+    /// Convenience scalar for square boards (typically equals board_size_mm\[0\]).
     pub board_mm: f32,
     pub board_size_mm: [f32; 2],
     pub marker_count: usize,
@@ -37,7 +38,7 @@ pub struct BoardDebugV1 {
     pub codebook_n: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamsDebugV1 {
     pub marker_diameter_px: f64,
 
@@ -60,13 +61,13 @@ pub struct ParamsDebugV1 {
     pub debug: DebugOptionsV1,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugOptionsV1 {
     pub max_candidates: usize,
     pub store_points: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposalParamsV1 {
     pub r_min: f32,
     pub r_max: f32,
@@ -76,7 +77,7 @@ pub struct ProposalParamsV1 {
     pub accum_sigma: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdgeSampleParamsV1 {
     pub n_rays: usize,
     pub r_max: f32,
@@ -86,7 +87,7 @@ pub struct EdgeSampleParamsV1 {
     pub min_rays_with_ring: usize,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OuterGradPolarityParamsV1 {
     DarkToLight,
@@ -94,7 +95,7 @@ pub enum OuterGradPolarityParamsV1 {
     Auto,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OuterEstimationParamsV1 {
     pub search_halfwidth_px: f32,
     pub radial_samples: usize,
@@ -108,7 +109,7 @@ pub struct OuterEstimationParamsV1 {
     pub refine_halfwidth_px: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodeParamsV1 {
     pub code_band_ratio: f32,
     pub samples_per_sector: usize,
@@ -117,7 +118,7 @@ pub struct DecodeParamsV1 {
     pub min_decode_confidence: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RansacHomographyParamsV1 {
     pub max_iters: usize,
     pub inlier_threshold: f64,
@@ -125,7 +126,7 @@ pub struct RansacHomographyParamsV1 {
     pub seed: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StagesDebugV1 {
     pub stage0_proposals: StageDebugV1,
     pub stage1_fit_decode: StageDebugV1,
@@ -139,7 +140,7 @@ pub struct StagesDebugV1 {
     pub final_: FinalDebugV1,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageDebugV1 {
     pub n_total: usize,
     pub n_recorded: usize,
@@ -148,7 +149,7 @@ pub struct StageDebugV1 {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateDebugV1 {
     pub cand_idx: usize,
     pub proposal: ProposalDebugV1,
@@ -160,26 +161,26 @@ pub struct CandidateDebugV1 {
     pub derived: DerivedDebugV1,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposalDebugV1 {
     pub center_xy: [f32; 2],
     pub score: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionDebugV1 {
     pub status: DecisionStatusV1,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DecisionStatusV1 {
     Accepted,
     Rejected,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DerivedDebugV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<usize>,
@@ -189,7 +190,7 @@ pub struct DerivedDebugV1 {
     pub center_xy: Option<[f32; 2]>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RingFitDebugV1 {
     pub center_xy_fit: [f32; 2],
     pub edges: RingEdgesDebugV1,
@@ -208,7 +209,7 @@ pub struct RingFitDebugV1 {
     pub points_inner: Option<Vec<[f32; 2]>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RingEdgesDebugV1 {
     pub n_angles_total: usize,
     pub n_angles_with_both: usize,
@@ -218,14 +219,14 @@ pub struct RingEdgesDebugV1 {
     pub outer_peak_r: Option<Vec<f32>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EllipseParamsDebugV1 {
     pub center_xy: [f32; 2],
     pub semi_axes: [f32; 2],
     pub angle: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RingFitMetricsDebugV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inlier_ratio_inner: Option<f32>,
@@ -240,14 +241,14 @@ pub struct RingFitMetricsDebugV1 {
     pub valid_outer: bool,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InnerPolarityDebugV1 {
     Pos,
     Neg,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InnerEstimationStatusDebugV1 {
     Ok,
@@ -255,7 +256,7 @@ pub enum InnerEstimationStatusDebugV1 {
     Failed,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InnerEstimationDebugV1 {
     pub r_inner_expected: f32,
     pub search_window: [f32; 2],
@@ -276,7 +277,7 @@ pub struct InnerEstimationDebugV1 {
     pub r_samples: Option<Vec<f32>>,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OuterEstimationStatusDebugV1 {
     Ok,
@@ -284,14 +285,14 @@ pub enum OuterEstimationStatusDebugV1 {
     Failed,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OuterHypothesisDebugV1 {
     pub r_outer_px: f32,
     pub peak_strength: f32,
     pub theta_consistency: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OuterEstimationDebugV1 {
     pub r_outer_expected_px: f32,
     pub search_window_px: [f32; 2],
@@ -316,7 +317,7 @@ pub struct OuterEstimationDebugV1 {
     pub r_samples: Option<Vec<f32>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodeDebugV1 {
     pub sector_means: [f32; 16],
     pub threshold: f32,
@@ -329,7 +330,7 @@ pub struct DecodeDebugV1 {
     pub reject_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodeMatchDebugV1 {
     pub best_id: usize,
     pub best_rotation: u8,
@@ -338,7 +339,7 @@ pub struct DecodeMatchDebugV1 {
     pub decode_confidence: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DedupDebugV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_by_proximity: Vec<KeptByProximityDebugV1>,
@@ -348,7 +349,7 @@ pub struct DedupDebugV1 {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeptByProximityDebugV1 {
     pub kept_cand_idx: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -357,7 +358,7 @@ pub struct KeptByProximityDebugV1 {
     pub reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeptByIdDebugV1 {
     pub id: usize,
     pub kept_cand_idx: usize,
@@ -367,7 +368,7 @@ pub struct KeptByIdDebugV1 {
     pub reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RansacDebugV1 {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -384,13 +385,13 @@ pub struct RansacDebugV1 {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerIdErrorDebugV1 {
     pub id: usize,
     pub reproj_err_px: f64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RansacStatsDebugV1 {
     pub iters: usize,
     pub thresh_px: f64,
@@ -400,7 +401,7 @@ pub struct RansacStatsDebugV1 {
     pub p95_err_inliers: f64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefineDebugV1 {
     pub h_prior: [[f64; 3]; 3],
     pub refined_markers: Vec<RefinedMarkerDebugV1>,
@@ -410,7 +411,7 @@ pub struct RefineDebugV1 {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefinedMarkerDebugV1 {
     pub id: usize,
     pub prior_center_xy: [f32; 2],
@@ -422,7 +423,7 @@ pub struct RefinedMarkerDebugV1 {
     pub fit: FitMetrics,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionDebugV1 {
     pub enabled: bool,
     pub params: CompletionParamsDebugV1,
@@ -432,7 +433,7 @@ pub struct CompletionDebugV1 {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionParamsDebugV1 {
     pub roi_radius_px: f32,
     pub reproj_gate_px: f32,
@@ -443,7 +444,7 @@ pub struct CompletionParamsDebugV1 {
     pub image_margin_px: f32,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionAttemptStatusDebugV1 {
     Added,
@@ -453,7 +454,7 @@ pub enum CompletionAttemptStatusDebugV1 {
     FailedGate,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionAttemptDebugV1 {
     pub id: usize,
     pub projected_center_xy: [f32; 2],
@@ -468,7 +469,7 @@ pub struct CompletionAttemptDebugV1 {
     pub fit: Option<RingFitDebugV1>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionStatsDebugV1 {
     pub n_candidates_total: usize,
     pub n_in_image: usize,
@@ -478,7 +479,7 @@ pub struct CompletionStatsDebugV1 {
     pub n_failed_gate: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalDebugV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h_final: Option<[[f64; 3]; 3]>,

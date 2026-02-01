@@ -229,6 +229,7 @@ fn run_decode_test(word_str: &str) -> CliResult<()> {
 
 // ── detect ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn run_detect(
     image_path: &std::path::Path,
     out_path: &std::path::Path,
@@ -258,8 +259,10 @@ fn run_detect(
 
     // Configure detection parameters from marker_diameter
     let r_outer = marker_diameter as f32 / 2.0;
-    let mut config = ringgrid_core::ring::DetectConfig::default();
-    config.marker_diameter_px = marker_diameter as f32;
+    let mut config = ringgrid_core::ring::DetectConfig {
+        marker_diameter_px: marker_diameter as f32,
+        ..Default::default()
+    };
 
     // Scale proposal search radii
     config.proposal.r_min = (r_outer * 0.4).max(2.0);

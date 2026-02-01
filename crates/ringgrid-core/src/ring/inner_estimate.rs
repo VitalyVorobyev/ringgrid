@@ -407,13 +407,15 @@ mod tests {
             angle: 0.0,
         };
 
-        let mut spec = MarkerSpec::default();
-        spec.r_inner_expected = r_inner / r_outer;
-        spec.inner_grad_polarity = InnerGradPolarity::LightToDark;
-        spec.inner_search_halfwidth = 0.08;
-        spec.theta_samples = 64;
-        spec.radial_samples = 64;
-        spec.min_theta_coverage = 0.5;
+        let spec = MarkerSpec {
+            r_inner_expected: r_inner / r_outer,
+            inner_grad_polarity: InnerGradPolarity::LightToDark,
+            inner_search_halfwidth: 0.08,
+            theta_samples: 64,
+            radial_samples: 64,
+            min_theta_coverage: 0.5,
+            ..MarkerSpec::default()
+        };
 
         let est = estimate_inner_scale_from_outer(&img, &outer_ellipse, &spec, true);
         assert_eq!(

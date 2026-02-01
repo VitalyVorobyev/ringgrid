@@ -372,7 +372,7 @@ pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)>
     //   (S11 − S12 S22⁻¹ S21) a1 = λ C1 a1
     // which becomes: C1⁻¹ M a1 = λ a1
     let s22_inv = s22.try_inverse()?;
-    let m = s11 - &s12 * &s22_inv * s12.transpose();
+    let m = s11 - s12 * s22_inv * s12.transpose();
 
     // Solve the generalized eigenvalue problem M a1 = λ C1 a1.
     //
@@ -383,7 +383,7 @@ pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)>
     let system = c1_inv * m;
 
     let a1 = solve_gep_3x3(&system, &c1)?;
-    let a2 = -s22_inv * s12.transpose() * &a1;
+    let a2 = -s22_inv * s12.transpose() * a1;
 
     // Denormalize the conic coefficients
     let coeffs_norm = Vector6::new(a1[0], a1[1], a1[2], a2[0], a2[1], a2[2]);
@@ -682,8 +682,8 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         .map(|(_, &p)| p)
         .collect();
 
-    let (final_conic, final_ellipse) = fit_ellipse_direct(&inlier_pts)
-        .or_else(|| best_conic.zip(best_ellipse).map(|(c, e)| (c, e)))?;
+    let (final_conic, final_ellipse) =
+        fit_ellipse_direct(&inlier_pts).or_else(|| best_conic.zip(best_ellipse))?;
 
     // Recompute inlier mask with final model using Sampson distance
     let mut final_mask = vec![false; n];
@@ -1002,7 +1002,7 @@ mod tests {
     #[test]
     fn test_various_ellipses() {
         // Test fitting with different aspect ratios and orientations
-        let test_cases = vec![
+        let test_cases = [
             Ellipse {
                 cx: 50.0,
                 cy: 50.0,

@@ -345,11 +345,7 @@ pub fn estimate_outer_from_prior(
             hypotheses,
             status: OuterStatus::Ok,
             reason: None,
-            radial_response_agg: if store_response {
-                Some(agg_resp)
-            } else {
-                None
-            },
+            radial_response_agg: if store_response { Some(agg_resp) } else { None },
             r_samples: if store_response {
                 Some(r_samples.clone())
             } else {
@@ -455,7 +451,12 @@ mod tests {
 
         // If we search around r_outer, we should land near r_outer, not the stronger inner edge.
         let est = estimate_outer_from_prior(&img, [cx, cy], r_outer, &cfg, true);
-        assert_eq!(est.status, OuterStatus::Ok, "outer estimate failed: {:?}", est.reason);
+        assert_eq!(
+            est.status,
+            OuterStatus::Ok,
+            "outer estimate failed: {:?}",
+            est.reason
+        );
         assert_eq!(est.polarity, Some(Polarity::Pos));
         let r_found = est.hypotheses[0].r_outer_px;
         assert!(

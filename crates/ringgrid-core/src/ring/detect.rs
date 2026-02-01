@@ -232,7 +232,7 @@ fn sample_outer_edge_points(
     let cx = center_prior[0];
     let cy = center_prior[1];
 
-    let refine_hw = refine_halfwidth_px.max(0.0).min(4.0);
+    let refine_hw = refine_halfwidth_px.clamp(0.0, 4.0);
     let refine_step = edge_cfg.r_step.clamp(0.25, 1.0);
     let n_ref = ((refine_hw / refine_step).ceil() as i32).max(1);
 
@@ -353,7 +353,8 @@ fn fit_outer_ellipse_robust_with_reason(
     let mut outer_cfg = config.outer_estimation.clone();
     outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
 
-    let outer_estimate = estimate_outer_from_prior(gray, center_prior, r_expected, &outer_cfg, store_response);
+    let outer_estimate =
+        estimate_outer_from_prior(gray, center_prior, r_expected, &outer_cfg, store_response);
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
         return Err(format!(
             "outer_estimate:{}",
@@ -364,7 +365,9 @@ fn fit_outer_ellipse_robust_with_reason(
         ));
     }
 
-    let pol = outer_estimate.polarity.ok_or_else(|| "outer_estimate:no_polarity".to_string())?;
+    let pol = outer_estimate
+        .polarity
+        .ok_or_else(|| "outer_estimate:no_polarity".to_string())?;
 
     let mut best: Option<OuterFitCandidate> = None;
 
@@ -403,7 +406,8 @@ fn fit_outer_ellipse_robust_with_reason(
             Err(_) => continue,
         };
 
-        let (decode_result, decode_diag) = decode_marker_with_diagnostics(gray, &outer, &config.decode);
+        let (decode_result, decode_diag) =
+            decode_marker_with_diagnostics(gray, &outer, &config.decode);
 
         let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
         let inlier_ratio = outer_ransac
@@ -418,7 +422,8 @@ fn fit_outer_ellipse_robust_with_reason(
 
         let decode_score = decode_diag.decode_confidence;
 
-        let score = 2.0 * decode_score + 0.7 * (arc_cov * inlier_ratio) + 0.3 * size_score - 0.05 * residual;
+        let score = 2.0 * decode_score + 0.7 * (arc_cov * inlier_ratio) + 0.3 * size_score
+            - 0.05 * residual;
 
         let cand = OuterFitCandidate {
             edge,
@@ -1457,7 +1462,8 @@ fn refine_with_homography_with_debug(
             continue;
         }
 
-        let r_expected = mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
+        let r_expected =
+            mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
 
         let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
@@ -1737,7 +1743,8 @@ fn refine_with_homography(
             continue;
         }
 
-        let r_expected = mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
+        let r_expected =
+            mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
 
         let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
@@ -2143,7 +2150,10 @@ fn complete_with_h(
                     }
                     continue;
                 }
-                added_reason = Some(format!("decode_mismatch_accepted(expected={}, got={})", id, d.id));
+                added_reason = Some(format!(
+                    "decode_mismatch_accepted(expected={}, got={})",
+                    id, d.id
+                ));
             }
         }
 
@@ -2266,14 +2276,17 @@ fn complete_with_h(
             rms_residual_inner: None,
         };
 
-        let decode_metrics = decode_result.as_ref().filter(|d| d.id == id).map(|d| DecodeMetrics {
-            observed_word: d.raw_word,
-            best_id: d.id,
-            best_rotation: d.rotation,
-            best_dist: d.dist,
-            margin: d.margin,
-            decode_confidence: d.confidence,
-        });
+        let decode_metrics = decode_result
+            .as_ref()
+            .filter(|d| d.id == id)
+            .map(|d| DecodeMetrics {
+                observed_word: d.raw_word,
+                best_id: d.id,
+                best_rotation: d.rotation,
+                best_dist: d.dist,
+                margin: d.margin,
+                decode_confidence: d.confidence,
+            });
 
         let confidence = decode_metrics
             .as_ref()
@@ -2323,7 +2336,9 @@ fn complete_with_h(
                             theta_consistency: chosen.map(|h| h.theta_consistency),
                             status: match outer_estimate.status {
                                 OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
-                                OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
+                                OuterStatus::Rejected => {
+                                    dbg::OuterEstimationStatusDebugV1::Rejected
+                                }
                                 OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
                             },
                             reason: outer_estimate.reason.clone(),
@@ -2550,9 +2565,11 @@ mod tests {
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
         let img = GrayImage::new(64, 64);
-        let mut cfg = DetectConfig::default();
-        cfg.use_global_filter = false;
-        cfg.refine_with_h = false;
+        let cfg = DetectConfig {
+            use_global_filter: false,
+            refine_with_h: false,
+            ..DetectConfig::default()
+        };
 
         let dbg_cfg = DebugCollectConfig {
             image_path: Some("dummy.png".to_string()),
@@ -2598,13 +2615,13 @@ mod tests {
             }
         }
 
-        let mut cfg = DetectConfig::default();
-        cfg.use_global_filter = true;
-        cfg.refine_with_h = false;
-
-        // Make ellipse validation compatible with our synthetic ring radius.
-        cfg.min_semi_axis = 6.0;
-        cfg.max_semi_axis = 30.0;
+        let mut cfg = DetectConfig {
+            refine_with_h: false,
+            // Make ellipse validation compatible with our synthetic ring radius.
+            min_semi_axis: 6.0,
+            max_semi_axis: 30.0,
+            ..DetectConfig::default()
+        };
 
         // Completion should attempt only this ID and should not be blocked by decoding.
         cfg.completion.enable = true;

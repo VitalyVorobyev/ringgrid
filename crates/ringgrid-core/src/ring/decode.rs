@@ -231,8 +231,8 @@ pub fn decode_marker_with_diagnostics(
 
     // Form word: bit=1 if intensity > threshold, bit=0 otherwise
     let mut word: u16 = 0;
-    for s in 0..16 {
-        if sector_intensities[s] > threshold {
+    for (s, &intensity) in sector_intensities.iter().enumerate() {
+        if intensity > threshold {
             word |= 1 << s;
         }
     }
@@ -342,13 +342,13 @@ mod tests {
                 let yn = yc / ellipse.b;
                 let r = (xn * xn + yn * yn).sqrt();
 
-                let val = if r >= 0.90 && r <= 1.10 {
+                let val = if (0.90..=1.10).contains(&r) {
                     // Outer ring: dark
                     30u8
-                } else if r >= 0.55 && r <= 0.75 {
+                } else if (0.55..=0.75).contains(&r) {
                     // Inner ring: dark
                     30u8
-                } else if r >= 0.76 && r <= 0.89 {
+                } else if (0.76..=0.89).contains(&r) {
                     // Code band
                     let angle = yn.atan2(xn);
                     let sector = ((angle / (2.0 * std::f64::consts::PI) + 0.5) * 16.0) as i32 % 16;

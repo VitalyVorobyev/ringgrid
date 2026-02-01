@@ -18,11 +18,3 @@ rand = { workspace = true }
 [dev-dependencies]
 approx = { workspace = true }
 rand = { workspace = true }
-
-# TODO Milestone 3: add criterion benchmarks
-# [[bench]]
-# name = "conic_bench"
-# harness = false
-#
-# [dev-dependencies]
-# criterion = "0.5"

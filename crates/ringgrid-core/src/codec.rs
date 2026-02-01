@@ -124,20 +124,6 @@ impl Codebook {
     }
 }
 
-/// Decode a marker ID from the image around a detected marker.
-///
-/// TODO Milestone 4: implement sector sampling and thresholding.
-/// For now, returns None.
-pub fn decode_marker_id(
-    _image: &image::GrayImage,
-    _outer_ellipse: &crate::conic::Ellipse,
-    _inner_ratio: f64,
-) -> Option<u32> {
-    // TODO Milestone 4: implement sector sampling along elliptical arcs,
-    // adaptive thresholding, then call Codebook::default().match_word()
-    None
-}
-
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]

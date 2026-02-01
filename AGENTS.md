@@ -138,7 +138,6 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 - Prefer `serde` structs for external JSON outputs (see `ringgrid_core::DetectionResult`).
 - Avoid introducing OpenCV bindings (Rust or Python).
 - Add/extend unit tests for math-heavy primitives (`conic`, `homography`, `codec`, etc.).
-- When tracking planned work in code, follow the existing `TODO Milestone N:` pattern.
 
 ## CI / checks
 

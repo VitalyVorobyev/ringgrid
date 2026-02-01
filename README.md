@@ -202,12 +202,6 @@ python3 tools/gen_board_spec.py \
 cargo build --release
 ```
 
-## Roadmap (from TODOs in repo)
-
-- Milestone 2: implement and integrate `ringgrid_core::preprocess`, `ringgrid_core::edges`, and `ringgrid_core::lattice`.
-- Milestone 3: implement `ringgrid_core::refine` (LM refinement) and add Criterion benchmarks.
-- Cleanup: reconcile the legacy `ringgrid_core::codec::decode_marker_id` TODO stub with the active decoder in `ringgrid_core::ring::decode`.
-
 ## License
 
 No `LICENSE` file is present in this repository. If you intend this to be open source, add an explicit license.
@@ -222,8 +216,3 @@ No `LICENSE` file is present in this repository. If you intend this to be open s
   cargo clippy --all-targets
   cargo test
   ```
-
-## TODO / needs clarification
-
-- Physical/printable board assets (SVG/PDF) and exact marker drawing spec are not tracked in this repo (only codebook + center layout + synthetic renderer).
-- `docs/ARCHITECTURE.md` includes planned milestone notes and may not match the current end-to-end pipeline 1:1.

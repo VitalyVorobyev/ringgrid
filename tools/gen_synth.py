@@ -8,6 +8,8 @@ imaging conditions.
 
 Usage:
     python tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 10
+    # Also emits ready-to-print calibration targets:
+    python tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 0 --print_png --print_svg  # includes scale bar
 
 Dependencies: numpy, matplotlib (for viz_debug.py), json (stdlib).
 """
@@ -428,16 +430,25 @@ def apply_noise(
 
 # ── PNG writing (no PIL dependency) ─────────────────────────────────────
 
-def write_png_gray(path: str, img: np.ndarray) -> None:
-    """Write a grayscale float64 image [0, 1] as 8-bit PNG."""
-    h, w = img.shape
-    data = (np.clip(img, 0, 1) * 255).astype(np.uint8)
+def write_png_gray(path: str, img: np.ndarray, dpi: Optional[float] = None) -> None:
+    """Write a grayscale image as 8-bit PNG.
 
-    # Build raw PNG data
-    raw = b""
+    - Float images are interpreted as [0, 1].
+    - uint8 images are written as-is.
+    - If dpi is provided, embeds a pHYs chunk for print scaling.
+    """
+    h, w = img.shape
+    if img.dtype == np.uint8:
+        data = img
+    else:
+        data = (np.clip(img, 0, 1) * 255).astype(np.uint8)
+
+    # Build raw PNG data (scanlines with per-row filter byte).
+    raw = bytearray()
+    raw_extend = raw.extend
     for row in range(h):
-        raw += b"\x00"  # filter: none
-        raw += data[row].tobytes()
+        raw.append(0)  # filter: none
+        raw_extend(data[row].tobytes())
 
     def chunk(ctype: bytes, cdata: bytes) -> bytes:
         c = ctype + cdata
@@ -446,10 +457,468 @@ def write_png_gray(path: str, img: np.ndarray) -> None:
 
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)  # 8-bit grayscale
-    compressed = zlib.compress(raw, 6)
+    compressed = zlib.compress(bytes(raw), 6)
+
+    chunks = [chunk(b"IHDR", ihdr)]
+    if dpi is not None:
+        if dpi <= 0:
+            raise ValueError("dpi must be > 0")
+        ppm = int(round(dpi * 1000.0 / 25.4))  # pixels per meter
+        phys = struct.pack(">IIB", ppm, ppm, 1)  # unit: meter
+        chunks.append(chunk(b"pHYs", phys))
+    chunks.append(chunk(b"IDAT", compressed))
+    chunks.append(chunk(b"IEND", b""))
 
     with open(path, "wb") as f:
-        f.write(sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(b"IEND", b""))
+        f.write(sig + b"".join(chunks))
+
+
+# ── Print-target export ─────────────────────────────────────────────────
+
+def _svg_fmt(x: float) -> str:
+    # Keep files readable while preserving geometry.
+    return f"{x:.4f}".rstrip("0").rstrip(".")
+
+
+def _svg_annulus_path(cx: float, cy: float, r_outer: float, r_inner: float) -> str:
+    # Even-odd filled annulus: two closed circles in one path.
+    ox = cx + r_outer
+    ix = cx + r_inner
+    return (
+        f"M {_svg_fmt(ox)} {_svg_fmt(cy)} "
+        f"A {_svg_fmt(r_outer)} {_svg_fmt(r_outer)} 0 1 1 {_svg_fmt(cx - r_outer)} {_svg_fmt(cy)} "
+        f"A {_svg_fmt(r_outer)} {_svg_fmt(r_outer)} 0 1 1 {_svg_fmt(ox)} {_svg_fmt(cy)} Z "
+        f"M {_svg_fmt(ix)} {_svg_fmt(cy)} "
+        f"A {_svg_fmt(r_inner)} {_svg_fmt(r_inner)} 0 1 0 {_svg_fmt(cx - r_inner)} {_svg_fmt(cy)} "
+        f"A {_svg_fmt(r_inner)} {_svg_fmt(r_inner)} 0 1 0 {_svg_fmt(ix)} {_svg_fmt(cy)} Z"
+    )
+
+
+def _svg_annular_sector_path(
+    cx: float,
+    cy: float,
+    r_outer: float,
+    r_inner: float,
+    angle0_rad: float,
+    angle1_rad: float,
+) -> str:
+    x0o = cx + r_outer * math.cos(angle0_rad)
+    y0o = cy + r_outer * math.sin(angle0_rad)
+    x1o = cx + r_outer * math.cos(angle1_rad)
+    y1o = cy + r_outer * math.sin(angle1_rad)
+
+    x1i = cx + r_inner * math.cos(angle1_rad)
+    y1i = cy + r_inner * math.sin(angle1_rad)
+    x0i = cx + r_inner * math.cos(angle0_rad)
+    y0i = cy + r_inner * math.sin(angle0_rad)
+
+    # SVG coordinates have +y downward, so increasing angles sweep clockwise.
+    # Outer arc: angle0 -> angle1 (sweep=1). Inner arc: angle1 -> angle0 (sweep=0).
+    return (
+        f"M {_svg_fmt(x0o)} {_svg_fmt(y0o)} "
+        f"A {_svg_fmt(r_outer)} {_svg_fmt(r_outer)} 0 0 1 {_svg_fmt(x1o)} {_svg_fmt(y1o)} "
+        f"L {_svg_fmt(x1i)} {_svg_fmt(y1i)} "
+        f"A {_svg_fmt(r_inner)} {_svg_fmt(r_inner)} 0 0 0 {_svg_fmt(x0i)} {_svg_fmt(y0i)} Z"
+    )
+
+
+def _scale_bar_params(
+    board_mm: float,
+    pitch_mm: float,
+    markers: list[tuple[int, int, float, float]],
+    outer_draw_extent_mm: float,
+    margin_mm: float,
+) -> dict:
+    """Pick scale-bar geometry and placement (all in mm)."""
+    half = board_mm / 2.0
+    canvas_mm = board_mm + 2.0 * margin_mm
+
+    inset_x_mm = max(2.0, 0.5 * pitch_mm)
+    inset_y_mm = max(1.0, 0.25 * pitch_mm)
+
+    # Try to fit the bar below the lowest marker drawings.
+    if markers:
+        max_my = max(m[3] for m in markers)
+        marker_bottom_mm = margin_mm + half + max_my + outer_draw_extent_mm
+    else:
+        marker_bottom_mm = margin_mm + half
+
+    # Height: keep it readable, but try to fit without overlap.
+    bar_h_mm = min(4.0, max(2.0, 0.4 * pitch_mm))
+    clearance_mm = max(0.5, 0.2 * bar_h_mm)
+    available_mm = canvas_mm - inset_y_mm - bar_h_mm - (marker_bottom_mm + clearance_mm)
+    if available_mm < 0:
+        # Shrink to fit if possible; otherwise keep a minimum and accept overlap.
+        bar_h_mm = max(1.0, canvas_mm - inset_y_mm - (marker_bottom_mm + clearance_mm))
+        bar_h_mm = min(bar_h_mm, 4.0)
+
+    # Length: aim for ~50% of board width, capped at 100 mm, rounded to 10 mm.
+    usable_w_mm = max(1.0, board_mm - 2.0 * inset_x_mm)
+    target_len_mm = min(100.0, 0.5 * usable_w_mm)
+    bar_len_mm = int(round(target_len_mm / 10.0)) * 10
+    bar_len_mm = max(10, bar_len_mm)
+    while bar_len_mm > usable_w_mm and bar_len_mm >= 10:
+        bar_len_mm -= 10
+    bar_len_mm = max(10, bar_len_mm)
+
+    tick_step_mm = 10 if bar_len_mm >= 50 else (5 if bar_len_mm >= 20 else 1)
+    tick_w_mm = max(0.2, 0.08 * bar_h_mm)
+    font_size_mm = max(1.2, 0.7 * bar_h_mm)
+
+    x0_mm = margin_mm + inset_x_mm
+    y0_mm = canvas_mm - inset_y_mm - bar_h_mm
+
+    return {
+        "x0_mm": x0_mm,
+        "y0_mm": y0_mm,
+        "bar_len_mm": float(bar_len_mm),
+        "bar_h_mm": float(bar_h_mm),
+        "tick_step_mm": float(tick_step_mm),
+        "tick_w_mm": float(tick_w_mm),
+        "label": f"{bar_len_mm} mm",
+        "font_size_mm": float(font_size_mm),
+    }
+
+
+def _append_scale_bar_svg(
+    lines: list[str],
+    board_mm: float,
+    pitch_mm: float,
+    markers: list[tuple[int, int, float, float]],
+    outer_draw_extent_mm: float,
+    margin_mm: float,
+) -> None:
+    p = _scale_bar_params(board_mm, pitch_mm, markers, outer_draw_extent_mm, margin_mm)
+    x0 = p["x0_mm"]
+    y0 = p["y0_mm"]
+    w = p["bar_len_mm"]
+    h = p["bar_h_mm"]
+    tick = p["tick_step_mm"]
+    tick_w = p["tick_w_mm"]
+    label = p["label"]
+    fs = p["font_size_mm"]
+
+    lines.append('<g id="scale_bar">')
+    lines.append(
+        f'<rect x="{_svg_fmt(x0)}" y="{_svg_fmt(y0)}" width="{_svg_fmt(w)}" height="{_svg_fmt(h)}" '
+        f'fill="black"/>'
+    )
+    # Ticks: white lines inside the bar at fixed mm intervals.
+    n_ticks = int(round(w / tick))
+    for i in range(n_ticks + 1):
+        tx = x0 + i * tick
+        lines.append(
+            f'<line x1="{_svg_fmt(tx)}" y1="{_svg_fmt(y0)}" x2="{_svg_fmt(tx)}" y2="{_svg_fmt(y0 + h)}" '
+            f'stroke="white" stroke-width="{_svg_fmt(tick_w)}"/>'
+        )
+    # Label centered on the bar.
+    lines.append(
+        f'<text x="{_svg_fmt(x0 + w / 2)}" y="{_svg_fmt(y0 + 0.75 * h)}" '
+        f'fill="white" font-size="{_svg_fmt(fs)}" font-family="monospace" text-anchor="middle">{label}</text>'
+    )
+    lines.append("</g>")
+
+
+def write_print_target_svg(
+    out_path: Path,
+    board_mm: float,
+    pitch_mm: float,
+    n_markers: Optional[int],
+    codebook: list[int],
+    margin_mm: float = 0.0,
+) -> None:
+    """Write a ready-to-print SVG calibration target (board coordinates in mm)."""
+    if board_mm <= 0:
+        raise ValueError("--board_mm must be > 0")
+    if pitch_mm <= 0:
+        raise ValueError("--pitch_mm must be > 0")
+    if margin_mm < 0:
+        raise ValueError("--print_margin_mm must be >= 0")
+    if not codebook:
+        raise ValueError("codebook is empty")
+
+    markers = generate_hex_lattice(board_mm, pitch_mm, n_markers)
+
+    # Geometry (in mm), matching synthetic defaults.
+    outer_radius = pitch_mm * 0.6
+    inner_radius = pitch_mm * 0.4
+    code_band_outer = pitch_mm * 0.58
+    code_band_inner = pitch_mm * 0.42
+    ring_half_thickness = outer_radius * 0.12
+    ring_stroke = 2.0 * ring_half_thickness
+    outer_draw_extent = outer_radius + ring_half_thickness
+
+    size_mm = board_mm + 2.0 * margin_mm
+    half = board_mm / 2.0
+
+    lines: list[str] = []
+    lines.append('<?xml version="1.0" encoding="UTF-8"?>')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{_svg_fmt(size_mm)}mm" height="{_svg_fmt(size_mm)}mm" '
+        f'viewBox="0 0 {_svg_fmt(size_mm)} {_svg_fmt(size_mm)}">'
+    )
+    lines.append('<rect x="0" y="0" width="100%" height="100%" fill="white"/>')
+
+    dtheta = 2.0 * math.pi / 16.0
+    for idx, (_q, _r, mx, my) in enumerate(markers):
+        code_id = idx % len(codebook)
+        cw = codebook[code_id]
+
+        cx = mx + half + margin_mm
+        cy = my + half + margin_mm
+
+        lines.append(f'<g id="m{idx}" data-id="{code_id}">')
+        lines.append(
+            f'<circle cx="{_svg_fmt(cx)}" cy="{_svg_fmt(cy)}" r="{_svg_fmt(outer_radius)}" '
+            f'fill="none" stroke="black" stroke-width="{_svg_fmt(ring_stroke)}"/>'
+        )
+        lines.append(
+            f'<circle cx="{_svg_fmt(cx)}" cy="{_svg_fmt(cy)}" r="{_svg_fmt(inner_radius)}" '
+            f'fill="none" stroke="black" stroke-width="{_svg_fmt(ring_stroke)}"/>'
+        )
+
+        # Erase ring overlap inside the code band.
+        annulus_d = _svg_annulus_path(cx, cy, code_band_outer, code_band_inner)
+        lines.append(f'<path d="{annulus_d}" fill="white" fill-rule="evenodd"/>')
+
+        # Draw black sectors where bit == 0. Bit==1 stays white.
+        for s in range(16):
+            if ((cw >> s) & 1) == 1:
+                continue
+            a0 = -math.pi + s * dtheta
+            a1 = a0 + dtheta
+            sector_d = _svg_annular_sector_path(cx, cy, code_band_outer, code_band_inner, a0, a1)
+            lines.append(f'<path d="{sector_d}" fill="black"/>')
+
+        lines.append("</g>")
+
+    _append_scale_bar_svg(
+        lines,
+        board_mm=board_mm,
+        pitch_mm=pitch_mm,
+        markers=markers,
+        outer_draw_extent_mm=outer_draw_extent,
+        margin_mm=margin_mm,
+    )
+    lines.append("</svg>")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def render_print_target_raster(
+    board_mm: float,
+    pitch_mm: float,
+    n_markers: Optional[int],
+    codebook: list[int],
+    dpi: float,
+    margin_mm: float = 0.0,
+) -> np.ndarray:
+    """Render a top-down, ready-to-print calibration target as an 8-bit image."""
+    if board_mm <= 0:
+        raise ValueError("--board_mm must be > 0")
+    if pitch_mm <= 0:
+        raise ValueError("--pitch_mm must be > 0")
+    if margin_mm < 0:
+        raise ValueError("--print_margin_mm must be >= 0")
+    if dpi <= 0:
+        raise ValueError("--print_dpi must be > 0")
+    if not codebook:
+        raise ValueError("codebook is empty")
+
+    ppmm = dpi / 25.4
+    size_mm = board_mm + 2.0 * margin_mm
+    w_px = int(round(size_mm * ppmm))
+    h_px = int(round(size_mm * ppmm))
+    w_px = max(w_px, 1)
+    h_px = max(h_px, 1)
+
+    bg = np.uint8(255)
+    fg = np.uint8(0)
+    img = np.full((h_px, w_px), bg, dtype=np.uint8)
+
+    markers = generate_hex_lattice(board_mm, pitch_mm, n_markers)
+
+    # Geometry (in mm), matching synthetic defaults.
+    outer_radius_mm = pitch_mm * 0.6
+    inner_radius_mm = pitch_mm * 0.4
+    code_band_outer_mm = pitch_mm * 0.58
+    code_band_inner_mm = pitch_mm * 0.42
+    ring_half_thickness_mm = outer_radius_mm * 0.12
+
+    outer_r = outer_radius_mm * ppmm
+    inner_r = inner_radius_mm * ppmm
+    code_r_outer = code_band_outer_mm * ppmm
+    code_r_inner = code_band_inner_mm * ppmm
+    ring_w = ring_half_thickness_mm * ppmm
+
+    half = board_mm / 2.0
+    bound = outer_r + ring_w + 2.0
+
+    outer_min_sq = (outer_r - ring_w) ** 2
+    outer_max_sq = (outer_r + ring_w) ** 2
+    inner_min_sq = (inner_r - ring_w) ** 2
+    inner_max_sq = (inner_r + ring_w) ** 2
+    code_min_sq = code_r_inner ** 2
+    code_max_sq = code_r_outer ** 2
+
+    two_pi = 2.0 * math.pi
+
+    for idx, (_q, _r, mx, my) in enumerate(markers):
+        code_id = idx % len(codebook)
+        cw = int(codebook[code_id])
+
+        cx = (mx + half + margin_mm) * ppmm
+        cy = (my + half + margin_mm) * ppmm
+
+        x0 = int(max(math.floor(cx - bound), 0))
+        x1 = int(min(math.ceil(cx + bound) + 1, w_px))
+        y0 = int(max(math.floor(cy - bound), 0))
+        y1 = int(min(math.ceil(cy + bound) + 1, h_px))
+        if x0 >= x1 or y0 >= y1:
+            continue
+
+        patch = img[y0:y1, x0:x1]
+        yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float64)
+        dx = xx - cx
+        dy = yy - cy
+        dist_sq = dx * dx + dy * dy
+
+        outer_mask = (dist_sq >= outer_min_sq) & (dist_sq <= outer_max_sq)
+        patch[outer_mask] = fg
+
+        inner_mask = (dist_sq >= inner_min_sq) & (dist_sq <= inner_max_sq)
+        patch[inner_mask] = fg
+
+        code_mask = (dist_sq >= code_min_sq) & (dist_sq <= code_max_sq)
+        if np.any(code_mask):
+            angles = np.arctan2(dy[code_mask], dx[code_mask])  # [-pi, pi], +y down
+            sector = ((angles / two_pi + 0.5) * 16).astype(np.int32) % 16
+            bits = np.right_shift(cw, sector) & 1
+            patch[code_mask] = np.where(bits == 1, bg, fg).astype(np.uint8)
+
+    # Scale bar (black bar with white ticks + label).
+    outer_draw_extent_mm = outer_radius_mm + ring_half_thickness_mm
+    _draw_scale_bar_raster(
+        img,
+        board_mm=board_mm,
+        pitch_mm=pitch_mm,
+        markers=markers,
+        outer_draw_extent_mm=outer_draw_extent_mm,
+        margin_mm=margin_mm,
+        dpi=dpi,
+    )
+
+    return img
+
+
+_FONT_5X7: dict[str, list[int]] = {
+    "0": [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+    "1": [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+    "2": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+    "3": [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
+    "4": [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+    "5": [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+    "6": [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+    "7": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+    "8": [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+    "9": [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+    "m": [0b00000, 0b00000, 0b11010, 0b10101, 0b10101, 0b10101, 0b10101],
+    " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+}
+
+
+def _draw_text_5x7_u8(
+    img: np.ndarray,
+    x0: int,
+    y0: int,
+    text: str,
+    scale: int,
+    value: int,
+) -> None:
+    """Draw ASCII text using a tiny built-in 5x7 bitmap font."""
+    if scale <= 0:
+        return
+    h, w = img.shape
+    cursor_x = x0
+    spacing = scale
+    for ch in text:
+        glyph = _FONT_5X7.get(ch, _FONT_5X7[" "])
+        for row, bits in enumerate(glyph):
+            for col in range(5):
+                if ((bits >> (4 - col)) & 1) == 0:
+                    continue
+                px0 = cursor_x + col * scale
+                py0 = y0 + row * scale
+                px1 = px0 + scale
+                py1 = py0 + scale
+                if px1 <= 0 or py1 <= 0 or px0 >= w or py0 >= h:
+                    continue
+                sx0 = max(px0, 0)
+                sy0 = max(py0, 0)
+                sx1 = min(px1, w)
+                sy1 = min(py1, h)
+                img[sy0:sy1, sx0:sx1] = np.uint8(value)
+        cursor_x += 5 * scale + spacing
+
+
+def _draw_scale_bar_raster(
+    img: np.ndarray,
+    board_mm: float,
+    pitch_mm: float,
+    markers: list[tuple[int, int, float, float]],
+    outer_draw_extent_mm: float,
+    margin_mm: float,
+    dpi: float,
+) -> None:
+    p = _scale_bar_params(
+        board_mm=board_mm,
+        pitch_mm=pitch_mm,
+        markers=markers,
+        outer_draw_extent_mm=outer_draw_extent_mm,
+        margin_mm=margin_mm,
+    )
+
+    ppmm = dpi / 25.4
+    x0 = int(round(p["x0_mm"] * ppmm))
+    y0 = int(round(p["y0_mm"] * ppmm))
+    bar_w = int(round(p["bar_len_mm"] * ppmm))
+    bar_h = int(round(p["bar_h_mm"] * ppmm))
+    tick_step = int(round(p["tick_step_mm"] * ppmm))
+    tick_w = max(1, int(round(p["tick_w_mm"] * ppmm)))
+    label = str(p["label"])
+
+    h, w = img.shape
+    if bar_w <= 0 or bar_h <= 0:
+        return
+
+    x1 = min(x0 + bar_w, w)
+    y1 = min(y0 + bar_h, h)
+    x0c = max(x0, 0)
+    y0c = max(y0, 0)
+    if x0c >= x1 or y0c >= y1:
+        return
+
+    # Black bar.
+    img[y0c:y1, x0c:x1] = np.uint8(0)
+
+    # White ticks.
+    if tick_step > 0:
+        for tx in range(x0, x0 + bar_w + 1, tick_step):
+            for dx in range(-(tick_w // 2), tick_w - (tick_w // 2)):
+                col = tx + dx
+                if 0 <= col < w:
+                    img[y0c:y1, col] = np.uint8(255)
+
+    # White label centered on the bar.
+    desired_text_h = max(7, int(round(bar_h * 0.7)))
+    scale = max(1, desired_text_h // 7)
+    text_h = 7 * scale
+    text_w = len(label) * (5 * scale + scale) - scale
+    text_x = x0 + (bar_w - text_w) // 2
+    text_y = y0 + (bar_h - text_h) // 2
+    _draw_text_5x7_u8(img, text_x, text_y, label, scale=scale, value=255)
 
 
 # ── Main generator ──────────────────────────────────────────────────────
@@ -592,10 +1061,40 @@ def main() -> None:
         ),
     )
     parser.add_argument("--codebook", type=str, default="tools/codebook.json")
+    parser.add_argument(
+        "--print",
+        dest="print_all",
+        action="store_true",
+        help="Write ready-to-print calibration target (both PNG + SVG) into out_dir",
+    )
+    parser.add_argument("--print_png", action="store_true", help="Write ready-to-print calibration target PNG into out_dir")
+    parser.add_argument("--print_svg", action="store_true", help="Write ready-to-print calibration target SVG into out_dir")
+    parser.add_argument(
+        "--print_dpi",
+        type=float,
+        default=600.0,
+        help="DPI for the print PNG (also embedded as PNG pHYs metadata)",
+    )
+    parser.add_argument(
+        "--print_margin_mm",
+        type=float,
+        default=0.0,
+        help="Extra white margin (mm) added around the board in print outputs",
+    )
+    parser.add_argument(
+        "--print_basename",
+        type=str,
+        default="target_print",
+        help="Basename for print output files (without extension)",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.print_all:
+        args.print_png = True
+        args.print_svg = True
 
     codebook = load_codebook(args.codebook)
     print(f"Loaded codebook: {len(codebook)} codewords")
@@ -627,6 +1126,35 @@ def main() -> None:
     with open(board_spec_path, "w") as f:
         json.dump(board_spec, f, indent=2)
     print(f"Board spec written to {board_spec_path}")
+
+    if args.print_svg:
+        svg_path = out_dir / f"{args.print_basename}.svg"
+        write_print_target_svg(
+            svg_path,
+            board_mm=args.board_mm,
+            pitch_mm=args.pitch_mm,
+            n_markers=args.n_markers,
+            codebook=codebook,
+            margin_mm=args.print_margin_mm,
+        )
+        size_mm = args.board_mm + 2.0 * args.print_margin_mm
+        print(f"Print SVG written to {svg_path} ({size_mm:.2f}mm x {size_mm:.2f}mm)")
+
+    if args.print_png:
+        png_path = out_dir / f"{args.print_basename}.png"
+        img_u8 = render_print_target_raster(
+            board_mm=args.board_mm,
+            pitch_mm=args.pitch_mm,
+            n_markers=args.n_markers,
+            codebook=codebook,
+            dpi=args.print_dpi,
+            margin_mm=args.print_margin_mm,
+        )
+        write_png_gray(str(png_path), img_u8, dpi=args.print_dpi)
+        print(
+            f"Print PNG written to {png_path} ({args.print_dpi:.1f} dpi, "
+            f"{img_u8.shape[1]}x{img_u8.shape[0]} px)"
+        )
 
     for i in range(args.n_images):
         gt = generate_one_sample(

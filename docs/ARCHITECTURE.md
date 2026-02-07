@@ -144,7 +144,7 @@ Exit criteria:
 Problem:
 - Ellipse center is not the projected circle center under perspective.
 
-Status: partially completed (R3A complete, R3B pending).
+Status: in progress (R3A complete; core R3B integration complete, eval hardening pending).
 
 Implemented in R3A:
 
@@ -164,11 +164,17 @@ Implemented in R3A:
   - `nl_board_only`,
   - `nl_board_and_projective_center` (default).
 
-Remaining R3B integration decisions:
+Implemented in R3B so far:
 
-1. Decide whether downstream stages (dedup/global filter/refine/completion) should consume `center_projective` as primary center.
-2. Add synthetic eval reporting that compares legacy center vs projective center against GT.
-3. Add stability gates for runtime fallback if future datasets expose new failure modes.
+- Added `circle_refinement` method selector to config + CLI mapping.
+- Promoted projective center into primary `DetectedMarker.center` when enabled.
+- Applied projective-center promotion before dedup so downstream dedup/global filter/refine/completion consume corrected centers.
+- Kept diagnostic fields (`center_projective`, `vanishing_line`, residual) in outputs.
+
+Remaining R3B work:
+
+1. Add synthetic eval reporting that compares legacy center vs projective center against GT.
+2. Add stability gates for runtime fallback if future datasets expose new failure modes.
 
 Exit criteria:
 - New perspective-stress synthetic tests show center-error improvement.

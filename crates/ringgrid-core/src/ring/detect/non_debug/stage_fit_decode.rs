@@ -8,6 +8,8 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
     // Stage 1: Find candidate centers
     let proposals = find_proposals(gray, &config.proposal);
     tracing::info!("{} proposals found", proposals.len());
+    let use_projective_center =
+        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
 
     // Stages 2-5: For each proposal, sample edges → fit → decode
     let mut markers: Vec<DetectedMarker> = Vec::new();
@@ -66,10 +68,15 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
         markers.push(marker);
     }
 
-    // Stage 5: Dedup by center proximity
+    // Stage 5: Promote projective centers so downstream stages use unbiased centers.
+    if use_projective_center {
+        apply_projective_centers(&mut markers, config);
+    }
+
+    // Stage 6: Dedup by center proximity
     markers = dedup_markers(markers, config.dedup_radius);
 
-    // Stage 5b: Dedup by ID — keep best confidence per decoded ID
+    // Stage 6b: Dedup by ID — keep best confidence per decoded ID
     dedup_by_id(&mut markers);
 
     tracing::info!("{} markers detected after dedup", markers.len());

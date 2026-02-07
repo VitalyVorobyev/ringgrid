@@ -16,6 +16,8 @@ pub(super) fn run(
     use crate::codebook::{CODEBOOK_BITS, CODEBOOK_N};
 
     let (w, h) = gray.dimensions();
+    let use_projective_center =
+        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
 
     // Stage 0: proposals
     let proposals = find_proposals(gray, &config.proposal);
@@ -296,6 +298,18 @@ pub(super) fn run(
         }
     }
 
+    // Promote projective centers before dedup so downstream stages consume unbiased centers.
+    if use_projective_center {
+        apply_projective_centers(&mut markers, config);
+        for (marker, &cand_idx) in markers.iter().zip(marker_cand_idx.iter()) {
+            if cand_idx < n_rec {
+                if let Some(cd) = stage1.candidates.get_mut(cand_idx) {
+                    cd.derived.center_xy = Some([marker.center[0] as f32, marker.center[1] as f32]);
+                }
+            }
+        }
+    }
+
     // Stage 2: dedup (proximity + id)
     let (markers_dedup, cand_idx_dedup, dedup_debug) =
         dedup_with_debug(markers, marker_cand_idx, config.dedup_radius);
@@ -414,8 +428,6 @@ pub(super) fn run(
     };
 
     let use_nl_refine = config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled;
-    let use_projective_center =
-        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
 
     // Stage 6: Non-linear refinement in board plane (optional).
     let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);

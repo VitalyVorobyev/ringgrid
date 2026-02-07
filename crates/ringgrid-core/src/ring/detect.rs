@@ -351,7 +351,9 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         let q_inner = Conic2D::from_ellipse_params(inner).mat;
         let q_outer = Conic2D::from_ellipse_params(outer).mat;
         if let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) {
-            m.center_projective = Some([res.center.x, res.center.y]);
+            let center_projective = [res.center.x, res.center.y];
+            m.center = center_projective;
+            m.center_projective = Some(center_projective);
             m.vanishing_line = Some([
                 res.vanishing_line[0],
                 res.vanishing_line[1],
@@ -365,9 +367,12 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conic::ConicCoeffs;
+    use crate::FitMetrics;
     use image::GrayImage;
     use image::Luma;
     use nalgebra::Matrix3;
+    use nalgebra::Vector3;
 
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
@@ -444,5 +449,82 @@ mod tests {
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, Some(id));
+    }
+
+    #[test]
+    fn apply_projective_centers_promotes_center_field() {
+        fn circle_conic(radius: f64) -> Matrix3<f64> {
+            Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))
+        }
+
+        fn project_conic(q_plane: &Matrix3<f64>, h: &Matrix3<f64>) -> Matrix3<f64> {
+            let h_inv = h.try_inverse().expect("invertible homography");
+            h_inv.transpose() * q_plane * h_inv
+        }
+
+        fn conic_matrix_to_params(q: Matrix3<f64>) -> crate::EllipseParams {
+            let q_sym = 0.5 * (q + q.transpose());
+            let coeffs = ConicCoeffs([
+                q_sym[(0, 0)],
+                2.0 * q_sym[(0, 1)],
+                q_sym[(1, 1)],
+                2.0 * q_sym[(0, 2)],
+                2.0 * q_sym[(1, 2)],
+                q_sym[(2, 2)],
+            ]);
+            let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
+            crate::EllipseParams {
+                center_xy: [e.cx, e.cy],
+                semi_axes: [e.a, e.b],
+                angle: e.angle,
+            }
+        }
+
+        let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);
+        let q_inner = project_conic(&circle_conic(4.0), &h);
+        let q_outer = project_conic(&circle_conic(7.0), &h);
+        let inner = conic_matrix_to_params(q_inner);
+        let outer = conic_matrix_to_params(q_outer);
+
+        let center_before = outer.center_xy;
+        let mut markers = vec![DetectedMarker {
+            id: Some(0),
+            confidence: 1.0,
+            center: center_before,
+            center_projective: None,
+            vanishing_line: None,
+            center_projective_residual: None,
+            ellipse_outer: Some(outer),
+            ellipse_inner: Some(inner),
+            fit: FitMetrics::default(),
+            decode: None,
+        }];
+
+        let cfg = DetectConfig::default();
+        apply_projective_centers(&mut markers, &cfg);
+        let m = &markers[0];
+
+        let gt_h = h * Vector3::new(0.0, 0.0, 1.0);
+        let gt_center = [gt_h[0] / gt_h[2], gt_h[1] / gt_h[2]];
+        let err =
+            ((m.center[0] - gt_center[0]).powi(2) + (m.center[1] - gt_center[1]).powi(2)).sqrt();
+        let shift = ((m.center[0] - center_before[0]).powi(2)
+            + (m.center[1] - center_before[1]).powi(2))
+        .sqrt();
+
+        assert!(
+            m.center_projective.is_some(),
+            "projective center should be present"
+        );
+        assert!(
+            err < 1e-6,
+            "expected near-exact projective center, err={}",
+            err
+        );
+        assert!(
+            shift > 1e-3,
+            "primary center should be updated from ellipse center, shift={}",
+            shift
+        );
     }
 }

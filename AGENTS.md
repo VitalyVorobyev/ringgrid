@@ -138,12 +138,12 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
 9. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
-10. In progress (R3B): added `circle_refinement` method selector in detect config and CLI; downstream consumers still use legacy `center` as primary unless explicitly switched later.
-11. Next (R3B): decide whether downstream geometry stages should use `center_projective` as primary center (currently emitted as additional output fields).
+10. Completed (R3B): added `circle_refinement` method selector in detect config and CLI.
+11. Completed (R3B): downstream geometry stages now consume projective-corrected center as primary `center` when projective center is enabled.
 
 ## Projective unbiased center recovery (implemented)
 
-Current behavior now computes an additional unbiased center from inner/outer conics for final accepted markers.
+Current behavior computes a projective-unbiased center from inner/outer conics for accepted fits and promotes it to primary `center` for downstream stages when enabled.
 
 Policy decision (v1): run center correction for all accepted local fits that have both conics (inner + outer), independent of homography availability.
 
@@ -155,11 +155,12 @@ Implementation notes:
    - `center_projective`
    - `vanishing_line`
    - `center_projective_residual`
-4. Deterministic unit tests cover exact synthetic homography, scale invariance, and mild-noise stability.
+4. Downstream dedup/global-filter/refine/completion now consume corrected `center` values (projective-promoted when enabled).
+5. Deterministic unit tests cover exact synthetic homography, scale invariance, mild-noise stability, and center-promotion behavior.
 
 Remaining follow-up:
 - Add synthetic eval metrics that compare `center` vs `center_projective` against GT centers.
-- Decide if downstream dedup/global-filter/refine should optionally consume `center_projective`.
+- Add stability gates / fallback policy if projective center recovery fails on future datasets.
 
 ## Camera calibration / distortion plan
 

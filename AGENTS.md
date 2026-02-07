@@ -2,9 +2,9 @@
 
 ## Project overview
 
-`ringgrid` is a Rust workspace for detecting dense, all-coded ring calibration markers arranged on a hex (triangular) lattice. The core detector is pure Rust (no OpenCV bindings) and is paired with small Python utilities for generating synthetic datasets, running evaluation loops, scoring, and visualization.
+`ringgrid` is a Rust workspace for detecting dense, all-coded ring calibration markers arranged on a hex (triangular) lattice. The core detector is pure Rust (no OpenCV bindings) and is paired with Python utilities for synthetic generation, evaluation, scoring, and visualization.
 
-The Rust CLI (`ringgrid`) loads an image, runs the end-to-end ring detection pipeline (proposal → edge sampling → ellipse fit → decode → dedup → optional homography RANSAC filtering + refinement), and writes results as JSON (`ringgrid_core::DetectionResult`).
+The Rust CLI (`ringgrid`) loads an image, runs the end-to-end ring detection pipeline (proposal -> local fit/decode -> dedup -> optional homography filtering/refinement/completion), and writes results as JSON (`ringgrid_core::DetectionResult`).
 
 ## Local setup
 
@@ -20,7 +20,7 @@ cargo test
 
 ### Python tooling
 
-- Python **3.10+** (some scripts use `X | None` type syntax)
+- Python **3.10+**
 - Required packages:
   - `numpy` (synthetic generation)
   - `matplotlib` (visualization)
@@ -87,9 +87,9 @@ cargo run -- detect \
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- `--debug-json` writes `ringgrid.debug.v1` (versioned, comprehensive debug dump).
+- `--debug-json` writes `ringgrid.debug.v1` (versioned debug dump).
 - `--debug` is deprecated (alias for `--debug-json`).
-- NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine` or enable H-refit via `--nl-h-refit`.
+- NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine`.
 
 ### 4) Score detections
 
@@ -103,10 +103,126 @@ python3 tools/score_detect.py \
 
 ### One-command end-to-end eval
 
-This runs: generate → detect → score and writes an aggregate summary.
+This runs: generate -> detect -> score and writes an aggregate summary.
 ```bash
 python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_run
 ```
+
+## Architecture review snapshot (2026-02-07)
+
+### 1) Mixed-responsibility hotspots
+
+- `crates/ringgrid-core/src/ring/detect.rs` (~2960 LOC): local fitting, decode, dedup, homography RANSAC, refinement, completion, debug-schema mapping, and utility math all in one module.
+- `crates/ringgrid-core/src/refine.rs` (~930 LOC): edge re-sampling + optimization + record/debug assembly in one flow.
+- `crates/ringgrid-core/src/conic.rs` (~1180 LOC): core model types, conversion, direct fit, generalized eigen solver, cubic root solver, and RANSAC in one file.
+- `crates/ringgrid-cli/src/main.rs` (~400 LOC): CLI parsing and parameter-scaling policy are tightly coupled (`run_detect` uses many arguments).
+
+### 2) Redundant logic / data paths
+
+- Debug and non-debug branches duplicate core logic in `detect.rs`:
+  - `dedup_with_debug` vs `dedup_by_id`/`dedup_markers`
+  - `global_filter_with_debug` vs `global_filter`
+  - `refine_with_homography_with_debug` vs `refine_with_homography`
+- Marker assembly is repeated several times in `detect.rs` (fit metrics, decode metrics, inner estimate mapping).
+- `inner_estimate.rs` and `outer_estimate.rs` duplicate radial aggregation/peak machinery (`aggregate`, `per_theta_peak_r`).
+- Radial outer-edge probing exists in both `detect.rs` and `refine.rs` with slightly different gates.
+- `ring/edge_sample.rs::sample_edges` is currently unused by production pipeline (used only by its unit tests).
+
+### 3) Refactoring plan (ordered)
+
+1. Split `ring/detect.rs` into pipeline-focused modules while keeping behavior identical:
+   - `ring/pipeline/local_fit.rs`
+   - `ring/pipeline/dedup.rs`
+   - `ring/pipeline/global_filter.rs`
+   - `ring/pipeline/refine_h.rs`
+   - `ring/pipeline/completion.rs`
+   - `ring/pipeline/debug_map.rs`
+2. Introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
+3. Consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
+4. Reduce CLI argument plumbing by introducing a small config adapter:
+   - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
+
+## Missing feature plan: ellipse center correction via vanishing line pole
+
+Current behavior uses outer ellipse center directly; this is projectively biased. Planned first implementation:
+
+Policy decision (v1): run center correction for all accepted local fits whenever a valid homography is available (not only decoded/RANSAC-inlier subset).
+
+1. Build conic matrix `C` from fitted ellipse coefficients (`ellipse_to_conic`).
+2. Obtain board-plane vanishing line `l` from fitted homography `H`:
+   - `l ~ H^{-T} * [0, 0, 1]^T`.
+3. Compute center candidate as pole of `l` w.r.t. `C`:
+   - `p ~ C^{-1} * l` (or `adj(C) * l` for robustness).
+4. Dehomogenize `p` to image coordinates.
+5. Compute this for outer and inner ellipse when both available; fuse with quality weighting and gating.
+6. If no valid homography or unstable conic inversion, fall back to current center estimate.
+
+Acceptance checks:
+- New synthetic perspective stress test where corrected center error decreases vs baseline.
+- Keep decode and RANSAC inlier counts non-regressing on existing eval runs.
+
+## Camera calibration / distortion plan
+
+Goal: allow undistortion of edge samples for higher precision.
+
+1. Add `camera` module with explicit calibration structs for radial-tangential distortion.
+2. Make camera parameters optional in `DetectConfig` and output metadata.
+3. Add distortion-aware sampling helper used by radial sampling and refinement.
+4. Start with point-wise undistortion/remap during sampling (avoid full-image remap blur for precision path).
+5. Add synthetic-distortion eval mode in `tools/gen_synth.py` and score scripts.
+
+Scope decision (v1): radial-tangential only.
+
+## Public API target shape
+
+Design target for `ringgrid-core`:
+
+- Keep a simple entrypoint for common usage.
+- Expose expert controls in nested structs; avoid flat parameter sprawl.
+
+Proposed API direction:
+
+- `Detector` object holding immutable target/codebook/camera context.
+- `target` comes from runtime JSON and is mandatory in public API v1.
+- `Detector::detect(&GrayImage) -> DetectionResult`
+- `Detector::detect_with_debug(&GrayImage, DebugOptions) -> (DetectionResult, DebugDumpV1)`
+- `DetectionOptions` with two tiers:
+  - Stable user-facing fields (small set).
+  - `advanced` optional sub-structs for proposal/edge/decode/refine internals.
+
+Initial stable parameter surface (v1, provisional):
+
+- `marker_diameter_px`
+- `min_marker_separation_px` (maps to dedup/min-distance semantics)
+- `enable_global_filter`
+- `ransac_reproj_thresh_px`
+- `enable_completion`
+- `enable_nl_refine`
+- `decode_min_confidence`
+- `camera` (optional radial-tangential calibration)
+
+Initial advanced surface (v1, provisional):
+
+- Proposal internals (`r_min/r_max`, gradient threshold, NMS)
+- Outer/inner estimator internals (search windows, polarity, theta/radial sample counts)
+- Decode sampling internals (band ratio, samples per sector, radial rings)
+- Completion gates (ROI radius, reproj gate, arc coverage, fit confidence, attempts)
+- Homography internals (`max_iters`, seed, min inliers)
+- NL refine internals (`max_iters`, huber delta, min_points, reject shift, H-refit loop)
+
+## Target specification format (planned)
+
+Move to a versioned runtime JSON schema (while keeping generated Rust embedding support):
+
+- `schema`: version string (for example `ringgrid.target.v1`)
+- `name`, `units`
+- `board`: either explicit marker list (`id`, `xy_mm`, optional `q/r`) or parametric hex layout descriptor
+- `marker_geometry`: outer/inner/code-band radii, sector count
+- `coding`: codebook metadata + codewords (or external reference)
+- optional: tolerances / expected visibility masks
+
+Keep `tools/gen_board_spec.py` and embedded constants as one backend of this schema, not a separate format.
+Public API decision (v1): runtime target JSON is mandatory (no embedded-board fallback at API boundary).
 
 ## Debugging workflow
 
@@ -151,10 +267,17 @@ cargo test
 
 ## Do / Don’t
 
-- Do regenerate embedded artifacts via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (don’t hand-edit generated Rust).
-- Do keep the generator(s) + embedded Rust + decoder/scorer consistent if formats change.
+- Do regenerate embedded artifacts via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust).
+- Do keep generator(s) + embedded Rust + decoder/scorer consistent if formats change.
+- Do keep debug schema evolution versioned (`ringgrid.debug.v1`, `v2`, ...).
 - Don’t change the codebook/board ID conventions without updating:
-  - the generator scripts
-  - the embedded Rust modules
+  - generator scripts
+  - embedded Rust modules
   - decoding + global filter logic
   - tests and scoring scripts
+
+## Open decisions for maintainers
+
+- Which advanced parameters should remain user-exposed in v1 vs internal-only?
+- Should `min_marker_separation_px` be a direct user knob or derived from target geometry + marker scale?
+- Should camera calibration remain optional in v1 API, or required for precision-oriented profiles?

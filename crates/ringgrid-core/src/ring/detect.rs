@@ -20,6 +20,13 @@ use super::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus, Polari
 use super::outer_estimate::{
     estimate_outer_from_prior, OuterEstimate, OuterEstimationConfig, OuterStatus,
 };
+use super::pipeline::dedup::{
+    dedup_by_id as dedup_by_id_impl, dedup_markers as dedup_markers_impl,
+    dedup_with_debug as dedup_with_debug_impl,
+};
+use super::pipeline::global_filter::{
+    global_filter as global_filter_impl, global_filter_with_debug as global_filter_with_debug_impl,
+};
 use super::proposal::{find_proposals, ProposalConfig};
 
 /// Debug collection options for `detect_rings_with_debug`.
@@ -1396,125 +1403,16 @@ pub fn detect_rings_with_debug(
 }
 
 fn dedup_with_debug(
-    mut markers: Vec<DetectedMarker>,
-    mut cand_idx: Vec<usize>,
+    markers: Vec<DetectedMarker>,
+    cand_idx: Vec<usize>,
     radius: f64,
 ) -> (Vec<DetectedMarker>, Vec<usize>, dbg::DedupDebugV1) {
-    // Sort by confidence descending (keep cand_idx in sync)
-    let mut order: Vec<usize> = (0..markers.len()).collect();
-    order.sort_by(|&a, &b| {
-        markers[b]
-            .confidence
-            .partial_cmp(&markers[a].confidence)
-            .unwrap()
-    });
-
-    markers = order.iter().map(|&i| markers[i].clone()).collect();
-    cand_idx = order.iter().map(|&i| cand_idx[i]).collect();
-
-    let mut keep = vec![true; markers.len()];
-    let r2 = radius * radius;
-    let mut kept_by_proximity: Vec<dbg::KeptByProximityDebugV1> = Vec::new();
-
-    for i in 0..markers.len() {
-        if !keep[i] {
-            continue;
-        }
-        let mut dropped: Vec<usize> = Vec::new();
-        for j in (i + 1)..markers.len() {
-            if !keep[j] {
-                continue;
-            }
-            let dx = markers[i].center[0] - markers[j].center[0];
-            let dy = markers[i].center[1] - markers[j].center[1];
-            if dx * dx + dy * dy < r2 {
-                keep[j] = false;
-                dropped.push(cand_idx[j]);
-            }
-        }
-        if !dropped.is_empty() {
-            kept_by_proximity.push(dbg::KeptByProximityDebugV1 {
-                kept_cand_idx: cand_idx[i],
-                dropped_cand_indices: dropped,
-                reasons: vec!["within_dedup_radius".to_string()],
-            });
-        }
-    }
-
-    let mut markers2: Vec<DetectedMarker> = Vec::new();
-    let mut cand2: Vec<usize> = Vec::new();
-    for ((m, k), ci) in markers
-        .into_iter()
-        .zip(keep.into_iter())
-        .zip(cand_idx.into_iter())
-    {
-        if k {
-            markers2.push(m);
-            cand2.push(ci);
-        }
-    }
-
-    // Dedup by ID (keep best confidence)
-    use std::collections::{HashMap, HashSet};
-    let mut best_idx: HashMap<usize, usize> = HashMap::new();
-    for (i, m) in markers2.iter().enumerate() {
-        if let Some(id) = m.id {
-            match best_idx.get(&id) {
-                Some(&prev) if markers2[prev].confidence >= m.confidence => {}
-                _ => {
-                    best_idx.insert(id, i);
-                }
-            }
-        }
-    }
-
-    let keep_set: HashSet<usize> = best_idx.values().copied().collect();
-    let mut kept_by_id: Vec<dbg::KeptByIdDebugV1> = Vec::new();
-    for (&id, &kept_i) in best_idx.iter() {
-        let mut dropped: Vec<usize> = Vec::new();
-        for (i, m) in markers2.iter().enumerate() {
-            if i == kept_i {
-                continue;
-            }
-            if m.id == Some(id) {
-                dropped.push(cand2[i]);
-            }
-        }
-        if !dropped.is_empty() {
-            kept_by_id.push(dbg::KeptByIdDebugV1 {
-                id,
-                kept_cand_idx: cand2[kept_i],
-                dropped_cand_indices: dropped,
-                reasons: vec!["lower_confidence".to_string()],
-            });
-        }
-    }
-    kept_by_id.sort_by_key(|e| e.id);
-
-    let mut markers3: Vec<DetectedMarker> = Vec::new();
-    let mut cand3: Vec<usize> = Vec::new();
-    for (i, m) in markers2.into_iter().enumerate() {
-        let keep_it = m.id.is_none() || keep_set.contains(&i);
-        if keep_it {
-            markers3.push(m);
-            cand3.push(cand2[i]);
-        }
-    }
-
-    (
-        markers3,
-        cand3,
-        dbg::DedupDebugV1 {
-            kept_by_proximity,
-            kept_by_id,
-            notes: Vec::new(),
-        },
-    )
+    dedup_with_debug_impl(markers, cand_idx, radius)
 }
 
 fn global_filter_with_debug(
     markers: &[DetectedMarker],
-    _cand_idx: &[usize],
+    cand_idx: &[usize],
     config: &RansacHomographyConfig,
 ) -> (
     Vec<DetectedMarker>,
@@ -1522,139 +1420,7 @@ fn global_filter_with_debug(
     Option<RansacStats>,
     dbg::RansacDebugV1,
 ) {
-    // Build correspondences from decoded markers
-    let mut src_pts = Vec::new(); // board coords (mm)
-    let mut dst_pts = Vec::new(); // image coords (px)
-    let mut corr_ids: Vec<usize> = Vec::new();
-
-    for m in markers {
-        if let Some(id) = m.id {
-            if let Some(xy) = board_spec::xy_mm(id) {
-                src_pts.push([xy[0] as f64, xy[1] as f64]);
-                dst_pts.push(m.center);
-                corr_ids.push(id);
-            }
-        }
-    }
-
-    if src_pts.len() < 4 {
-        let dbg = dbg::RansacDebugV1 {
-            enabled: true,
-            h_best: None,
-            correspondences_used: src_pts.len(),
-            inlier_ids: Vec::new(),
-            outlier_ids: Vec::new(),
-            per_id_error_px: None,
-            stats: dbg::RansacStatsDebugV1 {
-                iters: config.max_iters,
-                thresh_px: config.inlier_threshold,
-                n_corr: src_pts.len(),
-                n_inliers: 0,
-                mean_err_inliers: 0.0,
-                p95_err_inliers: 0.0,
-            },
-            notes: vec![format!("too_few_correspondences({}<4)", src_pts.len())],
-        };
-        return (markers.to_vec(), None, None, dbg);
-    }
-
-    let result = match homography::fit_homography_ransac(&src_pts, &dst_pts, config) {
-        Ok(r) => r,
-        Err(e) => {
-            let dbg = dbg::RansacDebugV1 {
-                enabled: true,
-                h_best: None,
-                correspondences_used: src_pts.len(),
-                inlier_ids: Vec::new(),
-                outlier_ids: Vec::new(),
-                per_id_error_px: None,
-                stats: dbg::RansacStatsDebugV1 {
-                    iters: config.max_iters,
-                    thresh_px: config.inlier_threshold,
-                    n_corr: src_pts.len(),
-                    n_inliers: 0,
-                    mean_err_inliers: 0.0,
-                    p95_err_inliers: 0.0,
-                },
-                notes: vec![format!("ransac_failed:{}", e)],
-            };
-            return (markers.to_vec(), None, None, dbg);
-        }
-    };
-
-    // Collect inliers/outliers and per-id errors
-    let mut filtered: Vec<DetectedMarker> = Vec::new();
-    let mut inlier_errors: Vec<f64> = Vec::new();
-    let mut inlier_ids: Vec<usize> = Vec::new();
-    let mut outlier_ids: Vec<usize> = Vec::new();
-    let mut per_id_error: Vec<dbg::PerIdErrorDebugV1> = Vec::new();
-
-    for (j, &id) in corr_ids.iter().enumerate() {
-        let err = result.errors[j];
-        per_id_error.push(dbg::PerIdErrorDebugV1 {
-            id,
-            reproj_err_px: err,
-        });
-        if result.inlier_mask[j] {
-            inlier_ids.push(id);
-            inlier_errors.push(err);
-        } else {
-            outlier_ids.push(id);
-        }
-    }
-
-    // Filter markers to inliers only (by matching id list)
-    use std::collections::HashSet;
-    let inlier_set: HashSet<usize> = inlier_ids.iter().copied().collect();
-    for m in markers {
-        if let Some(id) = m.id {
-            if inlier_set.contains(&id) {
-                filtered.push(m.clone());
-            }
-        }
-    }
-
-    // Stats
-    inlier_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mean_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        inlier_errors.iter().sum::<f64>() / inlier_errors.len() as f64
-    };
-    let p95_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        let idx = ((inlier_errors.len() as f64 * 0.95) as usize).min(inlier_errors.len() - 1);
-        inlier_errors[idx]
-    };
-
-    let stats = RansacStats {
-        n_candidates: src_pts.len(),
-        n_inliers: result.n_inliers,
-        threshold_px: config.inlier_threshold,
-        mean_err_px: mean_err,
-        p95_err_px: p95_err,
-    };
-
-    let dbg = dbg::RansacDebugV1 {
-        enabled: true,
-        h_best: Some(matrix3_to_array(&result.h)),
-        correspondences_used: src_pts.len(),
-        inlier_ids,
-        outlier_ids,
-        per_id_error_px: Some(per_id_error),
-        stats: dbg::RansacStatsDebugV1 {
-            iters: config.max_iters,
-            thresh_px: config.inlier_threshold,
-            n_corr: src_pts.len(),
-            n_inliers: result.n_inliers,
-            mean_err_inliers: mean_err,
-            p95_err_inliers: p95_err,
-        },
-        notes: Vec::new(),
-    };
-
-    (filtered, Some(result), Some(stats), dbg)
+    global_filter_with_debug_impl(markers, cand_idx, config)
 }
 
 fn refine_with_homography_with_debug(
@@ -1820,28 +1586,7 @@ fn refine_with_homography_with_debug(
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
 /// one with the highest confidence.
 fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
-    use std::collections::HashMap;
-    let mut best_idx: HashMap<usize, usize> = HashMap::new();
-
-    for (i, m) in markers.iter().enumerate() {
-        if let Some(id) = m.id {
-            match best_idx.get(&id) {
-                Some(&prev) if markers[prev].confidence >= m.confidence => {}
-                _ => {
-                    best_idx.insert(id, i);
-                }
-            }
-        }
-    }
-
-    let keep_set: std::collections::HashSet<usize> = best_idx.values().copied().collect();
-    let mut i = 0;
-    markers.retain(|m| {
-        let idx = i;
-        i += 1;
-        // Keep markers without ID (they'll be filtered by RANSAC anyway)
-        m.id.is_none() || keep_set.contains(&idx)
-    });
+    dedup_by_id_impl(markers);
 }
 
 /// Apply global homography RANSAC filter.
@@ -1855,85 +1600,7 @@ fn global_filter(
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
-    // Build correspondences from decoded markers
-    let mut src_pts = Vec::new(); // board coords (mm)
-    let mut dst_pts = Vec::new(); // image coords (px)
-    let mut candidate_indices = Vec::new(); // index into markers
-
-    for (i, m) in markers.iter().enumerate() {
-        if let Some(id) = m.id {
-            if let Some(xy) = board_spec::xy_mm(id) {
-                src_pts.push([xy[0] as f64, xy[1] as f64]);
-                dst_pts.push(m.center);
-                candidate_indices.push(i);
-            }
-        }
-    }
-
-    tracing::info!(
-        "Global filter: {} decoded candidates out of {} total detections",
-        candidate_indices.len(),
-        markers.len()
-    );
-
-    if candidate_indices.len() < 4 {
-        tracing::warn!(
-            "Too few decoded candidates for homography ({} < 4)",
-            candidate_indices.len()
-        );
-        return (markers.to_vec(), None, None);
-    }
-
-    let result = match homography::fit_homography_ransac(&src_pts, &dst_pts, config) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("Homography RANSAC failed: {}", e);
-            return (markers.to_vec(), None, None);
-        }
-    };
-
-    // Collect inlier markers
-    let mut filtered = Vec::new();
-    let mut inlier_errors = Vec::new();
-
-    for (j, &marker_idx) in candidate_indices.iter().enumerate() {
-        if result.inlier_mask[j] {
-            filtered.push(markers[marker_idx].clone());
-            inlier_errors.push(result.errors[j]);
-        }
-    }
-
-    // Compute stats
-    inlier_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mean_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        inlier_errors.iter().sum::<f64>() / inlier_errors.len() as f64
-    };
-    let p95_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        let idx = ((inlier_errors.len() as f64 * 0.95) as usize).min(inlier_errors.len() - 1);
-        inlier_errors[idx]
-    };
-
-    let stats = RansacStats {
-        n_candidates: candidate_indices.len(),
-        n_inliers: result.n_inliers,
-        threshold_px: config.inlier_threshold,
-        mean_err_px: mean_err,
-        p95_err_px: p95_err,
-    };
-
-    tracing::info!(
-        "Homography RANSAC: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
-        result.n_inliers,
-        candidate_indices.len(),
-        mean_err,
-        p95_err,
-    );
-
-    (filtered, Some(result), Some(stats))
+    global_filter_impl(markers, config)
 }
 
 /// Refine marker centers using H: project board coords through H as priors,
@@ -1944,114 +1611,7 @@ fn refine_with_homography(
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
 ) -> Vec<DetectedMarker> {
-    let mut refined = Vec::with_capacity(markers.len());
-
-    for m in markers {
-        let id = match m.id {
-            Some(id) => id,
-            None => {
-                refined.push(m.clone());
-                continue;
-            }
-        };
-
-        let xy = match board_spec::xy_mm(id) {
-            Some(xy) => xy,
-            None => {
-                refined.push(m.clone());
-                continue;
-            }
-        };
-
-        // Project board coords through H to get refined center prior
-        let prior = project(h, xy[0] as f64, xy[1] as f64);
-        if prior[0].is_nan() || prior[1].is_nan() {
-            refined.push(m.clone());
-            continue;
-        }
-
-        let r_expected =
-            mean_axis_px_from_marker(m).unwrap_or(marker_outer_radius_expected_px(config));
-
-        let fit_cand = match fit_outer_ellipse_robust_with_reason(
-            gray,
-            [prior[0] as f32, prior[1] as f32],
-            r_expected,
-            config,
-            &config.edge_sample,
-            false,
-        ) {
-            Ok(v) => v,
-            Err(_) => {
-                refined.push(m.clone());
-                continue;
-            }
-        };
-        let edge = fit_cand.edge;
-        let outer = fit_cand.outer;
-        let outer_ransac = fit_cand.outer_ransac;
-        let decode_result = fit_cand.decode_result.filter(|d| d.id == id);
-
-        let mean_axis_new = ((outer.a + outer.b) * 0.5) as f32;
-        let scale_ok = mean_axis_new.is_finite()
-            && mean_axis_new >= (r_expected * 0.75)
-            && mean_axis_new <= (r_expected * 1.33);
-        if decode_result.is_none() || !scale_ok {
-            refined.push(m.clone());
-            continue;
-        }
-
-        let center = compute_center(&outer);
-
-        let fit = FitMetrics {
-            n_angles_total: edge.n_total_rays,
-            n_angles_with_both_edges: edge.n_good_rays,
-            n_points_outer: edge.outer_points.len(),
-            n_points_inner: 0,
-            ransac_inlier_ratio_outer: outer_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: None,
-            rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: None,
-        };
-
-        let inner_est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
-        let inner_params = if inner_est.status == InnerStatus::Ok {
-            let s = inner_est
-                .r_inner_found
-                .unwrap_or(config.marker_spec.r_inner_expected) as f64;
-            Some(EllipseParams {
-                center_xy: [outer.cx, outer.cy],
-                semi_axes: [outer.a * s, outer.b * s],
-                angle: outer.angle,
-            })
-        } else {
-            None
-        };
-
-        let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
-        let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
-            observed_word: d.raw_word,
-            best_id: d.id,
-            best_rotation: d.rotation,
-            best_dist: d.dist,
-            margin: d.margin,
-            decode_confidence: d.confidence,
-        });
-
-        // Keep original ID (validated by RANSAC), but update geometry
-        refined.push(DetectedMarker {
-            id: Some(id),
-            confidence,
-            center,
-            ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner_params,
-            fit,
-            decode: decode_metrics,
-        });
-    }
-
+    let (refined, _debug) = refine_with_homography_with_debug(gray, markers, h, config);
     refined
 }
 
@@ -2845,35 +2405,8 @@ fn refit_homography_matrix(
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within dedup_radius.
-fn dedup_markers(mut markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarker> {
-    // Sort by confidence descending
-    markers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
-
-    let mut keep = vec![true; markers.len()];
-    let r2 = radius * radius;
-
-    for i in 0..markers.len() {
-        if !keep[i] {
-            continue;
-        }
-        for j in (i + 1)..markers.len() {
-            if !keep[j] {
-                continue;
-            }
-            let dx = markers[i].center[0] - markers[j].center[0];
-            let dy = markers[i].center[1] - markers[j].center[1];
-            if dx * dx + dy * dy < r2 {
-                keep[j] = false;
-            }
-        }
-    }
-
-    markers
-        .into_iter()
-        .zip(keep)
-        .filter(|(_, k)| *k)
-        .map(|(m, _)| m)
-        .collect()
+fn dedup_markers(markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarker> {
+    dedup_markers_impl(markers, radius)
 }
 
 #[cfg(test)]

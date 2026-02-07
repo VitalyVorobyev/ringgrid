@@ -10,8 +10,8 @@ use image::GrayImage;
 use crate::marker_spec::AngularAggregator;
 
 use super::edge_sample::bilinear_sample_u8_checked;
-use super::inner_estimate::Polarity;
-
+use super::radial_profile;
+use super::radial_profile::Polarity;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OuterGradPolarity {
     /// Intensity increases as radius increases (dark → light).
@@ -87,47 +87,6 @@ impl Default for OuterEstimationConfig {
             refine_halfwidth_px: 1.0,
         }
     }
-}
-
-fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    match *agg {
-        AngularAggregator::Median => values[values.len() / 2],
-        AngularAggregator::TrimmedMean { trim_fraction } => {
-            let tf = trim_fraction.clamp(0.0, 0.45);
-            let k = (values.len() as f32 * tf).floor() as usize;
-            let start = k.min(values.len());
-            let end = values.len().saturating_sub(k).max(start);
-            let slice = &values[start..end];
-            if slice.is_empty() {
-                values[values.len() / 2]
-            } else {
-                slice.iter().sum::<f32>() / slice.len() as f32
-            }
-        }
-    }
-}
-
-fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
-    let mut peaks = Vec::with_capacity(curves.len());
-    for d in curves {
-        let idx = match pol {
-            Polarity::Pos => d
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, _)| i)
-                .unwrap(),
-            Polarity::Neg => d
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, _)| i)
-                .unwrap(),
-        };
-        peaks.push(r_samples[idx]);
-    }
-    peaks
 }
 
 fn find_local_peaks(score: &[f32]) -> Vec<usize> {
@@ -262,7 +221,7 @@ pub fn estimate_outer_from_prior(
             for d in &curves {
                 scratch.push(d[ri]);
             }
-            agg_resp[ri] = aggregate(&mut scratch, &cfg.aggregator);
+            agg_resp[ri] = radial_profile::aggregate(&mut scratch, &cfg.aggregator);
         }
 
         // Convert to a score where "larger is better" regardless of polarity.
@@ -288,7 +247,7 @@ pub fn estimate_outer_from_prior(
         peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
 
         // Per-theta peaks (for consistency checks)
-        let per_theta = per_theta_peak_r(&curves, &r_samples, pol);
+        let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
 
         let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
         let mut best_strength = None::<f32>;

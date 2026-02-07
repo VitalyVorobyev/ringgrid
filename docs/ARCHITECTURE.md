@@ -132,6 +132,7 @@ Work completed under this phase so far:
 - `refine_markers_circle_board` flow split into `refine/pipeline.rs` with helper modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`).
 - Inner-ellipse estimation is now run for every accepted outer fit (not decode-gated), reducing branching differences between decoded/undecoded local fits.
 - `Conic2D` was moved into `conic.rs` as a shared primitive, removing duplicate conic-matrix conversion code from `projective_center.rs`.
+- Added shared `ring/radial_profile.rs` and removed duplicated radial aggregation/peak helper logic from `inner_estimate.rs` and `outer_estimate.rs`.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.

@@ -122,7 +122,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 - Core dedup/global-filter/refine-H duplication has been reduced by delegating to shared module paths.
 - Marker assembly is still repeated across regular and debug flows (`non_debug/stage_fit_decode.rs`, `debug_pipeline.rs`, `completion.rs`, `refine_h.rs`).
-- `inner_estimate.rs` and `outer_estimate.rs` duplicate radial aggregation/peak machinery (`aggregate`, `per_theta_peak_r`).
+- Shared radial aggregation/peak helpers now live in `ring/radial_profile.rs`; remaining duplication is in sampling/gating policy rather than utility math.
 - Radial outer-edge probing still exists in both `ring/detect/*` and `refine/*` with slightly different gates.
 - `ring/edge_sample.rs::sample_edges` is currently unused by production pipeline (used only by its unit tests).
 
@@ -133,7 +133,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 3. In progress (R2): introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
 4. In progress (R2): inner estimation now runs for every accepted outer fit (not decode-gated), so center correction can run on all accepted fits when both conics exist.
 5. Completed (R2): moved `Conic2D` into `conic.rs` as shared primitive (removed duplicate matrix-form conversion implementation from `projective_center.rs`).
-6. Next (R2): consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
+6. Completed (R2): consolidated radial profile helpers into `ring/radial_profile.rs` and switched inner/outer estimators to use it.
 7. Next (R2): reduce CLI argument plumbing by introducing a small config adapter:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 8. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.

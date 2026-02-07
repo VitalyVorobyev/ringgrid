@@ -130,29 +130,33 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 1. Completed: split `ring/detect.rs` into focused modules while keeping behavior identical (synthetic aggregate parity checks kept exact).
 2. Completed: split `refine.rs` into focused modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`, `refine/pipeline.rs`).
-3. Next: introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
-4. Next: consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
-5. Next: reduce CLI argument plumbing by introducing a small config adapter:
+3. In progress (R2): introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
+4. In progress (R2): inner estimation now runs for every accepted outer fit (not decode-gated), so center correction can run on all accepted fits when both conics exist.
+5. Next (R2): consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
+6. Next (R2): reduce CLI argument plumbing by introducing a small config adapter:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
+7. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
+8. Next (R3B): decide whether downstream geometry stages should use `center_projective` as primary center (currently emitted as additional output fields).
 
-## Missing feature plan: ellipse center correction via vanishing line pole
+## Projective unbiased center recovery (implemented)
 
-Current behavior uses outer ellipse center directly; this is projectively biased. Planned first implementation:
+Current behavior now computes an additional unbiased center from inner/outer conics for final accepted markers.
 
-Policy decision (v1): run center correction for all accepted local fits whenever a valid homography is available (not only decoded/RANSAC-inlier subset).
+Policy decision (v1): run center correction for all accepted local fits that have both conics (inner + outer), independent of homography availability.
 
-1. Build conic matrix `C` from fitted ellipse coefficients (`ellipse_to_conic`).
-2. Obtain board-plane vanishing line `l` from fitted homography `H`:
-   - `l ~ H^{-T} * [0, 0, 1]^T`.
-3. Compute center candidate as pole of `l` w.r.t. `C`:
-   - `p ~ C^{-1} * l` (or `adj(C) * l` for robustness).
-4. Dehomogenize `p` to image coordinates.
-5. Compute this for outer and inner ellipse when both available; fuse with quality weighting and gating.
-6. If no valid homography or unstable conic inversion, fall back to current center estimate.
+Implementation notes:
 
-Acceptance checks:
-- New synthetic perspective stress test where corrected center error decreases vs baseline.
-- Keep decode and RANSAC inlier counts non-regressing on existing eval runs.
+1. `crates/ringgrid-core/src/projective_center.rs` implements conic-pencil eigen recovery (Wang 2019 style) with clear error modes.
+2. `DetectConfig` now has `projective_center` controls (`enable`, `use_expected_ratio`, `ratio_penalty_weight`).
+3. Final `DetectedMarker` now stores:
+   - `center_projective`
+   - `vanishing_line`
+   - `center_projective_residual`
+4. Deterministic unit tests cover exact synthetic homography, scale invariance, and mild-noise stability.
+
+Remaining follow-up:
+- Add synthetic eval metrics that compare `center` vs `center_projective` against GT centers.
+- Decide if downstream dedup/global-filter/refine should optionally consume `center_projective`.
 
 ## Camera calibration / distortion plan
 
@@ -165,6 +169,7 @@ Goal: allow undistortion of edge samples for higher precision.
 5. Add synthetic-distortion eval mode in `tools/gen_synth.py` and score scripts.
 
 Scope decision (v1): radial-tangential only.
+Status: not started (roadmap phase R4).
 
 ## Public API target shape
 
@@ -185,6 +190,7 @@ Proposed API direction:
 
 Initial stable parameter surface (v1, provisional):
 
+- `target` JSON (mandatory input in public API v1)
 - `marker_diameter_px`
 - `min_marker_separation_px` (maps to dedup/min-distance semantics)
 - `enable_global_filter`
@@ -201,6 +207,7 @@ Initial advanced surface (v1, provisional):
 - Decode sampling internals (band ratio, samples per sector, radial rings)
 - Completion gates (ROI radius, reproj gate, arc coverage, fit confidence, attempts)
 - Homography internals (`max_iters`, seed, min inliers)
+- Projective-center selector internals (`use_expected_ratio`, `ratio_penalty_weight`)
 - NL refine internals (`max_iters`, huber delta, min_points, reject shift, H-refit loop)
 
 ## Target specification format (planned)

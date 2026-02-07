@@ -46,21 +46,17 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
             rms_residual_inner: None,
         };
 
-        // Stage 4b: Inner edge estimation (only for decoded candidates)
-        let inner_params = if decode_result.is_some() {
-            let est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
-            if est.status == InnerStatus::Ok {
-                let s = est
-                    .r_inner_found
-                    .unwrap_or(config.marker_spec.r_inner_expected) as f64;
-                Some(EllipseParams {
-                    center_xy: [outer.cx, outer.cy],
-                    semi_axes: [outer.a * s, outer.b * s],
-                    angle: outer.angle,
-                })
-            } else {
-                None
-            }
+        // Stage 4b: Inner edge estimation for every accepted outer fit.
+        let est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
+        let inner_params = if est.status == InnerStatus::Ok {
+            let s = est
+                .r_inner_found
+                .unwrap_or(config.marker_spec.r_inner_expected) as f64;
+            Some(EllipseParams {
+                center_xy: [outer.cx, outer.cy],
+                semi_axes: [outer.a * s, outer.b * s],
+                angle: outer.angle,
+            })
         } else {
             None
         };
@@ -81,6 +77,9 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
             id: decode_result.as_ref().map(|d| d.id),
             confidence,
             center,
+            center_projective: None,
+            vanishing_line: None,
+            center_projective_residual: None,
             ellipse_outer: Some(ellipse_to_params(&outer)),
             ellipse_inner: inner_params,
             fit,

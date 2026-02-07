@@ -140,16 +140,12 @@ pub(super) fn run(
             decode_confidence: d.confidence,
         });
 
-        let inner_est = if decode_result.is_some() {
-            Some(estimate_inner_scale_from_outer(
-                gray,
-                &outer,
-                &config.marker_spec,
-                debug_cfg.store_points,
-            ))
-        } else {
-            None
-        };
+        let inner_est = Some(estimate_inner_scale_from_outer(
+            gray,
+            &outer,
+            &config.marker_spec,
+            debug_cfg.store_points,
+        ));
         let inner_params = inner_est.as_ref().and_then(|est| {
             if est.status == InnerStatus::Ok {
                 let s = est
@@ -169,6 +165,9 @@ pub(super) fn run(
             id: derived_id,
             confidence,
             center,
+            center_projective: None,
+            vanishing_line: None,
+            center_projective_residual: None,
             ellipse_outer: Some(ellipse_to_params(&outer)),
             ellipse_inner: inner_params.clone(),
             fit: fit_metrics.clone(),
@@ -621,6 +620,8 @@ pub(super) fn run(
         }
     }
 
+    apply_projective_centers(&mut final_markers, config);
+
     let result = DetectionResult {
         detected_markers: final_markers.clone(),
         image_size: [w, h],
@@ -685,6 +686,11 @@ pub(super) fn run(
                 min_decode_confidence: config.decode.min_decode_confidence,
             },
             marker_spec: config.marker_spec.clone(),
+            projective_center: Some(dbg::ProjectiveCenterParamsV1 {
+                enabled: config.projective_center.enable,
+                use_expected_ratio: config.projective_center.use_expected_ratio,
+                ratio_penalty_weight: config.projective_center.ratio_penalty_weight,
+            }),
             nl_refine: Some(nl_refine_debug.params.clone()),
             min_semi_axis: config.min_semi_axis,
             max_semi_axis: config.max_semi_axis,

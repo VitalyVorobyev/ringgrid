@@ -19,6 +19,7 @@ pub mod conic;
 pub mod debug_dump;
 pub mod homography;
 pub mod marker_spec;
+pub mod projective_center;
 pub mod refine;
 pub mod ring;
 
@@ -85,6 +86,15 @@ pub struct DetectedMarker {
     pub confidence: f32,
     /// Marker center in image coordinates (pixels).
     pub center: [f64; 2],
+    /// Projective unbiased center estimated from inner+outer ring conics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective: Option<[f64; 2]>,
+    /// Vanishing line estimate associated with the unbiased center (homogeneous line ax+by+c=0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vanishing_line: Option<[f64; 3]>,
+    /// Selection residual used by the projective-center eigenpair chooser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective_residual: Option<f64>,
     /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<EllipseParams>,

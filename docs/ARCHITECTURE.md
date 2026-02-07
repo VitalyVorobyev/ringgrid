@@ -25,6 +25,7 @@ crates/
         decode.rs         # 16-sector sampling + codebook matching
       conic.rs            # ellipse/conic fit and utilities
       homography.rs       # DLT + RANSAC homography fitting
+      projective_center.rs # projective unbiased center from inner/outer conics
       refine.rs           # public refine API + wrappers
       refine/             # math/sampling/solver/pipeline helpers
       debug_dump.rs       # versioned debug schema
@@ -84,6 +85,7 @@ For each proposal:
 ### 8) Outputs
 
 - `DetectionResult` (`lib.rs`) for stable detector output.
+- Includes optional `center_projective`, `vanishing_line`, and selection residual per marker.
 - Optional versioned debug dump (`debug_dump.rs`, schema `ringgrid.debug.v1`).
 
 ## Known architecture debt
@@ -128,6 +130,7 @@ Status: in progress.
 
 Work completed under this phase so far:
 - `refine_markers_circle_board` flow split into `refine/pipeline.rs` with helper modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`).
+- Inner-ellipse estimation is now run for every accepted outer fit (not decode-gated), reducing branching differences between decoded/undecoded local fits.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.
@@ -138,21 +141,26 @@ Exit criteria:
 Problem:
 - Ellipse center is not the projected circle center under perspective.
 
-Planned math:
+Status: partially completed (R3A complete, R3B pending).
 
-- Represent observed ellipse as conic matrix `C`.
-- Compute board-plane vanishing line `l` from homography `H`:
-  - `l ~ H^{-T} [0, 0, 1]^T`.
-- Corrected center is pole of `l` w.r.t. `C`:
-  - `p ~ C^{-1} l` (or `adj(C) l` for numerical robustness).
-- Dehomogenize `p` to image coordinates.
+Implemented in R3A:
 
-Integration plan:
+- Added `projective_center.rs` with conic-pencil eigen recovery (`A = Q_outer * inv(Q_inner)`), robust candidate selection, and explicit degenerate-input errors.
+- Added deterministic tests:
+  - exact synthetic homography recovery,
+  - conic scale invariance,
+  - mild-noise stability.
+- Integrated into detection outputs for all accepted markers that have both conics, in both debug and non-debug flows.
+- Exposed config knobs in `DetectConfig.projective_center`:
+  - `enable`,
+  - `use_expected_ratio`,
+  - `ratio_penalty_weight`.
 
-1. Add conic-matrix conversion + pole helper utility.
-2. When `H` is available, compute corrected center for every accepted local fit (policy decision).
-3. If inner ellipse exists, compute second corrected center and fuse with quality weighting.
-4. Gate by reprojection consistency; fallback to legacy center when unstable.
+Remaining R3B integration decisions:
+
+1. Decide whether downstream stages (dedup/global filter/refine/completion) should consume `center_projective` as primary center.
+2. Add synthetic eval reporting that compares legacy center vs projective center against GT.
+3. Add stability gates for runtime fallback if future datasets expose new failure modes.
 
 Exit criteria:
 - New perspective-stress synthetic tests show center-error improvement.
@@ -252,7 +260,7 @@ Policy decision for public API v1:
 
 - Keep existing unit tests green.
 - Add targeted tests for:
-  - conic pole/line math and degeneracy handling
+  - conic-pencil/eigen center recovery and degeneracy handling
   - center-correction regression on perspective synthetic data
   - distortion-aware sampling consistency
 - Keep end-to-end synthetic eval as release gate.

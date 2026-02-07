@@ -110,6 +110,8 @@ pub(super) fn run(
         }
     );
 
+    apply_projective_centers(&mut final_markers, config);
+
     DetectionResult {
         detected_markers: final_markers,
         image_size,

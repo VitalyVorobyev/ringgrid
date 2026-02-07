@@ -49,6 +49,8 @@ pub struct ParamsDebugV1 {
     pub decode: DecodeParamsV1,
     pub marker_spec: crate::marker_spec::MarkerSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projective_center: Option<ProjectiveCenterParamsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nl_refine: Option<NlRefineParamsV1>,
 
     pub min_semi_axis: f64,
@@ -126,6 +128,13 @@ pub struct RansacHomographyParamsV1 {
     pub inlier_threshold: f64,
     pub min_inliers: usize,
     pub seed: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectiveCenterParamsV1 {
+    pub enabled: bool,
+    pub use_expected_ratio: bool,
+    pub ratio_penalty_weight: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -611,6 +620,7 @@ mod tests {
                     min_decode_confidence: 0.15,
                 },
                 marker_spec: crate::marker_spec::MarkerSpec::default(),
+                projective_center: None,
                 nl_refine: None,
                 min_semi_axis: 3.0,
                 max_semi_axis: 15.0,

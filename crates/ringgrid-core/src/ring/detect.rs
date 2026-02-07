@@ -86,6 +86,27 @@ impl Default for CompletionParams {
     }
 }
 
+/// Projective-only unbiased center recovery from inner/outer conics.
+#[derive(Debug, Clone)]
+pub struct ProjectiveCenterParams {
+    /// Enable projective unbiased center estimation.
+    pub enable: bool,
+    /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
+    pub use_expected_ratio: bool,
+    /// Weight of the eigenvalue-vs-ratio penalty term.
+    pub ratio_penalty_weight: f64,
+}
+
+impl Default for ProjectiveCenterParams {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            use_expected_ratio: true,
+            ratio_penalty_weight: 1.0,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
@@ -97,6 +118,7 @@ pub struct DetectConfig {
     pub edge_sample: EdgeSampleConfig,
     pub decode: DecodeConfig,
     pub marker_spec: MarkerSpec,
+    pub projective_center: ProjectiveCenterParams,
     pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
     pub min_semi_axis: f64,
@@ -125,6 +147,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
             min_semi_axis: 3.0,
             max_semi_axis: 15.0,
@@ -262,6 +285,52 @@ fn refit_homography_matrix(
 /// Remove duplicate detections: keep the highest-confidence marker within dedup_radius.
 fn dedup_markers(markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarker> {
     dedup_markers_impl(markers, radius)
+}
+
+pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+    use crate::projective_center::{
+        ring_center_projective_with_debug, Conic2D, RingCenterProjectiveOptions,
+    };
+
+    for m in markers.iter_mut() {
+        m.center_projective = None;
+        m.vanishing_line = None;
+        m.center_projective_residual = None;
+    }
+
+    if !config.projective_center.enable {
+        return;
+    }
+
+    let expected_ratio = if config.projective_center.use_expected_ratio {
+        Some(config.marker_spec.r_inner_expected as f64)
+    } else {
+        None
+    };
+    let opts = RingCenterProjectiveOptions {
+        expected_ratio,
+        ratio_penalty_weight: config.projective_center.ratio_penalty_weight,
+        ..Default::default()
+    };
+
+    for m in markers.iter_mut() {
+        let (Some(inner), Some(outer)) = (m.ellipse_inner.as_ref(), m.ellipse_outer.as_ref())
+        else {
+            continue;
+        };
+
+        let q_inner = Conic2D::from_ellipse_params(inner).mat;
+        let q_outer = Conic2D::from_ellipse_params(outer).mat;
+        if let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) {
+            m.center_projective = Some([res.center.x, res.center.y]);
+            m.vanishing_line = Some([
+                res.vanishing_line[0],
+                res.vanishing_line[1],
+                res.vanishing_line[2],
+            ]);
+            m.center_projective_residual = Some(res.debug.selected_residual);
+        }
+    }
 }
 
 #[cfg(test)]

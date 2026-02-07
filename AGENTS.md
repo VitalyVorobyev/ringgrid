@@ -87,8 +87,7 @@ cargo run -- detect \
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- `--debug-json` writes `ringgrid.debug.v1` (versioned debug dump).
-- `--debug` is deprecated (alias for `--debug-json`).
+- Debug dump CLI flags (`--debug-json`, `--debug-store-points`) are available only when built with `--features debug-trace`.
 - NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine`.
 
 ### 4) Score detections
@@ -112,7 +111,6 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 ### 1) Mixed-responsibility hotspots
 
-- `crates/ringgrid-core/src/ring/detect/debug_pipeline.rs` (~727 LOC): still mixes stage execution with debug-schema mapping and serialization shaping.
 - `crates/ringgrid-core/src/ring/detect/completion.rs` (~634 LOC): completion logic + gates + debug mapping in one module.
 - `crates/ringgrid-core/src/refine/pipeline.rs` (~524 LOC): per-marker refine flow still long, although now isolated from API/types.
 - `crates/ringgrid-core/src/conic.rs` (~1180 LOC): core model types, conversion, direct fit, generalized eigen solver, cubic root solver, and RANSAC in one file.
@@ -137,12 +135,15 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 7. Completed (R2): reduced CLI argument plumbing by introducing a config adapter path:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
-9. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
-10. Completed (R3B): added `circle_refinement` method selector in detect config and CLI.
-11. Completed (R3C): center correction is now treated as a strict single-choice strategy (`none` | `projective_center` | `nl_board`) with no sequential chaining.
-12. Completed (R3C): when `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers.
-13. Completed (R3C): when correction runs without camera intrinsics, pipeline still runs and emits warnings (R4 will add undistortion path).
-14. Completed (R3C): board-circle center solve now supports selectable solver backends (`lm` and `irls`) via config/CLI/debug metadata.
+9. Completed (R2): merged debug/non-debug detection execution into shared stage modules (`non_debug/stage_fit_decode.rs`, `non_debug/stage_finalize.rs`) and removed `ring/detect/debug_pipeline.rs`.
+10. Completed (R2): added compile-time debug tracing feature (`debug-trace`), default-disabled.
+11. Completed (R2): debug API/CLI is unavailable at compile time unless `debug-trace` is enabled.
+12. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
+13. Completed (R3B): added `circle_refinement` method selector in detect config and CLI.
+14. Completed (R3C): center correction is now treated as a strict single-choice strategy (`none` | `projective_center` | `nl_board`) with no sequential chaining.
+15. Completed (R3C): when `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers.
+16. Completed (R3C): when correction runs without camera intrinsics, pipeline still runs and emits warnings (R4 will add undistortion path).
+17. Completed (R3C): board-circle center solve now supports selectable solver backends (`lm` and `irls`) via config/CLI/debug metadata.
 
 ## Center correction strategy (R3C re-plan)
 

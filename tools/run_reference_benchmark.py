@@ -261,7 +261,6 @@ def main() -> None:
             img_path = synth_dir / f"img_{idx:04d}.png"
             gt_path = synth_dir / f"gt_{idx:04d}.json"
             det_path = mode_dir / f"det_{idx:04d}.json"
-            dbg_path = mode_dir / f"debug_{idx:04d}.json"
             score_path = mode_dir / f"score_{idx:04d}.json"
 
             if use_cargo_run:
@@ -275,8 +274,6 @@ def main() -> None:
                     str(img_path),
                     "--out",
                     str(det_path),
-                    "--debug-json",
-                    str(dbg_path),
                     "--marker-diameter",
                     str(args.marker_diameter),
                     *mode_args,
@@ -289,8 +286,6 @@ def main() -> None:
                     str(img_path),
                     "--out",
                     str(det_path),
-                    "--debug-json",
-                    str(dbg_path),
                     "--marker-diameter",
                     str(args.marker_diameter),
                     *mode_args,

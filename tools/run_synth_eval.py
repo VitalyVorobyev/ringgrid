@@ -177,7 +177,6 @@ def main():
     for i in range(args.n):
         img_path = synth_dir / f"img_{i:04d}.png"
         det_path = det_dir / f"det_{i:04d}.json"
-        debug_path = det_dir / f"debug_{i:04d}.json"
         gt_path = synth_dir / f"gt_{i:04d}.json"
 
         if not img_path.exists():
@@ -190,7 +189,6 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
         else:
@@ -199,7 +197,6 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
         if args.pass_camera_to_detector and gt_path.exists():

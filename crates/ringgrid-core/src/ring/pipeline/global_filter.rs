@@ -7,6 +7,7 @@ struct GlobalFilterOutcome {
     filtered: Vec<DetectedMarker>,
     result: Option<homography::RansacHomographyResult>,
     stats: Option<RansacStats>,
+    #[allow(dead_code)]
     debug: Option<dbg::RansacDebugV1>,
 }
 
@@ -212,6 +213,7 @@ fn run_global_filter(
     }
 }
 
+#[allow(dead_code)]
 pub fn global_filter_with_debug(
     markers: &[DetectedMarker],
     _cand_idx: &[usize],

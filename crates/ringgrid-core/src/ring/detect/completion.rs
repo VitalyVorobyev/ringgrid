@@ -23,6 +23,7 @@ pub(super) enum CompletionAttemptStatus {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(super) struct CompletionAttemptRecord {
     pub(super) id: usize,
     pub(super) projected_center_xy: [f32; 2],
@@ -34,6 +35,7 @@ pub(super) struct CompletionAttemptRecord {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub(super) struct CompletionStats {
     pub(super) n_candidates_total: usize,
     pub(super) n_in_image: usize,

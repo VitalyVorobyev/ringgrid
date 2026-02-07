@@ -40,9 +40,11 @@ python3 tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 
 target/release/ringgrid detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json \
-  --debug-json tools/out/synth_001/debug_0000.json \
   --marker-diameter 32.0
 ```
+
+Debug dump support is compile-time gated (disabled by default).  
+Build with `--features debug-trace` to enable `--debug-json` / `--debug-store-points`.
 
 ### 5. Score against ground truth
 
@@ -93,8 +95,8 @@ Other commonly used toggles:
 - `--no-global-filter`
 - `--no-refine`
 - `--no-complete`
-- `--debug-json <path>`
-- `--debug-store-points`
+- `--debug-json <path>` (requires `debug-trace` feature)
+- `--debug-store-points` (requires `debug-trace` feature)
 
 ## Metrics (Synthetic Scoring)
 

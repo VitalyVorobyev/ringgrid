@@ -19,7 +19,7 @@ crates/
         outer_estimate.rs # outer edge radius hypotheses near expected scale
         edge_sample.rs    # low-level image sampling helpers
         detect.rs         # top-level orchestration (delegates into ring/detect/*)
-        detect/           # non_debug/debug/completion/refine_h helpers
+        detect/           # shared stage modules + completion/refine_h helpers
         pipeline/         # dedup + global-filter shared stages
         inner_estimate.rs # inner radius estimation constrained by outer ellipse
         decode.rs         # 16-sector sampling + codebook matching
@@ -96,14 +96,15 @@ For each proposal:
 
 ### Mixed responsibilities
 
-- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/debug_pipeline.rs` (~727 LOC) and `ring/detect/completion.rs` (~634 LOC) are still large mixed-responsibility modules.
+- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/completion.rs` (~634 LOC) is still a large mixed-responsibility module.
 - `refine.rs` is now slim, but `refine/pipeline.rs` (~524 LOC) still concentrates many per-marker decision branches.
 - `conic.rs` combines model definitions and multiple algorithmic layers (fit + solver internals + RANSAC).
 - CLI `run_detect` has broad parameter plumbing and policy coupling.
 
 ### Duplicate or near-duplicate logic
 
-- Debug/non-debug branch duplication has been reduced for dedup/global-filter/refine-H core paths, but marker assembly is still repeated across multiple stage modules.
+- Debug/non-debug pipeline execution has been merged into shared stage modules (`non_debug/stage_fit_decode.rs`, `non_debug/stage_finalize.rs`) with feature-gated trace collection.
+- Marker assembly is still repeated across some stage modules.
 - Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
 - Radial edge probing code appears in both `ring/detect/*` and `refine/*`.
@@ -136,8 +137,10 @@ Work completed under this phase so far:
 - `Conic2D` was moved into `conic.rs` as a shared primitive, removing duplicate conic-matrix conversion code from `projective_center.rs`.
 - Added shared `ring/radial_profile.rs` and removed duplicated radial aggregation/peak helper logic from `inner_estimate.rs` and `outer_estimate.rs`.
 - CLI detect wiring now uses an adapter path (`CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`) instead of passing a large argument list through `run_detect`.
-- Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, debug pipeline, completion, and H-refine paths.
+- Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, completion, and H-refine paths.
 - Legacy `sample_edges` implementation was removed (decision: deprecate/remove, not adopt).
+- Debug/non-debug execution was unified into shared stage modules and `ring/detect/debug_pipeline.rs` was removed.
+- Compile-time trace feature `debug-trace` was added (default-disabled). Debug API/CLI are unavailable when the feature is not enabled.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.

@@ -48,18 +48,22 @@ struct CliDetectArgs {
     out: PathBuf,
 
     /// DEPRECATED: use --debug-json. Writes a versioned debug dump (JSON).
+    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug: Option<PathBuf>,
 
     /// Path to write a comprehensive versioned debug dump (JSON).
+    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug_json: Option<PathBuf>,
 
     /// Include edge point arrays in debug dump (can get large).
+    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug_store_points: bool,
 
     /// Maximum number of candidates to record in the debug dump.
+    #[cfg(feature = "debug-trace")]
     #[arg(long, default_value = "300")]
     debug_max_candidates: usize,
 
@@ -497,14 +501,17 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let overrides = args.to_overrides()?;
     let config = build_detect_config(preset, &overrides);
 
-    // Run detection pipeline (optionally with debug dump)
+    #[cfg(feature = "debug-trace")]
     let deprecated_debug_path = args.debug.as_deref();
+    #[cfg(feature = "debug-trace")]
     let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);
 
+    #[cfg(feature = "debug-trace")]
     if deprecated_debug_path.is_some() && args.debug_json.is_none() {
         tracing::warn!("--debug is deprecated; use --debug-json instead");
     }
 
+    #[cfg(feature = "debug-trace")]
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid_core::ring::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
@@ -517,6 +524,9 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     } else {
         (ringgrid_core::ring::detect_rings(&gray, &config), None)
     };
+
+    #[cfg(not(feature = "debug-trace"))]
+    let result = ringgrid_core::ring::detect_rings(&gray, &config);
 
     let n_with_id = result
         .detected_markers
@@ -545,6 +555,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     tracing::info!("Results written to {}", args.out.display());
 
     // Write debug dump (versioned schema)
+    #[cfg(feature = "debug-trace")]
     if let Some(debug_path) = debug_out_path {
         let dump = debug_dump.expect("debug dump present when debug_out_path is set");
         let debug_json = serde_json::to_string_pretty(&dump)?;

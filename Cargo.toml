@@ -17,3 +17,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 approx = "0.5"
 rand = "0.8"
+tiny-solver = "0.18"

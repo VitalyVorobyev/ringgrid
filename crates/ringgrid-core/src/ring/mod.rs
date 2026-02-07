@@ -12,6 +12,10 @@ pub mod detect;
 pub mod edge_sample;
 pub mod inner_estimate;
 pub mod outer_estimate;
+mod pipeline;
 pub mod proposal;
+pub(crate) mod radial_profile;
 
-pub use detect::{detect_rings, detect_rings_with_debug, DebugCollectConfig, DetectConfig};
+pub use detect::{
+    detect_rings, detect_rings_with_debug, CircleRefinementMethod, DebugCollectConfig, DetectConfig,
+};

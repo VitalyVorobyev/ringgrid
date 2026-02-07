@@ -52,6 +52,10 @@ def write_rust(path: Path, spec: dict) -> None:
     markers = spec["markers"]
     pitch = spec["pitch_mm"]
     board = spec["board_size_mm"][0]
+    outer_r = spec.get("marker_outer_radius_mm")
+    inner_r = spec.get("marker_inner_radius_mm")
+    code_outer_r = spec.get("marker_code_band_outer_radius_mm")
+    code_inner_r = spec.get("marker_code_band_inner_radius_mm")
 
     lines = [
         f"//! Embedded board specification for {spec['name']}.",
@@ -63,6 +67,12 @@ def write_rust(path: Path, spec: dict) -> None:
         f"pub const BOARD_N: usize = {n};",
         f"pub const BOARD_PITCH_MM: f32 = {pitch};",
         f"pub const BOARD_SIZE_MM: [f32; 2] = [{spec['board_size_mm'][0]}, {spec['board_size_mm'][1]}];",
+        "",
+        "/// Marker geometry in board units (mm).",
+        f"pub const MARKER_OUTER_RADIUS_MM: f32 = {outer_r};",
+        f"pub const MARKER_INNER_RADIUS_MM: f32 = {inner_r};",
+        f"pub const MARKER_CODE_BAND_OUTER_RADIUS_MM: f32 = {code_outer_r};",
+        f"pub const MARKER_CODE_BAND_INNER_RADIUS_MM: f32 = {code_inner_r};",
         "",
         "/// Board-coordinate (x, y) in mm for each marker, indexed by codebook ID.",
         f"pub const BOARD_XY_MM: [[f32; 2]; {n}] = [",
@@ -97,6 +107,11 @@ def write_rust(path: Path, spec: dict) -> None:
     lines.append("    BOARD_NAME")
     lines.append("}")
     lines.append("")
+    lines.append("/// Marker outer radius in board units (mm).")
+    lines.append("pub fn marker_outer_radius_mm() -> f32 {")
+    lines.append("    MARKER_OUTER_RADIUS_MM")
+    lines.append("}")
+    lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
@@ -123,12 +138,20 @@ def main():
     lattice = generate_hex_lattice(args.board_mm, args.pitch_mm)
     n = len(lattice)
     name = f"ringgrid_{int(args.board_mm)}mm_hex"
+    marker_outer_radius = args.pitch_mm * 0.6
+    marker_inner_radius = args.pitch_mm * 0.4
+    marker_code_band_outer_radius = args.pitch_mm * 0.58
+    marker_code_band_inner_radius = args.pitch_mm * 0.42
 
     spec = {
         "name": name,
         "board_size_mm": [args.board_mm, args.board_mm],
         "pitch_mm": args.pitch_mm,
         "origin_mm": [0.0, 0.0],
+        "marker_outer_radius_mm": marker_outer_radius,
+        "marker_inner_radius_mm": marker_inner_radius,
+        "marker_code_band_outer_radius_mm": marker_code_band_outer_radius,
+        "marker_code_band_inner_radius_mm": marker_code_band_inner_radius,
         "n_markers": n,
         "markers": [
             {"id": i, "q": q, "r": r, "xy_mm": [round(x, 4), round(y, 4)]}

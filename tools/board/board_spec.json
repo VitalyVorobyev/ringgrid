@@ -9,6 +9,10 @@
     0.0,
     0.0
   ],
+  "marker_outer_radius_mm": 4.8,
+  "marker_inner_radius_mm": 3.2,
+  "marker_code_band_outer_radius_mm": 4.64,
+  "marker_code_band_inner_radius_mm": 3.36,
   "n_markers": 203,
   "markers": [
     {

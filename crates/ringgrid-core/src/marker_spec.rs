@@ -19,9 +19,11 @@ pub enum InnerGradPolarity {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AngularAggregator {
+    /// Median across theta responses.
     Median,
     /// Trimmed mean (drops `trim_fraction` on each side).
     TrimmedMean {
+        /// Fraction removed from each tail before averaging.
         trim_fraction: f32,
     },
 }
@@ -93,6 +95,7 @@ impl Default for MarkerSpec {
 }
 
 impl MarkerSpec {
+    /// Return normalized radial search window around `r_inner_expected`.
     pub fn search_window(&self) -> [f32; 2] {
         [
             self.r_inner_expected - self.inner_search_halfwidth,

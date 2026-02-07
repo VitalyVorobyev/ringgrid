@@ -10,8 +10,9 @@ use image::GrayImage;
 use crate::marker_spec::AngularAggregator;
 
 use super::edge_sample::bilinear_sample_u8_checked;
-use super::inner_estimate::Polarity;
-
+use super::radial_profile;
+use super::radial_profile::Polarity;
+/// Expected sign convention for the outer-edge radial derivative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OuterGradPolarity {
     /// Intensity increases as radius increases (dark → light).
@@ -22,32 +23,50 @@ pub enum OuterGradPolarity {
     Auto,
 }
 
+/// Outcome category for outer-edge estimation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OuterStatus {
+    /// Outer-radius estimate is valid and passed quality gates.
     Ok,
+    /// Estimate was computed but rejected by quality gates.
     Rejected,
+    /// Estimation failed (invalid inputs or insufficient data).
     Failed,
 }
 
+/// Candidate outer-radius hypothesis from aggregated radial response.
 #[derive(Debug, Clone)]
 pub struct OuterHypothesis {
+    /// Outer radius in pixels.
     pub r_outer_px: f32,
+    /// Absolute aggregated peak magnitude.
     pub peak_strength: f32,
+    /// Fraction of per-theta peaks close to `r_outer_px`.
     pub theta_consistency: f32,
 }
 
+/// Outer-radius estimation result with optional debug traces.
 #[derive(Debug, Clone)]
 pub struct OuterEstimate {
+    /// Expected outer radius (pixels) from current scale prior.
     pub r_outer_expected_px: f32,
+    /// Radial search window `[min, max]` in pixels.
     pub search_window_px: [f32; 2],
+    /// Selected response polarity.
     pub polarity: Option<Polarity>,
+    /// Candidate hypotheses sorted by quality (best first).
     pub hypotheses: Vec<OuterHypothesis>,
+    /// Final estimator status.
     pub status: OuterStatus,
+    /// Optional human-readable reject/failure reason.
     pub reason: Option<String>,
+    /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
+    /// Optional sampled radii corresponding to `radial_response_agg`.
     pub r_samples: Option<Vec<f32>>,
 }
 
+/// Configuration for outer-radius estimation around a center prior.
 #[derive(Debug, Clone)]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
@@ -89,47 +108,6 @@ impl Default for OuterEstimationConfig {
     }
 }
 
-fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    match *agg {
-        AngularAggregator::Median => values[values.len() / 2],
-        AngularAggregator::TrimmedMean { trim_fraction } => {
-            let tf = trim_fraction.clamp(0.0, 0.45);
-            let k = (values.len() as f32 * tf).floor() as usize;
-            let start = k.min(values.len());
-            let end = values.len().saturating_sub(k).max(start);
-            let slice = &values[start..end];
-            if slice.is_empty() {
-                values[values.len() / 2]
-            } else {
-                slice.iter().sum::<f32>() / slice.len() as f32
-            }
-        }
-    }
-}
-
-fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
-    let mut peaks = Vec::with_capacity(curves.len());
-    for d in curves {
-        let idx = match pol {
-            Polarity::Pos => d
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, _)| i)
-                .unwrap(),
-            Polarity::Neg => d
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, _)| i)
-                .unwrap(),
-        };
-        peaks.push(r_samples[idx]);
-    }
-    peaks
-}
-
 fn find_local_peaks(score: &[f32]) -> Vec<usize> {
     if score.len() < 3 {
         return Vec::new();
@@ -143,6 +121,10 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
     out
 }
 
+/// Estimate outer radius around a center prior using radial derivatives.
+///
+/// Returns one or more radius hypotheses along with quality statistics and
+/// optional response traces used by debug tooling.
 pub fn estimate_outer_from_prior(
     gray: &GrayImage,
     center_prior: [f32; 2],
@@ -262,7 +244,7 @@ pub fn estimate_outer_from_prior(
             for d in &curves {
                 scratch.push(d[ri]);
             }
-            agg_resp[ri] = aggregate(&mut scratch, &cfg.aggregator);
+            agg_resp[ri] = radial_profile::aggregate(&mut scratch, &cfg.aggregator);
         }
 
         // Convert to a score where "larger is better" regardless of polarity.
@@ -288,7 +270,7 @@ pub fn estimate_outer_from_prior(
         peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
 
         // Per-theta peaks (for consistency checks)
-        let per_theta = per_theta_peak_r(&curves, &r_samples, pol);
+        let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
 
         let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
         let mut best_strength = None::<f32>;

@@ -8,17 +8,22 @@
 //! 3. **Conic** – robust ellipse fitting via direct conic least-squares + RANSAC.
 //! 4. **Lattice** – neighbor graph construction, vanishing line estimation,
 //!    affine-rectification homography for center-bias correction.
-//! 5. **Refine** – per-marker shared-center dual-ring Levenberg–Marquardt refinement.
+//! 5. **Refine** – per-marker shared-center dual-ring board-plane refinement.
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
+#[allow(missing_docs)]
 pub mod board_spec;
+#[allow(missing_docs)]
 pub mod codebook;
 pub mod codec;
 pub mod conic;
+#[allow(missing_docs)]
 pub mod debug_dump;
 pub mod homography;
 pub mod marker_spec;
+pub mod projective_center;
+pub mod refine;
 pub mod ring;
 
 /// Ellipse parameters for serialization (center + geometry).
@@ -84,6 +89,15 @@ pub struct DetectedMarker {
     pub confidence: f32,
     /// Marker center in image coordinates (pixels).
     pub center: [f64; 2],
+    /// Projective unbiased center estimated from inner+outer ring conics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective: Option<[f64; 2]>,
+    /// Vanishing line estimate associated with the unbiased center (homogeneous line ax+by+c=0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vanishing_line: Option<[f64; 3]>,
+    /// Selection residual used by the projective-center eigenpair chooser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective_residual: Option<f64>,
     /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<EllipseParams>,
@@ -115,6 +129,7 @@ pub struct RansacStats {
 /// Full detection result for a single image.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
+    /// Detected markers in image coordinates.
     pub detected_markers: Vec<DetectedMarker>,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
@@ -127,6 +142,7 @@ pub struct DetectionResult {
 }
 
 impl DetectionResult {
+    /// Construct an empty result for an image with the provided dimensions.
     pub fn empty(width: u32, height: u32) -> Self {
         Self {
             detected_markers: Vec::new(),

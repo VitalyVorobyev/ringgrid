@@ -7,37 +7,53 @@
 use image::GrayImage;
 
 use crate::conic::Ellipse;
-use crate::marker_spec::{AngularAggregator, InnerGradPolarity, MarkerSpec};
+use crate::marker_spec::{InnerGradPolarity, MarkerSpec};
 
 use super::edge_sample::bilinear_sample_u8_checked;
+use super::radial_profile;
+pub use super::radial_profile::Polarity;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Polarity {
-    Pos,
-    Neg,
-}
-
+/// Outcome category for inner-edge estimation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InnerStatus {
+    /// Inner-edge estimate is valid and passed quality gates.
     Ok,
+    /// Inner-edge estimate was computed but rejected by quality gates.
     Rejected,
+    /// Estimation failed (invalid inputs or insufficient data).
     Failed,
 }
 
+/// Inner-edge estimation result anchored on the fitted outer ellipse.
 #[derive(Debug, Clone)]
 pub struct InnerEstimate {
+    /// Expected normalized inner radius (`Rin/Rout`).
     pub r_inner_expected: f32,
+    /// Search window in normalized radius units.
     pub search_window: [f32; 2],
+    /// Recovered normalized inner radius when available.
     pub r_inner_found: Option<f32>,
+    /// Selected radial derivative polarity.
     pub polarity: Option<Polarity>,
+    /// Absolute aggregated peak magnitude at the selected radius.
     pub peak_strength: Option<f32>,
+    /// Fraction of theta samples consistent with the selected radius.
     pub theta_consistency: Option<f32>,
+    /// Final estimator status.
     pub status: InnerStatus,
+    /// Optional human-readable reject/failure reason.
     pub reason: Option<String>,
+    /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
+    /// Optional sampled normalized radii corresponding to `radial_response_agg`.
     pub r_samples: Option<Vec<f32>>,
 }
 
+/// Estimate inner ring scale from a fitted outer ellipse.
+///
+/// This estimator samples radial profiles in the normalized outer-ellipse frame,
+/// aggregates edge responses across theta, and returns a robust single-radius
+/// inner-scale estimate with quality diagnostics.
 pub fn estimate_inner_scale_from_outer(
     gray: &GrayImage,
     outer: &Ellipse,
@@ -172,62 +188,9 @@ pub fn estimate_inner_scale_from_outer(
         };
     }
 
-    fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
-        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        match *agg {
-            AngularAggregator::Median => values[values.len() / 2],
-            AngularAggregator::TrimmedMean { trim_fraction } => {
-                let tf = trim_fraction.clamp(0.0, 0.45);
-                let k = (values.len() as f32 * tf).floor() as usize;
-                let start = k.min(values.len());
-                let end = values.len().saturating_sub(k).max(start);
-                let slice = &values[start..end];
-                if slice.is_empty() {
-                    values[values.len() / 2]
-                } else {
-                    slice.iter().sum::<f32>() / slice.len() as f32
-                }
-            }
-        }
-    }
-
     fn find_peak_idx(agg: &[f32], pol: Polarity) -> (usize, f32) {
-        match pol {
-            Polarity::Pos => agg
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, &v)| (i, v))
-                .unwrap(),
-            Polarity::Neg => agg
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, &v)| (i, v))
-                .unwrap(),
-        }
-    }
-
-    fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
-        let mut peaks = Vec::with_capacity(curves.len());
-        for d in curves {
-            let (idx, _) = match pol {
-                Polarity::Pos => d
-                    .iter()
-                    .enumerate()
-                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                    .map(|(i, &v)| (i, v))
-                    .unwrap(),
-                Polarity::Neg => d
-                    .iter()
-                    .enumerate()
-                    .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                    .map(|(i, &v)| (i, v))
-                    .unwrap(),
-            };
-            peaks.push(r_samples[idx]);
-        }
-        peaks
+        let idx = radial_profile::peak_idx(agg, pol);
+        (idx, agg[idx])
     }
 
     let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
@@ -247,14 +210,14 @@ pub fn estimate_inner_scale_from_outer(
             for d in &curves {
                 scratch.push(d[ri]);
             }
-            agg_resp[ri] = aggregate(&mut scratch, &spec.aggregator);
+            agg_resp[ri] = radial_profile::aggregate(&mut scratch, &spec.aggregator);
         }
 
         let (peak_idx, peak_val) = find_peak_idx(&agg_resp, pol);
         let r_star = r_samples[peak_idx];
 
         // Consistency: how many per-theta peaks agree with r_star
-        let per_theta = per_theta_peak_r(&curves, &r_samples, pol);
+        let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
         let delta = (4.0 * r_step).max(0.02);
         let n_close = per_theta
             .iter()

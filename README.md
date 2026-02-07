@@ -1,66 +1,40 @@
 # ringgrid
 
-Robust ring-grid calibration target detector in **Rust** (no OpenCV).
+`ringgrid` is a pure-Rust detector for dense coded ring calibration targets on a hex lattice.
+It detects markers, decodes IDs, estimates homography, and exports structured JSON.
 
-`ringgrid` detects dense, all-coded, two-edge ring calibration markers arranged on a hex (triangular) lattice. The detector decodes marker IDs via an embedded 16-bit codebook and can apply a board-aware global filter using homography RANSAC (with optional refinement).
+## Visual Overview
 
-## Key features (current)
+Target print example:
 
-- Pure Rust detector (`image` / `imageproc` / `nalgebra`), no OpenCV bindings.
-- Candidate proposals via gradient-voting radial symmetry.
-- Radial edge sampling to recover inner/outer ring edges.
-- Robust ellipse fitting (direct fit + optional RANSAC fallback).
-- 16-sector decoding with cyclic rotation matching (tries all 16 rotations) and inverted-polarity fallback.
-- Deduplication (by center proximity, then by best confidence per ID).
-- Optional global homography RANSAC filter using the embedded board spec, plus a 1-iteration “refine-with-H” pass.
-- Homography-guided completion pass to fit missing board IDs at H-projected locations (optional; conservative gates).
-- Python tools for synthetic data generation, scoring, and visualization.
+![Ringgrid target print](docs/assets/target_print.png)
 
-## Repository structure
+Detection overlay example (`tools/out/synth_002/img_0002.png`):
 
-```
-crates/
-  ringgrid-core/        # Core detection algorithms + JSON output structs
-  ringgrid-cli/         # CLI binary: ringgrid
-tools/
-  gen_codebook.py       # Generate tools/codebook.json + embedded Rust codebook.rs
-  gen_board_spec.py     # Generate tools/board/board_spec.json + embedded Rust board_spec.rs
-  gen_synth.py          # Synthetic dataset generator (img_XXXX.png + gt_XXXX.json)
-  run_synth_eval.py     # End-to-end: generate → detect → score
-  score_detect.py       # Score ringgrid detect JSON vs synthetic GT
-  viz_debug.py          # Visualize GT overlay for synthetic samples
-  viz_detect_debug.py   # Visualize ringgrid.debug.v1 overlays
-docs/
-  ARCHITECTURE.md       # Background + notes (includes planned milestones)
-```
+![Detection overlay example](docs/assets/det_overlay_0002.png)
 
-## Quickstart
+## Quick Start
 
-### 1) Rust build
+### 1. Build
 
 ```bash
 cargo build --release
 ```
 
-Useful during development:
-```bash
-RUST_LOG=info cargo run -- --help
-```
+### 2. Install Python tooling deps (for synth/eval/viz)
 
-### 2) Python env (for tools)
-
-Python **3.10+** and:
 ```bash
+python3 -m pip install -U pip
 python3 -m pip install numpy matplotlib
 ```
 
-### 3) Generate a tiny synthetic dataset
+### 3. Generate one synthetic sample
 
 ```bash
 python3 tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 1.0
 ```
 
-### 4) Run the detector on one image
+### 4. Run detection
 
 ```bash
 target/release/ringgrid detect \
@@ -70,7 +44,7 @@ target/release/ringgrid detect \
   --marker-diameter 32.0
 ```
 
-### 5) Score vs ground truth
+### 5. Score against ground truth
 
 ```bash
 python3 tools/score_detect.py \
@@ -80,113 +54,108 @@ python3 tools/score_detect.py \
   --out tools/out/synth_001/score_0000.json
 ```
 
-### End-to-end (generate → detect → score)
+### 6. Render detection debug overlay
 
 ```bash
-python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_run
+tools/run_synth_viz.sh tools/out/synth_001 0
 ```
 
-## CLI reference (current)
+## Project Layout
 
-`ringgrid` subcommands:
+```text
+crates/
+  ringgrid-core/   # detection algorithms and result structures
+  ringgrid-cli/    # CLI binary: ringgrid
+tools/
+  gen_synth.py         # synthetic dataset generator
+  run_synth_eval.py    # generate -> detect -> score
+  score_detect.py      # scoring utility
+  viz_detect_debug.py  # debug overlay rendering
+docs/
+  ARCHITECTURE.md
+```
 
-- `ringgrid detect`
-  - Required: `--image <path> --out <path>`
-  - Debug: `--debug-json <path>` (versioned dump), `--debug-store-points`, `--debug-max-candidates <n>`
-  - Deprecated: `--debug <path>` (alias for `--debug-json`)
-  - Tuning: `--marker-diameter <px>`
-  - Global filter: `--ransac-thresh-px <px>`, `--ransac-iters <n>`, `--no-global-filter`
-  - Refinement: `--no-refine`
-  - Completion (runs only when a homography is available): `--no-complete`, `--complete-reproj-gate <px>`, `--complete-min-conf <0..1>`, `--complete-roi-radius <px>`
-- `ringgrid codebook-info` — print embedded codebook stats.
-- `ringgrid board-info` — print embedded board spec summary.
-- `ringgrid decode-test --word 0xABCD` — decode a raw 16-bit word against the embedded codebook.
+## Detection Modes
 
-## Output artifacts
+Core refinement selector:
 
-### Detection JSON (`ringgrid detect`)
+- `--circle-refine-method none`
+- `--circle-refine-method projective-center` (default)
+- `--circle-refine-method nl-board`
 
-`ringgrid detect` writes a `ringgrid_core::DetectionResult` JSON object:
+When `nl-board` is used, select solver via:
 
-- Top-level:
-  - `detected_markers`: list of detections
-  - `image_size`: `[width, height]`
-  - `homography`: optional `[[f64;3];3]` (row-major), present when fitted
-  - `ransac`: optional RANSAC stats, present when fitted
-- Per marker (`DetectedMarker`):
-  - `id`: optional (present when decoded, or when accepted by homography-guided completion)
-  - `confidence`: `0..1`
-  - `center`: `[x, y]` in pixels
-  - `ellipse_outer`: optional `{ center_xy, semi_axes, angle }`
-  - `ellipse_inner`: optional `{ center_xy, semi_axes, angle }`
-  - `fit`: edge/fit quality metrics
-  - `decode`: optional `{ observed_word, best_id, best_rotation, best_dist, margin, decode_confidence }` (may be absent for completion-assigned IDs)
+- `--nl-solver lm`
+- `--nl-solver irls`
 
-### Debug dump JSON (`--debug-json`)
+Other commonly used toggles:
 
-`ringgrid detect --debug-json ...` writes a versioned debug object with:
+- `--no-global-filter`
+- `--no-refine`
+- `--no-complete`
+- `--debug-json <path>`
+- `--debug-store-points`
 
-- `schema_version: "ringgrid.debug.v1"`
-- `image`, `board`, `params`
-- `stages` (proposals → fit/decode → dedup → ransac → refine → final)
+## Performance Snapshots (Synthetic)
 
-This file is intended for manual inspection and is distinct from `--out`.
+### Regression Batch (10 images)
 
-### Manual inspection (debug overlay)
+Source: `tools/out/regress_r2_batch/det/aggregate.json`
 
-Produce a comprehensive debug dump (optionally including edge points), then render an overlay:
+Run command:
 
 ```bash
-target/release/ringgrid detect \
-  --image tools/out/synth_001/img_0000.png \
-  --out tools/out/synth_001/det_0000.json \
-  --debug-json tools/out/synth_001/debug_0000.json \
-  --debug-store-points
-
-python3 tools/viz_detect_debug.py \
-  --image tools/out/synth_001/img_0000.png \
-  --debug_json tools/out/synth_001/debug_0000.json \
-  --out tools/out/synth_001/det_overlay_0000.png
+python3 tools/run_synth_eval.py \
+  --n 10 \
+  --skip_gen \
+  --out_dir tools/out/regress_r2_batch \
+  --marker_diameter 32.0
 ```
 
-Inspect the homography-guided completion stage (projected centers and per-ID decisions):
+Snapshot:
 
-```bash
-python3 tools/viz_detect_debug.py \
-  --image tools/out/synth_001/img_0000.png \
-  --debug_json tools/out/synth_001/debug_0000.json \
-  --stage stage5_completion \
-  --out tools/out/synth_001/completion_overlay_0000.png
-```
+| Metric | Value |
+|---|---:|
+| Images | 10 |
+| Avg precision | 1.000 |
+| Avg recall | 0.949 |
+| Avg TP / image | 192.6 |
+| Avg FP / image | 0.0 |
+| Avg center error (px) | 0.254 |
+| Avg reprojection error (px) | 0.199 |
 
-### Synthetic ground truth (`tools/gen_synth.py`)
+### Refinement Strategy Comparison (`synth_002`, image 0002)
 
-For each image `img_XXXX.png`, `gen_synth.py` writes `gt_XXXX.json` with (high level):
+Source: `tools/out/synth_002/_cmp_recheck/score_*.json`
 
-- Top-level: `image_file`, `image_size`, `seed`, `blur_px`, `homography`, `board_mm`, `pitch_mm`, `outer_radius_mm`, `inner_radius_mm`, `markers`, …
-- Per marker: `id`, `q`, `r`, `board_xy_mm`, `true_image_center`, `outer_ellipse`, `inner_ellipse`, `visible`
+All modes below reached 203 TP / 0 FP on this sample.
 
-### Scoring output (`tools/score_detect.py`)
+| Mode | Center mean (px) | Legacy center mean (px) | Homography mean / p95 (px) |
+|---|---:|---:|---:|
+| `none` | 0.102 | 0.102 | 0.076 / 0.157 |
+| `projective-center` | 0.078 | 0.097 | 0.060 / 0.128 |
+| `nl-board + lm` | 0.086 | 0.102 | 0.040 / 0.103 |
+| `nl-board + irls` | 0.099 | 0.102 | 0.071 / 0.140 |
 
-`score_detect.py` writes a JSON report containing:
+Notes:
 
-- Counts: `n_gt`, `n_pred`, `n_tp`, `n_fp`, `n_miss`, `n_pred_with_id`, `n_pred_no_id`
-- Metrics: `precision`, `recall`
-- Center error stats (TP only): `center_error.mean|median|p95|max` (when any TP exist)
-- Decode histogram: `decode_dist_histogram`
-- Diagnostics: `missed_ids_top20`, `false_positives_top20`
-- Optional: `ransac_stats` (copied from the detection JSON when present)
+- `projective-center` currently matches `tools/out/synth_002/det_0002.json` exactly.
+- `none` and `projective-center` are not equivalent: all 203 centers moved on this sample.
 
-### End-to-end eval outputs (`tools/run_synth_eval.py`)
+## CI Workflows
 
-Under `--out_dir tools/out/eval_run`:
+Draft CI is configured under `.github/workflows/`:
 
-- `tools/out/eval_run/synth/` — `img_XXXX.png`, `gt_XXXX.json`
-- `tools/out/eval_run/det/` — `det_XXXX.json`, `debug_XXXX.json`, `score_XXXX.json`, `aggregate.json`
+- `ci.yml`
+  - rust formatting/lint/tests on Ubuntu
+  - synthetic smoke eval (`tools/run_synth_eval.py --n 1`)
+  - cross-platform build/test on macOS + Windows
+- `audit.yml`
+  - weekly `cargo audit`
+- `publish-docs.yml`
+  - publish Rustdoc to GitHub Pages
 
-## Regenerating embedded assets
-
-The detector uses an **embedded** codebook and board spec (Rust constants in `crates/ringgrid-core/src/`).
+## Regenerate Embedded Assets
 
 ```bash
 python3 tools/gen_codebook.py \
@@ -198,21 +167,18 @@ python3 tools/gen_board_spec.py \
   --pitch_mm 8.0 --board_mm 200.0 \
   --json_out tools/board/board_spec.json \
   --rust_out crates/ringgrid-core/src/board_spec.rs
+```
 
+Then rebuild:
+
+```bash
 cargo build --release
 ```
 
-## License
+## Development Checks
 
-No `LICENSE` file is present in this repository. If you intend this to be open source, add an explicit license.
-
-## Contributing
-
-- Keep algorithmic work in `crates/ringgrid-core/` and CLI wiring in `crates/ringgrid-cli/`.
-- Keep JSON output changes backwards-aware (update tooling in `tools/` as needed).
-- Run:
-  ```bash
-  cargo fmt --all
-  cargo clippy --all-targets
-  cargo test
-  ```
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```

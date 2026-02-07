@@ -8,6 +8,12 @@ pub const BOARD_N: usize = 203;
 pub const BOARD_PITCH_MM: f32 = 8.0;
 pub const BOARD_SIZE_MM: [f32; 2] = [200.0, 200.0];
 
+/// Marker geometry in board units (mm).
+pub const MARKER_OUTER_RADIUS_MM: f32 = 4.8;
+pub const MARKER_INNER_RADIUS_MM: f32 = 3.2;
+pub const MARKER_CODE_BAND_OUTER_RADIUS_MM: f32 = 4.64;
+pub const MARKER_CODE_BAND_INNER_RADIUS_MM: f32 = 3.36;
+
 /// Board-coordinate (x, y) in mm for each marker, indexed by codebook ID.
 pub const BOARD_XY_MM: [[f32; 2]; 203] = [
     [-90.0666, -84.0000],
@@ -435,4 +441,9 @@ pub fn n_markers() -> usize {
 /// Board name.
 pub fn board_name() -> &'static str {
     BOARD_NAME
+}
+
+/// Marker outer radius in board units (mm).
+pub fn marker_outer_radius_mm() -> f32 {
+    MARKER_OUTER_RADIUS_MM
 }

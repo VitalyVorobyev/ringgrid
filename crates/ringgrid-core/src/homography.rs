@@ -9,11 +9,25 @@ use nalgebra::{DMatrix, Matrix3, Vector3};
 
 // ── Error type ───────────────────────────────────────────────────────────
 
+/// Errors produced by homography estimation/refinement routines.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HomographyError {
-    TooFewPoints { needed: usize, got: usize },
+    /// Too few correspondences were provided.
+    TooFewPoints {
+        /// Required minimum number of points.
+        needed: usize,
+        /// Number of points provided.
+        got: usize,
+    },
+    /// Numerical failure (for example, singular matrices).
     NumericalFailure(String),
-    InsufficientInliers { needed: usize, found: usize },
+    /// RANSAC did not find enough inliers.
+    InsufficientInliers {
+        /// Required minimum number of inliers.
+        needed: usize,
+        /// Number of inliers found.
+        found: usize,
+    },
 }
 
 impl std::fmt::Display for HomographyError {

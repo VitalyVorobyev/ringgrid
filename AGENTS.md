@@ -112,34 +112,27 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 ### 1) Mixed-responsibility hotspots
 
-- `crates/ringgrid-core/src/ring/detect.rs` (~2960 LOC): local fitting, decode, dedup, homography RANSAC, refinement, completion, debug-schema mapping, and utility math all in one module.
-- `crates/ringgrid-core/src/refine.rs` (~930 LOC): edge re-sampling + optimization + record/debug assembly in one flow.
+- `crates/ringgrid-core/src/ring/detect/debug_pipeline.rs` (~727 LOC): still mixes stage execution with debug-schema mapping and serialization shaping.
+- `crates/ringgrid-core/src/ring/detect/completion.rs` (~634 LOC): completion logic + gates + debug mapping in one module.
+- `crates/ringgrid-core/src/refine/pipeline.rs` (~524 LOC): per-marker refine flow still long, although now isolated from API/types.
 - `crates/ringgrid-core/src/conic.rs` (~1180 LOC): core model types, conversion, direct fit, generalized eigen solver, cubic root solver, and RANSAC in one file.
 - `crates/ringgrid-cli/src/main.rs` (~400 LOC): CLI parsing and parameter-scaling policy are tightly coupled (`run_detect` uses many arguments).
 
 ### 2) Redundant logic / data paths
 
-- Debug and non-debug branches duplicate core logic in `detect.rs`:
-  - `dedup_with_debug` vs `dedup_by_id`/`dedup_markers`
-  - `global_filter_with_debug` vs `global_filter`
-  - `refine_with_homography_with_debug` vs `refine_with_homography`
-- Marker assembly is repeated several times in `detect.rs` (fit metrics, decode metrics, inner estimate mapping).
+- Core dedup/global-filter/refine-H duplication has been reduced by delegating to shared module paths.
+- Marker assembly is still repeated across regular and debug flows (`non_debug/stage_fit_decode.rs`, `debug_pipeline.rs`, `completion.rs`, `refine_h.rs`).
 - `inner_estimate.rs` and `outer_estimate.rs` duplicate radial aggregation/peak machinery (`aggregate`, `per_theta_peak_r`).
-- Radial outer-edge probing exists in both `detect.rs` and `refine.rs` with slightly different gates.
+- Radial outer-edge probing still exists in both `ring/detect/*` and `refine/*` with slightly different gates.
 - `ring/edge_sample.rs::sample_edges` is currently unused by production pipeline (used only by its unit tests).
 
 ### 3) Refactoring plan (ordered)
 
-1. Split `ring/detect.rs` into pipeline-focused modules while keeping behavior identical:
-   - `ring/pipeline/local_fit.rs`
-   - `ring/pipeline/dedup.rs`
-   - `ring/pipeline/global_filter.rs`
-   - `ring/pipeline/refine_h.rs`
-   - `ring/pipeline/completion.rs`
-   - `ring/pipeline/debug_map.rs`
-2. Introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
-3. Consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
-4. Reduce CLI argument plumbing by introducing a small config adapter:
+1. Completed: split `ring/detect.rs` into focused modules while keeping behavior identical (synthetic aggregate parity checks kept exact).
+2. Completed: split `refine.rs` into focused modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`, `refine/pipeline.rs`).
+3. Next: introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
+4. Next: consolidate radial profile utilities into one reusable module (`ring/radial_profile.rs`) used by inner/outer/refine.
+5. Next: reduce CLI argument plumbing by introducing a small config adapter:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 
 ## Missing feature plan: ellipse center correction via vanishing line pole

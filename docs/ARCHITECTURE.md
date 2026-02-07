@@ -18,12 +18,15 @@ crates/
         proposal.rs       # center proposals (gradient-voting radial symmetry)
         outer_estimate.rs # outer edge radius hypotheses near expected scale
         edge_sample.rs    # low-level image sampling helpers
-        detect.rs         # end-to-end orchestration + debug orchestration
+        detect.rs         # top-level orchestration (delegates into ring/detect/*)
+        detect/           # non_debug/debug/completion/refine_h helpers
+        pipeline/         # dedup + global-filter shared stages
         inner_estimate.rs # inner radius estimation constrained by outer ellipse
         decode.rs         # 16-sector sampling + codebook matching
       conic.rs            # ellipse/conic fit and utilities
       homography.rs       # DLT + RANSAC homography fitting
-      refine.rs           # NL marker center refinement in board coordinates
+      refine.rs           # public refine API + wrappers
+      refine/             # math/sampling/solver/pipeline helpers
       debug_dump.rs       # versioned debug schema
       marker_spec.rs      # marker geometry priors and estimator controls
       board_spec.rs       # generated embedded board constants
@@ -87,46 +90,44 @@ For each proposal:
 
 ### Mixed responsibilities
 
-- `ring/detect.rs` is a monolith (~2960 LOC) combining orchestration, local geometry logic, global filtering, completion, debug mapping, and many utility functions.
-- `refine.rs` combines edge re-sampling policy, solver control, and debug/report assembly.
+- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/debug_pipeline.rs` (~727 LOC) and `ring/detect/completion.rs` (~634 LOC) are still large mixed-responsibility modules.
+- `refine.rs` is now slim, but `refine/pipeline.rs` (~524 LOC) still concentrates many per-marker decision branches.
 - `conic.rs` combines model definitions and multiple algorithmic layers (fit + solver internals + RANSAC).
 - CLI `run_detect` has broad parameter plumbing and policy coupling.
 
 ### Duplicate or near-duplicate logic
 
-- Debug/non-debug branches duplicate key operations in `detect.rs`:
-  - dedup
-  - global filtering
-  - homography-based refinement
+- Debug/non-debug branch duplication has been reduced for dedup/global-filter/refine-H core paths, but marker assembly is still repeated across multiple stage modules.
 - Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
-- Radial edge probing code appears in both `detect.rs` and `refine.rs`.
+- Radial edge probing code appears in both `ring/detect/*` and `refine/*`.
 - `ring/edge_sample.rs::sample_edges` is currently not used by production pipeline.
 
 ## Refactoring roadmap
 
 ### Phase R1: Split pipeline orchestration (no behavior change)
 
-- Extract `detect.rs` internals into focused modules:
-  - `ring/pipeline/local_fit.rs`
-  - `ring/pipeline/dedup.rs`
-  - `ring/pipeline/global_filter.rs`
-  - `ring/pipeline/refine_h.rs`
-  - `ring/pipeline/completion.rs`
-  - `ring/pipeline/debug_map.rs`
-- Keep `detect_rings*` signatures stable.
+Status: completed.
+
+- `detect_rings*` signatures remained stable.
+- Logic was extracted into focused modules (`ring/pipeline/*`, `ring/detect/*`, `ring/detect/non_debug/*`).
 
 Exit criteria:
-- All current tests pass.
-- Synthetic eval metrics unchanged within tolerance.
+- All current tests pass. Completed.
+- Synthetic eval aggregate parity checks are byte-identical on baseline run. Completed.
 
 ### Phase R2: Remove duplication and centralize primitives
+
+Status: in progress.
 
 - Add shared marker-build helpers (fit/decode structs + conversion functions).
 - Introduce shared radial-profile utility module used by inner/outer/refine.
 - Decide fate of `edge_sample::sample_edges`:
   - adopt as canonical local sampling path, or
   - deprecate/remove if superseded.
+
+Work completed under this phase so far:
+- `refine_markers_circle_board` flow split into `refine/pipeline.rs` with helper modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`).
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.

@@ -135,7 +135,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 7. Completed (R2): reduced CLI argument plumbing by introducing a config adapter path:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
-9. Completed (R2): merged debug/non-debug detection execution into shared stage modules (`non_debug/stage_fit_decode.rs`, `non_debug/stage_finalize.rs`) and removed `ring/detect/debug_pipeline.rs`.
+9. Completed (R2): merged debug/non-debug detection execution into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) and removed `ring/detect/debug_pipeline.rs`.
 10. Completed (R2): added compile-time debug tracing feature (`debug-trace`), default-disabled.
 11. Completed (R2): debug API/CLI is unavailable at compile time unless `debug-trace` is enabled.
 12. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.

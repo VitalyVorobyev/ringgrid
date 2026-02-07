@@ -25,20 +25,20 @@ use super::pipeline::global_filter::global_filter_with_debug as global_filter_wi
 use super::proposal::{find_proposals, Proposal, ProposalConfig};
 #[path = "detect/completion.rs"]
 mod completion;
+#[path = "detect/debug_conv.rs"]
+mod debug_conv;
 #[path = "detect/homography_utils.rs"]
 mod homography_utils;
 #[path = "detect/inner_fit.rs"]
 mod inner_fit;
 #[path = "detect/marker_build.rs"]
 mod marker_build;
-#[path = "detect/non_debug/mod.rs"]
-mod non_debug;
 #[path = "detect/outer_fit.rs"]
 mod outer_fit;
 #[path = "detect/refine_h.rs"]
 mod refine_h;
-#[cfg(feature = "debug-trace")]
-use completion::CompletionAttemptStatus;
+#[path = "detect/stages/mod.rs"]
+mod stages;
 use completion::{CompletionAttemptRecord, CompletionStats};
 use outer_fit::{
     compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
@@ -403,7 +403,7 @@ fn detect_rings_with_mapper_and_seeds(
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
 ) -> DetectionResult {
-    non_debug::run(gray, config, mapper, seed_centers_image, seed_cfg)
+    stages::run(gray, config, mapper, seed_centers_image, seed_cfg)
 }
 
 /// Run the full ring detection pipeline.
@@ -529,7 +529,7 @@ pub fn detect_rings_with_debug_and_mapper(
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
-    non_debug::run_with_debug(
+    stages::run_with_debug(
         gray,
         config,
         debug_cfg,

@@ -1,3 +1,5 @@
+#[cfg(feature = "debug-trace")]
+use super::super::debug_conv;
 use super::super::*;
 
 #[cfg(feature = "debug-trace")]
@@ -254,38 +256,9 @@ pub(super) fn run_with_debug(
         attempted: completion_attempts
             .unwrap_or_default()
             .into_iter()
-            .map(|a| dbg::CompletionAttemptDebugV1 {
-                id: a.id,
-                projected_center_xy: a.projected_center_xy,
-                status: match a.status {
-                    CompletionAttemptStatus::Added => dbg::CompletionAttemptStatusDebugV1::Added,
-                    CompletionAttemptStatus::SkippedPresent => {
-                        dbg::CompletionAttemptStatusDebugV1::SkippedPresent
-                    }
-                    CompletionAttemptStatus::SkippedOob => {
-                        dbg::CompletionAttemptStatusDebugV1::SkippedOob
-                    }
-                    CompletionAttemptStatus::FailedFit => {
-                        dbg::CompletionAttemptStatusDebugV1::FailedFit
-                    }
-                    CompletionAttemptStatus::FailedGate => {
-                        dbg::CompletionAttemptStatusDebugV1::FailedGate
-                    }
-                },
-                reason: a.reason,
-                reproj_err_px: a.reproj_err_px,
-                fit_confidence: a.fit_confidence,
-                fit: a.fit,
-            })
+            .map(debug_conv::completion_attempt)
             .collect(),
-        stats: dbg::CompletionStatsDebugV1 {
-            n_candidates_total: completion_stats.n_candidates_total,
-            n_in_image: completion_stats.n_in_image,
-            n_attempted: completion_stats.n_attempted,
-            n_added: completion_stats.n_added,
-            n_failed_fit: completion_stats.n_failed_fit,
-            n_failed_gate: completion_stats.n_failed_gate,
-        },
+        stats: debug_conv::completion_stats(&completion_stats),
         notes: Vec::new(),
     };
 
@@ -331,40 +304,9 @@ pub(super) fn run_with_debug(
                 debug_cfg.store_points,
             );
 
-            nl_refine_debug.stats = dbg::NlRefineStatsDebugV1 {
-                n_inliers: stats0.n_inliers,
-                n_refined: stats0.n_refined,
-                n_failed: stats0.n_failed,
-                mean_before_mm: stats0.mean_before_mm,
-                mean_after_mm: stats0.mean_after_mm,
-                p95_before_mm: stats0.p95_before_mm,
-                p95_after_mm: stats0.p95_after_mm,
-            };
-            nl_refine_debug.refined_markers = records0
-                .into_iter()
-                .map(|r| dbg::NlRefinedMarkerDebugV1 {
-                    id: r.id,
-                    n_points: r.n_points,
-                    init_center_board_mm: r.init_center_board_mm,
-                    refined_center_board_mm: r.refined_center_board_mm,
-                    center_img_before: r.center_img_before,
-                    center_img_after: r.center_img_after,
-                    before_rms_mm: r.before_rms_mm,
-                    after_rms_mm: r.after_rms_mm,
-                    delta_center_mm: r.delta_center_mm,
-                    edge_points_img: r.edge_points_img,
-                    edge_points_board_mm: r.edge_points_board_mm,
-                    status: match r.status {
-                        refine::MarkerRefineStatus::Ok => dbg::NlRefineStatusDebugV1::Ok,
-                        refine::MarkerRefineStatus::Rejected => {
-                            dbg::NlRefineStatusDebugV1::Rejected
-                        }
-                        refine::MarkerRefineStatus::Failed => dbg::NlRefineStatusDebugV1::Failed,
-                        refine::MarkerRefineStatus::Skipped => dbg::NlRefineStatusDebugV1::Skipped,
-                    },
-                    reason: r.reason,
-                })
-                .collect();
+            nl_refine_debug.stats = debug_conv::nl_stats(&stats0);
+            nl_refine_debug.refined_markers =
+                records0.into_iter().map(debug_conv::nl_record).collect();
 
             if config.nl_refine.enable_h_refit && final_markers.len() >= 10 {
                 let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
@@ -400,46 +342,9 @@ pub(super) fn run_with_debug(
                             mapper,
                             debug_cfg.store_points,
                         );
-                        nl_refine_debug.stats = dbg::NlRefineStatsDebugV1 {
-                            n_inliers: stats_i.n_inliers,
-                            n_refined: stats_i.n_refined,
-                            n_failed: stats_i.n_failed,
-                            mean_before_mm: stats_i.mean_before_mm,
-                            mean_after_mm: stats_i.mean_after_mm,
-                            p95_before_mm: stats_i.p95_before_mm,
-                            p95_after_mm: stats_i.p95_after_mm,
-                        };
-                        nl_refine_debug.refined_markers = records_i
-                            .into_iter()
-                            .map(|r| dbg::NlRefinedMarkerDebugV1 {
-                                id: r.id,
-                                n_points: r.n_points,
-                                init_center_board_mm: r.init_center_board_mm,
-                                refined_center_board_mm: r.refined_center_board_mm,
-                                center_img_before: r.center_img_before,
-                                center_img_after: r.center_img_after,
-                                before_rms_mm: r.before_rms_mm,
-                                after_rms_mm: r.after_rms_mm,
-                                delta_center_mm: r.delta_center_mm,
-                                edge_points_img: r.edge_points_img,
-                                edge_points_board_mm: r.edge_points_board_mm,
-                                status: match r.status {
-                                    refine::MarkerRefineStatus::Ok => {
-                                        dbg::NlRefineStatusDebugV1::Ok
-                                    }
-                                    refine::MarkerRefineStatus::Rejected => {
-                                        dbg::NlRefineStatusDebugV1::Rejected
-                                    }
-                                    refine::MarkerRefineStatus::Failed => {
-                                        dbg::NlRefineStatusDebugV1::Failed
-                                    }
-                                    refine::MarkerRefineStatus::Skipped => {
-                                        dbg::NlRefineStatusDebugV1::Skipped
-                                    }
-                                },
-                                reason: r.reason,
-                            })
-                            .collect();
+                        nl_refine_debug.stats = debug_conv::nl_stats(&stats_i);
+                        nl_refine_debug.refined_markers =
+                            records_i.into_iter().map(debug_conv::nl_record).collect();
                     } else {
                         nl_refine_debug.notes.push(format!(
                             "h_refit_iter{}:rejected mean_err_px {:.3} -> {:.3}",

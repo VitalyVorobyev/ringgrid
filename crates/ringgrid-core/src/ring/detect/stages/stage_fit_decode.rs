@@ -1,3 +1,5 @@
+#[cfg(feature = "debug-trace")]
+use super::super::debug_conv;
 use super::super::marker_build::{
     decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
 };
@@ -302,16 +304,8 @@ fn run_core(
                         r_samples: outer_estimate.r_samples.clone(),
                     }
                 }),
-                ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
-                    center_xy: [outer.cx as f32, outer.cy as f32],
-                    semi_axes: [outer.a as f32, outer.b as f32],
-                    angle: outer.angle as f32,
-                }),
-                ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
-                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
-                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
-                    angle: p.angle as f32,
-                }),
+                ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
+                ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
                 inner_estimation: Some(dbg::InnerEstimationDebugV1 {
                     r_inner_expected: inner_fit.estimate.r_inner_expected,
                     search_window: inner_fit.estimate.search_window,
@@ -331,15 +325,12 @@ fn run_core(
                     radial_response_agg: inner_fit.estimate.radial_response_agg.clone(),
                     r_samples: inner_fit.estimate.r_samples.clone(),
                 }),
-                metrics: dbg::RingFitMetricsDebugV1 {
-                    inlier_ratio_inner: fit_metrics.ransac_inlier_ratio_inner,
-                    inlier_ratio_outer: fit_metrics.ransac_inlier_ratio_outer,
-                    mean_resid_inner: fit_metrics.rms_residual_inner.map(|v| v as f32),
-                    mean_resid_outer: fit_metrics.rms_residual_outer.map(|v| v as f32),
-                    arc_coverage: arc_cov,
-                    valid_inner: inner_params.is_some(),
-                    valid_outer: true,
-                },
+                metrics: debug_conv::ring_fit_metrics(
+                    &fit_metrics,
+                    arc_cov,
+                    inner_params.is_some(),
+                    true,
+                ),
                 points_outer: if debug_cfg.map(|cfg| cfg.store_points).unwrap_or(false) {
                     Some(
                         edge.outer_points

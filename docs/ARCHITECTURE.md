@@ -103,7 +103,7 @@ For each proposal:
 
 ### Duplicate or near-duplicate logic
 
-- Debug/non-debug pipeline execution has been merged into shared stage modules (`non_debug/stage_fit_decode.rs`, `non_debug/stage_finalize.rs`) with feature-gated trace collection.
+- Debug/non-debug pipeline execution has been merged into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) with feature-gated trace collection.
 - Marker assembly is still repeated across some stage modules.
 - Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
@@ -117,7 +117,7 @@ For each proposal:
 Status: completed.
 
 - `detect_rings*` signatures remained stable.
-- Logic was extracted into focused modules (`ring/pipeline/*`, `ring/detect/*`, `ring/detect/non_debug/*`).
+- Logic was extracted into focused modules (`ring/pipeline/*`, `ring/detect/*`, `ring/detect/stages/*`).
 
 Exit criteria:
 - All current tests pass. Completed.

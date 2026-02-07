@@ -5,6 +5,7 @@ use crate::debug_dump as dbg;
 use crate::homography::project;
 use crate::DetectedMarker;
 
+use super::debug_conv;
 use super::marker_build::{
     decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
 };
@@ -77,16 +78,14 @@ pub(super) fn refine_with_homography_with_debug(
                 id,
                 prior_center_xy: [prior[0] as f32, prior[1] as f32],
                 refined_center_xy: [m.center[0] as f32, m.center[1] as f32],
-                ellipse_outer: m.ellipse_outer.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
-                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
-                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
-                    angle: p.angle as f32,
-                }),
-                ellipse_inner: m.ellipse_inner.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
-                    center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
-                    semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
-                    angle: p.angle as f32,
-                }),
+                ellipse_outer: m
+                    .ellipse_outer
+                    .as_ref()
+                    .map(debug_conv::ellipse_from_params),
+                ellipse_inner: m
+                    .ellipse_inner
+                    .as_ref()
+                    .map(debug_conv::ellipse_from_params),
                 fit: m.fit.clone(),
             });
             continue;
@@ -132,16 +131,8 @@ pub(super) fn refine_with_homography_with_debug(
             id,
             prior_center_xy: [prior[0] as f32, prior[1] as f32],
             refined_center_xy: [center[0] as f32, center[1] as f32],
-            ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
-                center_xy: [outer.cx as f32, outer.cy as f32],
-                semi_axes: [outer.a as f32, outer.b as f32],
-                angle: outer.angle as f32,
-            }),
-            ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
-                center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
-                semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
-                angle: p.angle as f32,
-            }),
+            ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
+            ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
             fit,
         });
 

@@ -1,6 +1,6 @@
 //! ringgrid CLI — command-line interface for ring marker detection.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 type CliError = Box<dyn std::error::Error>;
@@ -85,6 +85,10 @@ enum Commands {
         #[arg(long)]
         no_nl_refine: bool,
 
+        /// Circle refinement method after local fits are accepted.
+        #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::NlBoardAndProjectiveCenter)]
+        circle_refine_method: CircleRefineMethodArg,
+
         /// NL refine: maximum solver iterations.
         #[arg(long, default_value = "20")]
         nl_max_iters: usize,
@@ -124,6 +128,14 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CircleRefineMethodArg {
+    None,
+    ProjectiveCenterOnly,
+    NlBoardOnly,
+    NlBoardAndProjectiveCenter,
+}
+
 fn main() -> CliResult<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -152,6 +164,7 @@ fn main() -> CliResult<()> {
             complete_min_conf,
             complete_roi_radius,
             no_nl_refine,
+            circle_refine_method,
             nl_max_iters,
             nl_huber_delta_mm,
             nl_min_points,
@@ -175,6 +188,7 @@ fn main() -> CliResult<()> {
             complete_min_conf,
             complete_roi_radius,
             no_nl_refine,
+            circle_refine_method,
             nl_max_iters,
             nl_huber_delta_mm,
             nl_min_points,
@@ -289,6 +303,7 @@ fn run_detect(
     complete_min_conf: f32,
     complete_roi_radius: Option<f64>,
     no_nl_refine: bool,
+    circle_refine_method: CircleRefineMethodArg,
     nl_max_iters: usize,
     nl_huber_delta_mm: f64,
     nl_min_points: usize,
@@ -340,13 +355,39 @@ fn run_detect(
     config.completion.roi_radius_px =
         complete_roi_radius.unwrap_or((marker_diameter * 0.75).clamp(24.0, 80.0)) as f32;
 
+    let mut selected_method = match circle_refine_method {
+        CircleRefineMethodArg::None => ringgrid_core::ring::CircleRefinementMethod::None,
+        CircleRefineMethodArg::ProjectiveCenterOnly => {
+            ringgrid_core::ring::CircleRefinementMethod::ProjectiveCenterOnly
+        }
+        CircleRefineMethodArg::NlBoardOnly => {
+            ringgrid_core::ring::CircleRefinementMethod::NlBoardOnly
+        }
+        CircleRefineMethodArg::NlBoardAndProjectiveCenter => {
+            ringgrid_core::ring::CircleRefinementMethod::NlBoardAndProjectiveCenter
+        }
+    };
+    if no_nl_refine {
+        selected_method = match selected_method {
+            ringgrid_core::ring::CircleRefinementMethod::NlBoardOnly => {
+                ringgrid_core::ring::CircleRefinementMethod::None
+            }
+            ringgrid_core::ring::CircleRefinementMethod::NlBoardAndProjectiveCenter => {
+                ringgrid_core::ring::CircleRefinementMethod::ProjectiveCenterOnly
+            }
+            other => other,
+        };
+    }
+    config.circle_refinement = selected_method;
+
     // Non-linear refinement options (board-plane circle fit)
-    config.nl_refine.enabled = !no_nl_refine;
+    config.nl_refine.enabled = config.circle_refinement.uses_nl_refine();
     config.nl_refine.max_iters = nl_max_iters;
     config.nl_refine.huber_delta_mm = nl_huber_delta_mm;
     config.nl_refine.min_points = nl_min_points;
     config.nl_refine.reject_thresh_mm = nl_reject_shift_mm;
     config.nl_refine.enable_h_refit = nl_h_refit && !no_nl_h_refit;
+    config.projective_center.enable = config.circle_refinement.uses_projective_center();
 
     // Run detection pipeline (optionally with debug dump)
     let deprecated_debug_path = debug_path;

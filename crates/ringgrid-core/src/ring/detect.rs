@@ -107,6 +107,33 @@ impl Default for ProjectiveCenterParams {
     }
 }
 
+/// Circle-center refinement strategy used after local fits are accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CircleRefinementMethod {
+    /// Disable both non-linear board-plane refinement and projective-center recovery.
+    None,
+    /// Run only projective-center recovery from inner/outer conics.
+    ProjectiveCenterOnly,
+    /// Run only non-linear board-plane circle refinement.
+    NlBoardOnly,
+    /// Run non-linear board refinement, then projective-center recovery.
+    #[default]
+    NlBoardAndProjectiveCenter,
+}
+
+impl CircleRefinementMethod {
+    pub fn uses_nl_refine(self) -> bool {
+        matches!(self, Self::NlBoardOnly | Self::NlBoardAndProjectiveCenter)
+    }
+
+    pub fn uses_projective_center(self) -> bool {
+        matches!(
+            self,
+            Self::ProjectiveCenterOnly | Self::NlBoardAndProjectiveCenter
+        )
+    }
+}
+
 /// Top-level detection configuration.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
@@ -118,6 +145,7 @@ pub struct DetectConfig {
     pub edge_sample: EdgeSampleConfig,
     pub decode: DecodeConfig,
     pub marker_spec: MarkerSpec,
+    pub circle_refinement: CircleRefinementMethod,
     pub projective_center: ProjectiveCenterParams,
     pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
@@ -147,6 +175,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
             min_semi_axis: 3.0,
@@ -288,8 +317,9 @@ fn dedup_markers(markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarke
 }
 
 pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+    use crate::conic::Conic2D;
     use crate::projective_center::{
-        ring_center_projective_with_debug, Conic2D, RingCenterProjectiveOptions,
+        ring_center_projective_with_debug, RingCenterProjectiveOptions,
     };
 
     for m in markers.iter_mut() {

@@ -6,8 +6,16 @@ pub(super) fn run(
     image_size: [u32; 2],
     config: &DetectConfig,
 ) -> DetectionResult {
+    let use_nl_refine = config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled;
+    let use_projective_center =
+        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
+
     // Stage 6: Global homography filtering
     if !config.use_global_filter {
+        let mut markers = markers;
+        if use_projective_center {
+            apply_projective_centers(&mut markers, config);
+        }
         return DetectionResult {
             detected_markers: markers,
             image_size,
@@ -44,7 +52,7 @@ pub(super) fn run(
 
     // Stage 9: Non-linear refinement in board plane (optional).
     let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
-    if config.nl_refine.enabled {
+    if use_nl_refine {
         if let Some(h0) = h_current {
             let _ = refine::refine_markers_circle_board(
                 gray,
@@ -110,7 +118,9 @@ pub(super) fn run(
         }
     );
 
-    apply_projective_centers(&mut final_markers, config);
+    if use_projective_center {
+        apply_projective_centers(&mut final_markers, config);
+    }
 
     DetectionResult {
         detected_markers: final_markers,

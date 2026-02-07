@@ -131,6 +131,7 @@ Status: in progress.
 Work completed under this phase so far:
 - `refine_markers_circle_board` flow split into `refine/pipeline.rs` with helper modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`).
 - Inner-ellipse estimation is now run for every accepted outer fit (not decode-gated), reducing branching differences between decoded/undecoded local fits.
+- `Conic2D` was moved into `conic.rs` as a shared primitive, removing duplicate conic-matrix conversion code from `projective_center.rs`.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.
@@ -155,6 +156,11 @@ Implemented in R3A:
   - `enable`,
   - `use_expected_ratio`,
   - `ratio_penalty_weight`.
+- Added `DetectConfig.circle_refinement` selector:
+  - `none`,
+  - `projective_center_only`,
+  - `nl_board_only`,
+  - `nl_board_and_projective_center` (default).
 
 Remaining R3B integration decisions:
 
@@ -220,6 +226,7 @@ Candidate stable top-level options:
 - minimum marker distance (`min_marker_separation_px`)
 - global filter toggle + reprojection threshold
 - completion toggle
+- circle refinement method selector
 - NL refine toggle (`enable_nl_refine`) as a required stable control
 - decode confidence threshold
 - optional radial-tangential camera calibration

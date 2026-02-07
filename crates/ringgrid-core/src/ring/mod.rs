@@ -15,4 +15,6 @@ pub mod outer_estimate;
 mod pipeline;
 pub mod proposal;
 
-pub use detect::{detect_rings, detect_rings_with_debug, DebugCollectConfig, DetectConfig};
+pub use detect::{
+    detect_rings, detect_rings_with_debug, CircleRefinementMethod, DebugCollectConfig, DetectConfig,
+};

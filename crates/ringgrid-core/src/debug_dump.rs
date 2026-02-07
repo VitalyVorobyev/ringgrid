@@ -49,6 +49,8 @@ pub struct ParamsDebugV1 {
     pub decode: DecodeParamsV1,
     pub marker_spec: crate::marker_spec::MarkerSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle_refinement_method: Option<CircleRefinementMethodV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projective_center: Option<ProjectiveCenterParamsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nl_refine: Option<NlRefineParamsV1>,
@@ -135,6 +137,15 @@ pub struct ProjectiveCenterParamsV1 {
     pub enabled: bool,
     pub use_expected_ratio: bool,
     pub ratio_penalty_weight: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CircleRefinementMethodV1 {
+    None,
+    ProjectiveCenterOnly,
+    NlBoardOnly,
+    NlBoardAndProjectiveCenter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -620,6 +631,7 @@ mod tests {
                     min_decode_confidence: 0.15,
                 },
                 marker_spec: crate::marker_spec::MarkerSpec::default(),
+                circle_refinement_method: None,
                 projective_center: None,
                 nl_refine: None,
                 min_semi_axis: 3.0,

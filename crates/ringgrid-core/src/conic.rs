@@ -6,7 +6,7 @@
 //! - Algebraic and geometric residual computation.
 //! - RANSAC wrapper for outlier-robust fitting.
 
-use nalgebra::{DMatrix, Matrix3, Vector6};
+use nalgebra::{DMatrix, Matrix3, Vector3, Vector6};
 use serde::{Deserialize, Serialize};
 
 // ── Error type ─────────────────────────────────────────────────────────────
@@ -64,6 +64,74 @@ pub struct Ellipse {
     pub b: f64,
     /// Rotation angle of the major axis from +x, in radians (−π/2, π/2].
     pub angle: f64,
+}
+
+/// 2D conic in homogeneous image coordinates: `x^T Q x = 0`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Conic2D {
+    pub mat: Matrix3<f64>,
+}
+
+impl Conic2D {
+    /// Build from general quadratic coefficients:
+    /// `A x^2 + B xy + C y^2 + D x + E y + F = 0`.
+    pub fn from_quadratic_coeffs(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) -> Self {
+        Self {
+            mat: Matrix3::new(
+                a,
+                b * 0.5,
+                d * 0.5,
+                b * 0.5,
+                c,
+                e * 0.5,
+                d * 0.5,
+                e * 0.5,
+                f,
+            ),
+        }
+    }
+
+    /// Build from conic coefficients.
+    pub fn from_coeffs(c: &ConicCoeffs) -> Self {
+        let [a, b, cc, d, e, f] = c.0;
+        Self::from_quadratic_coeffs(a, b, cc, d, e, f)
+    }
+
+    /// Build from fitted geometric ellipse representation.
+    pub fn from_ellipse(e: &Ellipse) -> Self {
+        Self::from_coeffs(&ellipse_to_conic(e))
+    }
+
+    /// Build from serialized ellipse parameters.
+    pub fn from_ellipse_params(e: &crate::EllipseParams) -> Self {
+        let ellipse = Ellipse {
+            cx: e.center_xy[0],
+            cy: e.center_xy[1],
+            a: e.semi_axes[0].abs(),
+            b: e.semi_axes[1].abs(),
+            angle: e.angle,
+        };
+        Self::from_ellipse(&ellipse)
+    }
+
+    /// Normalize conic scale to unit Frobenius norm.
+    pub fn normalize_frobenius(&self) -> Option<Self> {
+        let n = self.mat.norm();
+        if !n.is_finite() || n <= 1e-15 {
+            return None;
+        }
+        Some(Self { mat: self.mat / n })
+    }
+
+    /// Invert the conic matrix.
+    pub fn invert(&self) -> Option<Matrix3<f64>> {
+        self.mat.try_inverse()
+    }
+
+    /// Evaluate `x^T Q x` for homogeneous `x`.
+    pub fn eval_h(&self, x: Vector3<f64>) -> f64 {
+        x.dot(&(self.mat * x))
+    }
 }
 
 /// Configuration for RANSAC ellipse fitting.

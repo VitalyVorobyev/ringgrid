@@ -436,12 +436,16 @@ pub(super) fn run(
         notes: Vec::new(),
     };
 
+    let use_nl_refine = config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled;
+    let use_projective_center =
+        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
+
     // Stage 6: Non-linear refinement in board plane (optional).
     let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
     let mut nl_refine_debug = dbg::NlRefineDebugV1 {
-        enabled: config.nl_refine.enabled && h_current.is_some(),
+        enabled: use_nl_refine && h_current.is_some(),
         params: dbg::NlRefineParamsV1 {
-            enabled: config.nl_refine.enabled,
+            enabled: use_nl_refine,
             max_iters: config.nl_refine.max_iters,
             huber_delta_mm: config.nl_refine.huber_delta_mm,
             min_points: config.nl_refine.min_points,
@@ -465,7 +469,7 @@ pub(super) fn run(
         notes: Vec::new(),
     };
 
-    if config.nl_refine.enabled {
+    if use_nl_refine {
         if let Some(h0) = h_current {
             let (stats0, records0) = refine::refine_markers_circle_board(
                 gray,
@@ -597,6 +601,10 @@ pub(super) fn run(
                 .notes
                 .push("skipped_no_homography".to_string());
         }
+    } else {
+        nl_refine_debug
+            .notes
+            .push("disabled_by_circle_refinement_method".to_string());
     }
 
     // Final H: refit after refinement if we have enough markers.
@@ -620,7 +628,9 @@ pub(super) fn run(
         }
     }
 
-    apply_projective_centers(&mut final_markers, config);
+    if use_projective_center {
+        apply_projective_centers(&mut final_markers, config);
+    }
 
     let result = DetectionResult {
         detected_markers: final_markers.clone(),
@@ -686,6 +696,16 @@ pub(super) fn run(
                 min_decode_confidence: config.decode.min_decode_confidence,
             },
             marker_spec: config.marker_spec.clone(),
+            circle_refinement_method: Some(match config.circle_refinement {
+                CircleRefinementMethod::None => dbg::CircleRefinementMethodV1::None,
+                CircleRefinementMethod::ProjectiveCenterOnly => {
+                    dbg::CircleRefinementMethodV1::ProjectiveCenterOnly
+                }
+                CircleRefinementMethod::NlBoardOnly => dbg::CircleRefinementMethodV1::NlBoardOnly,
+                CircleRefinementMethod::NlBoardAndProjectiveCenter => {
+                    dbg::CircleRefinementMethodV1::NlBoardAndProjectiveCenter
+                }
+            }),
             projective_center: Some(dbg::ProjectiveCenterParamsV1 {
                 enabled: config.projective_center.enable,
                 use_expected_ratio: config.projective_center.use_expected_ratio,

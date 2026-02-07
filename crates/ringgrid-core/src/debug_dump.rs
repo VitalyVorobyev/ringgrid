@@ -49,6 +49,8 @@ pub struct ParamsDebugV1 {
     pub decode: DecodeParamsV1,
     pub marker_spec: crate::marker_spec::MarkerSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<crate::camera::CameraModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub circle_refinement_method: Option<CircleRefinementMethodV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projective_center: Option<ProjectiveCenterParamsV1>,
@@ -644,6 +646,7 @@ mod tests {
                     min_decode_confidence: 0.15,
                 },
                 marker_spec: crate::marker_spec::MarkerSpec::default(),
+                camera: None,
                 circle_refinement_method: None,
                 projective_center: None,
                 nl_refine: None,

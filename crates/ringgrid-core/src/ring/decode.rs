@@ -9,10 +9,11 @@
 
 use image::GrayImage;
 
+use crate::camera::CameraModel;
 use crate::codec::Codebook;
 use crate::conic::Ellipse;
 
-use super::edge_sample::bilinear_sample_u8;
+use super::edge_sample::DistortionAwareSampler;
 
 /// Configuration for sector decoding.
 #[derive(Debug, Clone)]
@@ -108,7 +109,17 @@ pub fn decode_marker(
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
 ) -> Option<DecodeResult> {
-    decode_marker_with_diagnostics(gray, outer_ellipse, config).0
+    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, None).0
+}
+
+/// Distortion-aware variant of [`decode_marker`].
+pub fn decode_marker_with_camera(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    camera: Option<&CameraModel>,
+) -> Option<DecodeResult> {
+    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, camera).0
 }
 
 /// Decode a marker and return (accepted_result, diagnostics).
@@ -119,6 +130,16 @@ pub fn decode_marker_with_diagnostics(
     gray: &GrayImage,
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
+    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, None)
+}
+
+/// Distortion-aware variant of [`decode_marker_with_diagnostics`].
+pub fn decode_marker_with_diagnostics_and_camera(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    camera: Option<&CameraModel>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
     // Validate ellipse
     if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
@@ -152,6 +173,7 @@ pub fn decode_marker_with_diagnostics(
     // Sample sector intensities in image coordinates.
     // The absolute angular reference doesn't matter: the codebook matcher
     // tries all 16 cyclic rotations (each 22.5°) to find the best match.
+    let sampler = DistortionAwareSampler::new(gray, camera);
     let mut sector_intensities = [0.0f32; 16];
 
     for s in 0..16u32 {
@@ -173,12 +195,11 @@ pub fn decode_marker_with_diagnostics(
                 };
                 let r = r_ratio * r_mean;
 
-                // Sample directly in image coordinates (circular frame)
+                // Sample in working coordinates (distortion-aware when camera is provided).
                 let x_img = cx + r * theta.cos();
                 let y_img = cy + r * theta.sin();
 
-                let intensity = bilinear_sample_u8(gray, x_img as f32, y_img as f32);
-                if intensity > 0.0 {
+                if let Some(intensity) = sampler.sample_checked(x_img as f32, y_img as f32) {
                     sum += intensity;
                     count += 1;
                 }

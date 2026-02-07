@@ -3,10 +3,12 @@ use image::GrayImage;
 use crate::conic::{
     fit_ellipse_direct, rms_sampson_distance, try_fit_ellipse_ransac, Ellipse, RansacConfig,
 };
-use crate::ring::decode::decode_marker_with_diagnostics;
-use crate::ring::edge_sample::{bilinear_sample_u8_checked, EdgeSampleConfig, EdgeSampleResult};
+use crate::ring::decode::decode_marker_with_diagnostics_and_camera;
+use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
-use crate::ring::outer_estimate::{estimate_outer_from_prior, OuterEstimate, OuterStatus};
+use crate::ring::outer_estimate::{
+    estimate_outer_from_prior_with_camera, OuterEstimate, OuterStatus,
+};
 use crate::{DetectedMarker, EllipseParams};
 
 use super::DetectConfig;
@@ -118,7 +120,7 @@ pub(super) fn median_outer_radius_from_neighbors_px(
 }
 
 fn sample_outer_edge_points(
-    gray: &GrayImage,
+    sampler: DistortionAwareSampler<'_>,
     center_prior: [f32; 2],
     r0: f32,
     pol: Polarity,
@@ -160,11 +162,11 @@ fn sample_outer_edge_points(
             let y1 = cy + dy * (r + h);
             let x0 = cx + dx * (r - h);
             let y0 = cy + dy * (r - h);
-            let i1 = match bilinear_sample_u8_checked(gray, x1, y1) {
+            let i1 = match sampler.sample_checked(x1, y1) {
                 Some(v) => v,
                 None => continue,
             };
-            let i0 = match bilinear_sample_u8_checked(gray, x0, y0) {
+            let i0 = match sampler.sample_checked(x0, y0) {
                 Some(v) => v,
                 None => continue,
             };
@@ -192,11 +194,11 @@ fn sample_outer_edge_points(
         let y_in = cy + dy * (r - band);
         let x_out = cx + dx * (r + band);
         let y_out = cy + dy * (r + band);
-        let i_in = match bilinear_sample_u8_checked(gray, x_in, y_in) {
+        let i_in = match sampler.sample_checked(x_in, y_in) {
             Some(v) => v,
             None => continue,
         };
-        let i_out = match bilinear_sample_u8_checked(gray, x_out, y_out) {
+        let i_out = match sampler.sample_checked(x_out, y_out) {
             Some(v) => v,
             None => continue,
         };
@@ -249,9 +251,16 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
 
     let mut outer_cfg = config.outer_estimation.clone();
     outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
+    let sampler = DistortionAwareSampler::new(gray, config.camera.as_ref());
 
-    let outer_estimate =
-        estimate_outer_from_prior(gray, center_prior, r_expected, &outer_cfg, store_response);
+    let outer_estimate = estimate_outer_from_prior_with_camera(
+        gray,
+        center_prior,
+        r_expected,
+        &outer_cfg,
+        config.camera.as_ref(),
+        store_response,
+    );
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
         return Err(format!(
             "outer_estimate:{}",
@@ -270,7 +279,7 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
 
     for (hi, hyp) in outer_estimate.hypotheses.iter().enumerate() {
         let (outer_points, outer_radii) = sample_outer_edge_points(
-            gray,
+            sampler,
             center_prior,
             hyp.r_outer_px,
             pol,
@@ -303,8 +312,12 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
             Err(_) => continue,
         };
 
-        let (decode_result, decode_diag) =
-            decode_marker_with_diagnostics(gray, &outer, &config.decode);
+        let (decode_result, decode_diag) = decode_marker_with_diagnostics_and_camera(
+            gray,
+            &outer,
+            &config.decode,
+            config.camera.as_ref(),
+        );
 
         let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
         let inlier_ratio = outer_ransac

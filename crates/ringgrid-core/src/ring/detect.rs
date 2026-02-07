@@ -165,6 +165,11 @@ pub struct DetectConfig {
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
+    /// Optional camera model for distortion-aware processing.
+    ///
+    /// When set, local fitting/sampling runs in the undistorted pixel frame
+    /// and all reported marker geometry/centers use that working frame.
+    pub camera: Option<crate::camera::CameraModel>,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -198,6 +203,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            camera: None,
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -228,13 +234,13 @@ pub fn detect_rings_with_debug(
 }
 
 pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig) {
-    if config.circle_refinement == CircleRefinementMethod::None {
+    if config.circle_refinement == CircleRefinementMethod::None || config.camera.is_some() {
         return;
     }
 
     tracing::warn!(
         "center correction is running without camera intrinsics/undistortion; \
-         lens distortion can bias corrected centers (planned to be addressed in R4)"
+         lens distortion can still bias corrected centers"
     );
 }
 

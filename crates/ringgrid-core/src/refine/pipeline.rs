@@ -2,17 +2,10 @@ use image::GrayImage;
 use nalgebra as na;
 
 use crate::board_spec;
+use crate::camera::CameraModel;
 use crate::homography::project;
 
 use super::*;
-
-#[derive(Debug, Clone, Copy)]
-struct SamplingConfig {
-    theta_samples: usize,
-    search_halfwidth_px: f32,
-    r_step_px: f32,
-    min_ring_depth: f32,
-}
 
 #[derive(Debug, Clone)]
 struct MarkerProcessResult {
@@ -26,7 +19,8 @@ struct RunContext<'a> {
     h_inv: &'a na::Matrix3<f64>,
     params: &'a RefineParams,
     radius_mm: f64,
-    sample_cfg: SamplingConfig,
+    sample_cfg: OuterSampleConfig,
+    camera: Option<&'a CameraModel>,
     store_points: bool,
 }
 
@@ -185,19 +179,15 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let s_pos = sample_outer_points_around_ellipse(
         ctx.gray,
         &ellipse_outer,
-        ctx.sample_cfg.theta_samples,
-        ctx.sample_cfg.search_halfwidth_px,
-        ctx.sample_cfg.r_step_px,
-        ctx.sample_cfg.min_ring_depth,
+        ctx.camera,
+        ctx.sample_cfg,
         Polarity::Pos,
     );
     let s_neg = sample_outer_points_around_ellipse(
         ctx.gray,
         &ellipse_outer,
-        ctx.sample_cfg.theta_samples,
-        ctx.sample_cfg.search_halfwidth_px,
-        ctx.sample_cfg.r_step_px,
-        ctx.sample_cfg.min_ring_depth,
+        ctx.camera,
+        ctx.sample_cfg,
         Polarity::Neg,
     );
 
@@ -467,6 +457,7 @@ pub(super) fn run(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    camera: Option<&CameraModel>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
     if !params.enabled {
@@ -488,7 +479,7 @@ pub(super) fn run(
         }
     };
 
-    let sample_cfg = SamplingConfig {
+    let sample_cfg = OuterSampleConfig {
         theta_samples: 96,
         search_halfwidth_px: 2.5,
         r_step_px: 0.5,
@@ -505,6 +496,7 @@ pub(super) fn run(
         params,
         radius_mm,
         sample_cfg,
+        camera,
         store_points,
     };
 

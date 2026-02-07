@@ -85,6 +85,9 @@ For each proposal:
 ### 8) Outputs
 
 - `DetectionResult` (`lib.rs`) for stable detector output.
+- Reported marker/homography coordinates are in detector working pixel frame:
+  - raw image pixels when no camera intrinsics are provided;
+  - undistorted pixels when camera intrinsics are provided.
 - Includes optional `center_projective`, `vanishing_line`, and selection residual per marker.
 - Optional versioned debug dump (`debug_dump.rs`, schema `ringgrid.debug.v1`).
 
@@ -192,12 +195,20 @@ Exit criteria:
 Goal:
 - Improve subpixel precision by accounting for lens distortion in edge sampling.
 
-Plan:
+Status: in progress.
+
+Completed:
 
 1. Add camera module with explicit calibration structs.
 2. Extend detect API/config with optional camera parameters.
 3. Add distortion-aware sampling utility used by local fit and both center-correction strategies (projective + NL board).
-4. Add synthetic-distortion generation/eval support in tools.
+4. Wire local fit (`outer_estimate`, `outer_fit`, `inner_estimate`, `inner_fit`), decode, and NL refine sampling to the shared distortion-aware sampler.
+5. Surface camera in detection/debug outputs.
+
+Remaining:
+
+1. Add synthetic-distortion generation/eval support in tools.
+2. Run larger benchmark sweeps to retune thresholds and verify improvement margins.
 
 R3/R4 coupling:
 - Center-correction strategies should consume undistorted edge elements when intrinsics are provided.

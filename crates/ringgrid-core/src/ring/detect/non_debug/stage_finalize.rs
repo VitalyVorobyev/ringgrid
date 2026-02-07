@@ -22,6 +22,7 @@ pub(super) fn run(
             image_size,
             homography: None,
             ransac: None,
+            camera: config.camera,
         };
     }
 
@@ -55,11 +56,12 @@ pub(super) fn run(
     let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
     if use_nl_refine {
         if let Some(h0) = h_current {
-            let _ = refine::refine_markers_circle_board(
+            let _ = refine::refine_markers_circle_board_with_camera(
                 gray,
                 &h0,
                 &mut final_markers,
                 &config.nl_refine,
+                config.camera.as_ref(),
                 false,
             );
 
@@ -80,11 +82,12 @@ pub(super) fn run(
                         h_prev = h_next;
                         mean_prev = mean_next;
 
-                        let _ = refine::refine_markers_circle_board(
+                        let _ = refine::refine_markers_circle_board_with_camera(
                             gray,
                             &h_prev,
                             &mut final_markers,
                             &config.nl_refine,
+                            config.camera.as_ref(),
                             false,
                         );
                     } else {
@@ -134,5 +137,6 @@ pub(super) fn run(
         image_size,
         homography: final_h,
         ransac: final_ransac,
+        camera: config.camera,
     }
 }

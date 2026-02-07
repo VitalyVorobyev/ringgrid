@@ -147,6 +147,77 @@ struct CliDetectArgs {
     /// NL refine: disable homography refit from refined centers.
     #[arg(long, conflicts_with = "nl_h_refit")]
     no_nl_h_refit: bool,
+
+    #[command(flatten)]
+    camera: CliCameraArgs,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+struct CliCameraArgs {
+    /// Camera intrinsic fx (pixels). If set, fy/cx/cy are required too.
+    #[arg(long)]
+    cam_fx: Option<f64>,
+    /// Camera intrinsic fy (pixels). If set, fx/cx/cy are required too.
+    #[arg(long)]
+    cam_fy: Option<f64>,
+    /// Camera principal point cx (pixels). If set, fx/fy/cy are required too.
+    #[arg(long)]
+    cam_cx: Option<f64>,
+    /// Camera principal point cy (pixels). If set, fx/fy/cx are required too.
+    #[arg(long)]
+    cam_cy: Option<f64>,
+    /// Radial distortion coefficient k1.
+    #[arg(long, default_value_t = 0.0)]
+    cam_k1: f64,
+    /// Radial distortion coefficient k2.
+    #[arg(long, default_value_t = 0.0)]
+    cam_k2: f64,
+    /// Tangential distortion coefficient p1.
+    #[arg(long, default_value_t = 0.0)]
+    cam_p1: f64,
+    /// Tangential distortion coefficient p2.
+    #[arg(long, default_value_t = 0.0)]
+    cam_p2: f64,
+    /// Radial distortion coefficient k3.
+    #[arg(long, default_value_t = 0.0)]
+    cam_k3: f64,
+}
+
+impl CliCameraArgs {
+    fn to_core(&self) -> CliResult<Option<ringgrid_core::camera::CameraModel>> {
+        let intr = [self.cam_fx, self.cam_fy, self.cam_cx, self.cam_cy];
+        let any_intr = intr.iter().any(Option::is_some);
+        if !any_intr {
+            return Ok(None);
+        }
+        if intr.iter().any(Option::is_none) {
+            return Err(
+                "camera intrinsics are partial; provide all of --cam-fx --cam-fy --cam-cx --cam-cy"
+                    .to_string()
+                    .into(),
+            );
+        }
+
+        let model = ringgrid_core::camera::CameraModel {
+            intrinsics: ringgrid_core::camera::CameraIntrinsics {
+                fx: self.cam_fx.expect("validated"),
+                fy: self.cam_fy.expect("validated"),
+                cx: self.cam_cx.expect("validated"),
+                cy: self.cam_cy.expect("validated"),
+            },
+            distortion: ringgrid_core::camera::RadialTangentialDistortion {
+                k1: self.cam_k1,
+                k2: self.cam_k2,
+                p1: self.cam_p1,
+                p2: self.cam_p2,
+                k3: self.cam_k3,
+            },
+        };
+        if !model.intrinsics.is_valid() {
+            return Err("invalid camera intrinsics: fx/fy must be finite and non-zero".into());
+        }
+        Ok(Some(model))
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -196,6 +267,7 @@ struct DetectOverrides {
     completion_reproj_gate_px: f32,
     completion_min_fit_confidence: f32,
     completion_roi_radius_px: Option<f32>,
+    camera: Option<ringgrid_core::camera::CameraModel>,
     circle_refinement: ringgrid_core::ring::CircleRefinementMethod,
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
@@ -215,7 +287,7 @@ impl CliDetectArgs {
         }
     }
 
-    fn to_overrides(&self) -> DetectOverrides {
+    fn to_overrides(&self) -> CliResult<DetectOverrides> {
         let mut circle_refinement = self.circle_refine_method.to_core();
         if self.no_nl_refine
             && circle_refinement == ringgrid_core::ring::CircleRefinementMethod::NlBoard
@@ -223,7 +295,7 @@ impl CliDetectArgs {
             circle_refinement = ringgrid_core::ring::CircleRefinementMethod::None;
         }
 
-        DetectOverrides {
+        Ok(DetectOverrides {
             use_global_filter: !self.no_global_filter,
             refine_with_h: !self.no_refine,
             ransac_thresh_px: self.ransac_thresh_px,
@@ -232,6 +304,7 @@ impl CliDetectArgs {
             completion_reproj_gate_px: self.complete_reproj_gate as f32,
             completion_min_fit_confidence: self.complete_min_conf,
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
+            camera: self.camera.to_core()?,
             circle_refinement,
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
@@ -242,7 +315,7 @@ impl CliDetectArgs {
             nl_reject_shift_mm: self.nl_reject_shift_mm,
             nl_solver: self.nl_solver.to_core(),
             nl_enable_h_refit: self.nl_h_refit && !self.no_nl_h_refit,
-        }
+        })
     }
 }
 
@@ -284,6 +357,7 @@ fn build_detect_config(
     config.completion.roi_radius_px = overrides
         .completion_roi_radius_px
         .unwrap_or(((preset.marker_diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32);
+    config.camera = overrides.camera;
 
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
@@ -420,7 +494,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     tracing::info!("Image size: {}x{}", w, h);
 
     let preset = args.to_preset();
-    let overrides = args.to_overrides();
+    let overrides = args.to_overrides()?;
     let config = build_detect_config(preset, &overrides);
 
     // Run detection pipeline (optionally with debug dump)

@@ -421,6 +421,7 @@ pub(super) fn complete_with_h(
             gray,
             &outer,
             &config.marker_spec,
+            config.camera.as_ref(),
             &inner_fit_cfg,
             record_debug || store_points_in_debug,
         );

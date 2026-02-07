@@ -179,7 +179,19 @@ Goal: allow undistortion of edge samples for higher precision.
 5. Add synthetic-distortion eval mode in `tools/gen_synth.py` and score scripts.
 
 Scope decision (v1): radial-tangential only.
-Status: not started (roadmap phase R4).
+Status: in progress (roadmap phase R4).
+
+Completed in current branch:
+
+1. Added `camera` module (`CameraIntrinsics`, radial-tangential coefficients, iterative undistort).
+2. Wired optional camera into detect config/CLI/result/debug metadata.
+3. Added shared distortion-aware sampler and switched local outer/inner fit, decode, and NL refine sampling to it.
+4. When camera is provided, the detector uses an undistorted pixel working frame internally and in outputs.
+
+Remaining:
+
+1. Add distortion-aware synthetic generation/eval tooling.
+2. Add larger real-image validation and threshold tuning with/without intrinsics.
 
 ## Public API target shape
 

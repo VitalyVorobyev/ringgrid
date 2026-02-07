@@ -1,10 +1,11 @@
 use image::GrayImage;
 
+use crate::camera::CameraModel;
 use crate::conic::{self, Ellipse, RansacConfig};
 use crate::marker_spec::MarkerSpec;
-use crate::ring::edge_sample::bilinear_sample_u8_checked;
+use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
-    estimate_inner_scale_from_outer, InnerEstimate, InnerStatus, Polarity,
+    estimate_inner_scale_from_outer_with_camera, InnerEstimate, InnerStatus, Polarity,
 };
 
 /// Outcome category for robust inner ellipse fitting.
@@ -129,6 +130,7 @@ fn sample_inner_points_from_hint(
     outer: &Ellipse,
     estimate: &InnerEstimate,
     cfg: &InnerFitConfig,
+    camera: Option<&CameraModel>,
 ) -> Vec<[f64; 2]> {
     let (Some(r_hint), Some(pol)) = (estimate.r_inner_found, estimate.polarity) else {
         return Vec::new();
@@ -154,6 +156,7 @@ fn sample_inner_points_from_hint(
         })
         .map(|(i, _)| i)
         .unwrap_or(0);
+    let sampler = DistortionAwareSampler::new(gray, camera);
 
     let mut points = Vec::<[f64; 2]>::with_capacity(n_t);
     for ti in 0..n_t {
@@ -162,7 +165,7 @@ fn sample_inner_points_from_hint(
         let mut ok = true;
         for &r in &r_samples {
             let p = outer_scaled_point(outer, theta, r);
-            let Some(v) = bilinear_sample_u8_checked(gray, p[0], p[1]) else {
+            let Some(v) = sampler.sample_checked(p[0], p[1]) else {
                 ok = false;
                 break;
             };
@@ -209,10 +212,12 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
     gray: &GrayImage,
     outer: &Ellipse,
     spec: &MarkerSpec,
+    camera: Option<&CameraModel>,
     cfg: &InnerFitConfig,
     store_response: bool,
 ) -> InnerFitResult {
-    let estimate = estimate_inner_scale_from_outer(gray, outer, spec, store_response);
+    let estimate =
+        estimate_inner_scale_from_outer_with_camera(gray, outer, spec, camera, store_response);
 
     if estimate.status != InnerStatus::Ok {
         return InnerFitResult {
@@ -237,7 +242,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
         };
     }
 
-    let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg);
+    let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, camera);
     if points_inner.len() < cfg.min_points {
         return InnerFitResult {
             estimate,
@@ -414,6 +419,7 @@ mod tests {
             &img,
             &outer,
             &spec,
+            None,
             &InnerFitConfig::default(),
             false,
         );

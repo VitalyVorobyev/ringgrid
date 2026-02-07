@@ -2,6 +2,8 @@
 
 use image::GrayImage;
 
+use crate::camera::CameraModel;
+
 /// Configuration for radial edge sampling.
 #[derive(Debug, Clone)]
 pub struct EdgeSampleConfig {
@@ -53,6 +55,69 @@ pub struct EdgeSampleResult {
     pub n_good_rays: usize,
     /// Total rays attempted.
     pub n_total_rays: usize,
+}
+
+/// Distortion-aware point sampler working in a "working" coordinate frame.
+///
+/// Working-frame coordinates are:
+/// - image pixel coordinates when `camera` is `None`,
+/// - undistorted pixel coordinates when `camera` is provided.
+#[derive(Clone, Copy)]
+pub struct DistortionAwareSampler<'a> {
+    img: &'a GrayImage,
+    camera: Option<&'a CameraModel>,
+}
+
+impl<'a> DistortionAwareSampler<'a> {
+    /// Create a sampler for one image and optional camera model.
+    pub fn new(img: &'a GrayImage, camera: Option<&'a CameraModel>) -> Self {
+        Self { img, camera }
+    }
+
+    /// Convert image-space (distorted) pixel coordinates into working-frame coordinates.
+    pub fn image_to_working_xy(self, img_xy: [f32; 2]) -> Option<[f32; 2]> {
+        if let Some(cam) = self.camera {
+            let u = cam.undistort_pixel([img_xy[0] as f64, img_xy[1] as f64])?;
+            let out = [u[0] as f32, u[1] as f32];
+            if out[0].is_finite() && out[1].is_finite() {
+                Some(out)
+            } else {
+                None
+            }
+        } else {
+            Some(img_xy)
+        }
+    }
+
+    /// Convert working-frame coordinates into image-space (distorted) pixel coordinates.
+    pub fn working_to_image_xy(self, working_xy: [f32; 2]) -> Option<[f32; 2]> {
+        if let Some(cam) = self.camera {
+            let d = cam.distort_pixel([working_xy[0] as f64, working_xy[1] as f64])?;
+            let out = [d[0] as f32, d[1] as f32];
+            if out[0].is_finite() && out[1].is_finite() {
+                Some(out)
+            } else {
+                None
+            }
+        } else {
+            Some(working_xy)
+        }
+    }
+
+    /// Sample at a working-frame coordinate.
+    ///
+    /// Returns intensity in [0, 1] or `None` if mapped position is out of image bounds.
+    #[inline]
+    pub fn sample_checked(self, x_working: f32, y_working: f32) -> Option<f32> {
+        let img_xy = self.working_to_image_xy([x_working, y_working])?;
+        bilinear_sample_u8_checked(self.img, img_xy[0], img_xy[1])
+    }
+
+    /// Sample at a working-frame coordinate; returns 0.0 out-of-bounds.
+    #[inline]
+    pub fn sample(self, x_working: f32, y_working: f32) -> f32 {
+        self.sample_checked(x_working, y_working).unwrap_or(0.0)
+    }
 }
 
 /// Sample a grayscale image at sub-pixel position using bilinear interpolation.
@@ -107,6 +172,7 @@ pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::{CameraIntrinsics, RadialTangentialDistortion};
 
     #[test]
     fn test_bilinear_sample() {
@@ -123,5 +189,42 @@ mod tests {
             expected,
             val
         );
+    }
+
+    #[test]
+    fn distortion_aware_sampler_no_camera_is_identity() {
+        let mut img = GrayImage::new(8, 8);
+        img.put_pixel(3, 4, image::Luma([255]));
+        let s = DistortionAwareSampler::new(&img, None);
+        let v = s.sample_checked(3.0, 4.0).unwrap();
+        assert!(v > 0.99);
+    }
+
+    #[test]
+    fn distortion_aware_sampler_maps_working_to_image() {
+        let mut img = GrayImage::new(16, 16);
+        img.put_pixel(8, 8, image::Luma([255]));
+        let cam = CameraModel {
+            intrinsics: CameraIntrinsics {
+                fx: 1000.0,
+                fy: 1000.0,
+                cx: 8.0,
+                cy: 8.0,
+            },
+            distortion: RadialTangentialDistortion {
+                k1: -0.2,
+                k2: 0.02,
+                p1: 0.0,
+                p2: 0.0,
+                k3: 0.0,
+            },
+        };
+        let s = DistortionAwareSampler::new(&img, Some(&cam));
+        let work = s.image_to_working_xy([8.0, 8.0]).unwrap();
+        let back = s.working_to_image_xy(work).unwrap();
+        assert!((back[0] - 8.0).abs() < 1e-4);
+        assert!((back[1] - 8.0).abs() < 1e-4);
+        let v = s.sample_checked(work[0], work[1]).unwrap();
+        assert!(v > 0.99);
     }
 }

@@ -10,15 +10,21 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();
+    let sampler =
+        crate::ring::edge_sample::DistortionAwareSampler::new(gray, config.camera.as_ref());
 
     // Stages 2-5: For each proposal, sample edges → fit → decode
     let mut markers: Vec<DetectedMarker> = Vec::new();
 
     for proposal in &proposals {
+        let center_prior = match sampler.image_to_working_xy([proposal.x, proposal.y]) {
+            Some(v) => v,
+            None => continue,
+        };
         // Stage 2-4: Robust outer edge extraction → outer fit → decode
         let fit = match fit_outer_ellipse_robust_with_reason(
             gray,
-            [proposal.x, proposal.y],
+            center_prior,
             marker_outer_radius_expected_px(config),
             config,
             &config.edge_sample,
@@ -43,6 +49,7 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
             gray,
             &outer,
             &config.marker_spec,
+            config.camera.as_ref(),
             &inner_fit_cfg,
             false,
         );

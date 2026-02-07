@@ -96,6 +96,7 @@ pub(super) fn refine_with_homography_with_debug(
             gray,
             &outer,
             &config.marker_spec,
+            config.camera.as_ref(),
             &inner_fit_cfg,
             false,
         );

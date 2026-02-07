@@ -3,9 +3,9 @@ use crate::debug_dump as dbg;
 use crate::{EllipseParams, FitMetrics};
 
 #[cfg(feature = "debug-trace")]
-use crate::refine::{MarkerRefineRecord, MarkerRefineStatus, RefineStats};
-#[cfg(feature = "debug-trace")]
 use super::completion::{CompletionAttemptRecord, CompletionAttemptStatus, CompletionStats};
+#[cfg(feature = "debug-trace")]
+use crate::refine::{MarkerRefineRecord, MarkerRefineStatus, RefineStats};
 
 pub(super) fn ellipse_from_params(p: &EllipseParams) -> dbg::EllipseParamsDebugV1 {
     dbg::EllipseParamsDebugV1 {

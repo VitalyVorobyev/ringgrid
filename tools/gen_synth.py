@@ -408,6 +408,8 @@ def apply_illumination_gradient(
     strength: float = 0.15,
 ) -> np.ndarray:
     """Apply a mild linear illumination gradient."""
+    if strength <= 0.0:
+        return img
     h, w = img.shape
     gx = rng.uniform(-strength, strength)
     gy = rng.uniform(-strength, strength)
@@ -424,6 +426,8 @@ def apply_noise(
     sigma: float = 0.02,
 ) -> np.ndarray:
     """Add Gaussian noise."""
+    if sigma <= 0.0:
+        return img
     noise = rng.normal(0, sigma, img.shape)
     return np.clip(img + noise, 0, 1)
 
@@ -933,6 +937,8 @@ def generate_one_sample(
     n_markers: Optional[int],
     codebook: list[int],
     blur_px: float,
+    illum_strength: float,
+    noise_sigma: float,
     projective: bool,
     tilt_strength: float,
     seed: int,
@@ -963,8 +969,8 @@ def generate_one_sample(
 
     # Post-processing
     img = apply_anisotropic_blur(img, blur_px, rng)
-    img = apply_illumination_gradient(img, rng)
-    img = apply_noise(img, rng)
+    img = apply_illumination_gradient(img, rng, strength=illum_strength)
+    img = apply_noise(img, rng, sigma=noise_sigma)
 
     # Crop (optional random crop to simulate partial visibility)
     # For now, just keep full image
@@ -1007,6 +1013,8 @@ def generate_one_sample(
         "inner_radius_mm": inner_radius,
         "homography": H.tolist(),
         "blur_px": blur_px,
+        "illum_strength": illum_strength,
+        "noise_sigma": noise_sigma,
         "projective": projective,
         "tilt_strength": tilt,
         "stress_inner_confusion": stress_inner_confusion,
@@ -1039,6 +1047,18 @@ def main() -> None:
     parser.add_argument("--n_markers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--blur_px", type=float, default=1.0)
+    parser.add_argument(
+        "--illum_strength",
+        type=float,
+        default=0.15,
+        help="Linear illumination gradient strength (0 disables).",
+    )
+    parser.add_argument(
+        "--noise_sigma",
+        type=float,
+        default=0.02,
+        help="Additive Gaussian noise sigma in normalized image intensity units (0 disables).",
+    )
     parser.add_argument(
         "--stress-inner-confusion",
         action="store_true",
@@ -1167,6 +1187,8 @@ def main() -> None:
             n_markers=args.n_markers,
             codebook=codebook,
             blur_px=args.blur_px,
+            illum_strength=args.illum_strength,
+            noise_sigma=args.noise_sigma,
             projective=args.projective,
             tilt_strength=args.tilt_strength,
             seed=args.seed,

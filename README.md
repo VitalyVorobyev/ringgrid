@@ -96,18 +96,59 @@ Other commonly used toggles:
 - `--debug-json <path>`
 - `--debug-store-points`
 
+## Metrics (Synthetic Scoring)
+
+`tools/score_detect.py` reports several geometric metrics; the three key ones are:
+
+- `center_error`: TP-only error between predicted `marker.center` and GT `true_image_center`.
+- `ransac.mean_err_px` / `ransac.p95_err_px`: homography self-consistency error from the detector output (board point projected by estimated `H` vs detected center, inliers only).
+- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT `true_image_center`) over visible GT markers.
+
+Interpretation:
+
+- Lower is better for all three.
+- `ransac.mean_err_px` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
+
 ## Performance Snapshots (Synthetic)
+
+### Reference Benchmark (Clean, 3 Images)
+
+Source: `tools/out/reference_benchmark/summary.json`
+
+Run command:
+
+```bash
+./.venv/bin/python tools/run_reference_benchmark.py \
+  --out_dir tools/out/reference_benchmark \
+  --n_images 3 \
+  --blur_px 0.8 \
+  --noise_sigma 0.0 \
+  --marker_diameter 32.0
+```
+
+| Mode | Precision | Recall | Center mean (px) | H reproj mean/p95 (px) | H vs GT mean/p95 (px) |
+|---|---:|---:|---:|---:|---:|
+| `none` | 1.000 | 1.000 | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
+| `projective-center` | 1.000 | 1.000 | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
+| `nl-board + lm` | 1.000 | 1.000 | 0.047 | 0.027 / 0.089 | 0.038 / 0.052 |
+| `nl-board + irls` | 1.000 | 1.000 | 0.069 | 0.061 / 0.123 | 0.034 / 0.048 |
 
 ### Regression Batch (10 images)
 
 Source: `tools/out/regress_r2_batch/det/aggregate.json`
+
+This set is intentionally harder (`blur_px=3.0`), and markers are visibly weak/blurred.
+
+Example image from this stress set:
+
+![Regression blur=3.0 sample](docs/assets/regression_blur3_sample.png)
 
 Run command:
 
 ```bash
 python3 tools/run_synth_eval.py \
   --n 10 \
-  --skip_gen \
+  --blur_px 3.0 \
   --out_dir tools/out/regress_r2_batch \
   --marker_diameter 32.0
 ```
@@ -121,26 +162,9 @@ Snapshot:
 | Avg recall | 0.949 |
 | Avg TP / image | 192.6 |
 | Avg FP / image | 0.0 |
-| Avg center error (px) | 0.254 |
-| Avg reprojection error (px) | 0.199 |
-
-### Refinement Strategy Comparison (`synth_002`, image 0002)
-
-Source: `tools/out/synth_002/_cmp_recheck/score_*.json`
-
-All modes below reached 203 TP / 0 FP on this sample.
-
-| Mode | Center mean (px) | Legacy center mean (px) | Homography mean / p95 (px) |
-|---|---:|---:|---:|
-| `none` | 0.102 | 0.102 | 0.076 / 0.157 |
-| `projective-center` | 0.078 | 0.097 | 0.060 / 0.128 |
-| `nl-board + lm` | 0.086 | 0.102 | 0.040 / 0.103 |
-| `nl-board + irls` | 0.099 | 0.102 | 0.071 / 0.140 |
-
-Notes:
-
-- `projective-center` currently matches `tools/out/synth_002/det_0002.json` exactly.
-- `none` and `projective-center` are not equivalent: all 203 centers moved on this sample.
+| Avg center error (px) | 0.280 |
+| Avg H vs GT error (px) | 0.150 |
+| Avg H reproj error (px) | 0.230 |
 
 ## CI Workflows
 

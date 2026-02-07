@@ -182,31 +182,19 @@ def main():
 
         # Aggregate center errors
         all_ce_primary = []
-        all_ce_legacy = []
-        all_ce_projective = []
-        all_ce_delta = []
+        all_ce_hgt = []
         for r in all_results:
             ce = r.get("center_error", {})
             if ce:
                 all_ce_primary.append(ce["mean"])
-            ce_legacy = r.get("center_error_legacy_outer", {})
-            if ce_legacy:
-                all_ce_legacy.append(ce_legacy["mean"])
-            ce_projective = r.get("center_error_projective", {})
-            if ce_projective:
-                all_ce_projective.append(ce_projective["mean"])
-            ce_cmp = r.get("center_error_projective_vs_legacy", {})
-            if ce_cmp:
-                all_ce_delta.append(ce_cmp["mean_delta_legacy_minus_projective"])
+            ce_hgt = r.get("homography_error_vs_gt", {})
+            if ce_hgt:
+                all_ce_hgt.append(ce_hgt["mean"])
 
         if all_ce_primary:
             print(f"Avg center error:    {sum(all_ce_primary)/len(all_ce_primary):.2f} px")
-        if all_ce_legacy:
-            print(f"Avg legacy center:   {sum(all_ce_legacy)/len(all_ce_legacy):.2f} px")
-        if all_ce_projective:
-            print(f"Avg projective ctr:  {sum(all_ce_projective)/len(all_ce_projective):.2f} px")
-        if all_ce_delta:
-            print(f"Avg delta (L-P):     {sum(all_ce_delta)/len(all_ce_delta):.2f} px")
+        if all_ce_hgt:
+            print(f"Avg H vs GT error:   {sum(all_ce_hgt)/len(all_ce_hgt):.2f} px")
 
         # Aggregate RANSAC stats
         all_ransac = [r["ransac_stats"] for r in all_results if r.get("ransac_stats")]
@@ -230,16 +218,8 @@ def main():
             "avg_center_error": (
                 sum(all_ce_primary) / len(all_ce_primary) if all_ce_primary else None
             ),
-            "avg_center_error_legacy_outer": (
-                sum(all_ce_legacy) / len(all_ce_legacy) if all_ce_legacy else None
-            ),
-            "avg_center_error_projective": (
-                sum(all_ce_projective) / len(all_ce_projective)
-                if all_ce_projective
-                else None
-            ),
-            "avg_center_error_delta_legacy_minus_projective": (
-                sum(all_ce_delta) / len(all_ce_delta) if all_ce_delta else None
+            "avg_homography_error_vs_gt": (
+                sum(all_ce_hgt) / len(all_ce_hgt) if all_ce_hgt else None
             ),
             "avg_reproj_error": avg_reproj,
             "per_image": all_results,

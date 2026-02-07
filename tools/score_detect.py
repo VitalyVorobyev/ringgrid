@@ -3,7 +3,8 @@
 
 Computes:
   - Detection precision and recall (by ID match within distance gate)
-  - Center error statistics for true positives
+  - Center error statistics for true positives (`marker.center` vs GT center)
+  - Homography-vs-GT center error (if prediction JSON contains `homography`)
   - Decode accuracy statistics
   - Lists of missed IDs and false positives
 
@@ -18,7 +19,6 @@ import argparse
 import json
 import math
 import sys
-from pathlib import Path
 from typing import Any, Optional
 
 
@@ -144,47 +144,9 @@ def score(
     precision = n_tp / max(n_pred, 1)
     recall = n_tp / max(n_gt, 1)
 
-    # Center error statistics (primary + comparison variants).
+    # Center error statistics (primary center field only).
     center_errors_primary = [e for _, _, e in matches]
     center_stats = stats_1d(center_errors_primary)
-
-    center_errors_legacy_outer = []
-    center_errors_projective = []
-    paired_delta_legacy_minus_projective = []
-    paired_projective_better = 0
-
-    for gt_idx, pred_idx, _ in matches:
-        gt_center = gt_markers[gt_idx]["true_image_center"]
-        pred = pred_markers[pred_idx]
-
-        eo = pred.get("ellipse_outer")
-        legacy_center = eo.get("center_xy") if isinstance(eo, dict) else None
-        legacy_err = None
-        if (
-            isinstance(legacy_center, list)
-            and len(legacy_center) >= 2
-            and legacy_center[0] is not None
-            and legacy_center[1] is not None
-        ):
-            legacy_err = math.sqrt(dist2(legacy_center, gt_center))
-            center_errors_legacy_outer.append(legacy_err)
-
-        projective_center = pred.get("center_projective")
-        projective_err = None
-        if (
-            isinstance(projective_center, list)
-            and len(projective_center) >= 2
-            and projective_center[0] is not None
-            and projective_center[1] is not None
-        ):
-            projective_err = math.sqrt(dist2(projective_center, gt_center))
-            center_errors_projective.append(projective_err)
-
-        if legacy_err is not None and projective_err is not None:
-            delta = legacy_err - projective_err
-            paired_delta_legacy_minus_projective.append(delta)
-            if delta > 0.0:
-                paired_projective_better += 1
 
     # Decode distance distribution (for matched predictions)
     decode_dists = []
@@ -243,25 +205,6 @@ def score(
         "gate_px": gate,
     }
 
-    center_legacy_stats = stats_1d(center_errors_legacy_outer)
-    if center_legacy_stats:
-        result["center_error_legacy_outer"] = center_legacy_stats
-
-    center_projective_stats = stats_1d(center_errors_projective)
-    if center_projective_stats:
-        result["center_error_projective"] = center_projective_stats
-
-    delta_stats = stats_1d(paired_delta_legacy_minus_projective)
-    if delta_stats:
-        n_paired = len(paired_delta_legacy_minus_projective)
-        result["center_error_projective_vs_legacy"] = {
-            "n_paired": n_paired,
-            "mean_delta_legacy_minus_projective": delta_stats["mean"],
-            "median_delta_legacy_minus_projective": delta_stats["median"],
-            "p95_delta_legacy_minus_projective": delta_stats["p95"],
-            "projective_better_frac": paired_projective_better / max(n_paired, 1),
-        }
-
     if expected_inner_ratio is not None:
         pred_with_both = sum(
             1
@@ -310,6 +253,52 @@ def extract_ransac_stats(pred_data: dict) -> dict | None:
     return pred_data.get("ransac")
 
 
+def project_h(h: list[list[float]], x: float, y: float) -> Optional[list[float]]:
+    """Project 2D point through a 3x3 homography matrix."""
+    q0 = h[0][0] * x + h[0][1] * y + h[0][2]
+    q1 = h[1][0] * x + h[1][1] * y + h[1][2]
+    q2 = h[2][0] * x + h[2][1] * y + h[2][2]
+    if abs(q2) < 1e-12:
+        return None
+    return [q0 / q2, q1 / q2]
+
+
+def homography_error_vs_gt(gt_markers: list[dict], pred_data: dict) -> Optional[dict]:
+    """Compute absolute geometric error between predicted H and GT projected centers.
+
+    For each visible GT marker with valid board/image coordinates:
+      err = || project(H_pred, board_xy_mm) - true_image_center ||
+    """
+    h = pred_data.get("homography")
+    if not isinstance(h, list) or len(h) != 3:
+        return None
+    if any(not isinstance(row, list) or len(row) != 3 for row in h):
+        return None
+
+    errors = []
+    for m in gt_markers:
+        board_xy = m.get("board_xy_mm")
+        true_center = m.get("true_image_center")
+        if (
+            not isinstance(board_xy, list)
+            or len(board_xy) < 2
+            or not isinstance(true_center, list)
+            or len(true_center) < 2
+        ):
+            continue
+        proj = project_h(h, float(board_xy[0]), float(board_xy[1]))
+        if proj is None:
+            continue
+        errors.append(math.sqrt(dist2(proj, [float(true_center[0]), float(true_center[1])])))
+
+    if not errors:
+        return None
+
+    out = stats_1d(errors)
+    out["n_markers_used"] = len(errors)
+    return out
+
+
 def print_report(result: dict) -> None:
     """Print a human-readable report."""
     print("=" * 60)
@@ -333,36 +322,6 @@ def print_report(result: dict) -> None:
         print(f"  median: {ce['median']:.2f} px")
         print(f"  p95:    {ce['p95']:.2f} px")
         print(f"  max:    {ce['max']:.2f} px")
-
-    ce_legacy = result.get("center_error_legacy_outer", {})
-    if ce_legacy:
-        print("Center error legacy (outer ellipse center):")
-        print(f"  mean:   {ce_legacy['mean']:.2f} px")
-        print(f"  median: {ce_legacy['median']:.2f} px")
-        print(f"  p95:    {ce_legacy['p95']:.2f} px")
-        print(f"  max:    {ce_legacy['max']:.2f} px")
-
-    ce_proj = result.get("center_error_projective", {})
-    if ce_proj:
-        print("Center error projective:")
-        print(f"  mean:   {ce_proj['mean']:.2f} px")
-        print(f"  median: {ce_proj['median']:.2f} px")
-        print(f"  p95:    {ce_proj['p95']:.2f} px")
-        print(f"  max:    {ce_proj['max']:.2f} px")
-
-    ce_cmp = result.get("center_error_projective_vs_legacy", {})
-    if ce_cmp:
-        print("Projective vs legacy center:")
-        print(f"  paired TP:       {ce_cmp['n_paired']}")
-        print(
-            "  mean delta:      "
-            f"{ce_cmp['mean_delta_legacy_minus_projective']:.2f} px "
-            "(positive => projective better)"
-        )
-        print(
-            "  projective wins: "
-            f"{100.0 * ce_cmp['projective_better_frac']:.1f}%"
-        )
 
     dh = result.get("decode_dist_histogram", {})
     if dh:
@@ -390,6 +349,15 @@ def print_report(result: dict) -> None:
         print(f"  threshold:     {rs['threshold_px']:.1f} px")
         print(f"  mean reproj:   {rs['mean_err_px']:.2f} px")
         print(f"  p95 reproj:    {rs['p95_err_px']:.2f} px")
+
+    hg = result.get("homography_error_vs_gt")
+    if hg:
+        print("Homography vs GT centers:")
+        print(f"  markers used:  {hg['n_markers_used']}")
+        print(f"  mean:          {hg['mean']:.2f} px")
+        print(f"  median:        {hg['median']:.2f} px")
+        print(f"  p95:           {hg['p95']:.2f} px")
+        print(f"  max:           {hg['max']:.2f} px")
 
     ir = result.get("inner_ratio")
     if ir:
@@ -470,6 +438,10 @@ def main():
     ransac_stats = extract_ransac_stats(pred_data)
     if ransac_stats:
         result["ransac_stats"] = ransac_stats
+
+    h_gt_stats = homography_error_vs_gt(gt_markers, pred_data)
+    if h_gt_stats:
+        result["homography_error_vs_gt"] = h_gt_stats
 
     print_report(result)
 

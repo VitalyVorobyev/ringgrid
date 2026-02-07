@@ -204,6 +204,7 @@ Completed:
 3. Add distortion-aware sampling utility used by local fit and both center-correction strategies (projective + NL board).
 4. Wire local fit (`outer_estimate`, `outer_fit`, `inner_estimate`, `inner_fit`), decode, and NL refine sampling to the shared distortion-aware sampler.
 5. Surface camera in detection/debug outputs.
+6. Introduce trait-based pixel mapping (`camera::PixelMapper`) so detector/refine algorithms can accept custom camera model adapters.
 
 Remaining:
 

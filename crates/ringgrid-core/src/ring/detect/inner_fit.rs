@@ -1,11 +1,11 @@
 use image::GrayImage;
 
-use crate::camera::CameraModel;
+use crate::camera::PixelMapper;
 use crate::conic::{self, Ellipse, RansacConfig};
 use crate::marker_spec::MarkerSpec;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
-    estimate_inner_scale_from_outer_with_camera, InnerEstimate, InnerStatus, Polarity,
+    estimate_inner_scale_from_outer_with_mapper, InnerEstimate, InnerStatus, Polarity,
 };
 
 /// Outcome category for robust inner ellipse fitting.
@@ -130,7 +130,7 @@ fn sample_inner_points_from_hint(
     outer: &Ellipse,
     estimate: &InnerEstimate,
     cfg: &InnerFitConfig,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
 ) -> Vec<[f64; 2]> {
     let (Some(r_hint), Some(pol)) = (estimate.r_inner_found, estimate.polarity) else {
         return Vec::new();
@@ -156,7 +156,7 @@ fn sample_inner_points_from_hint(
         })
         .map(|(i, _)| i)
         .unwrap_or(0);
-    let sampler = DistortionAwareSampler::new(gray, camera);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
 
     let mut points = Vec::<[f64; 2]>::with_capacity(n_t);
     for ti in 0..n_t {
@@ -212,12 +212,12 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
     gray: &GrayImage,
     outer: &Ellipse,
     spec: &MarkerSpec,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
     cfg: &InnerFitConfig,
     store_response: bool,
 ) -> InnerFitResult {
     let estimate =
-        estimate_inner_scale_from_outer_with_camera(gray, outer, spec, camera, store_response);
+        estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, mapper, store_response);
 
     if estimate.status != InnerStatus::Ok {
         return InnerFitResult {
@@ -242,7 +242,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
         };
     }
 
-    let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, camera);
+    let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, mapper);
     if points_inner.len() < cfg.min_points {
         return InnerFitResult {
             estimate,

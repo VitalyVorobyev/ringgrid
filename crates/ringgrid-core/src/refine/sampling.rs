@@ -1,6 +1,6 @@
 use image::GrayImage;
 
-use crate::camera::CameraModel;
+use crate::camera::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::Polarity;
 use crate::EllipseParams;
@@ -42,11 +42,11 @@ fn ellipse_direction_radius_px(e: &EllipseParams, dir: [f32; 2]) -> Option<f32> 
 pub(super) fn sample_outer_points_around_ellipse(
     gray: &GrayImage,
     ellipse: &EllipseParams,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
     cfg: OuterSampleConfig,
     polarity: Polarity,
 ) -> SampleOutcome {
-    let sampler = DistortionAwareSampler::new(gray, camera);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
     let n_t = cfg.theta_samples.max(8);
     let cx = ellipse.center_xy[0] as f32;
     let cy = ellipse.center_xy[1] as f32;

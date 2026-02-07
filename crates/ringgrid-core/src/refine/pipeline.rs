@@ -2,7 +2,7 @@ use image::GrayImage;
 use nalgebra as na;
 
 use crate::board_spec;
-use crate::camera::CameraModel;
+use crate::camera::PixelMapper;
 use crate::homography::project;
 
 use super::*;
@@ -20,7 +20,7 @@ struct RunContext<'a> {
     params: &'a RefineParams,
     radius_mm: f64,
     sample_cfg: OuterSampleConfig,
-    camera: Option<&'a CameraModel>,
+    mapper: Option<&'a dyn PixelMapper>,
     store_points: bool,
 }
 
@@ -179,14 +179,14 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let s_pos = sample_outer_points_around_ellipse(
         ctx.gray,
         &ellipse_outer,
-        ctx.camera,
+        ctx.mapper,
         ctx.sample_cfg,
         Polarity::Pos,
     );
     let s_neg = sample_outer_points_around_ellipse(
         ctx.gray,
         &ellipse_outer,
-        ctx.camera,
+        ctx.mapper,
         ctx.sample_cfg,
         Polarity::Neg,
     );
@@ -457,7 +457,7 @@ pub(super) fn run(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
     if !params.enabled {
@@ -496,7 +496,7 @@ pub(super) fn run(
         params,
         radius_mm,
         sample_cfg,
-        camera,
+        mapper,
         store_points,
     };
 

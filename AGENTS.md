@@ -187,6 +187,7 @@ Completed in current branch:
 2. Wired optional camera into detect config/CLI/result/debug metadata.
 3. Added shared distortion-aware sampler and switched local outer/inner fit, decode, and NL refine sampling to it.
 4. When camera is provided, the detector uses an undistorted pixel working frame internally and in outputs.
+5. Added trait-based mapper abstraction (`camera::PixelMapper`) so algorithms can consume custom camera/distortion adapters; built-in `CameraModel` is one implementation.
 
 Remaining:
 

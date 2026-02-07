@@ -2,7 +2,7 @@
 
 use image::GrayImage;
 
-use crate::camera::CameraModel;
+use crate::camera::PixelMapper;
 
 /// Configuration for radial edge sampling.
 #[derive(Debug, Clone)]
@@ -65,19 +65,19 @@ pub struct EdgeSampleResult {
 #[derive(Clone, Copy)]
 pub struct DistortionAwareSampler<'a> {
     img: &'a GrayImage,
-    camera: Option<&'a CameraModel>,
+    mapper: Option<&'a dyn PixelMapper>,
 }
 
 impl<'a> DistortionAwareSampler<'a> {
     /// Create a sampler for one image and optional camera model.
-    pub fn new(img: &'a GrayImage, camera: Option<&'a CameraModel>) -> Self {
-        Self { img, camera }
+    pub fn new(img: &'a GrayImage, mapper: Option<&'a dyn PixelMapper>) -> Self {
+        Self { img, mapper }
     }
 
     /// Convert image-space (distorted) pixel coordinates into working-frame coordinates.
     pub fn image_to_working_xy(self, img_xy: [f32; 2]) -> Option<[f32; 2]> {
-        if let Some(cam) = self.camera {
-            let u = cam.undistort_pixel([img_xy[0] as f64, img_xy[1] as f64])?;
+        if let Some(mapper) = self.mapper {
+            let u = mapper.image_to_working_pixel([img_xy[0] as f64, img_xy[1] as f64])?;
             let out = [u[0] as f32, u[1] as f32];
             if out[0].is_finite() && out[1].is_finite() {
                 Some(out)
@@ -91,8 +91,8 @@ impl<'a> DistortionAwareSampler<'a> {
 
     /// Convert working-frame coordinates into image-space (distorted) pixel coordinates.
     pub fn working_to_image_xy(self, working_xy: [f32; 2]) -> Option<[f32; 2]> {
-        if let Some(cam) = self.camera {
-            let d = cam.distort_pixel([working_xy[0] as f64, working_xy[1] as f64])?;
+        if let Some(mapper) = self.mapper {
+            let d = mapper.working_to_image_pixel([working_xy[0] as f64, working_xy[1] as f64])?;
             let out = [d[0] as f32, d[1] as f32];
             if out[0].is_finite() && out[1].is_finite() {
                 Some(out)
@@ -172,7 +172,7 @@ pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::{CameraIntrinsics, RadialTangentialDistortion};
+    use crate::camera::{CameraIntrinsics, CameraModel, PixelMapper, RadialTangentialDistortion};
 
     #[test]
     fn test_bilinear_sample() {
@@ -219,7 +219,7 @@ mod tests {
                 k3: 0.0,
             },
         };
-        let s = DistortionAwareSampler::new(&img, Some(&cam));
+        let s = DistortionAwareSampler::new(&img, Some(&cam as &dyn PixelMapper));
         let work = s.image_to_working_xy([8.0, 8.0]).unwrap();
         let back = s.working_to_image_xy(work).unwrap();
         assert!((back[0] - 8.0).abs() < 1e-4);

@@ -5,8 +5,9 @@ pub(super) fn run(
     markers: Vec<DetectedMarker>,
     image_size: [u32; 2],
     config: &DetectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
 ) -> DetectionResult {
-    warn_center_correction_without_intrinsics(config);
+    warn_center_correction_without_intrinsics(config, mapper.is_some());
     let use_nl_refine = config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled;
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
@@ -33,7 +34,7 @@ pub(super) fn run(
     let mut final_markers = if config.refine_with_h {
         if let Some(h) = h_matrix {
             if filtered.len() >= 10 {
-                refine_with_homography(gray, &filtered, h, config)
+                refine_with_homography(gray, &filtered, h, config, mapper)
             } else {
                 filtered
             }
@@ -48,7 +49,7 @@ pub(super) fn run(
     if config.completion.enable {
         if let Some(h) = h_matrix {
             let (_stats, _attempts) =
-                complete_with_h(gray, h, &mut final_markers, config, false, false);
+                complete_with_h(gray, h, &mut final_markers, config, mapper, false, false);
         }
     }
 
@@ -56,12 +57,12 @@ pub(super) fn run(
     let mut h_current: Option<nalgebra::Matrix3<f64>> = h_result.as_ref().map(|r| r.h);
     if use_nl_refine {
         if let Some(h0) = h_current {
-            let _ = refine::refine_markers_circle_board_with_camera(
+            let _ = refine::refine_markers_circle_board_with_mapper(
                 gray,
                 &h0,
                 &mut final_markers,
                 &config.nl_refine,
-                config.camera.as_ref(),
+                mapper,
                 false,
             );
 
@@ -82,12 +83,12 @@ pub(super) fn run(
                         h_prev = h_next;
                         mean_prev = mean_next;
 
-                        let _ = refine::refine_markers_circle_board_with_camera(
+                        let _ = refine::refine_markers_circle_board_with_mapper(
                             gray,
                             &h_prev,
                             &mut final_markers,
                             &config.nl_refine,
-                            config.camera.as_ref(),
+                            mapper,
                             false,
                         );
                     } else {

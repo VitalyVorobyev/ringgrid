@@ -7,7 +7,7 @@
 
 use image::GrayImage;
 
-use crate::camera::CameraModel;
+use crate::camera::{CameraModel, PixelMapper};
 use crate::marker_spec::AngularAggregator;
 
 use super::edge_sample::DistortionAwareSampler;
@@ -133,7 +133,7 @@ pub fn estimate_outer_from_prior(
     cfg: &OuterEstimationConfig,
     store_response: bool,
 ) -> OuterEstimate {
-    estimate_outer_from_prior_with_camera(
+    estimate_outer_from_prior_with_mapper(
         gray,
         center_prior,
         r_outer_expected_px,
@@ -143,13 +143,13 @@ pub fn estimate_outer_from_prior(
     )
 }
 
-/// Distortion-aware variant of [`estimate_outer_from_prior`].
-pub fn estimate_outer_from_prior_with_camera(
+/// Distortion-aware variant of [`estimate_outer_from_prior`] using an abstract mapper.
+pub fn estimate_outer_from_prior_with_mapper(
     gray: &GrayImage,
     center_prior: [f32; 2],
     r_outer_expected_px: f32,
     cfg: &OuterEstimationConfig,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
     store_response: bool,
 ) -> OuterEstimate {
     let r_expected = r_outer_expected_px.max(1.0);
@@ -173,7 +173,7 @@ pub fn estimate_outer_from_prior_with_camera(
     let n_t = cfg.theta_samples.max(8);
     let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
     let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
-    let sampler = DistortionAwareSampler::new(gray, camera);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
     let cy = center_prior[1];
 
@@ -377,6 +377,25 @@ pub fn estimate_outer_from_prior_with_camera(
             None
         },
     })
+}
+
+/// Distortion-aware variant of [`estimate_outer_from_prior`] using [`CameraModel`].
+pub fn estimate_outer_from_prior_with_camera(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    cfg: &OuterEstimationConfig,
+    camera: Option<&CameraModel>,
+    store_response: bool,
+) -> OuterEstimate {
+    estimate_outer_from_prior_with_mapper(
+        gray,
+        center_prior,
+        r_outer_expected_px,
+        cfg,
+        camera.map(|c| c as &dyn PixelMapper),
+        store_response,
+    )
 }
 
 #[cfg(test)]

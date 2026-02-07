@@ -14,6 +14,7 @@ pub(super) fn refine_with_homography_with_debug(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &super::DetectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
     let mut refined = Vec::with_capacity(markers.len());
     let mut refined_dbg = Vec::with_capacity(markers.len());
@@ -50,6 +51,7 @@ pub(super) fn refine_with_homography_with_debug(
             [prior[0] as f32, prior[1] as f32],
             r_expected,
             config,
+            mapper,
             &config.edge_sample,
             false,
         ) {
@@ -96,7 +98,7 @@ pub(super) fn refine_with_homography_with_debug(
             gray,
             &outer,
             &config.marker_spec,
-            config.camera.as_ref(),
+            mapper,
             &inner_fit_cfg,
             false,
         );

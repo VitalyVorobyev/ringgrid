@@ -10,17 +10,17 @@ pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
     use crate::board_spec::{BOARD_N, BOARD_PITCH_MM, BOARD_SIZE_MM};
     use crate::codebook::{CODEBOOK_BITS, CODEBOOK_N};
 
     let (w, h) = gray.dimensions();
-    warn_center_correction_without_intrinsics(config);
+    warn_center_correction_without_intrinsics(config, mapper.is_some());
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();
-    let sampler =
-        crate::ring::edge_sample::DistortionAwareSampler::new(gray, config.camera.as_ref());
+    let sampler = crate::ring::edge_sample::DistortionAwareSampler::new(gray, mapper);
 
     // Stage 0: proposals
     let proposals = find_proposals(gray, &config.proposal);
@@ -97,6 +97,7 @@ pub(super) fn run(
             center_prior,
             marker_outer_radius_expected_px(config),
             config,
+            mapper,
             &config.edge_sample,
             debug_cfg.store_points,
         ) {
@@ -137,7 +138,7 @@ pub(super) fn run(
             gray,
             &outer,
             &config.marker_spec,
-            config.camera.as_ref(),
+            mapper,
             &inner_fit_cfg,
             debug_cfg.store_points,
         );
@@ -358,7 +359,7 @@ pub(super) fn run(
         if let Some(h) = h_matrix {
             if filtered.len() >= 10 {
                 let (refined, refine_dbg) =
-                    refine_with_homography_with_debug(gray, &filtered, h, config);
+                    refine_with_homography_with_debug(gray, &filtered, h, config, mapper);
                 (refined, Some(refine_dbg))
             } else {
                 (filtered, None)
@@ -378,6 +379,7 @@ pub(super) fn run(
                 h,
                 &mut final_markers,
                 config,
+                mapper,
                 debug_cfg.store_points,
                 true,
             )
@@ -473,12 +475,12 @@ pub(super) fn run(
 
     if use_nl_refine {
         if let Some(h0) = h_current {
-            let (stats0, records0) = refine::refine_markers_circle_board_with_camera(
+            let (stats0, records0) = refine::refine_markers_circle_board_with_mapper(
                 gray,
                 &h0,
                 &mut final_markers,
                 &config.nl_refine,
-                config.camera.as_ref(),
+                mapper,
                 debug_cfg.store_points,
             );
 
@@ -543,12 +545,12 @@ pub(super) fn run(
                         h_prev = h_next;
                         mean_prev = mean_next;
 
-                        let (stats_i, records_i) = refine::refine_markers_circle_board_with_camera(
+                        let (stats_i, records_i) = refine::refine_markers_circle_board_with_mapper(
                             gray,
                             &h_prev,
                             &mut final_markers,
                             &config.nl_refine,
-                            config.camera.as_ref(),
+                            mapper,
                             debug_cfg.store_points,
                         );
                         nl_refine_debug.stats = dbg::NlRefineStatsDebugV1 {

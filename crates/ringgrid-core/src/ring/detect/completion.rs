@@ -52,6 +52,7 @@ pub(super) fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
@@ -175,6 +176,7 @@ pub(super) fn complete_with_h(
             [projected_center[0] as f32, projected_center[1] as f32],
             r_expected,
             config,
+            mapper,
             &edge_cfg,
             store_points_in_debug,
         ) {
@@ -421,7 +423,7 @@ pub(super) fn complete_with_h(
             gray,
             &outer,
             &config.marker_spec,
-            config.camera.as_ref(),
+            mapper,
             &inner_fit_cfg,
             record_debug || store_points_in_debug,
         );

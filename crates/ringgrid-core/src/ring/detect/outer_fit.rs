@@ -1,13 +1,14 @@
 use image::GrayImage;
 
+use crate::camera::PixelMapper;
 use crate::conic::{
     fit_ellipse_direct, rms_sampson_distance, try_fit_ellipse_ransac, Ellipse, RansacConfig,
 };
-use crate::ring::decode::decode_marker_with_diagnostics_and_camera;
+use crate::ring::decode::decode_marker_with_diagnostics_and_mapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
-    estimate_outer_from_prior_with_camera, OuterEstimate, OuterStatus,
+    estimate_outer_from_prior_with_mapper, OuterEstimate, OuterStatus,
 };
 use crate::{DetectedMarker, EllipseParams};
 
@@ -244,6 +245,7 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
     center_prior: [f32; 2],
     r_outer_expected_px: f32,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
     edge_cfg: &EdgeSampleConfig,
     store_response: bool,
 ) -> Result<OuterFitCandidate, String> {
@@ -251,14 +253,14 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
 
     let mut outer_cfg = config.outer_estimation.clone();
     outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
-    let sampler = DistortionAwareSampler::new(gray, config.camera.as_ref());
+    let sampler = DistortionAwareSampler::new(gray, mapper);
 
-    let outer_estimate = estimate_outer_from_prior_with_camera(
+    let outer_estimate = estimate_outer_from_prior_with_mapper(
         gray,
         center_prior,
         r_expected,
         &outer_cfg,
-        config.camera.as_ref(),
+        mapper,
         store_response,
     );
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
@@ -312,12 +314,8 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
             Err(_) => continue,
         };
 
-        let (decode_result, decode_diag) = decode_marker_with_diagnostics_and_camera(
-            gray,
-            &outer,
-            &config.decode,
-            config.camera.as_ref(),
-        );
+        let (decode_result, decode_diag) =
+            decode_marker_with_diagnostics_and_mapper(gray, &outer, &config.decode, mapper);
 
         let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
         let inlier_ratio = outer_ransac

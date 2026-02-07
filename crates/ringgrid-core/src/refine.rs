@@ -7,7 +7,7 @@
 use image::GrayImage;
 use nalgebra as na;
 
-use crate::camera::CameraModel;
+use crate::camera::{CameraModel, PixelMapper};
 use crate::ring::inner_estimate::Polarity;
 use crate::{DetectedMarker, EllipseParams};
 #[path = "refine/math.rs"]
@@ -144,11 +144,11 @@ fn try_unproject(h_inv: &na::Matrix3<f64>, x: f64, y: f64) -> Option<[f64; 2]> {
 fn sample_outer_points_around_ellipse(
     gray: &GrayImage,
     ellipse: &EllipseParams,
-    camera: Option<&CameraModel>,
+    mapper: Option<&dyn PixelMapper>,
     cfg: OuterSampleConfig,
     polarity: Polarity,
 ) -> SampleOutcome {
-    sampling::sample_outer_points_around_ellipse(gray, ellipse, camera, cfg, polarity)
+    sampling::sample_outer_points_around_ellipse(gray, ellipse, mapper, cfg, polarity)
 }
 
 fn solve_circle_center_mm(
@@ -179,10 +179,22 @@ pub fn refine_markers_circle_board(
     params: &RefineParams,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    refine_markers_circle_board_with_camera(gray, h, detections, params, None, store_points)
+    refine_markers_circle_board_with_mapper(gray, h, detections, params, None, store_points)
 }
 
-/// Distortion-aware variant of [`refine_markers_circle_board`].
+/// Distortion-aware variant of [`refine_markers_circle_board`] using an abstract mapper.
+pub fn refine_markers_circle_board_with_mapper(
+    gray: &GrayImage,
+    h: &na::Matrix3<f64>,
+    detections: &mut [DetectedMarker],
+    params: &RefineParams,
+    mapper: Option<&dyn PixelMapper>,
+    store_points: bool,
+) -> (RefineStats, Vec<MarkerRefineRecord>) {
+    pipeline::run(gray, h, detections, params, mapper, store_points)
+}
+
+/// Distortion-aware variant of [`refine_markers_circle_board`] using [`CameraModel`].
 pub fn refine_markers_circle_board_with_camera(
     gray: &GrayImage,
     h: &na::Matrix3<f64>,
@@ -191,7 +203,14 @@ pub fn refine_markers_circle_board_with_camera(
     camera: Option<&CameraModel>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    pipeline::run(gray, h, detections, params, camera, store_points)
+    refine_markers_circle_board_with_mapper(
+        gray,
+        h,
+        detections,
+        params,
+        camera.map(|c| c as &dyn PixelMapper),
+        store_points,
+    )
 }
 
 #[cfg(test)]

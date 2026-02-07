@@ -3,15 +3,18 @@ use super::super::marker_build::{
 };
 use super::super::*;
 
-pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker> {
+pub(super) fn run(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
+) -> Vec<DetectedMarker> {
     // Stage 1: Find candidate centers
     let proposals = find_proposals(gray, &config.proposal);
     tracing::info!("{} proposals found", proposals.len());
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();
-    let sampler =
-        crate::ring::edge_sample::DistortionAwareSampler::new(gray, config.camera.as_ref());
+    let sampler = crate::ring::edge_sample::DistortionAwareSampler::new(gray, mapper);
 
     // Stages 2-5: For each proposal, sample edges → fit → decode
     let mut markers: Vec<DetectedMarker> = Vec::new();
@@ -27,6 +30,7 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
             center_prior,
             marker_outer_radius_expected_px(config),
             config,
+            mapper,
             &config.edge_sample,
             false,
         ) {
@@ -49,7 +53,7 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
             gray,
             &outer,
             &config.marker_spec,
-            config.camera.as_ref(),
+            mapper,
             &inner_fit_cfg,
             false,
         );

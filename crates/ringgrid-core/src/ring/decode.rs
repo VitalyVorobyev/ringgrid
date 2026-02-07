@@ -9,7 +9,7 @@
 
 use image::GrayImage;
 
-use crate::camera::CameraModel;
+use crate::camera::{CameraModel, PixelMapper};
 use crate::codec::Codebook;
 use crate::conic::Ellipse;
 
@@ -109,7 +109,17 @@ pub fn decode_marker(
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
 ) -> Option<DecodeResult> {
-    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, None).0
+    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, None).0
+}
+
+/// Distortion-aware variant of [`decode_marker`] using an abstract mapper.
+pub fn decode_marker_with_mapper(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> Option<DecodeResult> {
+    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, mapper).0
 }
 
 /// Distortion-aware variant of [`decode_marker`].
@@ -119,7 +129,12 @@ pub fn decode_marker_with_camera(
     config: &DecodeConfig,
     camera: Option<&CameraModel>,
 ) -> Option<DecodeResult> {
-    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, camera).0
+    decode_marker_with_mapper(
+        gray,
+        outer_ellipse,
+        config,
+        camera.map(|c| c as &dyn PixelMapper),
+    )
 }
 
 /// Decode a marker and return (accepted_result, diagnostics).
@@ -131,7 +146,17 @@ pub fn decode_marker_with_diagnostics(
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    decode_marker_with_diagnostics_and_camera(gray, outer_ellipse, config, None)
+    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, None)
+}
+
+/// Distortion-aware variant of [`decode_marker_with_diagnostics`] using an abstract mapper.
+pub fn decode_marker_with_diagnostics_and_mapper(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
+    decode_marker_impl(gray, outer_ellipse, config, mapper)
 }
 
 /// Distortion-aware variant of [`decode_marker_with_diagnostics`].
@@ -140,6 +165,20 @@ pub fn decode_marker_with_diagnostics_and_camera(
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
     camera: Option<&CameraModel>,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
+    decode_marker_impl(
+        gray,
+        outer_ellipse,
+        config,
+        camera.map(|c| c as &dyn PixelMapper),
+    )
+}
+
+fn decode_marker_impl(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    mapper: Option<&dyn PixelMapper>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
     // Validate ellipse
     if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
@@ -173,7 +212,7 @@ pub fn decode_marker_with_diagnostics_and_camera(
     // Sample sector intensities in image coordinates.
     // The absolute angular reference doesn't matter: the codebook matcher
     // tries all 16 cyclic rotations (each 22.5°) to find the best match.
-    let sampler = DistortionAwareSampler::new(gray, camera);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
     let mut sector_intensities = [0.0f32; 16];
 
     for s in 0..16u32 {

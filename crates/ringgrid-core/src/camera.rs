@@ -5,6 +5,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Mapping between raw image pixels and detector working-frame pixels.
+///
+/// The working frame is the coordinate system used by sampling/fitting stages.
+/// For distortion-aware processing this is typically an undistorted pixel frame.
+pub trait PixelMapper {
+    /// Map from image (distorted) pixel coordinates to working coordinates.
+    fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]>;
+    /// Map from working coordinates back to image (distorted) pixel coordinates.
+    fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]>;
+}
+
 /// Pinhole camera intrinsics.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct CameraIntrinsics {
@@ -184,6 +195,16 @@ impl CameraModel {
         } else {
             None
         }
+    }
+}
+
+impl PixelMapper for CameraModel {
+    fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+        self.undistort_pixel(image_xy)
+    }
+
+    fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+        self.distort_pixel(working_xy)
     }
 }
 

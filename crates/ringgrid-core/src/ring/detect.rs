@@ -2,6 +2,7 @@
 
 use image::GrayImage;
 
+use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
@@ -219,9 +220,24 @@ impl Default for DetectConfig {
     }
 }
 
+fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
+    config.camera.as_ref().map(|c| c as &dyn PixelMapper)
+}
+
 /// Run the full ring detection pipeline.
 pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    non_debug::run(gray, config)
+    detect_rings_with_mapper(gray, config, config_mapper(config))
+}
+
+/// Run the full ring detection pipeline with an optional custom pixel mapper.
+///
+/// This allows users to plug in camera/distortion models via a lightweight trait adapter.
+pub fn detect_rings_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    non_debug::run(gray, config, mapper)
 }
 
 /// Run the full ring detection pipeline and collect a versioned debug dump.
@@ -230,11 +246,21 @@ pub fn detect_rings_with_debug(
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
-    debug_pipeline::run(gray, config, debug_cfg)
+    detect_rings_with_debug_and_mapper(gray, config, debug_cfg, config_mapper(config))
 }
 
-pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig) {
-    if config.circle_refinement == CircleRefinementMethod::None || config.camera.is_some() {
+/// Run the full ring detection pipeline with debug collection and optional custom mapper.
+pub fn detect_rings_with_debug_and_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    debug_cfg: &DebugCollectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> (DetectionResult, dbg::DebugDumpV1) {
+    debug_pipeline::run(gray, config, debug_cfg, mapper)
+}
+
+pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
+    if config.circle_refinement == CircleRefinementMethod::None || has_mapper {
         return;
     }
 
@@ -270,8 +296,9 @@ fn refine_with_homography_with_debug(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
-    refine_h::refine_with_homography_with_debug(gray, markers, h, config)
+    refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
@@ -301,8 +328,9 @@ fn refine_with_homography(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
-    let (refined, _debug) = refine_with_homography_with_debug(gray, markers, h, config);
+    let (refined, _debug) = refine_with_homography_with_debug(gray, markers, h, config, mapper);
     refined
 }
 
@@ -315,6 +343,7 @@ fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
@@ -323,6 +352,7 @@ fn complete_with_h(
         h,
         markers,
         config,
+        mapper,
         store_points_in_debug,
         record_debug,
     )
@@ -459,6 +489,7 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::PixelMapper;
     use crate::conic::ConicCoeffs;
     use crate::FitMetrics;
     use image::GrayImage;
@@ -487,6 +518,41 @@ mod tests {
         assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V1);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
+    }
+
+    #[test]
+    fn detect_accepts_custom_pixel_mapper_adapter() {
+        struct IdentityMapper;
+        impl PixelMapper for IdentityMapper {
+            fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some(image_xy)
+            }
+            fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some(working_xy)
+            }
+        }
+
+        let img = GrayImage::new(64, 64);
+        let cfg = DetectConfig {
+            use_global_filter: false,
+            refine_with_h: false,
+            ..DetectConfig::default()
+        };
+        let dbg_cfg = DebugCollectConfig {
+            image_path: None,
+            marker_diameter_px: 32.0,
+            max_candidates: 10,
+            store_points: false,
+        };
+
+        let mapper = IdentityMapper;
+        let (res, _dump) = detect_rings_with_debug_and_mapper(
+            &img,
+            &cfg,
+            &dbg_cfg,
+            Some(&mapper as &dyn PixelMapper),
+        );
+        assert_eq!(res.image_size, [64, 64]);
     }
 
     #[test]
@@ -537,7 +603,8 @@ mod tests {
         cfg.decode.min_decode_confidence = 1.0; // force decode rejection (avoid mismatch gate)
 
         let mut markers: Vec<DetectedMarker> = Vec::new();
-        let (stats, _attempts) = complete_with_h(&img, &h_matrix, &mut markers, &cfg, false, false);
+        let (stats, _attempts) =
+            complete_with_h(&img, &h_matrix, &mut markers, &cfg, None, false, false);
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, Some(id));

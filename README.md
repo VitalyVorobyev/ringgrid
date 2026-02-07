@@ -126,12 +126,12 @@ Run command:
   --marker_diameter 32.0
 ```
 
-| Mode | Precision | Recall | Center mean (px) | H reproj mean/p95 (px) | H vs GT mean/p95 (px) |
-|---|---:|---:|---:|---:|---:|
-| `none` | 1.000 | 1.000 | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
-| `projective-center` | 1.000 | 1.000 | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
-| `nl-board + lm` | 1.000 | 1.000 | 0.047 | 0.027 / 0.089 | 0.038 / 0.052 |
-| `nl-board + irls` | 1.000 | 1.000 | 0.069 | 0.061 / 0.123 | 0.034 / 0.048 |
+| Mode | Center mean (px) | H reproj mean/p95 (px) | H vs GT mean/p95 (px) |
+|---|---:|---:|---:|
+| `none` | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
+| `projective-center` | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
+| `nl-board + lm` | 0.047 | 0.027 / 0.089 | 0.038 / 0.052 |
+| `nl-board + irls` | 0.069 | 0.061 / 0.123 | 0.034 / 0.048 |
 
 ### Regression Batch (10 images)
 

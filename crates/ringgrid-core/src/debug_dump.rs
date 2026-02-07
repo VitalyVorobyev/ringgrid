@@ -95,13 +95,8 @@ pub struct EdgeSampleParamsV1 {
     pub min_rays_with_ring: usize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OuterGradPolarityParamsV1 {
-    DarkToLight,
-    LightToDark,
-    Auto,
-}
+/// Alias for debug schema backward compatibility.
+pub type OuterGradPolarityParamsV1 = crate::marker_spec::GradPolarity;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OuterEstimationParamsV1 {

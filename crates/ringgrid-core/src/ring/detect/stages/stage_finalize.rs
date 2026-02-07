@@ -4,8 +4,6 @@ use super::super::*;
 
 #[cfg(feature = "debug-trace")]
 use crate::debug_dump as dbg;
-#[cfg(feature = "debug-trace")]
-use crate::ring::outer_estimate::OuterGradPolarity;
 
 pub(super) fn run(
     gray: &GrayImage,
@@ -440,11 +438,7 @@ pub(super) fn run_with_debug(
                 radial_samples: config.outer_estimation.radial_samples,
                 theta_samples: config.outer_estimation.theta_samples,
                 aggregator: config.outer_estimation.aggregator,
-                grad_polarity: match config.outer_estimation.grad_polarity {
-                    OuterGradPolarity::DarkToLight => dbg::OuterGradPolarityParamsV1::DarkToLight,
-                    OuterGradPolarity::LightToDark => dbg::OuterGradPolarityParamsV1::LightToDark,
-                    OuterGradPolarity::Auto => dbg::OuterGradPolarityParamsV1::Auto,
-                },
+                grad_polarity: config.outer_estimation.grad_polarity,
                 min_theta_coverage: config.outer_estimation.min_theta_coverage,
                 min_theta_consistency: config.outer_estimation.min_theta_consistency,
                 allow_two_hypotheses: config.outer_estimation.allow_two_hypotheses,

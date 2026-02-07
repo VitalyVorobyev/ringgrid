@@ -104,7 +104,7 @@ pub(super) fn refine_with_homography_with_debug(
         let inner_params = inner_fit
             .ellipse_inner
             .as_ref()
-            .map(super::ellipse_to_params);
+            .map(crate::EllipseParams::from);
         let fit = fit_metrics_from_outer(
             &edge,
             &outer,
@@ -121,7 +121,7 @@ pub(super) fn refine_with_homography_with_debug(
             Some(id),
             confidence,
             center,
-            Some(super::ellipse_to_params(&outer)),
+            Some(crate::EllipseParams::from(&outer)),
             inner_params.clone(),
             fit.clone(),
             decode_metrics,

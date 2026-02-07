@@ -41,6 +41,50 @@ pub struct EllipseParams {
     pub angle: f64,
 }
 
+impl From<conic::Ellipse> for EllipseParams {
+    fn from(e: conic::Ellipse) -> Self {
+        Self {
+            center_xy: [e.cx, e.cy],
+            semi_axes: [e.a, e.b],
+            angle: e.angle,
+        }
+    }
+}
+
+impl From<&conic::Ellipse> for EllipseParams {
+    fn from(e: &conic::Ellipse) -> Self {
+        Self {
+            center_xy: [e.cx, e.cy],
+            semi_axes: [e.a, e.b],
+            angle: e.angle,
+        }
+    }
+}
+
+impl From<EllipseParams> for conic::Ellipse {
+    fn from(p: EllipseParams) -> Self {
+        Self {
+            cx: p.center_xy[0],
+            cy: p.center_xy[1],
+            a: p.semi_axes[0].abs(),
+            b: p.semi_axes[1].abs(),
+            angle: p.angle,
+        }
+    }
+}
+
+impl From<&EllipseParams> for conic::Ellipse {
+    fn from(p: &EllipseParams) -> Self {
+        Self {
+            cx: p.center_xy[0],
+            cy: p.center_xy[1],
+            a: p.semi_axes[0].abs(),
+            b: p.semi_axes[1].abs(),
+            angle: p.angle,
+        }
+    }
+}
+
 /// Fit quality metrics for a detected marker.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FitMetrics {

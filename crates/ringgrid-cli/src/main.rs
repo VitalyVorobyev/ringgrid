@@ -327,26 +327,8 @@ fn build_detect_config(
     preset: DetectPreset,
     overrides: &DetectOverrides,
 ) -> ringgrid_core::ring::DetectConfig {
-    // Configure detection parameters from marker_diameter
-    let r_outer = preset.marker_diameter_px / 2.0;
-    let mut config = ringgrid_core::ring::DetectConfig {
-        marker_diameter_px: preset.marker_diameter_px,
-        ..Default::default()
-    };
-
-    // Scale proposal search radii
-    config.proposal.r_min = (r_outer * 0.4).max(2.0);
-    config.proposal.r_max = r_outer * 1.7;
-    config.proposal.nms_radius = r_outer * 0.8;
-
-    // Scale edge sampling range
-    config.edge_sample.r_max = r_outer * 2.0;
-    config.edge_sample.r_min = 1.5;
-    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
-
-    // Scale ellipse validation
-    config.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
-    config.max_semi_axis = r_outer as f64 * 2.5;
+    let mut config =
+        ringgrid_core::ring::DetectConfig::from_marker_diameter_px(preset.marker_diameter_px);
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -358,19 +340,17 @@ fn build_detect_config(
     config.completion.enable = overrides.completion_enable;
     config.completion.reproj_gate_px = overrides.completion_reproj_gate_px;
     config.completion.min_fit_confidence = overrides.completion_min_fit_confidence;
-    config.completion.roi_radius_px = overrides
-        .completion_roi_radius_px
-        .unwrap_or(((preset.marker_diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32);
+    if let Some(roi) = overrides.completion_roi_radius_px {
+        config.completion.roi_radius_px = roi;
+    }
     config.camera = overrides.camera;
 
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
-    config.projective_center.max_center_shift_px = Some(
-        overrides
-            .projective_center_max_shift_px
-            .unwrap_or(preset.marker_diameter_px as f64),
-    );
+    if let Some(shift) = overrides.projective_center_max_shift_px {
+        config.projective_center.max_center_shift_px = Some(shift);
+    }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
 

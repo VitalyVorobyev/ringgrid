@@ -230,7 +230,7 @@ fn run_core(
                 inner_fit.reason
             );
         }
-        let inner_params = inner_fit.ellipse_inner.as_ref().map(ellipse_to_params);
+        let inner_params = inner_fit.ellipse_inner.as_ref().map(crate::EllipseParams::from);
 
         let fit_metrics = fit_metrics_from_outer(
             &edge,
@@ -247,7 +247,7 @@ fn run_core(
             decode_result.as_ref().map(|d| d.id),
             confidence,
             center,
-            Some(ellipse_to_params(&outer)),
+            Some(crate::EllipseParams::from(&outer)),
             inner_params.clone(),
             fit_metrics.clone(),
             decode_metrics,

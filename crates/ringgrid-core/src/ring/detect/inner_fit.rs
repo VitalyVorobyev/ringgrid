@@ -367,7 +367,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::marker_spec::InnerGradPolarity;
+    use crate::marker_spec::GradPolarity;
     use image::Luma;
 
     fn draw_ring_image(
@@ -411,7 +411,7 @@ mod tests {
         let spec = MarkerSpec {
             r_inner_expected: r_in / r_out,
             inner_search_halfwidth: 0.12,
-            inner_grad_polarity: InnerGradPolarity::LightToDark,
+            inner_grad_polarity: GradPolarity::LightToDark,
             ..MarkerSpec::default()
         };
 

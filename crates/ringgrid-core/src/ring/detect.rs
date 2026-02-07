@@ -41,9 +41,8 @@ mod refine_h;
 mod stages;
 use completion::{CompletionAttemptRecord, CompletionStats};
 use outer_fit::{
-    compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
-    marker_outer_radius_expected_px, mean_axis_px_from_marker,
-    median_outer_radius_from_neighbors_px, OuterFitCandidate,
+    compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
+    mean_axis_px_from_marker, median_outer_radius_from_neighbors_px, OuterFitCandidate,
 };
 
 /// Debug collection options for `detect_rings_with_debug`.
@@ -248,6 +247,44 @@ pub struct DetectConfig {
     pub refine_with_h: bool,
     /// Non-linear per-marker refinement using board-plane circle fits.
     pub nl_refine: refine::RefineParams,
+}
+
+impl DetectConfig {
+    /// Build a configuration with all scale-dependent parameters derived from
+    /// the expected marker outer diameter in pixels.
+    ///
+    /// This is the recommended constructor for library users. After calling it,
+    /// individual fields can be overridden as needed.
+    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
+        let r_outer = diameter_px / 2.0;
+        let mut cfg = Self {
+            marker_diameter_px: diameter_px,
+            ..Default::default()
+        };
+
+        // Proposal search radii
+        cfg.proposal.r_min = (r_outer * 0.4).max(2.0);
+        cfg.proposal.r_max = r_outer * 1.7;
+        cfg.proposal.nms_radius = r_outer * 0.8;
+
+        // Edge sampling range
+        cfg.edge_sample.r_max = r_outer * 2.0;
+        cfg.edge_sample.r_min = 1.5;
+        cfg.outer_estimation.theta_samples = cfg.edge_sample.n_rays;
+
+        // Ellipse validation bounds
+        cfg.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
+        cfg.max_semi_axis = r_outer as f64 * 2.5;
+
+        // Completion ROI
+        cfg.completion.roi_radius_px =
+            ((diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32;
+
+        // Projective center max shift
+        cfg.projective_center.max_center_shift_px = Some(diameter_px as f64);
+
+        cfg
+    }
 }
 
 impl Default for DetectConfig {
@@ -961,11 +998,7 @@ mod tests {
                 q_sym[(2, 2)],
             ]);
             let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
-            crate::EllipseParams {
-                center_xy: [e.cx, e.cy],
-                semi_axes: [e.a, e.b],
-                angle: e.angle,
-            }
+            crate::EllipseParams::from(e)
         }
 
         let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);
@@ -1038,11 +1071,7 @@ mod tests {
                 q_sym[(2, 2)],
             ]);
             let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
-            crate::EllipseParams {
-                center_xy: [e.cx, e.cy],
-                semi_axes: [e.a, e.b],
-                angle: e.angle,
-            }
+            crate::EllipseParams::from(e)
         }
 
         let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);

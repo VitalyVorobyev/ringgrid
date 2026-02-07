@@ -10,7 +10,6 @@ use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 use super::decode::DecodeConfig;
 use super::edge_sample::EdgeSampleConfig;
-use super::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus};
 use super::outer_estimate::OuterEstimationConfig;
 use super::pipeline::dedup::{
     dedup_by_id as dedup_by_id_impl, dedup_markers as dedup_markers_impl,
@@ -26,6 +25,8 @@ mod completion;
 mod debug_pipeline;
 #[path = "detect/homography_utils.rs"]
 mod homography_utils;
+#[path = "detect/inner_fit.rs"]
+mod inner_fit;
 #[path = "detect/marker_build.rs"]
 mod marker_build;
 #[path = "detect/non_debug/mod.rs"]
@@ -125,32 +126,27 @@ impl Default for ProjectiveCenterParams {
     }
 }
 
-/// Circle-center refinement strategy used after local fits are accepted.
+/// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CircleRefinementMethod {
-    /// Disable both non-linear board-plane refinement and projective-center recovery.
+    /// Disable center correction.
     None,
-    /// Run only projective-center recovery from inner/outer conics.
-    ProjectiveCenterOnly,
-    /// Run only non-linear board-plane circle refinement.
-    NlBoardOnly,
-    /// Run non-linear board refinement, then projective-center recovery.
+    /// Run projective-center recovery from inner/outer conics.
     #[default]
-    NlBoardAndProjectiveCenter,
+    ProjectiveCenter,
+    /// Run board-plane circle refinement.
+    NlBoard,
 }
 
 impl CircleRefinementMethod {
-    /// Returns `true` when this method includes non-linear board-plane refine.
+    /// Returns `true` when this method includes board-plane circle refinement.
     pub fn uses_nl_refine(self) -> bool {
-        matches!(self, Self::NlBoardOnly | Self::NlBoardAndProjectiveCenter)
+        matches!(self, Self::NlBoard)
     }
 
     /// Returns `true` when this method includes projective-center recovery.
     pub fn uses_projective_center(self) -> bool {
-        matches!(
-            self,
-            Self::ProjectiveCenterOnly | Self::NlBoardAndProjectiveCenter
-        )
+        matches!(self, Self::ProjectiveCenter)
     }
 }
 
@@ -229,6 +225,17 @@ pub fn detect_rings_with_debug(
     debug_cfg: &DebugCollectConfig,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
     debug_pipeline::run(gray, config, debug_cfg)
+}
+
+pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig) {
+    if config.circle_refinement == CircleRefinementMethod::None {
+        return;
+    }
+
+    tracing::warn!(
+        "center correction is running without camera intrinsics/undistortion; \
+         lens distortion can bias corrected centers (planned to be addressed in R4)"
+    );
 }
 
 fn dedup_with_debug(

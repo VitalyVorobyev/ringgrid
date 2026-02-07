@@ -99,12 +99,12 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
-    /// Disable non-linear per-marker refinement in board plane.
+    /// Disable per-marker board-plane center refinement.
     #[arg(long)]
     no_nl_refine: bool,
 
     /// Circle refinement method after local fits are accepted.
-    #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::NlBoardAndProjectiveCenter)]
+    #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
 
     /// Projective center gate: maximum allowed correction shift (px).
@@ -136,6 +136,10 @@ struct CliDetectArgs {
     #[arg(long, default_value = "1.0")]
     nl_reject_shift_mm: f64,
 
+    /// NL refine: solver backend for fixed-radius circle center optimization.
+    #[arg(long, value_enum, default_value_t = NlSolverArg::Lm)]
+    nl_solver: NlSolverArg,
+
     /// NL refine: enable a single homography refit from refined centers.
     #[arg(long, default_value = "true")]
     nl_h_refit: bool,
@@ -148,22 +152,31 @@ struct CliDetectArgs {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CircleRefineMethodArg {
     None,
-    ProjectiveCenterOnly,
-    NlBoardOnly,
-    NlBoardAndProjectiveCenter,
+    ProjectiveCenter,
+    NlBoard,
 }
 
 impl CircleRefineMethodArg {
     fn to_core(self) -> ringgrid_core::ring::CircleRefinementMethod {
         match self {
             Self::None => ringgrid_core::ring::CircleRefinementMethod::None,
-            Self::ProjectiveCenterOnly => {
-                ringgrid_core::ring::CircleRefinementMethod::ProjectiveCenterOnly
-            }
-            Self::NlBoardOnly => ringgrid_core::ring::CircleRefinementMethod::NlBoardOnly,
-            Self::NlBoardAndProjectiveCenter => {
-                ringgrid_core::ring::CircleRefinementMethod::NlBoardAndProjectiveCenter
-            }
+            Self::ProjectiveCenter => ringgrid_core::ring::CircleRefinementMethod::ProjectiveCenter,
+            Self::NlBoard => ringgrid_core::ring::CircleRefinementMethod::NlBoard,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum NlSolverArg {
+    Irls,
+    Lm,
+}
+
+impl NlSolverArg {
+    fn to_core(self) -> ringgrid_core::refine::CircleCenterSolver {
+        match self {
+            Self::Irls => ringgrid_core::refine::CircleCenterSolver::Irls,
+            Self::Lm => ringgrid_core::refine::CircleCenterSolver::Lm,
         }
     }
 }
@@ -191,6 +204,7 @@ struct DetectOverrides {
     nl_huber_delta_mm: f64,
     nl_min_points: usize,
     nl_reject_shift_mm: f64,
+    nl_solver: ringgrid_core::refine::CircleCenterSolver,
     nl_enable_h_refit: bool,
 }
 
@@ -203,16 +217,10 @@ impl CliDetectArgs {
 
     fn to_overrides(&self) -> DetectOverrides {
         let mut circle_refinement = self.circle_refine_method.to_core();
-        if self.no_nl_refine {
-            circle_refinement = match circle_refinement {
-                ringgrid_core::ring::CircleRefinementMethod::NlBoardOnly => {
-                    ringgrid_core::ring::CircleRefinementMethod::None
-                }
-                ringgrid_core::ring::CircleRefinementMethod::NlBoardAndProjectiveCenter => {
-                    ringgrid_core::ring::CircleRefinementMethod::ProjectiveCenterOnly
-                }
-                other => other,
-            };
+        if self.no_nl_refine
+            && circle_refinement == ringgrid_core::ring::CircleRefinementMethod::NlBoard
+        {
+            circle_refinement = ringgrid_core::ring::CircleRefinementMethod::None;
         }
 
         DetectOverrides {
@@ -232,6 +240,7 @@ impl CliDetectArgs {
             nl_huber_delta_mm: self.nl_huber_delta_mm,
             nl_min_points: self.nl_min_points,
             nl_reject_shift_mm: self.nl_reject_shift_mm,
+            nl_solver: self.nl_solver.to_core(),
             nl_enable_h_refit: self.nl_h_refit && !self.no_nl_h_refit,
         }
     }
@@ -293,6 +302,7 @@ fn build_detect_config(
     config.nl_refine.huber_delta_mm = overrides.nl_huber_delta_mm;
     config.nl_refine.min_points = overrides.nl_min_points;
     config.nl_refine.reject_thresh_mm = overrides.nl_reject_shift_mm;
+    config.nl_refine.solver = overrides.nl_solver;
     config.nl_refine.enable_h_refit = overrides.nl_enable_h_refit;
 
     config

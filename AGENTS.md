@@ -139,33 +139,34 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
 9. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
 10. Completed (R3B): added `circle_refinement` method selector in detect config and CLI.
-11. Completed (R3B): downstream geometry stages now consume projective-corrected center as primary `center` when projective center is enabled.
+11. Completed (R3C): center correction is now treated as a strict single-choice strategy (`none` | `projective_center` | `nl_board`) with no sequential chaining.
+12. Completed (R3C): when `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers.
+13. Completed (R3C): when correction runs without camera intrinsics, pipeline still runs and emits warnings (R4 will add undistortion path).
+14. Completed (R3C): board-circle center solve now supports selectable solver backends (`lm` and `irls`) via config/CLI/debug metadata.
 
-## Projective unbiased center recovery (implemented)
+## Center correction strategy (R3C re-plan)
 
-Current behavior computes a projective-unbiased center from inner/outer conics for accepted fits and promotes it to primary `center` for downstream stages when enabled.
+Issue:
+- `apply_projective_centers` and `refine_markers_circle_board` currently behave as potentially chained steps.
+- Semantically they are alternative center-correction strategies and should not both run in one pass.
 
-Policy decision (v1): run center correction for all accepted local fits that have both conics (inner + outer), independent of homography availability.
+Goal:
+- Configure exactly one center-correction strategy per run (or disable correction).
+- Keep strategy behavior explicit and reproducible across debug/non-debug flows.
 
-Implementation notes:
+Implemented R3C behavior:
 
-1. `crates/ringgrid-core/src/projective_center.rs` implements conic-pencil eigen recovery (Wang 2019 style) with clear error modes.
-2. `DetectConfig` now has `projective_center` controls (`enable`, `use_expected_ratio`, `ratio_penalty_weight`).
-3. Final `DetectedMarker` now stores:
-   - `center_projective`
-   - `vanishing_line`
-   - `center_projective_residual`
-4. Downstream dedup/global-filter/refine/completion now consume corrected `center` values (projective-promoted when enabled).
-5. Added runtime stability gates + fallback policy for projective centers:
-   - max center shift (px),
-   - max residual,
-   - min eigen-separation.
-   If a gate fails, detector keeps the prior center.
-6. Deterministic unit tests cover exact synthetic homography, scale invariance, mild-noise stability, and center-promotion behavior.
-7. Synthetic scoring/eval now reports legacy-vs-projective center errors against GT.
-
-Remaining follow-up:
-- Monitor gate thresholds on future real datasets and tune defaults.
+1. Strategy selector is strict single-choice:
+   - `none`
+   - `projective_center`
+   - `nl_board`
+   (`nl_board_and_projective_center` removed)
+2. Finalize/debug orchestration now treats projective and NL board correction as alternative branches.
+3. `nl_board` without homography keeps uncorrected centers and emits warnings/notes.
+4. Missing intrinsics does not block correction; warning is emitted that correction runs in distorted image space.
+5. Projective-center quality gates (shift/residual/eig-separation) remain active.
+6. Board-plane circle center solve supports both `lm` (`tiny-solver`) and `irls` backends; solver choice is configurable.
+7. Synthetic eval reporting for center comparison remains in place for acceptance/regression tracking.
 
 ## Camera calibration / distortion plan
 
@@ -173,7 +174,7 @@ Goal: allow undistortion of edge samples for higher precision.
 
 1. Add `camera` module with explicit calibration structs for radial-tangential distortion.
 2. Make camera parameters optional in `DetectConfig` and output metadata.
-3. Add distortion-aware sampling helper used by radial sampling and refinement.
+3. Add distortion-aware sampling helper used by radial sampling and both center-correction strategies.
 4. Start with point-wise undistortion/remap during sampling (avoid full-image remap blur for precision path).
 5. Add synthetic-distortion eval mode in `tools/gen_synth.py` and score scripts.
 
@@ -205,8 +206,7 @@ Initial stable parameter surface (v1, provisional):
 - `enable_global_filter`
 - `ransac_reproj_thresh_px`
 - `enable_completion`
-- `circle_refinement_method` (`none` | `projective_center_only` | `nl_board_only` | `nl_board_and_projective_center`)
-- `enable_nl_refine`
+- `center_correction_method` (`none` | `projective_center` | `nl_board`)
 - `decode_min_confidence`
 - `camera` (optional radial-tangential calibration)
 

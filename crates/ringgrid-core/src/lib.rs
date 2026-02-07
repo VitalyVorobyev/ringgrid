@@ -8,7 +8,7 @@
 //! 3. **Conic** – robust ellipse fitting via direct conic least-squares + RANSAC.
 //! 4. **Lattice** – neighbor graph construction, vanishing line estimation,
 //!    affine-rectification homography for center-bias correction.
-//! 5. **Refine** – per-marker shared-center dual-ring Levenberg–Marquardt refinement.
+//! 5. **Refine** – per-marker shared-center dual-ring board-plane refinement.
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 

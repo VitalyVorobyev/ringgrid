@@ -3,12 +3,10 @@ use image::GrayImage;
 use crate::board_spec;
 use crate::debug_dump as dbg;
 use crate::homography::project;
-use crate::ring::inner_estimate::estimate_inner_scale_from_outer;
 use crate::DetectedMarker;
 
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_from_outer, inner_params_from_estimate,
-    marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
 };
 
 pub(super) fn refine_with_homography_with_debug(
@@ -19,6 +17,7 @@ pub(super) fn refine_with_homography_with_debug(
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
     let mut refined = Vec::with_capacity(markers.len());
     let mut refined_dbg = Vec::with_capacity(markers.len());
+    let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
 
     for m in markers {
         let id = match m.id {
@@ -93,14 +92,24 @@ pub(super) fn refine_with_homography_with_debug(
 
         let center = super::compute_center(&outer);
 
-        let fit = fit_metrics_from_outer(&edge, &outer, outer_ransac.as_ref());
-
-        let inner_est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
-        let inner_params = inner_params_from_estimate(
+        let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
+            gray,
             &outer,
-            inner_est.status,
-            inner_est.r_inner_found,
-            config.marker_spec.r_inner_expected,
+            &config.marker_spec,
+            &inner_fit_cfg,
+            false,
+        );
+        let inner_params = inner_fit
+            .ellipse_inner
+            .as_ref()
+            .map(super::ellipse_to_params);
+        let fit = fit_metrics_from_outer(
+            &edge,
+            &outer,
+            outer_ransac.as_ref(),
+            inner_fit.points_inner.len(),
+            inner_fit.ransac_inlier_ratio_inner,
+            inner_fit.rms_residual_inner,
         );
 
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);

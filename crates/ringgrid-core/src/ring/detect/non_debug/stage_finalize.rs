@@ -6,6 +6,7 @@ pub(super) fn run(
     image_size: [u32; 2],
     config: &DetectConfig,
 ) -> DetectionResult {
+    warn_center_correction_without_intrinsics(config);
     let use_nl_refine = config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled;
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
@@ -91,7 +92,17 @@ pub(super) fn run(
                     }
                 }
             }
+        } else {
+            tracing::warn!(
+                "nl_board center correction selected but homography is unavailable; \
+                 keeping uncorrected centers"
+            );
         }
+    }
+
+    // Projective center correction must be reflected in the final H statistics/refit.
+    if use_projective_center {
+        apply_projective_centers(&mut final_markers, config);
     }
 
     // Final H: refit after refinement if enabled (or keep the original RANSAC H).
@@ -117,10 +128,6 @@ pub(super) fn run(
             ""
         }
     );
-
-    if use_projective_center {
-        apply_projective_centers(&mut final_markers, config);
-    }
 
     DetectionResult {
         detected_markers: final_markers,

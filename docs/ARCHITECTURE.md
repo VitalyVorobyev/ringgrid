@@ -144,7 +144,7 @@ Exit criteria:
 Problem:
 - Ellipse center is not the projected circle center under perspective.
 
-Status: completed.
+Status: completed for current scope (R3A/R3B/R3C).
 
 Implemented in R3A:
 
@@ -158,13 +158,9 @@ Implemented in R3A:
   - `enable`,
   - `use_expected_ratio`,
   - `ratio_penalty_weight`.
-- Added `DetectConfig.circle_refinement` selector:
-  - `none`,
-  - `projective_center_only`,
-  - `nl_board_only`,
-  - `nl_board_and_projective_center` (default).
+- Added `DetectConfig.circle_refinement` selector and strategy wiring in both debug and non-debug flows.
 
-Implemented in R3B so far:
+Implemented in R3B:
 
 - Added `circle_refinement` method selector to config + CLI mapping.
 - Promoted projective center into primary `DetectedMarker.center` when enabled.
@@ -173,13 +169,23 @@ Implemented in R3B so far:
 - Added runtime stability/fallback gates (max shift, max residual, min eigen-separation).
 - Added synthetic scoring/aggregate reporting for legacy-vs-projective center error against GT.
 
+Implemented in R3C:
+
+1. Enforced mutual exclusivity between projective and NL board center correction in one run.
+2. Strategy semantics are now single-choice: `none` | `projective_center` | `nl_board` (combined mode removed).
+3. Non-debug/debug finalize flow now guarantees no double-correction path.
+4. When `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers and emits warnings/notes.
+5. When correction runs without camera intrinsics/undistortion, pipeline still runs and emits warnings.
+6. `solve_circle_center_mm` now supports two solver backends (`lm` and `irls`) and exposes the solver choice in config/CLI/debug output.
+
 Remaining R3 follow-up:
 
 1. Tune fallback thresholds using larger real-image validation sets.
 
 Exit criteria:
 - New perspective-stress synthetic tests show center-error improvement. Completed.
-- Global filter/decode rates do not regress. Completed.
+- Global filter/decode rates do not regress. Completed in current synthetic guardrails.
+- No pipeline run applies both center-correction strategies. Completed.
 
 ### Phase R4: Camera calibration and distortion-aware sampling
 
@@ -190,8 +196,12 @@ Plan:
 
 1. Add camera module with explicit calibration structs.
 2. Extend detect API/config with optional camera parameters.
-3. Add distortion-aware sampling utility used by local fit and NL refine.
+3. Add distortion-aware sampling utility used by local fit and both center-correction strategies (projective + NL board).
 4. Add synthetic-distortion generation/eval support in tools.
+
+R3/R4 coupling:
+- Center-correction strategies should consume undistorted edge elements when intrinsics are provided.
+- R4 provides the shared undistortion path required by both strategies.
 
 Initial scope:
 - Radial-tangential model only (policy decision for v1).
@@ -235,8 +245,7 @@ Candidate stable top-level options:
 - minimum marker distance (`min_marker_separation_px`)
 - global filter toggle + reprojection threshold
 - completion toggle
-- circle refinement method selector
-- NL refine toggle (`enable_nl_refine`) as a required stable control
+- center correction strategy selector (`none` | `projective_center` | `nl_board`)
 - decode confidence threshold
 - optional radial-tangential camera calibration
 

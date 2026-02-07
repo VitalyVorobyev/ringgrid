@@ -149,9 +149,8 @@ pub struct ProjectiveCenterParamsV1 {
 #[serde(rename_all = "snake_case")]
 pub enum CircleRefinementMethodV1 {
     None,
-    ProjectiveCenterOnly,
-    NlBoardOnly,
-    NlBoardAndProjectiveCenter,
+    ProjectiveCenter,
+    NlBoard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +172,7 @@ pub struct StagesDebugV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NlRefineParamsV1 {
     pub enabled: bool,
+    pub solver: NlRefineSolverV1,
     pub max_iters: usize,
     pub huber_delta_mm: f64,
     pub min_points: usize,
@@ -180,6 +180,13 @@ pub struct NlRefineParamsV1 {
     pub enable_h_refit: bool,
     pub h_refit_iters: usize,
     pub marker_outer_radius_mm: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NlRefineSolverV1 {
+    Irls,
+    Lm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

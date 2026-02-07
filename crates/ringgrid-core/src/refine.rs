@@ -1,4 +1,4 @@
-//! Non-linear refinement utilities.
+//! Board-plane center refinement utilities.
 //!
 //! Milestone 6: refine per-marker centers in board coordinates (mm) using
 //! measured outer-edge points and a known physical radius, then project the
@@ -19,12 +19,22 @@ mod sampling;
 mod solver;
 use sampling::SampleOutcome;
 
-/// Configuration for non-linear board-plane center refinement.
+/// Solver backend used for fixed-radius circle-center optimization in board space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CircleCenterSolver {
+    /// Robust Gauss-Newton / IRLS update on geometric residuals.
+    Irls,
+    /// Levenberg-Marquardt backend (`tiny-solver`) with Huber loss.
+    #[default]
+    Lm,
+}
+
+/// Configuration for board-plane center refinement.
 #[derive(Debug, Clone)]
 pub struct RefineParams {
-    /// Master enable switch for NL board-plane refinement.
+    /// Master enable switch for board-plane center refinement.
     pub enabled: bool,
-    /// Maximum optimizer iterations per marker.
+    /// Maximum solver iterations per marker.
     pub max_iters: usize,
     /// Huber delta (mm) used for robust residual weighting.
     pub huber_delta_mm: f64,
@@ -36,6 +46,8 @@ pub struct RefineParams {
     pub enable_h_refit: bool,
     /// Number of H re-fit iterations when `enable_h_refit` is true.
     pub h_refit_iters: usize,
+    /// Solver backend for per-marker board-plane fixed-radius circle center fitting.
+    pub solver: CircleCenterSolver,
 }
 
 impl Default for RefineParams {
@@ -48,6 +60,7 @@ impl Default for RefineParams {
             reject_thresh_mm: 1.0,
             enable_h_refit: false,
             h_refit_iters: 1,
+            solver: CircleCenterSolver::default(),
         }
     }
 }
@@ -153,8 +166,16 @@ fn solve_circle_center_mm(
     radius_mm: f64,
     max_iters: usize,
     huber_delta_mm: f64,
+    solver: CircleCenterSolver,
 ) -> Option<[f64; 2]> {
-    solver::solve_circle_center_mm(points, init_center_mm, radius_mm, max_iters, huber_delta_mm)
+    solver::solve_circle_center_mm(
+        points,
+        init_center_mm,
+        radius_mm,
+        max_iters,
+        huber_delta_mm,
+        solver,
+    )
 }
 
 /// Refine marker centers in board coordinates using fixed-radius circle fitting.
@@ -197,7 +218,8 @@ mod tests {
         let pts = circle_points(true_center, radius, 96, 0.0, 2.0 * std::f64::consts::PI);
         let init = [true_center[0] + 0.8, true_center[1] - 0.6];
 
-        let est = solve_circle_center_mm(&pts, init, radius, 50, 0.2).expect("solver result");
+        let est = solve_circle_center_mm(&pts, init, radius, 50, 0.2, CircleCenterSolver::Lm)
+            .expect("solver result");
         assert!((est[0] - true_center[0]).abs() < 1e-3);
         assert!((est[1] - true_center[1]).abs() < 1e-3);
     }
@@ -210,7 +232,8 @@ mod tests {
         let pts = circle_points(true_center, radius, 64, 0.4, 1.8);
         let init = [true_center[0] + 0.5, true_center[1] + 0.4];
 
-        let est = solve_circle_center_mm(&pts, init, radius, 80, 0.2).expect("solver result");
+        let est = solve_circle_center_mm(&pts, init, radius, 80, 0.2, CircleCenterSolver::Lm)
+            .expect("solver result");
         assert!((est[0] - true_center[0]).abs() < 5e-2);
         assert!((est[1] - true_center[1]).abs() < 5e-2);
     }
@@ -241,7 +264,8 @@ mod tests {
         }
 
         let init = [true_center[0] - 0.9, true_center[1] + 0.7];
-        let est = solve_circle_center_mm(&pts, init, radius, 80, 0.10).expect("solver result");
+        let est = solve_circle_center_mm(&pts, init, radius, 80, 0.10, CircleCenterSolver::Lm)
+            .expect("solver result");
         assert!((est[0] - true_center[0]).abs() < 5e-2);
         assert!((est[1] - true_center[1]).abs() < 5e-2);
     }

@@ -3,16 +3,13 @@ use image::GrayImage;
 use crate::conic::rms_sampson_distance;
 use crate::debug_dump as dbg;
 use crate::homography::project;
-use crate::ring::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus, Polarity};
+use crate::ring::inner_estimate::{InnerStatus, Polarity};
 use crate::ring::outer_estimate::OuterStatus;
 use crate::DetectedMarker;
 
 use super::{
     compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
-    marker_build::{
-        decode_metrics_from_result, fit_metrics_from_outer, inner_params_from_estimate,
-        marker_with_defaults,
-    },
+    marker_build::{decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults},
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, DetectConfig,
     OuterFitCandidate,
 };
@@ -62,6 +59,7 @@ pub(super) fn complete_with_h(
     use std::collections::HashSet;
 
     let params = &config.completion;
+    let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
     if !params.enable {
         return (
             CompletionStats::default(),
@@ -419,33 +417,24 @@ pub(super) fn complete_with_h(
             continue;
         }
 
-        // Inner estimation (only for accepted completions, unless we're recording debug).
-        let inner_est = if record_debug || store_points_in_debug {
-            Some(estimate_inner_scale_from_outer(
-                gray,
-                &outer,
-                &config.marker_spec,
-                store_points_in_debug,
-            ))
-        } else {
-            Some(estimate_inner_scale_from_outer(
-                gray,
-                &outer,
-                &config.marker_spec,
-                false,
-            ))
-        };
-        let inner_params = inner_est.as_ref().and_then(|est| {
-            inner_params_from_estimate(
-                &outer,
-                est.status,
-                est.r_inner_found,
-                config.marker_spec.r_inner_expected,
-            )
-        });
+        let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
+            gray,
+            &outer,
+            &config.marker_spec,
+            &inner_fit_cfg,
+            record_debug || store_points_in_debug,
+        );
+        let inner_params = inner_fit.ellipse_inner.as_ref().map(ellipse_to_params);
 
         // Build fit metrics and marker.
-        let fit = fit_metrics_from_outer(&edge, &outer, outer_ransac.as_ref());
+        let fit = fit_metrics_from_outer(
+            &edge,
+            &outer,
+            outer_ransac.as_ref(),
+            inner_fit.points_inner.len(),
+            inner_fit.ransac_inlier_ratio_inner,
+            inner_fit.rms_residual_inner,
+        );
 
         let decode_metrics =
             decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));
@@ -528,29 +517,29 @@ pub(super) fn complete_with_h(
                         semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
                         angle: p.angle as f32,
                     }),
-                    inner_estimation: inner_est.as_ref().map(|est| dbg::InnerEstimationDebugV1 {
-                        r_inner_expected: est.r_inner_expected,
-                        search_window: est.search_window,
-                        r_inner_found: est.r_inner_found,
-                        polarity: est.polarity.map(|p| match p {
+                    inner_estimation: Some(dbg::InnerEstimationDebugV1 {
+                        r_inner_expected: inner_fit.estimate.r_inner_expected,
+                        search_window: inner_fit.estimate.search_window,
+                        r_inner_found: inner_fit.estimate.r_inner_found,
+                        polarity: inner_fit.estimate.polarity.map(|p| match p {
                             Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
                             Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
                         }),
-                        peak_strength: est.peak_strength,
-                        theta_consistency: est.theta_consistency,
-                        status: match est.status {
+                        peak_strength: inner_fit.estimate.peak_strength,
+                        theta_consistency: inner_fit.estimate.theta_consistency,
+                        status: match inner_fit.estimate.status {
                             InnerStatus::Ok => dbg::InnerEstimationStatusDebugV1::Ok,
                             InnerStatus::Rejected => dbg::InnerEstimationStatusDebugV1::Rejected,
                             InnerStatus::Failed => dbg::InnerEstimationStatusDebugV1::Failed,
                         },
-                        reason: est.reason.clone(),
-                        radial_response_agg: est.radial_response_agg.clone(),
-                        r_samples: est.r_samples.clone(),
+                        reason: inner_fit.estimate.reason.clone(),
+                        radial_response_agg: inner_fit.estimate.radial_response_agg.clone(),
+                        r_samples: inner_fit.estimate.r_samples.clone(),
                     }),
                     metrics: dbg::RingFitMetricsDebugV1 {
-                        inlier_ratio_inner: None,
+                        inlier_ratio_inner: fit.ransac_inlier_ratio_inner,
                         inlier_ratio_outer: fit.ransac_inlier_ratio_outer,
-                        mean_resid_inner: None,
+                        mean_resid_inner: fit.rms_residual_inner.map(|v| v as f32),
                         mean_resid_outer: fit.rms_residual_outer.map(|v| v as f32),
                         arc_coverage: arc_cov_dbg,
                         valid_inner: inner_params.is_some(),
@@ -568,7 +557,8 @@ pub(super) fn complete_with_h(
                     },
                     points_inner: if store_points_in_debug {
                         Some(
-                            edge.inner_points
+                            inner_fit
+                                .points_inner
                                 .iter()
                                 .map(|p| [p[0] as f32, p[1] as f32])
                                 .collect(),

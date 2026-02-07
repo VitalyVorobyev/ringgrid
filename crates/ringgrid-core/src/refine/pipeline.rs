@@ -299,6 +299,7 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
         ctx.radius_mm,
         ctx.params.max_iters,
         ctx.params.huber_delta_mm.max(1e-6),
+        ctx.params.solver,
     ) {
         Some(c) => c,
         None => {

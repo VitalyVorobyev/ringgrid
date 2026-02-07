@@ -1,10 +1,9 @@
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_from_outer, inner_params_from_estimate,
-    marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
 };
 use super::*;
 use crate::debug_dump as dbg;
-use crate::ring::inner_estimate::Polarity;
+use crate::ring::inner_estimate::{InnerStatus, Polarity};
 use crate::ring::outer_estimate::{OuterGradPolarity, OuterStatus};
 
 pub(super) fn run(
@@ -16,8 +15,10 @@ pub(super) fn run(
     use crate::codebook::{CODEBOOK_BITS, CODEBOOK_N};
 
     let (w, h) = gray.dimensions();
+    warn_center_correction_without_intrinsics(config);
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;
+    let inner_fit_cfg = inner_fit::InnerFitConfig::default();
 
     // Stage 0: proposals
     let proposals = find_proposals(gray, &config.proposal);
@@ -121,27 +122,27 @@ pub(super) fn run(
 
         let center = compute_center(&outer);
 
-        let fit_metrics = fit_metrics_from_outer(&edge, &outer, outer_ransac.as_ref());
-
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let derived_id = decode_result.as_ref().map(|d| d.id);
 
         let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
 
-        let inner_est = Some(estimate_inner_scale_from_outer(
+        let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
             gray,
             &outer,
             &config.marker_spec,
+            &inner_fit_cfg,
             debug_cfg.store_points,
-        ));
-        let inner_params = inner_est.as_ref().and_then(|est| {
-            inner_params_from_estimate(
-                &outer,
-                est.status,
-                est.r_inner_found,
-                config.marker_spec.r_inner_expected,
-            )
-        });
+        );
+        let inner_params = inner_fit.ellipse_inner.as_ref().map(ellipse_to_params);
+        let fit_metrics = fit_metrics_from_outer(
+            &edge,
+            &outer,
+            outer_ransac.as_ref(),
+            inner_fit.points_inner.len(),
+            inner_fit.ransac_inlier_ratio_inner,
+            inner_fit.rms_residual_inner,
+        );
 
         let marker = marker_with_defaults(
             derived_id,
@@ -212,24 +213,24 @@ pub(super) fn run(
                     semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
                     angle: p.angle as f32,
                 }),
-                inner_estimation: inner_est.as_ref().map(|est| dbg::InnerEstimationDebugV1 {
-                    r_inner_expected: est.r_inner_expected,
-                    search_window: est.search_window,
-                    r_inner_found: est.r_inner_found,
-                    polarity: est.polarity.map(|p| match p {
+                inner_estimation: Some(dbg::InnerEstimationDebugV1 {
+                    r_inner_expected: inner_fit.estimate.r_inner_expected,
+                    search_window: inner_fit.estimate.search_window,
+                    r_inner_found: inner_fit.estimate.r_inner_found,
+                    polarity: inner_fit.estimate.polarity.map(|p| match p {
                         Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
                         Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
                     }),
-                    peak_strength: est.peak_strength,
-                    theta_consistency: est.theta_consistency,
-                    status: match est.status {
+                    peak_strength: inner_fit.estimate.peak_strength,
+                    theta_consistency: inner_fit.estimate.theta_consistency,
+                    status: match inner_fit.estimate.status {
                         InnerStatus::Ok => dbg::InnerEstimationStatusDebugV1::Ok,
                         InnerStatus::Rejected => dbg::InnerEstimationStatusDebugV1::Rejected,
                         InnerStatus::Failed => dbg::InnerEstimationStatusDebugV1::Failed,
                     },
-                    reason: est.reason.clone(),
-                    radial_response_agg: est.radial_response_agg.clone(),
-                    r_samples: est.r_samples.clone(),
+                    reason: inner_fit.estimate.reason.clone(),
+                    radial_response_agg: inner_fit.estimate.radial_response_agg.clone(),
+                    r_samples: inner_fit.estimate.r_samples.clone(),
                 }),
                 metrics: dbg::RingFitMetricsDebugV1 {
                     inlier_ratio_inner: fit_metrics.ransac_inlier_ratio_inner,
@@ -252,7 +253,8 @@ pub(super) fn run(
                 },
                 points_inner: if debug_cfg.store_points {
                     Some(
-                        edge.inner_points
+                        inner_fit
+                            .points_inner
                             .iter()
                             .map(|p| [p[0] as f32, p[1] as f32])
                             .collect(),
@@ -435,6 +437,10 @@ pub(super) fn run(
         enabled: use_nl_refine && h_current.is_some(),
         params: dbg::NlRefineParamsV1 {
             enabled: use_nl_refine,
+            solver: match config.nl_refine.solver {
+                refine::CircleCenterSolver::Irls => dbg::NlRefineSolverV1::Irls,
+                refine::CircleCenterSolver::Lm => dbg::NlRefineSolverV1::Lm,
+            },
             max_iters: config.nl_refine.max_iters,
             huber_delta_mm: config.nl_refine.huber_delta_mm,
             min_points: config.nl_refine.min_points,
@@ -586,6 +592,10 @@ pub(super) fn run(
                 }
             }
         } else {
+            tracing::warn!(
+                "nl_board center correction selected but homography is unavailable; \
+                 keeping uncorrected centers"
+            );
             nl_refine_debug
                 .notes
                 .push("skipped_no_homography".to_string());
@@ -594,6 +604,11 @@ pub(super) fn run(
         nl_refine_debug
             .notes
             .push("disabled_by_circle_refinement_method".to_string());
+    }
+
+    // Projective center correction must be reflected in the final H statistics/refit.
+    if use_projective_center {
+        apply_projective_centers(&mut final_markers, config);
     }
 
     // Final H: refit after refinement if we have enough markers.
@@ -615,10 +630,6 @@ pub(super) fn run(
         if let Some(ref mut rd) = refine_debug {
             rd.h_refit = final_h;
         }
-    }
-
-    if use_projective_center {
-        apply_projective_centers(&mut final_markers, config);
     }
 
     let result = DetectionResult {
@@ -687,13 +698,10 @@ pub(super) fn run(
             marker_spec: config.marker_spec.clone(),
             circle_refinement_method: Some(match config.circle_refinement {
                 CircleRefinementMethod::None => dbg::CircleRefinementMethodV1::None,
-                CircleRefinementMethod::ProjectiveCenterOnly => {
-                    dbg::CircleRefinementMethodV1::ProjectiveCenterOnly
+                CircleRefinementMethod::ProjectiveCenter => {
+                    dbg::CircleRefinementMethodV1::ProjectiveCenter
                 }
-                CircleRefinementMethod::NlBoardOnly => dbg::CircleRefinementMethodV1::NlBoardOnly,
-                CircleRefinementMethod::NlBoardAndProjectiveCenter => {
-                    dbg::CircleRefinementMethodV1::NlBoardAndProjectiveCenter
-                }
+                CircleRefinementMethod::NlBoard => dbg::CircleRefinementMethodV1::NlBoard,
             }),
             projective_center: Some(dbg::ProjectiveCenterParamsV1 {
                 enabled: config.projective_center.enable,

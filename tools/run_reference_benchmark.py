@@ -15,12 +15,12 @@ import sys
 from pathlib import Path
 
 
-MODES = [
-    ("none", ["--circle-refine-method", "none"]),
-    ("projective_center", ["--circle-refine-method", "projective-center"]),
-    ("nl_board_lm", ["--circle-refine-method", "nl-board", "--nl-solver", "lm"]),
-    ("nl_board_irls", ["--circle-refine-method", "nl-board", "--nl-solver", "irls"]),
-]
+ALL_MODES = {
+    "none": ["--circle-refine-method", "none"],
+    "projective_center": ["--circle-refine-method", "projective-center"],
+    "nl_board_lm": ["--circle-refine-method", "nl-board", "--nl-solver", "lm"],
+    "nl_board_irls": ["--circle-refine-method", "nl-board", "--nl-solver", "irls"],
+}
 
 
 def find_ringgrid_binary() -> str | None:
@@ -126,6 +126,16 @@ def main() -> None:
     parser.add_argument("--cam-p2", type=float, default=0.0)
     parser.add_argument("--cam-k3", type=float, default=0.0)
     parser.add_argument("--pass-camera-to-detector", action="store_true")
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        default=["all"],
+        choices=["all", *ALL_MODES.keys()],
+        help=(
+            "Detection refinement modes to benchmark. "
+            "Use 'all' (default) or one/more explicit mode names."
+        ),
+    )
     parser.add_argument("--skip_gen", action="store_true")
     args = parser.parse_args()
 
@@ -139,6 +149,8 @@ def main() -> None:
         parser.error("camera intrinsics are partial; provide all of --cam-fx --cam-fy --cam-cx --cam-cy")
     if not has_any_intr and has_dist_coeff:
         parser.error("non-zero distortion requires camera intrinsics")
+
+    mode_names = list(ALL_MODES.keys()) if "all" in args.modes else args.modes
 
     out_dir = Path(args.out_dir)
     synth_dir = out_dir / "synth"
@@ -220,6 +232,7 @@ def main() -> None:
             "tilt_strength": args.tilt_strength,
             "metric_frame": "image",
             "pass_camera_to_detector": bool(args.pass_camera_to_detector),
+            "modes": mode_names,
             "camera": (
                 {
                     "fx": args.cam_fx,
@@ -239,7 +252,8 @@ def main() -> None:
         "modes": {},
     }
 
-    for mode, mode_args in MODES:
+    for mode in mode_names:
+        mode_args = ALL_MODES[mode]
         mode_dir = out_dir / mode
         mode_dir.mkdir(parents=True, exist_ok=True)
         scores: list[dict] = []

@@ -188,6 +188,12 @@ Completed in current branch:
 3. Added shared distortion-aware sampler and switched local outer/inner fit, decode, and NL refine sampling to it.
 4. When camera is provided, the detector uses an undistorted pixel working frame internally and in outputs.
 5. Added trait-based mapper abstraction (`camera::PixelMapper`) so algorithms can consume custom camera/distortion adapters; built-in `CameraModel` is one implementation.
+6. Added unified two-pass orchestration:
+   - pass-1 runs without mapper,
+   - pass-2 runs with mapper and pass-1 detections injected as proposal seeds,
+   - pass-1 markers can be retained as fallback when pass-2 misses.
+7. Two-pass API maps final marker centers back to original image space while keeping ellipse/homography fields in working frame.
+8. `detect_rings_with_mapper` now defaults to the unified two-pass flow when a mapper is provided.
 
 Remaining:
 

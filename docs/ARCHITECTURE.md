@@ -85,9 +85,10 @@ For each proposal:
 ### 8) Outputs
 
 - `DetectionResult` (`lib.rs`) for stable detector output.
-- Reported marker/homography coordinates are in detector working pixel frame:
-  - raw image pixels when no camera intrinsics are provided;
-  - undistorted pixels when camera intrinsics are provided.
+- Single-pass APIs report marker/homography coordinates in detector working pixel frame:
+  - raw image pixels when no mapper is provided;
+  - undistorted pixels when a mapper/intrinsics are provided.
+- Two-pass APIs map final marker centers back to original image-space pixels, while keeping ellipse and homography fields in working frame.
 - Includes optional `center_projective`, `vanishing_line`, and selection residual per marker.
 - Optional versioned debug dump (`debug_dump.rs`, schema `ringgrid.debug.v1`).
 
@@ -205,6 +206,12 @@ Completed:
 4. Wire local fit (`outer_estimate`, `outer_fit`, `inner_estimate`, `inner_fit`), decode, and NL refine sampling to the shared distortion-aware sampler.
 5. Surface camera in detection/debug outputs.
 6. Introduce trait-based pixel mapping (`camera::PixelMapper`) so detector/refine algorithms can accept custom camera model adapters.
+7. Add unified two-pass detection orchestration:
+   - pass-1 without mapper,
+   - pass-2 with mapper and pass-1 seed injection,
+   - fallback retry without seeds when seeded pass-2 fails.
+8. Two-pass merge policy keeps pass-2 detections as primary and can retain pass-1 markers as fallback.
+9. `detect_rings_with_mapper` defaults to the two-pass path when mapper is provided; debug path remains single-pass.
 
 Remaining:
 

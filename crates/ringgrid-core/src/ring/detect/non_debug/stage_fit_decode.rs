@@ -7,9 +7,11 @@ pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: Option<&dyn crate::camera::PixelMapper>,
+    seed_centers_image: &[[f32; 2]],
+    seed_cfg: &SeedProposalParams,
 ) -> Vec<DetectedMarker> {
     // Stage 1: Find candidate centers
-    let proposals = find_proposals(gray, &config.proposal);
+    let proposals = find_proposals_with_seeds(gray, &config.proposal, seed_centers_image, seed_cfg);
     tracing::info!("{} proposals found", proposals.len());
     let use_projective_center =
         config.circle_refinement.uses_projective_center() && config.projective_center.enable;

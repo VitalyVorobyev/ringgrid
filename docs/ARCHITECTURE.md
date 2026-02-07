@@ -212,11 +212,14 @@ Completed:
    - fallback retry without seeds when seeded pass-2 fails.
 8. Two-pass merge policy keeps pass-2 detections as primary and can retain pass-1 markers as fallback.
 9. `detect_rings_with_mapper` defaults to the two-pass path when mapper is provided; debug path remains single-pass.
+10. Added synthetic-distortion tooling:
+   - `tools/gen_synth.py` supports radial-tangential distortion and emits both working-frame and image-frame GT centers.
+   - `tools/run_synth_eval.py` can pass camera parameters to generator and detector, with stale-binary fallback to `cargo run`.
+   - `tools/score_detect.py` supports frame-aware GT comparison for `center_error` and `homography_error_vs_gt`.
 
 Remaining:
 
-1. Add synthetic-distortion generation/eval support in tools.
-2. Run larger benchmark sweeps to retune thresholds and verify improvement margins.
+1. Run larger benchmark sweeps to retune thresholds and verify improvement margins.
 
 R3/R4 coupling:
 - Center-correction strategies should consume undistorted edge elements when intrinsics are provided.

@@ -194,11 +194,15 @@ Completed in current branch:
    - pass-1 markers can be retained as fallback when pass-2 misses.
 7. Two-pass API maps final marker centers back to original image space while keeping ellipse/homography fields in working frame.
 8. `detect_rings_with_mapper` now defaults to the unified two-pass flow when a mapper is provided.
+9. Added synthetic-distortion generation/eval support:
+   - `tools/gen_synth.py` can render radial-tangential distortion and stores both `true_working_center` and `true_image_center`.
+   - `tools/run_synth_eval.py` can pass synthetic camera params into generation and optionally into detector runs.
+   - `tools/score_detect.py` supports explicit GT frame selection (`image` vs `working`) for center and homography metrics.
+10. `run_synth_eval.py` validates camera arg sets, handles negative distortion coefficients safely (`--arg=value`), and falls back to `cargo run` when a stale binary lacks camera CLI flags.
 
 Remaining:
 
-1. Add distortion-aware synthetic generation/eval tooling.
-2. Add larger real-image validation and threshold tuning with/without intrinsics.
+1. Add larger real-image validation and threshold tuning with/without intrinsics.
 
 ## Public API target shape
 

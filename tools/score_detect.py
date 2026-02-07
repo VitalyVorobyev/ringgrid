@@ -75,11 +75,38 @@ def stats_1d(xs: list[float]) -> dict[str, float]:
     }
 
 
+def gt_center_for_mode(gt_marker: dict[str, Any], mode: str) -> Optional[list[float]]:
+    """Return GT center for frame mode: 'image' or 'working'."""
+    if mode not in ("image", "working"):
+        raise ValueError(f"unsupported GT center mode: {mode}")
+    key = "true_working_center" if mode == "working" else "true_image_center"
+    center = gt_marker.get(key)
+    if not isinstance(center, list) or len(center) < 2:
+        # Backward compatibility with older GT JSONs.
+        fallback_key = "true_image_center" if mode == "working" else "true_working_center"
+        center = gt_marker.get(fallback_key)
+    if not isinstance(center, list) or len(center) < 2:
+        return None
+    x = float(center[0])
+    y = float(center[1])
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None
+    return [x, y]
+
+
+def resolve_gt_mode(mode: str, pred_data: dict[str, Any]) -> str:
+    """Resolve 'auto' GT mode from prediction metadata."""
+    if mode != "auto":
+        return mode
+    return "working" if pred_data.get("camera") is not None else "image"
+
+
 def score(
     gt_markers: list[dict],
     pred_markers: list[dict],
     gate: float = 8.0,
     *,
+    center_gt_mode: str = "image",
     expected_inner_ratio: Optional[float] = None,
     inner_ratio_tol: float = 0.08,
 ) -> dict:
@@ -122,7 +149,9 @@ def score(
         for gt_m, gt_idx in gt_by_id[pred_id]:
             if gt_idx in gt_matched:
                 continue
-            gt_center = gt_m["true_image_center"]
+            gt_center = gt_center_for_mode(gt_m, center_gt_mode)
+            if gt_center is None:
+                continue
             d2 = dist2(pred_center, gt_center)
             if d2 < best_dist_sq:
                 best_dist_sq = d2
@@ -167,9 +196,14 @@ def score(
     missed_ids = []
     for i, m in enumerate(gt_markers):
         if i not in gt_matched:
+            center = gt_center_for_mode(m, center_gt_mode)
+            if center is None:
+                center = m.get("true_image_center") or m.get("true_working_center")
+            if not isinstance(center, list) or len(center) < 2:
+                center = [float("nan"), float("nan")]
             missed_ids.append({
                 "id": m["id"],
-                "center": m["true_image_center"],
+                "center": center,
                 "q": m.get("q"),
                 "r": m.get("r"),
             })
@@ -203,6 +237,7 @@ def score(
             false_positives, key=lambda x: -x["confidence"]
         )[:20],
         "gate_px": gate,
+        "center_gt_frame": center_gt_mode,
     }
 
     if expected_inner_ratio is not None:
@@ -263,11 +298,15 @@ def project_h(h: list[list[float]], x: float, y: float) -> Optional[list[float]]
     return [q0 / q2, q1 / q2]
 
 
-def homography_error_vs_gt(gt_markers: list[dict], pred_data: dict) -> Optional[dict]:
+def homography_error_vs_gt(
+    gt_markers: list[dict],
+    pred_data: dict,
+    gt_mode: str,
+) -> Optional[dict]:
     """Compute absolute geometric error between predicted H and GT projected centers.
 
     For each visible GT marker with valid board/image coordinates:
-      err = || project(H_pred, board_xy_mm) - true_image_center ||
+      err = || project(H_pred, board_xy_mm) - true_<frame>_center ||
     """
     h = pred_data.get("homography")
     if not isinstance(h, list) or len(h) != 3:
@@ -278,12 +317,11 @@ def homography_error_vs_gt(gt_markers: list[dict], pred_data: dict) -> Optional[
     errors = []
     for m in gt_markers:
         board_xy = m.get("board_xy_mm")
-        true_center = m.get("true_image_center")
+        true_center = gt_center_for_mode(m, gt_mode)
         if (
             not isinstance(board_xy, list)
             or len(board_xy) < 2
-            or not isinstance(true_center, list)
-            or len(true_center) < 2
+            or true_center is None
         ):
             continue
         proj = project_h(h, float(board_xy[0]), float(board_xy[1]))
@@ -296,6 +334,7 @@ def homography_error_vs_gt(gt_markers: list[dict], pred_data: dict) -> Optional[
 
     out = stats_1d(errors)
     out["n_markers_used"] = len(errors)
+    out["gt_frame"] = gt_mode
     return out
 
 
@@ -314,6 +353,7 @@ def print_report(result: dict) -> None:
     print(f"Precision:               {result['precision']:.3f}")
     print(f"Recall:                  {result['recall']:.3f}")
     print(f"Gate:                    {result['gate_px']:.1f} px")
+    print(f"Center GT frame:         {result.get('center_gt_frame', 'image')}")
 
     ce = result.get("center_error", {})
     if ce:
@@ -353,6 +393,7 @@ def print_report(result: dict) -> None:
     hg = result.get("homography_error_vs_gt")
     if hg:
         print("Homography vs GT centers:")
+        print(f"  GT frame:      {hg.get('gt_frame', 'image')}")
         print(f"  markers used:  {hg['n_markers_used']}")
         print(f"  mean:          {hg['mean']:.2f} px")
         print(f"  median:        {hg['median']:.2f} px")
@@ -390,6 +431,26 @@ def main():
     parser.add_argument("--gate", type=float, default=8.0, help="Max center distance for matching (px)")
     parser.add_argument("--out", type=str, default=None, help="Optional: write scores JSON to this path")
     parser.add_argument(
+        "--center-gt-key",
+        choices=["auto", "image", "working"],
+        default="auto",
+        help=(
+            "GT frame for center_error matching: "
+            "'image' -> true_image_center, 'working' -> true_working_center, "
+            "'auto' selects working when prediction JSON contains camera metadata."
+        ),
+    )
+    parser.add_argument(
+        "--homography-gt-key",
+        choices=["auto", "image", "working"],
+        default="auto",
+        help=(
+            "GT frame for homography_error_vs_gt: "
+            "'image' -> true_image_center, 'working' -> true_working_center, "
+            "'auto' selects working when prediction JSON contains camera metadata."
+        ),
+    )
+    parser.add_argument(
         "--check-inner-ratio",
         action="store_true",
         help="Compute inner/outer ellipse ratio stats (requires ellipse_outer+ellipse_inner in predictions).",
@@ -405,6 +466,8 @@ def main():
     gt_data = load_gt_data(args.gt)
     gt_markers = visible_gt_markers(gt_data)
     pred_markers, pred_data = load_pred(args.pred)
+    center_gt_mode = resolve_gt_mode(args.center_gt_key, pred_data)
+    homography_gt_mode = resolve_gt_mode(args.homography_gt_key, pred_data)
 
     expected_ratio = None
     if args.check_inner_ratio:
@@ -430,6 +493,7 @@ def main():
         gt_markers,
         pred_markers,
         gate=args.gate,
+        center_gt_mode=center_gt_mode,
         expected_inner_ratio=expected_ratio,
         inner_ratio_tol=args.inner_ratio_tol,
     )
@@ -439,7 +503,7 @@ def main():
     if ransac_stats:
         result["ransac_stats"] = ransac_stats
 
-    h_gt_stats = homography_error_vs_gt(gt_markers, pred_data)
+    h_gt_stats = homography_error_vs_gt(gt_markers, pred_data, homography_gt_mode)
     if h_gt_stats:
         result["homography_error_vs_gt"] = h_gt_stats
 

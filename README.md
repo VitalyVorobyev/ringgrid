@@ -100,14 +100,28 @@ Other commonly used toggles:
 
 `tools/score_detect.py` reports several geometric metrics; the three key ones are:
 
-- `center_error`: TP-only error between predicted `marker.center` and GT `true_image_center`.
+- `center_error`: TP-only error between predicted `marker.center` and GT center in the selected frame (`--center-gt-key image|working|auto`).
 - `ransac.mean_err_px` / `ransac.p95_err_px`: homography self-consistency error from the detector output (board point projected by estimated `H` vs detected center, inliers only).
-- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT `true_image_center`) over visible GT markers.
+- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT center in selected frame via `--homography-gt-key`).
 
 Interpretation:
 
 - Lower is better for all three.
 - `ransac.mean_err_px` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
+- For camera-aware runs (`--cam-*` passed to detector), use `working` frame GT for both center and homography metrics.
+
+Distortion-aware eval example:
+
+```bash
+./.venv/bin/python tools/run_synth_eval.py \
+  --n 3 \
+  --blur_px 0.8 \
+  --out_dir tools/out/r4_distortion_eval \
+  --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --pass_camera_to_detector
+```
 
 ## Performance Snapshots (Synthetic)
 

@@ -108,7 +108,9 @@ Interpretation:
 
 - Lower is better for all three.
 - `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
-- For camera-aware runs (`--cam-*` passed to detector), use `working` frame GT for both center and homography metrics.
+- For cross-run comparisons, evaluate all metrics in distorted image space.
+- Use `--center-gt-key image --homography-gt-key image`.
+- Set predicted frame explicitly via `--pred-center-frame image|working` and `--pred-homography-frame image|working`.
 
 Distortion-aware eval example:
 
@@ -124,6 +126,42 @@ Distortion-aware eval example:
 ```
 
 ## Performance Snapshots (Synthetic)
+
+### Distortion Benchmark (Projective-Center, 3 Images)
+
+Source:
+- `tools/out/r4_benchmark_distorted_nomapper_pc/summary.json`
+- `tools/out/r4_benchmark_distorted_mapper_pc/summary.json`
+
+Example distorted sample used in this benchmark:
+
+![Distortion benchmark sample](docs/assets/distortion_benchmark_sample.png)
+
+Run commands:
+
+```bash
+./.venv/bin/python tools/run_reference_benchmark.py \
+  --out_dir tools/out/r4_benchmark_distorted_nomapper_pc \
+  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --modes projective_center
+
+./.venv/bin/python tools/run_reference_benchmark.py \
+  --out_dir tools/out/r4_benchmark_distorted_mapper_pc \
+  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --pass-camera-to-detector \
+  --modes projective_center
+```
+
+Image-space metric snapshot:
+
+| Pipeline | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
+|---|---:|---:|---:|---:|---:|
+| No mapper | 1.000 | 0.975 | 0.237 | 1.053 / 2.903 | 1.359 / 3.341 |
+| Mapper enabled | 1.000 | 1.000 | 0.079 | 0.077 / 0.155 | 0.022 / 0.031 |
 
 ### Reference Benchmark (Clean, 3 Images)
 

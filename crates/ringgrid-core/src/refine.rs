@@ -19,14 +19,22 @@ mod sampling;
 mod solver;
 use sampling::SampleOutcome;
 
+/// Configuration for non-linear board-plane center refinement.
 #[derive(Debug, Clone)]
 pub struct RefineParams {
+    /// Master enable switch for NL board-plane refinement.
     pub enabled: bool,
+    /// Maximum optimizer iterations per marker.
     pub max_iters: usize,
+    /// Huber delta (mm) used for robust residual weighting.
     pub huber_delta_mm: f64,
+    /// Minimum number of sampled edge points required to refine a marker.
     pub min_points: usize,
+    /// Reject refined centers that move more than this distance (mm) in board space.
     pub reject_thresh_mm: f64,
+    /// Enable homography re-fit loop after refinement.
     pub enable_h_refit: bool,
+    /// Number of H re-fit iterations when `enable_h_refit` is true.
     pub h_refit_iters: usize,
 }
 
@@ -44,39 +52,66 @@ impl Default for RefineParams {
     }
 }
 
+/// Aggregate statistics produced by one refinement pass.
 #[derive(Debug, Clone, Default)]
 pub struct RefineStats {
+    /// Number of detections with a valid board correspondence.
     pub n_inliers: usize,
+    /// Number of markers successfully refined and accepted.
     pub n_refined: usize,
+    /// Number of markers that failed/refused refinement.
     pub n_failed: usize,
+    /// Mean RMS residual before refinement (mm).
     pub mean_before_mm: f64,
+    /// Mean RMS residual after refinement (mm).
     pub mean_after_mm: f64,
+    /// 95th percentile RMS residual before refinement (mm).
     pub p95_before_mm: f64,
+    /// 95th percentile RMS residual after refinement (mm).
     pub p95_after_mm: f64,
 }
 
+/// Final status of one per-marker refinement attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerRefineStatus {
+    /// Refinement succeeded and update was accepted.
     Ok,
+    /// Refinement solved but failed an acceptance gate.
     Rejected,
+    /// Refinement could not be solved.
     Failed,
+    /// Refinement was skipped (for example, missing prerequisites).
     Skipped,
 }
 
+/// Per-marker refinement record for debug tooling and analysis.
 #[derive(Debug, Clone)]
 pub struct MarkerRefineRecord {
+    /// Marker id.
     pub id: usize,
+    /// Number of sampled edge points used for this marker.
     pub n_points: usize,
+    /// Initial center in board coordinates (mm).
     pub init_center_board_mm: [f64; 2],
+    /// Refined center in board coordinates (mm), if solver succeeded.
     pub refined_center_board_mm: Option<[f64; 2]>,
+    /// Marker center in image coordinates before refinement.
     pub center_img_before: [f64; 2],
+    /// Marker center in image coordinates after refinement, if accepted.
     pub center_img_after: Option<[f64; 2]>,
+    /// RMS circle residual before refinement (mm).
     pub before_rms_mm: Option<f64>,
+    /// RMS circle residual after refinement (mm).
     pub after_rms_mm: Option<f64>,
+    /// Board-space center shift magnitude (mm).
     pub delta_center_mm: Option<f64>,
+    /// Optional sampled image-space edge points.
     pub edge_points_img: Option<Vec<[f32; 2]>>,
+    /// Optional sampled board-space edge points (mm).
     pub edge_points_board_mm: Option<Vec<[f32; 2]>>,
+    /// Final per-marker status.
     pub status: MarkerRefineStatus,
+    /// Optional reject/failure reason.
     pub reason: Option<String>,
 }
 
@@ -122,6 +157,9 @@ fn solve_circle_center_mm(
     solver::solve_circle_center_mm(points, init_center_mm, radius_mm, max_iters, huber_delta_mm)
 }
 
+/// Refine marker centers in board coordinates using fixed-radius circle fitting.
+///
+/// Returns aggregate statistics and one record per processed marker.
 pub fn refine_markers_circle_board(
     gray: &GrayImage,
     h: &na::Matrix3<f64>,

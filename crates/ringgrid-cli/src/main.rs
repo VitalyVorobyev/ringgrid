@@ -18,6 +18,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Detect markers in an image.
     Detect(CliDetectArgs),
@@ -106,6 +107,19 @@ struct CliDetectArgs {
     #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::NlBoardAndProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
 
+    /// Projective center gate: maximum allowed correction shift (px).
+    /// Defaults to marker_diameter when omitted.
+    #[arg(long)]
+    proj_center_max_shift_px: Option<f64>,
+
+    /// Projective center gate: reject candidates with residual above this value.
+    #[arg(long, default_value = "0.25")]
+    proj_center_max_residual: f64,
+
+    /// Projective center gate: reject candidates with eigen-separation below this value.
+    #[arg(long, default_value = "1e-6")]
+    proj_center_min_eig_sep: f64,
+
     /// NL refine: maximum solver iterations.
     #[arg(long, default_value = "20")]
     nl_max_iters: usize,
@@ -170,6 +184,9 @@ struct DetectOverrides {
     completion_min_fit_confidence: f32,
     completion_roi_radius_px: Option<f32>,
     circle_refinement: ringgrid_core::ring::CircleRefinementMethod,
+    projective_center_max_shift_px: Option<f64>,
+    projective_center_max_residual: f64,
+    projective_center_min_eig_sep: f64,
     nl_max_iters: usize,
     nl_huber_delta_mm: f64,
     nl_min_points: usize,
@@ -208,6 +225,9 @@ impl CliDetectArgs {
             completion_min_fit_confidence: self.complete_min_conf,
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
             circle_refinement,
+            projective_center_max_shift_px: self.proj_center_max_shift_px,
+            projective_center_max_residual: self.proj_center_max_residual,
+            projective_center_min_eig_sep: self.proj_center_min_eig_sep,
             nl_max_iters: self.nl_max_iters,
             nl_huber_delta_mm: self.nl_huber_delta_mm,
             nl_min_points: self.nl_min_points,
@@ -259,6 +279,13 @@ fn build_detect_config(
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
+    config.projective_center.max_center_shift_px = Some(
+        overrides
+            .projective_center_max_shift_px
+            .unwrap_or(preset.marker_diameter_px as f64),
+    );
+    config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
+    config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
 
     // Non-linear refinement options (board-plane circle fit)
     config.nl_refine.enabled = config.circle_refinement.uses_nl_refine();

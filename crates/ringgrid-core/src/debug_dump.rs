@@ -137,6 +137,12 @@ pub struct ProjectiveCenterParamsV1 {
     pub enabled: bool,
     pub use_expected_ratio: bool,
     pub ratio_penalty_weight: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_center_shift_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_selected_residual: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_eig_separation: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

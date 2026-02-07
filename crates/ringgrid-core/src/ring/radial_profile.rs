@@ -2,12 +2,16 @@
 
 use crate::marker_spec::AngularAggregator;
 
+/// Sign convention for radial derivative peaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
+    /// Positive radial derivative peak (`dI/dr > 0`).
     Pos,
+    /// Negative radial derivative peak (`dI/dr < 0`).
     Neg,
 }
 
+/// Aggregate a per-theta response vector into one scalar profile value.
 pub fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
     values.sort_by(|a, b| a.partial_cmp(b).unwrap());
     match *agg {
@@ -27,6 +31,7 @@ pub fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
     }
 }
 
+/// Return index of the strongest peak for the requested polarity.
 pub fn peak_idx(values: &[f32], pol: Polarity) -> usize {
     match pol {
         Polarity::Pos => values
@@ -44,6 +49,7 @@ pub fn peak_idx(values: &[f32], pol: Polarity) -> usize {
     }
 }
 
+/// Compute per-theta peak radii from derivative curves.
 pub fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
     let mut peaks = Vec::with_capacity(curves.len());
     for d in curves {

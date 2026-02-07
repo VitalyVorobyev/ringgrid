@@ -120,7 +120,7 @@ Exit criteria:
 
 ### Phase R2: Remove duplication and centralize primitives
 
-Status: in progress.
+Status: completed.
 
 - Add shared marker-build helpers (fit/decode structs + conversion functions).
 - Introduce shared radial-profile utility module used by inner/outer/refine.
@@ -137,14 +137,14 @@ Work completed under this phase so far:
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.
-- No new behavior regressions in synthetic eval.
+- No new behavior regressions in synthetic eval. Completed.
 
 ### Phase R3: Ellipse center correction (projective bias fix)
 
 Problem:
 - Ellipse center is not the projected circle center under perspective.
 
-Status: in progress (R3A complete; core R3B integration complete, eval hardening pending).
+Status: completed.
 
 Implemented in R3A:
 
@@ -170,15 +170,16 @@ Implemented in R3B so far:
 - Promoted projective center into primary `DetectedMarker.center` when enabled.
 - Applied projective-center promotion before dedup so downstream dedup/global filter/refine/completion consume corrected centers.
 - Kept diagnostic fields (`center_projective`, `vanishing_line`, residual) in outputs.
+- Added runtime stability/fallback gates (max shift, max residual, min eigen-separation).
+- Added synthetic scoring/aggregate reporting for legacy-vs-projective center error against GT.
 
-Remaining R3B work:
+Remaining R3 follow-up:
 
-1. Add synthetic eval reporting that compares legacy center vs projective center against GT.
-2. Add stability gates for runtime fallback if future datasets expose new failure modes.
+1. Tune fallback thresholds using larger real-image validation sets.
 
 Exit criteria:
-- New perspective-stress synthetic tests show center-error improvement.
-- Global filter/decode rates do not regress.
+- New perspective-stress synthetic tests show center-error improvement. Completed.
+- Global filter/decode rates do not regress. Completed.
 
 ### Phase R4: Camera calibration and distortion-aware sampling
 

@@ -40,8 +40,11 @@ impl Default for ProposalConfig {
 /// A proposed marker center with its vote score.
 #[derive(Debug, Clone, Copy)]
 pub struct Proposal {
+    /// X coordinate (pixels).
     pub x: f32,
+    /// Y coordinate (pixels).
     pub y: f32,
+    /// Accumulator peak score.
     pub score: f32,
 }
 

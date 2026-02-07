@@ -131,7 +131,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 1. Completed: split `ring/detect.rs` into focused modules while keeping behavior identical (synthetic aggregate parity checks kept exact).
 2. Completed: split `refine.rs` into focused modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`, `refine/pipeline.rs`).
 3. Completed (R2): introduced shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`, `DetectedMarker`) and reused them across regular/debug/refine/completion flows.
-4. In progress (R2): inner estimation now runs for every accepted outer fit (not decode-gated), so center correction can run on all accepted fits when both conics exist.
+4. Completed (R2): inner estimation now runs for every accepted outer fit (not decode-gated), so center correction can run on all accepted fits when both conics exist.
 5. Completed (R2): moved `Conic2D` into `conic.rs` as shared primitive (removed duplicate matrix-form conversion implementation from `projective_center.rs`).
 6. Completed (R2): consolidated radial profile helpers into `ring/radial_profile.rs` and switched inner/outer estimators to use it.
 7. Completed (R2): reduced CLI argument plumbing by introducing a config adapter path:
@@ -156,11 +156,16 @@ Implementation notes:
    - `vanishing_line`
    - `center_projective_residual`
 4. Downstream dedup/global-filter/refine/completion now consume corrected `center` values (projective-promoted when enabled).
-5. Deterministic unit tests cover exact synthetic homography, scale invariance, mild-noise stability, and center-promotion behavior.
+5. Added runtime stability gates + fallback policy for projective centers:
+   - max center shift (px),
+   - max residual,
+   - min eigen-separation.
+   If a gate fails, detector keeps the prior center.
+6. Deterministic unit tests cover exact synthetic homography, scale invariance, mild-noise stability, and center-promotion behavior.
+7. Synthetic scoring/eval now reports legacy-vs-projective center errors against GT.
 
 Remaining follow-up:
-- Add synthetic eval metrics that compare `center` vs `center_projective` against GT centers.
-- Add stability gates / fallback policy if projective center recovery fails on future datasets.
+- Monitor gate thresholds on future real datasets and tune defaults.
 
 ## Camera calibration / distortion plan
 

@@ -104,7 +104,7 @@ def score(
     # Match: for each pred with ID, try to find a GT with same ID within gate
     gt_matched = set()
     pred_matched = set()
-    matches = []  # (gt_idx, pred_idx, center_error)
+    matches = []  # (gt_idx, pred_idx, center_error_primary)
 
     # Sort predictions by confidence descending for greedy matching
     pred_with_id.sort(key=lambda x: -x[0].get("confidence", 0.0))
@@ -144,18 +144,47 @@ def score(
     precision = n_tp / max(n_pred, 1)
     recall = n_tp / max(n_gt, 1)
 
-    # Center error statistics
-    center_errors = [e for _, _, e in matches]
-    center_errors.sort()
+    # Center error statistics (primary + comparison variants).
+    center_errors_primary = [e for _, _, e in matches]
+    center_stats = stats_1d(center_errors_primary)
 
-    center_stats = {}
-    if center_errors:
-        center_stats = {
-            "mean": sum(center_errors) / len(center_errors),
-            "median": center_errors[len(center_errors) // 2],
-            "p95": center_errors[int(0.95 * len(center_errors))],
-            "max": center_errors[-1],
-        }
+    center_errors_legacy_outer = []
+    center_errors_projective = []
+    paired_delta_legacy_minus_projective = []
+    paired_projective_better = 0
+
+    for gt_idx, pred_idx, _ in matches:
+        gt_center = gt_markers[gt_idx]["true_image_center"]
+        pred = pred_markers[pred_idx]
+
+        eo = pred.get("ellipse_outer")
+        legacy_center = eo.get("center_xy") if isinstance(eo, dict) else None
+        legacy_err = None
+        if (
+            isinstance(legacy_center, list)
+            and len(legacy_center) >= 2
+            and legacy_center[0] is not None
+            and legacy_center[1] is not None
+        ):
+            legacy_err = math.sqrt(dist2(legacy_center, gt_center))
+            center_errors_legacy_outer.append(legacy_err)
+
+        projective_center = pred.get("center_projective")
+        projective_err = None
+        if (
+            isinstance(projective_center, list)
+            and len(projective_center) >= 2
+            and projective_center[0] is not None
+            and projective_center[1] is not None
+        ):
+            projective_err = math.sqrt(dist2(projective_center, gt_center))
+            center_errors_projective.append(projective_err)
+
+        if legacy_err is not None and projective_err is not None:
+            delta = legacy_err - projective_err
+            paired_delta_legacy_minus_projective.append(delta)
+            if delta > 0.0:
+                paired_projective_better += 1
 
     # Decode distance distribution (for matched predictions)
     decode_dists = []
@@ -213,6 +242,25 @@ def score(
         )[:20],
         "gate_px": gate,
     }
+
+    center_legacy_stats = stats_1d(center_errors_legacy_outer)
+    if center_legacy_stats:
+        result["center_error_legacy_outer"] = center_legacy_stats
+
+    center_projective_stats = stats_1d(center_errors_projective)
+    if center_projective_stats:
+        result["center_error_projective"] = center_projective_stats
+
+    delta_stats = stats_1d(paired_delta_legacy_minus_projective)
+    if delta_stats:
+        n_paired = len(paired_delta_legacy_minus_projective)
+        result["center_error_projective_vs_legacy"] = {
+            "n_paired": n_paired,
+            "mean_delta_legacy_minus_projective": delta_stats["mean"],
+            "median_delta_legacy_minus_projective": delta_stats["median"],
+            "p95_delta_legacy_minus_projective": delta_stats["p95"],
+            "projective_better_frac": paired_projective_better / max(n_paired, 1),
+        }
 
     if expected_inner_ratio is not None:
         pred_with_both = sum(
@@ -285,6 +333,36 @@ def print_report(result: dict) -> None:
         print(f"  median: {ce['median']:.2f} px")
         print(f"  p95:    {ce['p95']:.2f} px")
         print(f"  max:    {ce['max']:.2f} px")
+
+    ce_legacy = result.get("center_error_legacy_outer", {})
+    if ce_legacy:
+        print("Center error legacy (outer ellipse center):")
+        print(f"  mean:   {ce_legacy['mean']:.2f} px")
+        print(f"  median: {ce_legacy['median']:.2f} px")
+        print(f"  p95:    {ce_legacy['p95']:.2f} px")
+        print(f"  max:    {ce_legacy['max']:.2f} px")
+
+    ce_proj = result.get("center_error_projective", {})
+    if ce_proj:
+        print("Center error projective:")
+        print(f"  mean:   {ce_proj['mean']:.2f} px")
+        print(f"  median: {ce_proj['median']:.2f} px")
+        print(f"  p95:    {ce_proj['p95']:.2f} px")
+        print(f"  max:    {ce_proj['max']:.2f} px")
+
+    ce_cmp = result.get("center_error_projective_vs_legacy", {})
+    if ce_cmp:
+        print("Projective vs legacy center:")
+        print(f"  paired TP:       {ce_cmp['n_paired']}")
+        print(
+            "  mean delta:      "
+            f"{ce_cmp['mean_delta_legacy_minus_projective']:.2f} px "
+            "(positive => projective better)"
+        )
+        print(
+            "  projective wins: "
+            f"{100.0 * ce_cmp['projective_better_frac']:.1f}%"
+        )
 
     dh = result.get("decode_dist_histogram", {})
     if dh:

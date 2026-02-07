@@ -69,17 +69,25 @@ pub struct DecodeResult {
 /// Debug/diagnostic information about a decode attempt.
 #[derive(Debug, Clone)]
 pub struct DecodeDiagnostics {
+    /// Per-sector average intensities sampled from the code band.
     pub sector_intensities: [f32; 16],
+    /// Threshold used to binarize sector intensities.
     pub threshold: f32,
     /// Word formed by thresholding `sector_intensities`.
     pub word: u16,
     /// Word actually matched against the codebook (possibly inverted).
     pub used_word: u16,
+    /// Whether the matched word was polarity-inverted before matching.
     pub inverted_used: bool,
+    /// Best-matching codebook id.
     pub best_id: usize,
+    /// Rotation (in sectors) of the best match.
     pub best_rotation: u8,
+    /// Hamming distance of the best match.
     pub best_dist: u8,
+    /// Distance margin to the second-best match.
     pub margin: u8,
+    /// Decode confidence in `[0, 1]`.
     pub decode_confidence: f32,
     /// If rejected, why.
     pub reject_reason: Option<String>,

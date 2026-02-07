@@ -41,28 +41,43 @@ impl Default for RingCenterProjectiveOptions {
 /// Debug information for selected eigenpair/candidate.
 #[derive(Debug, Clone, Copy)]
 pub struct RingCenterProjectiveDebug {
+    /// Geometric residual for the selected candidate.
     pub selected_residual: f64,
+    /// Full selector score for the selected candidate.
     pub selected_score: f64,
+    /// Real part of selected eigenvalue.
     pub selected_lambda: f64,
+    /// Imaginary part magnitude of selected eigenvalue.
     pub selected_lambda_imag: f64,
+    /// Imaginary norm of selected eigenvector.
     pub selected_imag_u_norm: f64,
+    /// Separation from nearest competing eigenvalue.
     pub selected_eig_separation: f64,
 }
 
 /// Full result including debug score.
 #[derive(Debug, Clone, Copy)]
 pub struct RingCenterProjectiveResult {
+    /// Recovered projective-unbiased center in image coordinates.
     pub center: Point2<f64>,
+    /// Estimated image vanishing line of the marker plane.
     pub vanishing_line: Vector3<f64>,
+    /// Selector diagnostics for the chosen eigenpair.
     pub debug: RingCenterProjectiveDebug,
 }
 
+/// Errors returned by projective-center recovery.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectiveCenterError {
+    /// Input conics contain non-finite values.
     NonFiniteInput,
+    /// Inner conic is singular and cannot be inverted.
     SingularInnerConic,
+    /// Conic pair is degenerate after normalization.
     DegenerateConics,
+    /// No viable eigenpair candidate passed numerical checks.
     NoViableEigenpair,
+    /// Recovered center is invalid/non-finite.
     InvalidCenter,
 }
 

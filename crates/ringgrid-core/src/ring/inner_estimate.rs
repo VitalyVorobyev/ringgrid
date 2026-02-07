@@ -13,27 +13,47 @@ use super::edge_sample::bilinear_sample_u8_checked;
 use super::radial_profile;
 pub use super::radial_profile::Polarity;
 
+/// Outcome category for inner-edge estimation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InnerStatus {
+    /// Inner-edge estimate is valid and passed quality gates.
     Ok,
+    /// Inner-edge estimate was computed but rejected by quality gates.
     Rejected,
+    /// Estimation failed (invalid inputs or insufficient data).
     Failed,
 }
 
+/// Inner-edge estimation result anchored on the fitted outer ellipse.
 #[derive(Debug, Clone)]
 pub struct InnerEstimate {
+    /// Expected normalized inner radius (`Rin/Rout`).
     pub r_inner_expected: f32,
+    /// Search window in normalized radius units.
     pub search_window: [f32; 2],
+    /// Recovered normalized inner radius when available.
     pub r_inner_found: Option<f32>,
+    /// Selected radial derivative polarity.
     pub polarity: Option<Polarity>,
+    /// Absolute aggregated peak magnitude at the selected radius.
     pub peak_strength: Option<f32>,
+    /// Fraction of theta samples consistent with the selected radius.
     pub theta_consistency: Option<f32>,
+    /// Final estimator status.
     pub status: InnerStatus,
+    /// Optional human-readable reject/failure reason.
     pub reason: Option<String>,
+    /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
+    /// Optional sampled normalized radii corresponding to `radial_response_agg`.
     pub r_samples: Option<Vec<f32>>,
 }
 
+/// Estimate inner ring scale from a fitted outer ellipse.
+///
+/// This estimator samples radial profiles in the normalized outer-ellipse frame,
+/// aggregates edge responses across theta, and returns a robust single-radius
+/// inner-scale estimate with quality diagnostics.
 pub fn estimate_inner_scale_from_outer(
     gray: &GrayImage,
     outer: &Ellipse,

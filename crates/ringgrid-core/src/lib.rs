@@ -12,10 +12,13 @@
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
+#[allow(missing_docs)]
 pub mod board_spec;
+#[allow(missing_docs)]
 pub mod codebook;
 pub mod codec;
 pub mod conic;
+#[allow(missing_docs)]
 pub mod debug_dump;
 pub mod homography;
 pub mod marker_spec;
@@ -126,6 +129,7 @@ pub struct RansacStats {
 /// Full detection result for a single image.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
+    /// Detected markers in image coordinates.
     pub detected_markers: Vec<DetectedMarker>,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
@@ -138,6 +142,7 @@ pub struct DetectionResult {
 }
 
 impl DetectionResult {
+    /// Construct an empty result for an image with the provided dimensions.
     pub fn empty(width: u32, height: u32) -> Self {
         Self {
             detected_markers: Vec::new(),

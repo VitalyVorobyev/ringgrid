@@ -15,7 +15,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConicError {
     /// Too few points for the requested operation.
-    TooFewPoints { needed: usize, got: usize },
+    TooFewPoints {
+        /// Required minimum number of points.
+        needed: usize,
+        /// Provided number of points.
+        got: usize,
+    },
     /// The fitted conic is degenerate (e.g., a line pair or point).
     DegenerateConic,
     /// The fitted conic is not an ellipse (hyperbola or parabola).
@@ -23,7 +28,12 @@ pub enum ConicError {
     /// Numerical failure (singular matrix, etc.).
     NumericalFailure(String),
     /// RANSAC could not find enough inliers.
-    InsufficientInliers { needed: usize, found: usize },
+    InsufficientInliers {
+        /// Required minimum number of inliers.
+        needed: usize,
+        /// Number of inliers found by RANSAC.
+        found: usize,
+    },
 }
 
 impl std::fmt::Display for ConicError {
@@ -69,6 +79,7 @@ pub struct Ellipse {
 /// 2D conic in homogeneous image coordinates: `x^T Q x = 0`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Conic2D {
+    /// Symmetric conic matrix `Q` such that `x^T Q x = 0`.
     pub mat: Matrix3<f64>,
 }
 
@@ -161,9 +172,13 @@ impl Default for RansacConfig {
 /// Result of a RANSAC fit.
 #[derive(Debug, Clone)]
 pub struct RansacResult {
+    /// Final geometric ellipse fitted on the inlier set.
     pub ellipse: Ellipse,
+    /// Final conic coefficients corresponding to `ellipse`.
     pub conic: ConicCoeffs,
+    /// Inlier mask over the input points.
     pub inlier_mask: Vec<bool>,
+    /// Number of `true` entries in `inlier_mask`.
     pub num_inliers: usize,
 }
 

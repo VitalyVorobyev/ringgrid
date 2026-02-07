@@ -44,9 +44,13 @@ use outer_fit::{
 /// Debug collection options for `detect_rings_with_debug`.
 #[derive(Debug, Clone)]
 pub struct DebugCollectConfig {
+    /// Optional source image path copied into debug dump metadata.
     pub image_path: Option<String>,
+    /// Marker diameter used for this run (debug metadata only).
     pub marker_diameter_px: f64,
+    /// Maximum number of per-candidate records stored in stage dumps.
     pub max_candidates: usize,
+    /// Whether to include sampled edge points in debug output.
     pub store_points: bool,
 }
 
@@ -94,6 +98,18 @@ pub struct ProjectiveCenterParams {
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
     pub ratio_penalty_weight: f64,
+    /// Optional maximum allowed shift (pixels) from the pre-correction center.
+    ///
+    /// When set, large jumps are rejected and the original center is kept.
+    pub max_center_shift_px: Option<f64>,
+    /// Optional maximum accepted projective-selection residual.
+    ///
+    /// Higher values are less strict; `None` disables this gate.
+    pub max_selected_residual: Option<f64>,
+    /// Optional minimum accepted eigenvalue separation used by the selector.
+    ///
+    /// Low separation indicates unstable conic-pencil eigenpairs.
+    pub min_eig_separation: Option<f64>,
 }
 
 impl Default for ProjectiveCenterParams {
@@ -102,6 +118,9 @@ impl Default for ProjectiveCenterParams {
             enable: true,
             use_expected_ratio: true,
             ratio_penalty_weight: 1.0,
+            max_center_shift_px: None,
+            max_selected_residual: Some(0.25),
+            min_eig_separation: Some(1e-6),
         }
     }
 }
@@ -121,10 +140,12 @@ pub enum CircleRefinementMethod {
 }
 
 impl CircleRefinementMethod {
+    /// Returns `true` when this method includes non-linear board-plane refine.
     pub fn uses_nl_refine(self) -> bool {
         matches!(self, Self::NlBoardOnly | Self::NlBoardAndProjectiveCenter)
     }
 
+    /// Returns `true` when this method includes projective-center recovery.
     pub fn uses_projective_center(self) -> bool {
         matches!(
             self,
@@ -140,12 +161,19 @@ pub struct DetectConfig {
     pub marker_diameter_px: f32,
     /// Outer edge estimation configuration (anchored on `marker_diameter_px`).
     pub outer_estimation: OuterEstimationConfig,
+    /// Proposal generation configuration.
     pub proposal: ProposalConfig,
+    /// Radial edge sampling configuration.
     pub edge_sample: EdgeSampleConfig,
+    /// Marker decode configuration.
     pub decode: DecodeConfig,
+    /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
+    /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
+    /// Projective-center recovery controls.
     pub projective_center: ProjectiveCenterParams,
+    /// Homography-guided completion controls.
     pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
     pub min_semi_axis: f64,
@@ -342,26 +370,77 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         ..Default::default()
     };
 
+    let mut n_missing_conics = 0usize;
+    let mut n_solver_failed = 0usize;
+    let mut n_rejected_shift = 0usize;
+    let mut n_rejected_residual = 0usize;
+    let mut n_rejected_eig_sep = 0usize;
+    let mut n_applied = 0usize;
+
     for m in markers.iter_mut() {
         let (Some(inner), Some(outer)) = (m.ellipse_inner.as_ref(), m.ellipse_outer.as_ref())
         else {
+            n_missing_conics += 1;
             continue;
         };
 
+        let center_before = m.center;
         let q_inner = Conic2D::from_ellipse_params(inner).mat;
         let q_outer = Conic2D::from_ellipse_params(outer).mat;
-        if let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) {
-            let center_projective = [res.center.x, res.center.y];
-            m.center = center_projective;
-            m.center_projective = Some(center_projective);
-            m.vanishing_line = Some([
-                res.vanishing_line[0],
-                res.vanishing_line[1],
-                res.vanishing_line[2],
-            ]);
-            m.center_projective_residual = Some(res.debug.selected_residual);
+        let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) else {
+            n_solver_failed += 1;
+            continue;
+        };
+
+        if let Some(max_residual) = config.projective_center.max_selected_residual {
+            if !res.debug.selected_residual.is_finite()
+                || res.debug.selected_residual > max_residual
+            {
+                n_rejected_residual += 1;
+                continue;
+            }
         }
+
+        if let Some(min_sep) = config.projective_center.min_eig_separation {
+            if !res.debug.selected_eig_separation.is_finite()
+                || res.debug.selected_eig_separation < min_sep
+            {
+                n_rejected_eig_sep += 1;
+                continue;
+            }
+        }
+
+        let center_projective = [res.center.x, res.center.y];
+        let dx = center_projective[0] - center_before[0];
+        let dy = center_projective[1] - center_before[1];
+        let center_shift = (dx * dx + dy * dy).sqrt();
+        if let Some(max_shift_px) = config.projective_center.max_center_shift_px {
+            if !center_shift.is_finite() || center_shift > max_shift_px {
+                n_rejected_shift += 1;
+                continue;
+            }
+        }
+
+        m.center = center_projective;
+        m.center_projective = Some(center_projective);
+        m.vanishing_line = Some([
+            res.vanishing_line[0],
+            res.vanishing_line[1],
+            res.vanishing_line[2],
+        ]);
+        m.center_projective_residual = Some(res.debug.selected_residual);
+        n_applied += 1;
     }
+
+    tracing::debug!(
+        applied = n_applied,
+        missing_conics = n_missing_conics,
+        solver_failed = n_solver_failed,
+        rejected_shift = n_rejected_shift,
+        rejected_residual = n_rejected_residual,
+        rejected_eig_sep = n_rejected_eig_sep,
+        "projective-center application summary"
+    );
 }
 
 #[cfg(test)]
@@ -526,5 +605,65 @@ mod tests {
             "primary center should be updated from ellipse center, shift={}",
             shift
         );
+    }
+
+    #[test]
+    fn apply_projective_centers_falls_back_when_shift_gate_rejects() {
+        fn circle_conic(radius: f64) -> Matrix3<f64> {
+            Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))
+        }
+
+        fn project_conic(q_plane: &Matrix3<f64>, h: &Matrix3<f64>) -> Matrix3<f64> {
+            let h_inv = h.try_inverse().expect("invertible homography");
+            h_inv.transpose() * q_plane * h_inv
+        }
+
+        fn conic_matrix_to_params(q: Matrix3<f64>) -> crate::EllipseParams {
+            let q_sym = 0.5 * (q + q.transpose());
+            let coeffs = ConicCoeffs([
+                q_sym[(0, 0)],
+                2.0 * q_sym[(0, 1)],
+                q_sym[(1, 1)],
+                2.0 * q_sym[(0, 2)],
+                2.0 * q_sym[(1, 2)],
+                q_sym[(2, 2)],
+            ]);
+            let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
+            crate::EllipseParams {
+                center_xy: [e.cx, e.cy],
+                semi_axes: [e.a, e.b],
+                angle: e.angle,
+            }
+        }
+
+        let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);
+        let q_inner = project_conic(&circle_conic(4.0), &h);
+        let q_outer = project_conic(&circle_conic(7.0), &h);
+        let inner = conic_matrix_to_params(q_inner);
+        let outer = conic_matrix_to_params(q_outer);
+
+        let center_before = outer.center_xy;
+        let mut markers = vec![DetectedMarker {
+            id: Some(0),
+            confidence: 1.0,
+            center: center_before,
+            center_projective: None,
+            vanishing_line: None,
+            center_projective_residual: None,
+            ellipse_outer: Some(outer),
+            ellipse_inner: Some(inner),
+            fit: FitMetrics::default(),
+            decode: None,
+        }];
+
+        let mut cfg = DetectConfig::default();
+        cfg.projective_center.max_center_shift_px = Some(1e-6);
+        apply_projective_centers(&mut markers, &cfg);
+        let m = &markers[0];
+
+        assert_eq!(m.center, center_before);
+        assert!(m.center_projective.is_none());
+        assert!(m.vanishing_line.is_none());
+        assert!(m.center_projective_residual.is_none());
     }
 }

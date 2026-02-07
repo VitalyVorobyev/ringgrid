@@ -5,10 +5,14 @@ use crate::debug_dump as dbg;
 use crate::homography::project;
 use crate::ring::inner_estimate::{estimate_inner_scale_from_outer, InnerStatus, Polarity};
 use crate::ring::outer_estimate::OuterStatus;
-use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics};
+use crate::DetectedMarker;
 
 use super::{
     compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
+    marker_build::{
+        decode_metrics_from_result, fit_metrics_from_outer, inner_params_from_estimate,
+        marker_with_defaults,
+    },
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, DetectConfig,
     OuterFitCandidate,
 };
@@ -432,63 +436,34 @@ pub(super) fn complete_with_h(
             ))
         };
         let inner_params = inner_est.as_ref().and_then(|est| {
-            if est.status == InnerStatus::Ok {
-                let s = est
-                    .r_inner_found
-                    .unwrap_or(config.marker_spec.r_inner_expected) as f64;
-                Some(EllipseParams {
-                    center_xy: [outer.cx, outer.cy],
-                    semi_axes: [outer.a * s, outer.b * s],
-                    angle: outer.angle,
-                })
-            } else {
-                None
-            }
+            inner_params_from_estimate(
+                &outer,
+                est.status,
+                est.r_inner_found,
+                config.marker_spec.r_inner_expected,
+            )
         });
 
         // Build fit metrics and marker.
-        let fit = FitMetrics {
-            n_angles_total: edge.n_total_rays,
-            n_angles_with_both_edges: edge.n_good_rays,
-            n_points_outer: edge.outer_points.len(),
-            n_points_inner: 0,
-            ransac_inlier_ratio_outer: outer_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: None,
-            rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: None,
-        };
+        let fit = fit_metrics_from_outer(&edge, &outer, outer_ransac.as_ref());
 
-        let decode_metrics = decode_result
-            .as_ref()
-            .filter(|d| d.id == id)
-            .map(|d| DecodeMetrics {
-                observed_word: d.raw_word,
-                best_id: d.id,
-                best_rotation: d.rotation,
-                best_dist: d.dist,
-                margin: d.margin,
-                decode_confidence: d.confidence,
-            });
+        let decode_metrics =
+            decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));
 
         let confidence = decode_metrics
             .as_ref()
             .map(|d| d.decode_confidence)
             .unwrap_or(fit_confidence);
 
-        markers.push(DetectedMarker {
-            id: Some(id),
+        markers.push(marker_with_defaults(
+            Some(id),
             confidence,
             center,
-            center_projective: None,
-            vanishing_line: None,
-            center_projective_residual: None,
-            ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner_params.clone(),
-            fit: fit.clone(),
-            decode: decode_metrics,
-        });
+            Some(ellipse_to_params(&outer)),
+            inner_params.clone(),
+            fit.clone(),
+            decode_metrics,
+        ));
 
         stats.n_added += 1;
         tracing::debug!("Completion added id={} reproj_err={:.2}px", id, reproj_err);

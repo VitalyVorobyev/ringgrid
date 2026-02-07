@@ -1,3 +1,7 @@
+use super::super::marker_build::{
+    decode_metrics_from_result, fit_metrics_from_outer, inner_params_from_estimate,
+    marker_with_defaults,
+};
 use super::super::*;
 
 pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker> {
@@ -33,58 +37,31 @@ pub(super) fn run(gray: &GrayImage, config: &DetectConfig) -> Vec<DetectedMarker
         let center = compute_center(&outer);
 
         // Compute fit metrics
-        let fit = FitMetrics {
-            n_angles_total: edge.n_total_rays,
-            n_angles_with_both_edges: edge.n_good_rays,
-            n_points_outer: edge.outer_points.len(),
-            n_points_inner: 0,
-            ransac_inlier_ratio_outer: outer_ransac
-                .as_ref()
-                .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-            ransac_inlier_ratio_inner: None,
-            rms_residual_outer: Some(rms_sampson_distance(&outer, &edge.outer_points)),
-            rms_residual_inner: None,
-        };
+        let fit = fit_metrics_from_outer(&edge, &outer, outer_ransac.as_ref());
 
         // Stage 4b: Inner edge estimation for every accepted outer fit.
         let est = estimate_inner_scale_from_outer(gray, &outer, &config.marker_spec, false);
-        let inner_params = if est.status == InnerStatus::Ok {
-            let s = est
-                .r_inner_found
-                .unwrap_or(config.marker_spec.r_inner_expected) as f64;
-            Some(EllipseParams {
-                center_xy: [outer.cx, outer.cy],
-                semi_axes: [outer.a * s, outer.b * s],
-                angle: outer.angle,
-            })
-        } else {
-            None
-        };
+        let inner_params = inner_params_from_estimate(
+            &outer,
+            est.status,
+            est.r_inner_found,
+            config.marker_spec.r_inner_expected,
+        );
 
         // Build marker
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
 
-        let decode_metrics = decode_result.as_ref().map(|d| DecodeMetrics {
-            observed_word: d.raw_word,
-            best_id: d.id,
-            best_rotation: d.rotation,
-            best_dist: d.dist,
-            margin: d.margin,
-            decode_confidence: d.confidence,
-        });
+        let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
 
-        let marker = DetectedMarker {
-            id: decode_result.as_ref().map(|d| d.id),
+        let marker = marker_with_defaults(
+            decode_result.as_ref().map(|d| d.id),
             confidence,
             center,
-            center_projective: None,
-            vanishing_line: None,
-            center_projective_residual: None,
-            ellipse_outer: Some(ellipse_to_params(&outer)),
-            ellipse_inner: inner_params,
+            Some(ellipse_to_params(&outer)),
+            inner_params,
             fit,
-            decode: decode_metrics,
-        };
+            decode_metrics,
+        );
 
         markers.push(marker);
     }

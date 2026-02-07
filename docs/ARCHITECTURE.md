@@ -103,7 +103,7 @@ For each proposal:
 - Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
 - Radial edge probing code appears in both `ring/detect/*` and `refine/*`.
-- `ring/edge_sample.rs::sample_edges` is currently not used by production pipeline.
+- Legacy `ring/edge_sample.rs::sample_edges` path has been removed.
 
 ## Refactoring roadmap
 
@@ -124,15 +124,16 @@ Status: in progress.
 
 - Add shared marker-build helpers (fit/decode structs + conversion functions).
 - Introduce shared radial-profile utility module used by inner/outer/refine.
-- Decide fate of `edge_sample::sample_edges`:
-  - adopt as canonical local sampling path, or
-  - deprecate/remove if superseded.
+- Keep `edge_sample.rs` as shared sampling helpers/types only; remove legacy full-path sampling implementations once superseded.
 
 Work completed under this phase so far:
 - `refine_markers_circle_board` flow split into `refine/pipeline.rs` with helper modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`).
 - Inner-ellipse estimation is now run for every accepted outer fit (not decode-gated), reducing branching differences between decoded/undecoded local fits.
 - `Conic2D` was moved into `conic.rs` as a shared primitive, removing duplicate conic-matrix conversion code from `projective_center.rs`.
 - Added shared `ring/radial_profile.rs` and removed duplicated radial aggregation/peak helper logic from `inner_estimate.rs` and `outer_estimate.rs`.
+- CLI detect wiring now uses an adapter path (`CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`) instead of passing a large argument list through `run_detect`.
+- Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, debug pipeline, completion, and H-refine paths.
+- Legacy `sample_edges` implementation was removed (decision: deprecate/remove, not adopt).
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.

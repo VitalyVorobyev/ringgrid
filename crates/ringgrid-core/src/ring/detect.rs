@@ -2,14 +2,11 @@
 
 use image::GrayImage;
 
-use crate::conic::rms_sampson_distance;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
 use crate::refine;
-use crate::{
-    DecodeMetrics, DetectedMarker, DetectionResult, EllipseParams, FitMetrics, RansacStats,
-};
+use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 use super::decode::DecodeConfig;
 use super::edge_sample::EdgeSampleConfig;
@@ -29,6 +26,8 @@ mod completion;
 mod debug_pipeline;
 #[path = "detect/homography_utils.rs"]
 mod homography_utils;
+#[path = "detect/marker_build.rs"]
+mod marker_build;
 #[path = "detect/non_debug/mod.rs"]
 mod non_debug;
 #[path = "detect/outer_fit.rs"]

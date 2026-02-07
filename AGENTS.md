@@ -121,24 +121,25 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 ### 2) Redundant logic / data paths
 
 - Core dedup/global-filter/refine-H duplication has been reduced by delegating to shared module paths.
-- Marker assembly is still repeated across regular and debug flows (`non_debug/stage_fit_decode.rs`, `debug_pipeline.rs`, `completion.rs`, `refine_h.rs`).
+- Marker assembly duplication is reduced via shared helpers in `ring/detect/marker_build.rs`; debug-only schema mapping is still repeated where structures diverge.
 - Shared radial aggregation/peak helpers now live in `ring/radial_profile.rs`; remaining duplication is in sampling/gating policy rather than utility math.
 - Radial outer-edge probing still exists in both `ring/detect/*` and `refine/*` with slightly different gates.
-- `ring/edge_sample.rs::sample_edges` is currently unused by production pipeline (used only by its unit tests).
+- Legacy full-path `ring/edge_sample.rs::sample_edges` has been removed; `edge_sample.rs` now contains shared sampling types/helpers used by active stages.
 
 ### 3) Refactoring plan (ordered)
 
 1. Completed: split `ring/detect.rs` into focused modules while keeping behavior identical (synthetic aggregate parity checks kept exact).
 2. Completed: split `refine.rs` into focused modules (`refine/math.rs`, `refine/sampling.rs`, `refine/solver.rs`, `refine/pipeline.rs`).
-3. In progress (R2): introduce shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`) and reuse across regular/debug flows.
+3. Completed (R2): introduced shared builder helpers for marker construction (`FitMetrics`, `DecodeMetrics`, `EllipseParams`, `DetectedMarker`) and reused them across regular/debug/refine/completion flows.
 4. In progress (R2): inner estimation now runs for every accepted outer fit (not decode-gated), so center correction can run on all accepted fits when both conics exist.
 5. Completed (R2): moved `Conic2D` into `conic.rs` as shared primitive (removed duplicate matrix-form conversion implementation from `projective_center.rs`).
 6. Completed (R2): consolidated radial profile helpers into `ring/radial_profile.rs` and switched inner/outer estimators to use it.
-7. Next (R2): reduce CLI argument plumbing by introducing a small config adapter:
+7. Completed (R2): reduced CLI argument plumbing by introducing a config adapter path:
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
-8. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
-9. In progress (R3B): added `circle_refinement` method selector in detect config and CLI; downstream consumers still use legacy `center` as primary unless explicitly switched later.
-10. Next (R3B): decide whether downstream geometry stages should use `center_projective` as primary center (currently emitted as additional output fields).
+8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
+9. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
+10. In progress (R3B): added `circle_refinement` method selector in detect config and CLI; downstream consumers still use legacy `center` as primary unless explicitly switched later.
+11. Next (R3B): decide whether downstream geometry stages should use `center_projective` as primary center (currently emitted as additional output fields).
 
 ## Projective unbiased center recovery (implemented)
 

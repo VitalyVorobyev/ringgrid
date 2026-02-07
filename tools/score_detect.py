@@ -4,6 +4,7 @@
 Computes:
   - Detection precision and recall (by ID match within distance gate)
   - Center error statistics for true positives (`marker.center` vs GT center)
+  - Homography self-consistency error (`project(H, board_xy_mm)` vs predicted center)
   - Homography-vs-GT center error (if prediction JSON contains `homography`)
   - Decode accuracy statistics
   - Lists of missed IDs and false positives
@@ -75,6 +76,136 @@ def stats_1d(xs: list[float]) -> dict[str, float]:
     }
 
 
+def parse_camera_model(data: dict[str, Any]) -> Optional[dict[str, dict[str, float]]]:
+    """Parse camera model from prediction JSON."""
+    camera = data.get("camera")
+    if not isinstance(camera, dict):
+        return None
+    intr = camera.get("intrinsics")
+    dist = camera.get("distortion")
+    if not isinstance(intr, dict) or not isinstance(dist, dict):
+        return None
+
+    try:
+        model = {
+            "intrinsics": {
+                "fx": float(intr["fx"]),
+                "fy": float(intr["fy"]),
+                "cx": float(intr["cx"]),
+                "cy": float(intr["cy"]),
+            },
+            "distortion": {
+                "k1": float(dist["k1"]),
+                "k2": float(dist["k2"]),
+                "p1": float(dist["p1"]),
+                "p2": float(dist["p2"]),
+                "k3": float(dist["k3"]),
+            },
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    return model
+
+
+def distort_point(camera: dict[str, dict[str, float]], x_u: float, y_u: float) -> Optional[list[float]]:
+    """Map working (undistorted) pixel coordinates to distorted image coordinates."""
+    intr = camera["intrinsics"]
+    dist = camera["distortion"]
+    fx = intr["fx"]
+    fy = intr["fy"]
+    cx = intr["cx"]
+    cy = intr["cy"]
+    if abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        return None
+
+    xn = (x_u - cx) / fx
+    yn = (y_u - cy) / fy
+    r2 = xn * xn + yn * yn
+    r4 = r2 * r2
+    r6 = r4 * r2
+    radial = 1.0 + dist["k1"] * r2 + dist["k2"] * r4 + dist["k3"] * r6
+    x_tan = 2.0 * dist["p1"] * xn * yn + dist["p2"] * (r2 + 2.0 * xn * xn)
+    y_tan = dist["p1"] * (r2 + 2.0 * yn * yn) + 2.0 * dist["p2"] * xn * yn
+    xd = xn * radial + x_tan
+    yd = yn * radial + y_tan
+    x_d = fx * xd + cx
+    y_d = fy * yd + cy
+    if not (math.isfinite(x_d) and math.isfinite(y_d)):
+        return None
+    return [x_d, y_d]
+
+
+def undistort_point(
+    camera: dict[str, dict[str, float]],
+    x_d: float,
+    y_d: float,
+    max_iters: int = 15,
+    eps: float = 1e-12,
+) -> Optional[list[float]]:
+    """Invert radial-tangential distortion by fixed-point iteration."""
+    intr = camera["intrinsics"]
+    dist = camera["distortion"]
+    fx = intr["fx"]
+    fy = intr["fy"]
+    cx = intr["cx"]
+    cy = intr["cy"]
+    if abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        return None
+
+    xd = (x_d - cx) / fx
+    yd = (y_d - cy) / fy
+    x = xd
+    y = yd
+    for _ in range(max(1, int(max_iters))):
+        r2 = x * x + y * y
+        r4 = r2 * r2
+        r6 = r4 * r2
+        radial = 1.0 + dist["k1"] * r2 + dist["k2"] * r4 + dist["k3"] * r6
+        if abs(radial) < 1e-12:
+            return None
+        dx_tan = 2.0 * dist["p1"] * x * y + dist["p2"] * (r2 + 2.0 * x * x)
+        dy_tan = dist["p1"] * (r2 + 2.0 * y * y) + 2.0 * dist["p2"] * x * y
+        x_next = (xd - dx_tan) / radial
+        y_next = (yd - dy_tan) / radial
+        diff = (x_next - x) * (x_next - x) + (y_next - y) * (y_next - y)
+        x = x_next
+        y = y_next
+        if not math.isfinite(diff):
+            return None
+        if math.sqrt(diff) <= max(0.0, eps):
+            break
+
+    x_u = fx * x + cx
+    y_u = fy * y + cy
+    if not (math.isfinite(x_u) and math.isfinite(y_u)):
+        return None
+    return [x_u, y_u]
+
+
+def map_point_between_frames(
+    point: list[float],
+    src_frame: str,
+    dst_frame: str,
+    camera: Optional[dict[str, dict[str, float]]],
+) -> Optional[list[float]]:
+    """Map a 2D point between image/working frames."""
+    if not isinstance(point, list) or len(point) < 2:
+        return None
+    x = float(point[0])
+    y = float(point[1])
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None
+    if src_frame == dst_frame:
+        return [x, y]
+    if camera is None:
+        return None
+    if src_frame == "working" and dst_frame == "image":
+        return distort_point(camera, x, y)
+    if src_frame == "image" and dst_frame == "working":
+        return undistort_point(camera, x, y)
+    return None
+
+
 def gt_center_for_mode(gt_marker: dict[str, Any], mode: str) -> Optional[list[float]]:
     """Return GT center for frame mode: 'image' or 'working'."""
     if mode not in ("image", "working"):
@@ -95,7 +226,14 @@ def gt_center_for_mode(gt_marker: dict[str, Any], mode: str) -> Optional[list[fl
 
 
 def resolve_gt_mode(mode: str, pred_data: dict[str, Any]) -> str:
-    """Resolve 'auto' GT mode from prediction metadata."""
+    """Resolve GT frame mode. `auto` defaults to distorted image pixels."""
+    if mode != "auto":
+        return mode
+    return "image"
+
+
+def resolve_pred_mode(mode: str, pred_data: dict[str, Any]) -> str:
+    """Resolve prediction frame mode from metadata."""
     if mode != "auto":
         return mode
     return "working" if pred_data.get("camera") is not None else "image"
@@ -107,6 +245,8 @@ def score(
     gate: float = 8.0,
     *,
     center_gt_mode: str = "image",
+    pred_center_mode: str = "image",
+    camera_model: Optional[dict[str, dict[str, float]]] = None,
     expected_inner_ratio: Optional[float] = None,
     inner_ratio_tol: float = 0.08,
 ) -> dict:
@@ -138,7 +278,11 @@ def score(
 
     for pred_m, pred_idx in pred_with_id:
         pred_id = pred_m["id"]
-        pred_center = pred_m["center"]
+        pred_center = map_point_between_frames(
+            pred_m["center"], pred_center_mode, center_gt_mode, camera_model
+        )
+        if pred_center is None:
+            continue
 
         if pred_id not in gt_by_id:
             continue
@@ -212,9 +356,14 @@ def score(
     false_positives = []
     for pred_m, pred_idx in pred_with_id:
         if pred_idx not in pred_matched:
+            fp_center = map_point_between_frames(
+                pred_m["center"], pred_center_mode, center_gt_mode, camera_model
+            )
+            if fp_center is None:
+                fp_center = pred_m["center"]
             false_positives.append({
                 "pred_id": pred_m["id"],
-                "center": pred_m["center"],
+                "center": fp_center,
                 "confidence": pred_m.get("confidence", 0),
             })
     # Also count predictions without ID as FP
@@ -238,6 +387,7 @@ def score(
         )[:20],
         "gate_px": gate,
         "center_gt_frame": center_gt_mode,
+        "pred_center_frame": pred_center_mode,
     }
 
     if expected_inner_ratio is not None:
@@ -283,11 +433,6 @@ def score(
     return result
 
 
-def extract_ransac_stats(pred_data: dict) -> dict | None:
-    """Extract RANSAC/homography stats from prediction metadata."""
-    return pred_data.get("ransac")
-
-
 def project_h(h: list[list[float]], x: float, y: float) -> Optional[list[float]]:
     """Project 2D point through a 3x3 homography matrix."""
     q0 = h[0][0] * x + h[0][1] * y + h[0][2]
@@ -302,6 +447,8 @@ def homography_error_vs_gt(
     gt_markers: list[dict],
     pred_data: dict,
     gt_mode: str,
+    pred_h_mode: str,
+    camera_model: Optional[dict[str, dict[str, float]]],
 ) -> Optional[dict]:
     """Compute absolute geometric error between predicted H and GT projected centers.
 
@@ -324,7 +471,10 @@ def homography_error_vs_gt(
             or true_center is None
         ):
             continue
-        proj = project_h(h, float(board_xy[0]), float(board_xy[1]))
+        proj_raw = project_h(h, float(board_xy[0]), float(board_xy[1]))
+        if proj_raw is None:
+            continue
+        proj = map_point_between_frames(proj_raw, pred_h_mode, gt_mode, camera_model)
         if proj is None:
             continue
         errors.append(math.sqrt(dist2(proj, [float(true_center[0]), float(true_center[1])])))
@@ -335,6 +485,70 @@ def homography_error_vs_gt(
     out = stats_1d(errors)
     out["n_markers_used"] = len(errors)
     out["gt_frame"] = gt_mode
+    out["pred_h_frame"] = pred_h_mode
+    return out
+
+
+def homography_self_error(
+    gt_markers: list[dict],
+    pred_markers: list[dict],
+    pred_data: dict,
+    eval_frame: str,
+    pred_center_mode: str,
+    pred_h_mode: str,
+    camera_model: Optional[dict[str, dict[str, float]]],
+) -> Optional[dict]:
+    """Compute ||H(board_xy)-pred_center|| in a requested frame."""
+    h = pred_data.get("homography")
+    if not isinstance(h, list) or len(h) != 3:
+        return None
+    if any(not isinstance(row, list) or len(row) != 3 for row in h):
+        return None
+
+    board_by_id: dict[int, list[float]] = {}
+    for m in gt_markers:
+        mid = m.get("id")
+        board_xy = m.get("board_xy_mm")
+        if (
+            not isinstance(mid, int)
+            or not isinstance(board_xy, list)
+            or len(board_xy) < 2
+            or mid in board_by_id
+        ):
+            continue
+        x = float(board_xy[0])
+        y = float(board_xy[1])
+        if math.isfinite(x) and math.isfinite(y):
+            board_by_id[mid] = [x, y]
+
+    errors = []
+    for m in pred_markers:
+        mid = m.get("id")
+        if not isinstance(mid, int):
+            continue
+        board_xy = board_by_id.get(mid)
+        if board_xy is None:
+            continue
+        center_eval = map_point_between_frames(
+            m.get("center"), pred_center_mode, eval_frame, camera_model
+        )
+        if center_eval is None:
+            continue
+        proj_raw = project_h(h, board_xy[0], board_xy[1])
+        if proj_raw is None:
+            continue
+        proj_eval = map_point_between_frames(proj_raw, pred_h_mode, eval_frame, camera_model)
+        if proj_eval is None:
+            continue
+        errors.append(math.sqrt(dist2(center_eval, proj_eval)))
+
+    if not errors:
+        return None
+    out = stats_1d(errors)
+    out["n_markers_used"] = len(errors)
+    out["eval_frame"] = eval_frame
+    out["pred_center_frame"] = pred_center_mode
+    out["pred_h_frame"] = pred_h_mode
     return out
 
 
@@ -354,6 +568,7 @@ def print_report(result: dict) -> None:
     print(f"Recall:                  {result['recall']:.3f}")
     print(f"Gate:                    {result['gate_px']:.1f} px")
     print(f"Center GT frame:         {result.get('center_gt_frame', 'image')}")
+    print(f"Pred center frame:       {result.get('pred_center_frame', 'image')}")
 
     ce = result.get("center_error", {})
     if ce:
@@ -381,24 +596,35 @@ def print_report(result: dict) -> None:
         for fp in fps[:10]:
             print(f"  pred_id={fp['pred_id']:4d} conf={fp['confidence']:.3f} at ({fp['center'][0]:.0f}, {fp['center'][1]:.0f})")
 
-    rs = result.get("ransac_stats")
-    if rs:
-        print(f"\nHomography RANSAC:")
-        print(f"  candidates:    {rs['n_candidates']}")
-        print(f"  inliers:       {rs['n_inliers']}")
-        print(f"  threshold:     {rs['threshold_px']:.1f} px")
-        print(f"  mean reproj:   {rs['mean_err_px']:.2f} px")
-        print(f"  p95 reproj:    {rs['p95_err_px']:.2f} px")
+    hs = result.get("homography_self_error")
+    if hs:
+        print("Homography self-consistency:")
+        print(f"  eval frame:    {hs.get('eval_frame', 'image')}")
+        print(f"  markers used:  {hs['n_markers_used']}")
+        print(f"  mean:          {hs['mean']:.2f} px")
+        print(f"  median:        {hs['median']:.2f} px")
+        print(f"  p95:           {hs['p95']:.2f} px")
+        print(f"  max:           {hs['max']:.2f} px")
 
     hg = result.get("homography_error_vs_gt")
     if hg:
         print("Homography vs GT centers:")
         print(f"  GT frame:      {hg.get('gt_frame', 'image')}")
+        print(f"  pred H frame:  {hg.get('pred_h_frame', 'image')}")
         print(f"  markers used:  {hg['n_markers_used']}")
         print(f"  mean:          {hg['mean']:.2f} px")
         print(f"  median:        {hg['median']:.2f} px")
         print(f"  p95:           {hg['p95']:.2f} px")
         print(f"  max:           {hg['max']:.2f} px")
+
+    rs = result.get("detector_ransac_raw")
+    if rs:
+        print("Detector RANSAC (raw detector frame):")
+        print(f"  candidates:    {rs['n_candidates']}")
+        print(f"  inliers:       {rs['n_inliers']}")
+        print(f"  threshold:     {rs['threshold_px']:.1f} px")
+        print(f"  mean reproj:   {rs['mean_err_px']:.2f} px")
+        print(f"  p95 reproj:    {rs['p95_err_px']:.2f} px")
 
     ir = result.get("inner_ratio")
     if ir:
@@ -447,7 +673,26 @@ def main():
         help=(
             "GT frame for homography_error_vs_gt: "
             "'image' -> true_image_center, 'working' -> true_working_center, "
-            "'auto' selects working when prediction JSON contains camera metadata."
+            "'auto' defaults to image."
+        ),
+    )
+    parser.add_argument(
+        "--pred-center-frame",
+        choices=["auto", "image", "working"],
+        default="auto",
+        help=(
+            "Frame of prediction marker centers: "
+            "'image' for distorted image pixels, 'working' for undistorted working pixels. "
+            "'auto' chooses 'working' when prediction JSON contains camera metadata."
+        ),
+    )
+    parser.add_argument(
+        "--pred-homography-frame",
+        choices=["auto", "image", "working"],
+        default="auto",
+        help=(
+            "Frame of prediction homography outputs. "
+            "'auto' chooses 'working' when prediction JSON contains camera metadata."
         ),
     )
     parser.add_argument(
@@ -466,8 +711,11 @@ def main():
     gt_data = load_gt_data(args.gt)
     gt_markers = visible_gt_markers(gt_data)
     pred_markers, pred_data = load_pred(args.pred)
+    camera_model = parse_camera_model(pred_data)
     center_gt_mode = resolve_gt_mode(args.center_gt_key, pred_data)
     homography_gt_mode = resolve_gt_mode(args.homography_gt_key, pred_data)
+    pred_center_mode = resolve_pred_mode(args.pred_center_frame, pred_data)
+    pred_h_mode = resolve_pred_mode(args.pred_homography_frame, pred_data)
 
     expected_ratio = None
     if args.check_inner_ratio:
@@ -494,16 +742,36 @@ def main():
         pred_markers,
         gate=args.gate,
         center_gt_mode=center_gt_mode,
+        pred_center_mode=pred_center_mode,
+        camera_model=camera_model,
         expected_inner_ratio=expected_ratio,
         inner_ratio_tol=args.inner_ratio_tol,
     )
 
-    # Attach RANSAC stats from prediction file if present
-    ransac_stats = extract_ransac_stats(pred_data)
+    # Attach raw detector-reported RANSAC stats for diagnostics.
+    ransac_stats = pred_data.get("ransac")
     if ransac_stats:
-        result["ransac_stats"] = ransac_stats
+        result["detector_ransac_raw"] = ransac_stats
 
-    h_gt_stats = homography_error_vs_gt(gt_markers, pred_data, homography_gt_mode)
+    h_self_stats = homography_self_error(
+        gt_markers,
+        pred_markers,
+        pred_data,
+        eval_frame=center_gt_mode,
+        pred_center_mode=pred_center_mode,
+        pred_h_mode=pred_h_mode,
+        camera_model=camera_model,
+    )
+    if h_self_stats:
+        result["homography_self_error"] = h_self_stats
+
+    h_gt_stats = homography_error_vs_gt(
+        gt_markers,
+        pred_data,
+        homography_gt_mode,
+        pred_h_mode,
+        camera_model,
+    )
     if h_gt_stats:
         result["homography_error_vs_gt"] = h_gt_stats
 

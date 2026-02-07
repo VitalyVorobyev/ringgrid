@@ -101,13 +101,13 @@ Other commonly used toggles:
 `tools/score_detect.py` reports several geometric metrics; the three key ones are:
 
 - `center_error`: TP-only error between predicted `marker.center` and GT center in the selected frame (`--center-gt-key image|working|auto`).
-- `ransac.mean_err_px` / `ransac.p95_err_px`: homography self-consistency error from the detector output (board point projected by estimated `H` vs detected center, inliers only).
+- `homography_self_error`: homography self-consistency error (`project(H_est, board_xy_mm)` vs predicted marker center) in the selected evaluation frame.
 - `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT center in selected frame via `--homography-gt-key`).
 
 Interpretation:
 
 - Lower is better for all three.
-- `ransac.mean_err_px` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
+- `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
 - For camera-aware runs (`--cam-*` passed to detector), use `working` frame GT for both center and homography metrics.
 
 Distortion-aware eval example:
@@ -140,7 +140,7 @@ Run command:
   --marker_diameter 32.0
 ```
 
-| Mode | Center mean (px) | H reproj mean/p95 (px) | H vs GT mean/p95 (px) |
+| Mode | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|
 | `none` | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
 | `projective-center` | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
@@ -178,7 +178,7 @@ Snapshot:
 | Avg FP / image | 0.0 |
 | Avg center error (px) | 0.280 |
 | Avg H vs GT error (px) | 0.150 |
-| Avg H reproj error (px) | 0.230 |
+| Avg H self error (px) | 0.230 |
 
 ## CI Workflows
 

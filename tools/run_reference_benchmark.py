@@ -30,6 +30,45 @@ def find_ringgrid_binary() -> str | None:
     return None
 
 
+def binary_supports_camera_cli(binary: str) -> bool:
+    try:
+        result = subprocess.run(
+            [binary, "detect", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    text = (result.stdout or "") + "\n" + (result.stderr or "")
+    return "--cam-fx" in text
+
+
+def camera_cli_args_from_gt(gt_data: dict) -> list[str]:
+    camera = gt_data.get("camera")
+    if not isinstance(camera, dict):
+        return []
+    intr = camera.get("intrinsics")
+    dist = camera.get("distortion")
+    if not isinstance(intr, dict) or not isinstance(dist, dict):
+        return []
+    required_intr = ("fx", "fy", "cx", "cy")
+    required_dist = ("k1", "k2", "p1", "p2", "k3")
+    if any(k not in intr for k in required_intr) or any(k not in dist for k in required_dist):
+        return []
+    return [
+        f"--cam-fx={intr['fx']}",
+        f"--cam-fy={intr['fy']}",
+        f"--cam-cx={intr['cx']}",
+        f"--cam-cy={intr['cy']}",
+        f"--cam-k1={dist['k1']}",
+        f"--cam-k2={dist['k2']}",
+        f"--cam-p1={dist['p1']}",
+        f"--cam-p2={dist['p2']}",
+        f"--cam-k3={dist['k3']}",
+    ]
+
+
 def run_checked(cmd: list[str]) -> str:
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
@@ -43,7 +82,7 @@ def run_checked(cmd: list[str]) -> str:
 
 def score_to_row(score: dict) -> dict:
     ce = score.get("center_error") or {}
-    rs = score.get("ransac_stats") or {}
+    hs = score.get("homography_self_error") or {}
     hg = score.get("homography_error_vs_gt") or {}
     return {
         "n_tp": score.get("n_tp"),
@@ -52,8 +91,8 @@ def score_to_row(score: dict) -> dict:
         "precision": score.get("precision"),
         "recall": score.get("recall"),
         "center_mean_px": ce.get("mean"),
-        "h_reproj_mean_px": rs.get("mean_err_px"),
-        "h_reproj_p95_px": rs.get("p95_err_px"),
+        "h_self_mean_px": hs.get("mean"),
+        "h_self_p95_px": hs.get("p95"),
         "h_vs_gt_mean_px": hg.get("mean"),
         "h_vs_gt_p95_px": hg.get("p95"),
     }
@@ -77,8 +116,29 @@ def main() -> None:
     parser.add_argument("--tilt_strength", type=float, default=0.3)
     parser.add_argument("--illum_strength", type=float, default=0.15)
     parser.add_argument("--noise_sigma", type=float, default=0.0)
+    parser.add_argument("--cam-fx", type=float, default=None)
+    parser.add_argument("--cam-fy", type=float, default=None)
+    parser.add_argument("--cam-cx", type=float, default=None)
+    parser.add_argument("--cam-cy", type=float, default=None)
+    parser.add_argument("--cam-k1", type=float, default=0.0)
+    parser.add_argument("--cam-k2", type=float, default=0.0)
+    parser.add_argument("--cam-p1", type=float, default=0.0)
+    parser.add_argument("--cam-p2", type=float, default=0.0)
+    parser.add_argument("--cam-k3", type=float, default=0.0)
+    parser.add_argument("--pass-camera-to-detector", action="store_true")
     parser.add_argument("--skip_gen", action="store_true")
     args = parser.parse_args()
+
+    intr_values = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
+    has_any_intr = any(v is not None for v in intr_values)
+    has_all_intr = all(v is not None for v in intr_values)
+    has_dist_coeff = any(
+        abs(float(v)) > 1e-15 for v in (args.cam_k1, args.cam_k2, args.cam_p1, args.cam_p2, args.cam_k3)
+    )
+    if has_any_intr and not has_all_intr:
+        parser.error("camera intrinsics are partial; provide all of --cam-fx --cam-fy --cam-cx --cam-cy")
+    if not has_any_intr and has_dist_coeff:
+        parser.error("non-zero distortion requires camera intrinsics")
 
     out_dir = Path(args.out_dir)
     synth_dir = out_dir / "synth"
@@ -108,6 +168,30 @@ def main() -> None:
                 str(args.illum_strength),
                 "--noise_sigma",
                 str(args.noise_sigma),
+                *(
+                    [
+                        "--cam-fx",
+                        str(args.cam_fx),
+                        "--cam-fy",
+                        str(args.cam_fy),
+                        "--cam-cx",
+                        str(args.cam_cx),
+                        "--cam-cy",
+                        str(args.cam_cy),
+                        "--cam-k1",
+                        str(args.cam_k1),
+                        "--cam-k2",
+                        str(args.cam_k2),
+                        "--cam-p1",
+                        str(args.cam_p1),
+                        "--cam-p2",
+                        str(args.cam_p2),
+                        "--cam-k3",
+                        str(args.cam_k3),
+                    ]
+                    if has_all_intr
+                    else []
+                ),
             ]
         )
     else:
@@ -115,6 +199,13 @@ def main() -> None:
 
     ringgrid_bin = find_ringgrid_binary()
     use_cargo_run = ringgrid_bin is None
+    if (
+        not use_cargo_run
+        and args.pass_camera_to_detector
+        and not binary_supports_camera_cli(ringgrid_bin)
+    ):
+        print("  NOTE: selected ringgrid binary does not support camera CLI flags; falling back to cargo run")
+        use_cargo_run = True
 
     print("[2/3] Run detection variants")
     summary: dict[str, dict] = {
@@ -127,6 +218,23 @@ def main() -> None:
             "gate": args.gate,
             "seed": args.seed,
             "tilt_strength": args.tilt_strength,
+            "metric_frame": "image",
+            "pass_camera_to_detector": bool(args.pass_camera_to_detector),
+            "camera": (
+                {
+                    "fx": args.cam_fx,
+                    "fy": args.cam_fy,
+                    "cx": args.cam_cx,
+                    "cy": args.cam_cy,
+                    "k1": args.cam_k1,
+                    "k2": args.cam_k2,
+                    "p1": args.cam_p1,
+                    "p2": args.cam_p2,
+                    "k3": args.cam_k3,
+                }
+                if has_all_intr
+                else None
+            ),
         },
         "modes": {},
     }
@@ -173,6 +281,10 @@ def main() -> None:
                     str(args.marker_diameter),
                     *mode_args,
                 ]
+            if args.pass_camera_to_detector:
+                with open(gt_path) as f:
+                    gt_data = json.load(f)
+                detect_cmd.extend(camera_cli_args_from_gt(gt_data))
             run_checked(detect_cmd)
             run_checked(
                 [
@@ -184,6 +296,14 @@ def main() -> None:
                     str(det_path),
                     "--gate",
                     str(args.gate),
+                    "--center-gt-key",
+                    "image",
+                    "--homography-gt-key",
+                    "image",
+                    "--pred-center-frame",
+                    "working" if args.pass_camera_to_detector else "image",
+                    "--pred-homography-frame",
+                    "working" if args.pass_camera_to_detector else "image",
                     "--out",
                     str(score_path),
                 ]
@@ -197,8 +317,8 @@ def main() -> None:
             "avg_precision": mean_of(rows, "precision"),
             "avg_recall": mean_of(rows, "recall"),
             "avg_center_mean_px": mean_of(rows, "center_mean_px"),
-            "avg_h_reproj_mean_px": mean_of(rows, "h_reproj_mean_px"),
-            "avg_h_reproj_p95_px": mean_of(rows, "h_reproj_p95_px"),
+            "avg_h_self_mean_px": mean_of(rows, "h_self_mean_px"),
+            "avg_h_self_p95_px": mean_of(rows, "h_self_p95_px"),
             "avg_h_vs_gt_mean_px": mean_of(rows, "h_vs_gt_mean_px"),
             "avg_h_vs_gt_p95_px": mean_of(rows, "h_vs_gt_p95_px"),
             "avg_tp": mean_of(rows, "n_tp"),
@@ -211,13 +331,13 @@ def main() -> None:
         json.dump(summary, f, indent=2)
 
     print("[3/3] Summary")
-    print("mode | precision | recall | center_mean | H_reproj_mean/p95 | H_vs_GT_mean/p95")
+    print("mode | precision | recall | center_mean | H_self_mean/p95 | H_vs_GT_mean/p95")
     for mode, vals in summary["modes"].items():
         print(
             f"{mode} | "
             f"{vals['avg_precision']:.3f} | {vals['avg_recall']:.3f} | "
             f"{vals['avg_center_mean_px']:.3f} | "
-            f"{vals['avg_h_reproj_mean_px']:.3f}/{vals['avg_h_reproj_p95_px']:.3f} | "
+            f"{vals['avg_h_self_mean_px']:.3f}/{vals['avg_h_self_p95_px']:.3f} | "
             f"{vals['avg_h_vs_gt_mean_px']:.3f}/{vals['avg_h_vs_gt_p95_px']:.3f}"
         )
     print(f"\nWrote {summary_path}")

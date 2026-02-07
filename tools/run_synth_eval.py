@@ -236,10 +236,12 @@ def main():
             "--gate", str(args.gate),
             "--out", str(det_dir / f"score_{i:04d}.json"),
         ]
+        # All benchmark metrics are evaluated in distorted image pixel space.
+        cmd.extend(["--center-gt-key", "image", "--homography-gt-key", "image"])
         if args.pass_camera_to_detector:
-            cmd.extend(["--center-gt-key", "working", "--homography-gt-key", "working"])
+            cmd.extend(["--pred-center-frame", "working", "--pred-homography-frame", "working"])
         else:
-            cmd.extend(["--center-gt-key", "image", "--homography-gt-key", "image"])
+            cmd.extend(["--pred-center-frame", "image", "--pred-homography-frame", "image"])
         result = subprocess.run(cmd, capture_output=True, text=True)
         print(result.stdout.strip())
 
@@ -274,6 +276,7 @@ def main():
         # Aggregate center errors
         all_ce_primary = []
         all_ce_hgt = []
+        all_h_self = []
         for r in all_results:
             ce = r.get("center_error", {})
             if ce:
@@ -281,22 +284,18 @@ def main():
             ce_hgt = r.get("homography_error_vs_gt", {})
             if ce_hgt:
                 all_ce_hgt.append(ce_hgt["mean"])
+            ce_hself = r.get("homography_self_error", {})
+            if ce_hself:
+                all_h_self.append(ce_hself["mean"])
 
         if all_ce_primary:
             print(f"Avg center error:    {sum(all_ce_primary)/len(all_ce_primary):.2f} px")
         if all_ce_hgt:
             print(f"Avg H vs GT error:   {sum(all_ce_hgt)/len(all_ce_hgt):.2f} px")
+        if all_h_self:
+            print(f"Avg H self error:    {sum(all_h_self)/len(all_h_self):.2f} px")
 
-        # Aggregate RANSAC stats
-        all_ransac = [r["ransac_stats"] for r in all_results if r.get("ransac_stats")]
-        avg_reproj = None
-        if all_ransac:
-            avg_reproj = sum(rs["mean_err_px"] for rs in all_ransac) / len(all_ransac)
-            avg_p95 = sum(rs["p95_err_px"] for rs in all_ransac) / len(all_ransac)
-            avg_inliers = sum(rs["n_inliers"] for rs in all_ransac) / len(all_ransac)
-            print(f"Avg RANSAC inliers:  {avg_inliers:.0f}")
-            print(f"Avg reproj error:    {avg_reproj:.2f} px")
-            print(f"Avg reproj p95:      {avg_p95:.2f} px")
+        avg_h_self = sum(all_h_self) / len(all_h_self) if all_h_self else None
 
         # Write aggregate
         agg = {
@@ -312,7 +311,7 @@ def main():
             "avg_homography_error_vs_gt": (
                 sum(all_ce_hgt) / len(all_ce_hgt) if all_ce_hgt else None
             ),
-            "avg_reproj_error": avg_reproj,
+            "avg_homography_self_error": avg_h_self,
             "per_image": all_results,
         }
         agg_path = det_dir / "aggregate.json"

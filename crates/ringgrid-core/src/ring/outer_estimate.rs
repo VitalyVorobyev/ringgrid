@@ -7,9 +7,10 @@
 
 use image::GrayImage;
 
+use crate::camera::{CameraModel, PixelMapper};
 use crate::marker_spec::AngularAggregator;
 
-use super::edge_sample::bilinear_sample_u8_checked;
+use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;
 use super::radial_profile::Polarity;
 /// Expected sign convention for the outer-edge radial derivative.
@@ -132,6 +133,25 @@ pub fn estimate_outer_from_prior(
     cfg: &OuterEstimationConfig,
     store_response: bool,
 ) -> OuterEstimate {
+    estimate_outer_from_prior_with_mapper(
+        gray,
+        center_prior,
+        r_outer_expected_px,
+        cfg,
+        None,
+        store_response,
+    )
+}
+
+/// Distortion-aware variant of [`estimate_outer_from_prior`] using an abstract mapper.
+pub fn estimate_outer_from_prior_with_mapper(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    cfg: &OuterEstimationConfig,
+    mapper: Option<&dyn PixelMapper>,
+    store_response: bool,
+) -> OuterEstimate {
     let r_expected = r_outer_expected_px.max(1.0);
     let hw = cfg.search_halfwidth_px.max(0.5);
     let mut window = [r_expected - hw, r_expected + hw];
@@ -153,7 +173,7 @@ pub fn estimate_outer_from_prior(
     let n_t = cfg.theta_samples.max(8);
     let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
     let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
-
+    let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
     let cy = center_prior[1];
 
@@ -169,7 +189,7 @@ pub fn estimate_outer_from_prior(
         for &r in &r_samples {
             let x = cx + dx * r;
             let y = cy + dy * r;
-            let samp = match bilinear_sample_u8_checked(gray, x, y) {
+            let samp = match sampler.sample_checked(x, y) {
                 Some(v) => v,
                 None => {
                     ok = false;
@@ -357,6 +377,25 @@ pub fn estimate_outer_from_prior(
             None
         },
     })
+}
+
+/// Distortion-aware variant of [`estimate_outer_from_prior`] using [`CameraModel`].
+pub fn estimate_outer_from_prior_with_camera(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    cfg: &OuterEstimationConfig,
+    camera: Option<&CameraModel>,
+    store_response: bool,
+) -> OuterEstimate {
+    estimate_outer_from_prior_with_mapper(
+        gray,
+        center_prior,
+        r_outer_expected_px,
+        cfg,
+        camera.map(|c| c as &dyn PixelMapper),
+        store_response,
+    )
 }
 
 #[cfg(test)]

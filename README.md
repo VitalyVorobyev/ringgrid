@@ -40,9 +40,11 @@ python3 tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 
 target/release/ringgrid detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json \
-  --debug-json tools/out/synth_001/debug_0000.json \
   --marker-diameter 32.0
 ```
+
+Debug dump support is compile-time gated (disabled by default).  
+Build with `--features debug-trace` to enable `--debug-json` / `--debug-store-points`.
 
 ### 5. Score against ground truth
 
@@ -93,23 +95,75 @@ Other commonly used toggles:
 - `--no-global-filter`
 - `--no-refine`
 - `--no-complete`
-- `--debug-json <path>`
-- `--debug-store-points`
+- `--debug-json <path>` (requires `debug-trace` feature)
+- `--debug-store-points` (requires `debug-trace` feature)
 
 ## Metrics (Synthetic Scoring)
 
 `tools/score_detect.py` reports several geometric metrics; the three key ones are:
 
-- `center_error`: TP-only error between predicted `marker.center` and GT `true_image_center`.
-- `ransac.mean_err_px` / `ransac.p95_err_px`: homography self-consistency error from the detector output (board point projected by estimated `H` vs detected center, inliers only).
-- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT `true_image_center`) over visible GT markers.
+- `center_error`: TP-only error between predicted `marker.center` and GT center in the selected frame (`--center-gt-key image|working|auto`).
+- `homography_self_error`: homography self-consistency error (`project(H_est, board_xy_mm)` vs predicted marker center) in the selected evaluation frame.
+- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT center in selected frame via `--homography-gt-key`).
 
 Interpretation:
 
 - Lower is better for all three.
-- `ransac.mean_err_px` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
+- `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
+- For cross-run comparisons, evaluate all metrics in distorted image space.
+- Use `--center-gt-key image --homography-gt-key image`.
+- Set predicted frame explicitly via `--pred-center-frame image|working` and `--pred-homography-frame image|working`.
+
+Distortion-aware eval example:
+
+```bash
+./.venv/bin/python tools/run_synth_eval.py \
+  --n 3 \
+  --blur_px 0.8 \
+  --out_dir tools/out/r4_distortion_eval \
+  --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --pass_camera_to_detector
+```
 
 ## Performance Snapshots (Synthetic)
+
+### Distortion Benchmark (Projective-Center, 3 Images)
+
+Source:
+- `tools/out/r4_benchmark_distorted_nomapper_pc/summary.json`
+- `tools/out/r4_benchmark_distorted_mapper_pc/summary.json`
+
+Example distorted sample used in this benchmark:
+
+![Distortion benchmark sample](docs/assets/distortion_benchmark_sample.png)
+
+Run commands:
+
+```bash
+./.venv/bin/python tools/run_reference_benchmark.py \
+  --out_dir tools/out/r4_benchmark_distorted_nomapper_pc \
+  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --modes projective_center
+
+./.venv/bin/python tools/run_reference_benchmark.py \
+  --out_dir tools/out/r4_benchmark_distorted_mapper_pc \
+  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --pass-camera-to-detector \
+  --modes projective_center
+```
+
+Image-space metric snapshot:
+
+| Pipeline | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
+|---|---:|---:|---:|---:|---:|
+| No mapper | 1.000 | 0.975 | 0.237 | 1.053 / 2.903 | 1.359 / 3.341 |
+| Mapper enabled | 1.000 | 1.000 | 0.079 | 0.077 / 0.155 | 0.022 / 0.031 |
 
 ### Reference Benchmark (Clean, 3 Images)
 
@@ -126,7 +180,7 @@ Run command:
   --marker_diameter 32.0
 ```
 
-| Mode | Center mean (px) | H reproj mean/p95 (px) | H vs GT mean/p95 (px) |
+| Mode | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|
 | `none` | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
 | `projective-center` | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
@@ -164,7 +218,7 @@ Snapshot:
 | Avg FP / image | 0.0 |
 | Avg center error (px) | 0.280 |
 | Avg H vs GT error (px) | 0.150 |
-| Avg H reproj error (px) | 0.230 |
+| Avg H self error (px) | 0.230 |
 
 ## CI Workflows
 

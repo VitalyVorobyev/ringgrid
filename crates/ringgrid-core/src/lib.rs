@@ -14,6 +14,7 @@
 
 #[allow(missing_docs)]
 pub mod board_spec;
+pub mod camera;
 #[allow(missing_docs)]
 pub mod codebook;
 pub mod codec;
@@ -29,9 +30,12 @@ pub mod ring;
 /// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EllipseParams {
-    /// Center (x, y) in image pixels.
+    /// Center (x, y) in detector working pixel coordinates.
+    ///
+    /// This is the undistorted pixel frame when camera intrinsics are provided,
+    /// otherwise it is the raw image pixel frame.
     pub center_xy: [f64; 2],
-    /// Semi-axes [a, b] in pixels.
+    /// Semi-axes [a, b] in working-frame pixels.
     pub semi_axes: [f64; 2],
     /// Rotation angle in radians.
     pub angle: f64,
@@ -87,7 +91,10 @@ pub struct DetectedMarker {
     pub id: Option<usize>,
     /// Combined detection + decode confidence in [0, 1].
     pub confidence: f32,
-    /// Marker center in image coordinates (pixels).
+    /// Marker center in detector working pixel coordinates.
+    ///
+    /// This is the undistorted pixel frame when camera intrinsics are provided,
+    /// otherwise it is the raw image pixel frame.
     pub center: [f64; 2],
     /// Projective unbiased center estimated from inner+outer ring conics.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,27 +125,30 @@ pub struct RansacStats {
     pub n_candidates: usize,
     /// Number of inliers after RANSAC.
     pub n_inliers: usize,
-    /// Inlier threshold in pixels.
+    /// Inlier threshold in working-frame pixels.
     pub threshold_px: f64,
-    /// Mean reprojection error of inliers (pixels).
+    /// Mean reprojection error of inliers (working-frame pixels).
     pub mean_err_px: f64,
-    /// 95th percentile reprojection error (pixels).
+    /// 95th percentile reprojection error (working-frame pixels).
     pub p95_err_px: f64,
 }
 
 /// Full detection result for a single image.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
-    /// Detected markers in image coordinates.
+    /// Detected markers in detector working pixel coordinates.
     pub detected_markers: Vec<DetectedMarker>,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
-    /// Fitted board-to-image homography (3x3, row-major), if available.
+    /// Fitted board-to-working-frame homography (3x3, row-major), if available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homography: Option<[[f64; 3]; 3]>,
     /// RANSAC statistics, if homography was fitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ransac: Option<RansacStats>,
+    /// Camera model used for distortion-aware processing, if configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<camera::CameraModel>,
 }
 
 impl DetectionResult {
@@ -149,6 +159,7 @@ impl DetectionResult {
             image_size: [width, height],
             homography: None,
             ransac: None,
+            camera: None,
         }
     }
 }

@@ -19,7 +19,7 @@ crates/
         outer_estimate.rs # outer edge radius hypotheses near expected scale
         edge_sample.rs    # low-level image sampling helpers
         detect.rs         # top-level orchestration (delegates into ring/detect/*)
-        detect/           # non_debug/debug/completion/refine_h helpers
+        detect/           # shared stage modules + completion/refine_h helpers
         pipeline/         # dedup + global-filter shared stages
         inner_estimate.rs # inner radius estimation constrained by outer ellipse
         decode.rs         # 16-sector sampling + codebook matching
@@ -85,6 +85,10 @@ For each proposal:
 ### 8) Outputs
 
 - `DetectionResult` (`lib.rs`) for stable detector output.
+- Single-pass APIs report marker/homography coordinates in detector working pixel frame:
+  - raw image pixels when no mapper is provided;
+  - undistorted pixels when a mapper/intrinsics are provided.
+- Two-pass APIs map final marker centers back to original image-space pixels, while keeping ellipse and homography fields in working frame.
 - Includes optional `center_projective`, `vanishing_line`, and selection residual per marker.
 - Optional versioned debug dump (`debug_dump.rs`, schema `ringgrid.debug.v1`).
 
@@ -92,14 +96,15 @@ For each proposal:
 
 ### Mixed responsibilities
 
-- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/debug_pipeline.rs` (~727 LOC) and `ring/detect/completion.rs` (~634 LOC) are still large mixed-responsibility modules.
+- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/completion.rs` (~634 LOC) is still a large mixed-responsibility module.
 - `refine.rs` is now slim, but `refine/pipeline.rs` (~524 LOC) still concentrates many per-marker decision branches.
 - `conic.rs` combines model definitions and multiple algorithmic layers (fit + solver internals + RANSAC).
 - CLI `run_detect` has broad parameter plumbing and policy coupling.
 
 ### Duplicate or near-duplicate logic
 
-- Debug/non-debug branch duplication has been reduced for dedup/global-filter/refine-H core paths, but marker assembly is still repeated across multiple stage modules.
+- Debug/non-debug pipeline execution has been merged into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) with feature-gated trace collection.
+- Marker assembly is still repeated across some stage modules.
 - Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
 - Radial edge probing code appears in both `ring/detect/*` and `refine/*`.
@@ -112,7 +117,7 @@ For each proposal:
 Status: completed.
 
 - `detect_rings*` signatures remained stable.
-- Logic was extracted into focused modules (`ring/pipeline/*`, `ring/detect/*`, `ring/detect/non_debug/*`).
+- Logic was extracted into focused modules (`ring/pipeline/*`, `ring/detect/*`, `ring/detect/stages/*`).
 
 Exit criteria:
 - All current tests pass. Completed.
@@ -132,8 +137,10 @@ Work completed under this phase so far:
 - `Conic2D` was moved into `conic.rs` as a shared primitive, removing duplicate conic-matrix conversion code from `projective_center.rs`.
 - Added shared `ring/radial_profile.rs` and removed duplicated radial aggregation/peak helper logic from `inner_estimate.rs` and `outer_estimate.rs`.
 - CLI detect wiring now uses an adapter path (`CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`) instead of passing a large argument list through `run_detect`.
-- Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, debug pipeline, completion, and H-refine paths.
+- Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, completion, and H-refine paths.
 - Legacy `sample_edges` implementation was removed (decision: deprecate/remove, not adopt).
+- Debug/non-debug execution was unified into shared stage modules and `ring/detect/debug_pipeline.rs` was removed.
+- Compile-time trace feature `debug-trace` was added (default-disabled). Debug API/CLI are unavailable when the feature is not enabled.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.
@@ -192,12 +199,30 @@ Exit criteria:
 Goal:
 - Improve subpixel precision by accounting for lens distortion in edge sampling.
 
-Plan:
+Status: in progress.
+
+Completed:
 
 1. Add camera module with explicit calibration structs.
 2. Extend detect API/config with optional camera parameters.
 3. Add distortion-aware sampling utility used by local fit and both center-correction strategies (projective + NL board).
-4. Add synthetic-distortion generation/eval support in tools.
+4. Wire local fit (`outer_estimate`, `outer_fit`, `inner_estimate`, `inner_fit`), decode, and NL refine sampling to the shared distortion-aware sampler.
+5. Surface camera in detection/debug outputs.
+6. Introduce trait-based pixel mapping (`camera::PixelMapper`) so detector/refine algorithms can accept custom camera model adapters.
+7. Add unified two-pass detection orchestration:
+   - pass-1 without mapper,
+   - pass-2 with mapper and pass-1 seed injection,
+   - fallback retry without seeds when seeded pass-2 fails.
+8. Two-pass merge policy keeps pass-2 detections as primary and can retain pass-1 markers as fallback.
+9. `detect_rings_with_mapper` defaults to the two-pass path when mapper is provided; debug path remains single-pass.
+10. Added synthetic-distortion tooling:
+   - `tools/gen_synth.py` supports radial-tangential distortion and emits both working-frame and image-frame GT centers.
+   - `tools/run_synth_eval.py` can pass camera parameters to generator and detector, with stale-binary fallback to `cargo run`.
+   - `tools/score_detect.py` supports frame-aware GT comparison for `center_error` and `homography_error_vs_gt`.
+
+Remaining:
+
+1. Run larger benchmark sweeps to retune thresholds and verify improvement margins.
 
 R3/R4 coupling:
 - Center-correction strategies should consume undistorted edge elements when intrinsics are provided.

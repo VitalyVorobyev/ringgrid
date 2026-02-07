@@ -1,6 +1,7 @@
 use image::GrayImage;
 
-use crate::ring::edge_sample::bilinear_sample_u8_checked;
+use crate::camera::PixelMapper;
+use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::Polarity;
 use crate::EllipseParams;
 
@@ -8,6 +9,14 @@ use crate::EllipseParams;
 pub(super) struct SampleOutcome {
     pub(super) points: Vec<[f64; 2]>,
     pub(super) score_sum: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OuterSampleConfig {
+    pub(super) theta_samples: usize,
+    pub(super) search_halfwidth_px: f32,
+    pub(super) r_step_px: f32,
+    pub(super) min_ring_depth: f32,
 }
 
 fn ellipse_direction_radius_px(e: &EllipseParams, dir: [f32; 2]) -> Option<f32> {
@@ -33,18 +42,17 @@ fn ellipse_direction_radius_px(e: &EllipseParams, dir: [f32; 2]) -> Option<f32> 
 pub(super) fn sample_outer_points_around_ellipse(
     gray: &GrayImage,
     ellipse: &EllipseParams,
-    theta_samples: usize,
-    search_halfwidth_px: f32,
-    r_step_px: f32,
-    min_ring_depth: f32,
+    mapper: Option<&dyn PixelMapper>,
+    cfg: OuterSampleConfig,
     polarity: Polarity,
 ) -> SampleOutcome {
-    let n_t = theta_samples.max(8);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
+    let n_t = cfg.theta_samples.max(8);
     let cx = ellipse.center_xy[0] as f32;
     let cy = ellipse.center_xy[1] as f32;
 
-    let hw = search_halfwidth_px.max(0.0);
-    let step = r_step_px.clamp(0.25, 1.0);
+    let hw = cfg.search_halfwidth_px.max(0.0);
+    let step = cfg.r_step_px.clamp(0.25, 1.0);
     let n_ref = ((hw / step).ceil() as i32).max(1);
 
     let mut points = Vec::with_capacity(n_t);
@@ -78,11 +86,11 @@ pub(super) fn sample_outer_points_around_ellipse(
             let y1 = cy + dir[1] * (r + h);
             let x0 = cx + dir[0] * (r - h);
             let y0 = cy + dir[1] * (r - h);
-            let i1 = match bilinear_sample_u8_checked(gray, x1, y1) {
+            let i1 = match sampler.sample_checked(x1, y1) {
                 Some(v) => v,
                 None => continue,
             };
-            let i0 = match bilinear_sample_u8_checked(gray, x0, y0) {
+            let i0 = match sampler.sample_checked(x0, y0) {
                 Some(v) => v,
                 None => continue,
             };
@@ -110,11 +118,11 @@ pub(super) fn sample_outer_points_around_ellipse(
         let y_in = cy + dir[1] * (r - band);
         let x_out = cx + dir[0] * (r + band);
         let y_out = cy + dir[1] * (r + band);
-        let i_in = match bilinear_sample_u8_checked(gray, x_in, y_in) {
+        let i_in = match sampler.sample_checked(x_in, y_in) {
             Some(v) => v,
             None => continue,
         };
-        let i_out = match bilinear_sample_u8_checked(gray, x_out, y_out) {
+        let i_out = match sampler.sample_checked(x_out, y_out) {
             Some(v) => v,
             None => continue,
         };
@@ -122,7 +130,7 @@ pub(super) fn sample_outer_points_around_ellipse(
             Polarity::Pos => i_out - i_in,
             Polarity::Neg => i_in - i_out,
         };
-        if signed_depth < min_ring_depth {
+        if signed_depth < cfg.min_ring_depth {
             continue;
         }
 

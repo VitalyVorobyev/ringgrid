@@ -6,10 +6,11 @@
 
 use image::GrayImage;
 
+use crate::camera::{CameraModel, PixelMapper};
 use crate::conic::Ellipse;
 use crate::marker_spec::{InnerGradPolarity, MarkerSpec};
 
-use super::edge_sample::bilinear_sample_u8_checked;
+use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;
 pub use super::radial_profile::Polarity;
 
@@ -60,6 +61,17 @@ pub fn estimate_inner_scale_from_outer(
     spec: &MarkerSpec,
     store_response: bool,
 ) -> InnerEstimate {
+    estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, None, store_response)
+}
+
+/// Distortion-aware variant of [`estimate_inner_scale_from_outer`] using an abstract mapper.
+pub fn estimate_inner_scale_from_outer_with_mapper(
+    gray: &GrayImage,
+    outer: &Ellipse,
+    spec: &MarkerSpec,
+    mapper: Option<&dyn PixelMapper>,
+    store_response: bool,
+) -> InnerEstimate {
     if !outer.is_valid() || outer.a < 2.0 || outer.b < 2.0 {
         return InnerEstimate {
             r_inner_expected: spec.r_inner_expected,
@@ -107,6 +119,7 @@ pub fn estimate_inner_scale_from_outer(
     let b = outer.b as f32;
     let ca = (outer.angle as f32).cos();
     let sa = (outer.angle as f32).sin();
+    let sampler = DistortionAwareSampler::new(gray, mapper);
 
     // Collect per-theta derivative curves (only for thetas fully in-bounds).
     let mut curves: Vec<Vec<f32>> = Vec::new();
@@ -127,7 +140,7 @@ pub fn estimate_inner_scale_from_outer(
             let x = cx + ca * vx - sa * vy;
             let y = cy + sa * vx + ca * vy;
 
-            let samp = match bilinear_sample_u8_checked(gray, x, y) {
+            let samp = match sampler.sample_checked(x, y) {
                 Some(v) => v,
                 None => {
                     ok = false;
@@ -290,6 +303,23 @@ pub fn estimate_inner_scale_from_outer(
             None
         },
     })
+}
+
+/// Distortion-aware variant of [`estimate_inner_scale_from_outer`] using [`CameraModel`].
+pub fn estimate_inner_scale_from_outer_with_camera(
+    gray: &GrayImage,
+    outer: &Ellipse,
+    spec: &MarkerSpec,
+    camera: Option<&CameraModel>,
+    store_response: bool,
+) -> InnerEstimate {
+    estimate_inner_scale_from_outer_with_mapper(
+        gray,
+        outer,
+        spec,
+        camera.map(|c| c as &dyn PixelMapper),
+        store_response,
+    )
 }
 
 #[cfg(test)]

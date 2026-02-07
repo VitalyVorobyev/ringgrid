@@ -18,6 +18,33 @@ import sys
 from pathlib import Path
 
 
+def camera_cli_args_from_gt(gt_data: dict) -> list[str]:
+    """Build ringgrid CLI camera args from GT camera block."""
+    camera = gt_data.get("camera")
+    if not isinstance(camera, dict):
+        return []
+    intr = camera.get("intrinsics")
+    dist = camera.get("distortion")
+    if not isinstance(intr, dict) or not isinstance(dist, dict):
+        return []
+    required_intr = ("fx", "fy", "cx", "cy")
+    required_dist = ("k1", "k2", "p1", "p2", "k3")
+    if any(k not in intr for k in required_intr) or any(k not in dist for k in required_dist):
+        return []
+    # Use --arg=value form so negative coefficients are parsed correctly by clap.
+    return [
+        f"--cam-fx={intr['fx']}",
+        f"--cam-fy={intr['fy']}",
+        f"--cam-cx={intr['cx']}",
+        f"--cam-cy={intr['cy']}",
+        f"--cam-k1={dist['k1']}",
+        f"--cam-k2={dist['k2']}",
+        f"--cam-p1={dist['p1']}",
+        f"--cam-p2={dist['p2']}",
+        f"--cam-k3={dist['k3']}",
+    ]
+
+
 def find_ringgrid_binary() -> str:
     """Find the ringgrid binary."""
     candidates = [
@@ -29,6 +56,21 @@ def find_ringgrid_binary() -> str:
             return c
     # Try cargo run
     return None
+
+
+def binary_supports_camera_cli(binary: str) -> bool:
+    """Check whether binary detect subcommand supports camera CLI flags."""
+    try:
+        result = subprocess.run(
+            [binary, "detect", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    text = (result.stdout or "") + "\n" + (result.stderr or "")
+    return "--cam-fx" in text
 
 
 def main():
@@ -56,7 +98,32 @@ def main():
         default=0.3,
         help="Projective tilt strength passed through to tools/gen_synth.py (larger => stronger perspective).",
     )
+    parser.add_argument("--cam-fx", "--cam_fx", dest="cam_fx", type=float, default=None, help="Synthetic camera fx; enables distortion model in gen_synth.")
+    parser.add_argument("--cam-fy", "--cam_fy", dest="cam_fy", type=float, default=None, help="Synthetic camera fy; enables distortion model in gen_synth.")
+    parser.add_argument("--cam-cx", "--cam_cx", dest="cam_cx", type=float, default=None, help="Synthetic camera cx; enables distortion model in gen_synth.")
+    parser.add_argument("--cam-cy", "--cam_cy", dest="cam_cy", type=float, default=None, help="Synthetic camera cy; enables distortion model in gen_synth.")
+    parser.add_argument("--cam-k1", "--cam_k1", dest="cam_k1", type=float, default=0.0, help="Synthetic distortion k1.")
+    parser.add_argument("--cam-k2", "--cam_k2", dest="cam_k2", type=float, default=0.0, help="Synthetic distortion k2.")
+    parser.add_argument("--cam-p1", "--cam_p1", dest="cam_p1", type=float, default=0.0, help="Synthetic distortion p1.")
+    parser.add_argument("--cam-p2", "--cam_p2", dest="cam_p2", type=float, default=0.0, help="Synthetic distortion p2.")
+    parser.add_argument("--cam-k3", "--cam_k3", dest="cam_k3", type=float, default=0.0, help="Synthetic distortion k3.")
+    parser.add_argument(
+        "--pass_camera_to_detector",
+        action="store_true",
+        help="Pass per-image camera intrinsics/distortion from GT JSON into ringgrid detect CLI.",
+    )
     args = parser.parse_args()
+
+    intr_values = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
+    has_any_intr = any(v is not None for v in intr_values)
+    has_all_intr = all(v is not None for v in intr_values)
+    has_dist_coeff = any(
+        abs(float(v)) > 1e-15 for v in (args.cam_k1, args.cam_k2, args.cam_p1, args.cam_p2, args.cam_k3)
+    )
+    if has_any_intr and not has_all_intr:
+        parser.error("camera intrinsics are partial; provide all of --cam-fx --cam-fy --cam-cx --cam-cy")
+    if not has_any_intr and has_dist_coeff:
+        parser.error("non-zero distortion requires camera intrinsics (--cam-fx/--cam-fy/--cam-cx/--cam-cy)")
 
     out_dir = Path(args.out_dir)
     synth_dir = out_dir / "synth"
@@ -75,6 +142,18 @@ def main():
             "--codebook", args.codebook,
             "--tilt_strength", str(args.tilt_strength),
         ]
+        if has_all_intr:
+            gen_cmd.extend([
+                "--cam-fx", str(args.cam_fx),
+                "--cam-fy", str(args.cam_fy),
+                "--cam-cx", str(args.cam_cx),
+                "--cam-cy", str(args.cam_cy),
+                "--cam-k1", str(args.cam_k1),
+                "--cam-k2", str(args.cam_k2),
+                "--cam-p1", str(args.cam_p1),
+                "--cam-p2", str(args.cam_p2),
+                "--cam-k3", str(args.cam_k3),
+            ])
         if args.stress_inner_confusion:
             gen_cmd.append("--stress-inner-confusion")
         if args.stress_outer_confusion:
@@ -90,12 +169,15 @@ def main():
     # Step 2: Run detection on each image
     binary = find_ringgrid_binary()
     use_cargo_run = binary is None
+    if not use_cargo_run and args.pass_camera_to_detector and not binary_supports_camera_cli(binary):
+        print("  NOTE: selected ringgrid binary does not support camera CLI flags; falling back to cargo run")
+        use_cargo_run = True
 
     print(f"\n[2/3] Running detection on {args.n} images...")
     for i in range(args.n):
         img_path = synth_dir / f"img_{i:04d}.png"
         det_path = det_dir / f"det_{i:04d}.json"
-        debug_path = det_dir / f"debug_{i:04d}.json"
+        gt_path = synth_dir / f"gt_{i:04d}.json"
 
         if not img_path.exists():
             print(f"  WARNING: {img_path} not found, skipping")
@@ -107,7 +189,6 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
         else:
@@ -116,9 +197,12 @@ def main():
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),
-                "--debug-json", str(debug_path),
                 "--marker-diameter", str(args.marker_diameter),
             ]
+        if args.pass_camera_to_detector and gt_path.exists():
+            with open(gt_path) as f:
+                gt_data = json.load(f)
+            cmd.extend(camera_cli_args_from_gt(gt_data))
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -149,6 +233,12 @@ def main():
             "--gate", str(args.gate),
             "--out", str(det_dir / f"score_{i:04d}.json"),
         ]
+        # All benchmark metrics are evaluated in distorted image pixel space.
+        cmd.extend(["--center-gt-key", "image", "--homography-gt-key", "image"])
+        if args.pass_camera_to_detector:
+            cmd.extend(["--pred-center-frame", "working", "--pred-homography-frame", "working"])
+        else:
+            cmd.extend(["--pred-center-frame", "image", "--pred-homography-frame", "image"])
         result = subprocess.run(cmd, capture_output=True, text=True)
         print(result.stdout.strip())
 
@@ -183,6 +273,7 @@ def main():
         # Aggregate center errors
         all_ce_primary = []
         all_ce_hgt = []
+        all_h_self = []
         for r in all_results:
             ce = r.get("center_error", {})
             if ce:
@@ -190,22 +281,18 @@ def main():
             ce_hgt = r.get("homography_error_vs_gt", {})
             if ce_hgt:
                 all_ce_hgt.append(ce_hgt["mean"])
+            ce_hself = r.get("homography_self_error", {})
+            if ce_hself:
+                all_h_self.append(ce_hself["mean"])
 
         if all_ce_primary:
             print(f"Avg center error:    {sum(all_ce_primary)/len(all_ce_primary):.2f} px")
         if all_ce_hgt:
             print(f"Avg H vs GT error:   {sum(all_ce_hgt)/len(all_ce_hgt):.2f} px")
+        if all_h_self:
+            print(f"Avg H self error:    {sum(all_h_self)/len(all_h_self):.2f} px")
 
-        # Aggregate RANSAC stats
-        all_ransac = [r["ransac_stats"] for r in all_results if r.get("ransac_stats")]
-        avg_reproj = None
-        if all_ransac:
-            avg_reproj = sum(rs["mean_err_px"] for rs in all_ransac) / len(all_ransac)
-            avg_p95 = sum(rs["p95_err_px"] for rs in all_ransac) / len(all_ransac)
-            avg_inliers = sum(rs["n_inliers"] for rs in all_ransac) / len(all_ransac)
-            print(f"Avg RANSAC inliers:  {avg_inliers:.0f}")
-            print(f"Avg reproj error:    {avg_reproj:.2f} px")
-            print(f"Avg reproj p95:      {avg_p95:.2f} px")
+        avg_h_self = sum(all_h_self) / len(all_h_self) if all_h_self else None
 
         # Write aggregate
         agg = {
@@ -221,7 +308,7 @@ def main():
             "avg_homography_error_vs_gt": (
                 sum(all_ce_hgt) / len(all_ce_hgt) if all_ce_hgt else None
             ),
-            "avg_reproj_error": avg_reproj,
+            "avg_homography_self_error": avg_h_self,
             "per_image": all_results,
         }
         agg_path = det_dir / "aggregate.json"

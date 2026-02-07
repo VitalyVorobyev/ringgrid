@@ -8,7 +8,7 @@ use crate::ring::outer_estimate::OuterStatus;
 use crate::DetectedMarker;
 
 use super::{
-    compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
+    compute_center, debug_conv, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
     marker_build::{decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults},
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, DetectConfig,
     OuterFitCandidate,
@@ -23,6 +23,7 @@ pub(super) enum CompletionAttemptStatus {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(super) struct CompletionAttemptRecord {
     pub(super) id: usize,
     pub(super) projected_center_xy: [f32; 2],
@@ -34,6 +35,7 @@ pub(super) struct CompletionAttemptRecord {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub(super) struct CompletionStats {
     pub(super) n_candidates_total: usize,
     pub(super) n_in_image: usize,
@@ -52,6 +54,7 @@ pub(super) fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    mapper: Option<&dyn crate::camera::PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
@@ -175,6 +178,7 @@ pub(super) fn complete_with_h(
             [projected_center[0] as f32, projected_center[1] as f32],
             r_expected,
             config,
+            mapper,
             &edge_cfg,
             store_points_in_debug,
         ) {
@@ -262,11 +266,7 @@ pub(super) fn complete_with_h(
                         r_samples: outer_estimate.r_samples.clone(),
                     }
                 }),
-                ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
-                    center_xy: [outer.cx as f32, outer.cy as f32],
-                    semi_axes: [outer.a as f32, outer.b as f32],
-                    angle: outer.angle as f32,
-                }),
+                ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
                 ellipse_inner: None,
                 inner_estimation: None,
                 metrics: dbg::RingFitMetricsDebugV1 {
@@ -421,6 +421,7 @@ pub(super) fn complete_with_h(
             gray,
             &outer,
             &config.marker_spec,
+            mapper,
             &inner_fit_cfg,
             record_debug || store_points_in_debug,
         );
@@ -507,16 +508,8 @@ pub(super) fn complete_with_h(
                             r_samples: outer_estimate.r_samples.clone(),
                         }
                     }),
-                    ellipse_outer: Some(dbg::EllipseParamsDebugV1 {
-                        center_xy: [outer.cx as f32, outer.cy as f32],
-                        semi_axes: [outer.a as f32, outer.b as f32],
-                        angle: outer.angle as f32,
-                    }),
-                    ellipse_inner: inner_params.as_ref().map(|p| dbg::EllipseParamsDebugV1 {
-                        center_xy: [p.center_xy[0] as f32, p.center_xy[1] as f32],
-                        semi_axes: [p.semi_axes[0] as f32, p.semi_axes[1] as f32],
-                        angle: p.angle as f32,
-                    }),
+                    ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
+                    ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
                     inner_estimation: Some(dbg::InnerEstimationDebugV1 {
                         r_inner_expected: inner_fit.estimate.r_inner_expected,
                         search_window: inner_fit.estimate.search_window,
@@ -536,15 +529,12 @@ pub(super) fn complete_with_h(
                         radial_response_agg: inner_fit.estimate.radial_response_agg.clone(),
                         r_samples: inner_fit.estimate.r_samples.clone(),
                     }),
-                    metrics: dbg::RingFitMetricsDebugV1 {
-                        inlier_ratio_inner: fit.ransac_inlier_ratio_inner,
-                        inlier_ratio_outer: fit.ransac_inlier_ratio_outer,
-                        mean_resid_inner: fit.rms_residual_inner.map(|v| v as f32),
-                        mean_resid_outer: fit.rms_residual_outer.map(|v| v as f32),
-                        arc_coverage: arc_cov_dbg,
-                        valid_inner: inner_params.is_some(),
-                        valid_outer: true,
-                    },
+                    metrics: debug_conv::ring_fit_metrics(
+                        &fit,
+                        arc_cov_dbg,
+                        inner_params.is_some(),
+                        true,
+                    ),
                     points_outer: if store_points_in_debug {
                         Some(
                             edge.outer_points

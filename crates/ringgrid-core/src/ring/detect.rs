@@ -1,7 +1,10 @@
 //! Full ring detection pipeline: proposal → edge sampling → fit → decode → global filter.
 
 use image::GrayImage;
+use std::collections::HashSet;
 
+use crate::camera::PixelMapper;
+#[cfg(feature = "debug-trace")]
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
@@ -11,31 +14,32 @@ use crate::{DetectedMarker, DetectionResult, RansacStats};
 use super::decode::DecodeConfig;
 use super::edge_sample::EdgeSampleConfig;
 use super::outer_estimate::OuterEstimationConfig;
+#[cfg(feature = "debug-trace")]
+use super::pipeline::dedup::dedup_with_debug as dedup_with_debug_impl;
 use super::pipeline::dedup::{
     dedup_by_id as dedup_by_id_impl, dedup_markers as dedup_markers_impl,
-    dedup_with_debug as dedup_with_debug_impl,
 };
-use super::pipeline::global_filter::{
-    global_filter as global_filter_impl, global_filter_with_debug as global_filter_with_debug_impl,
-};
-use super::proposal::{find_proposals, ProposalConfig};
+use super::pipeline::global_filter::global_filter as global_filter_impl;
+#[cfg(feature = "debug-trace")]
+use super::pipeline::global_filter::global_filter_with_debug as global_filter_with_debug_impl;
+use super::proposal::{find_proposals, Proposal, ProposalConfig};
 #[path = "detect/completion.rs"]
 mod completion;
-#[path = "detect/debug_pipeline.rs"]
-mod debug_pipeline;
+#[path = "detect/debug_conv.rs"]
+mod debug_conv;
 #[path = "detect/homography_utils.rs"]
 mod homography_utils;
 #[path = "detect/inner_fit.rs"]
 mod inner_fit;
 #[path = "detect/marker_build.rs"]
 mod marker_build;
-#[path = "detect/non_debug/mod.rs"]
-mod non_debug;
 #[path = "detect/outer_fit.rs"]
 mod outer_fit;
 #[path = "detect/refine_h.rs"]
 mod refine_h;
-use completion::{CompletionAttemptRecord, CompletionAttemptStatus, CompletionStats};
+#[path = "detect/stages/mod.rs"]
+mod stages;
+use completion::{CompletionAttemptRecord, CompletionStats};
 use outer_fit::{
     compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
     marker_outer_radius_expected_px, mean_axis_px_from_marker,
@@ -43,6 +47,7 @@ use outer_fit::{
 };
 
 /// Debug collection options for `detect_rings_with_debug`.
+#[cfg(feature = "debug-trace")]
 #[derive(Debug, Clone)]
 pub struct DebugCollectConfig {
     /// Optional source image path copied into debug dump metadata.
@@ -53,6 +58,57 @@ pub struct DebugCollectConfig {
     pub max_candidates: usize,
     /// Whether to include sampled edge points in debug output.
     pub store_points: bool,
+}
+
+/// Seed-injection controls for proposal generation.
+#[derive(Debug, Clone)]
+pub struct SeedProposalParams {
+    /// Radius (pixels) used to merge seed centers with detector proposals.
+    pub merge_radius_px: f32,
+    /// Score assigned to injected seed proposals.
+    pub seed_score: f32,
+    /// Maximum number of seeds consumed in one run.
+    pub max_seeds: Option<usize>,
+}
+
+impl Default for SeedProposalParams {
+    fn default() -> Self {
+        Self {
+            merge_radius_px: 3.0,
+            seed_score: 1.0e12,
+            max_seeds: Some(512),
+        }
+    }
+}
+
+/// Two-pass orchestration parameters.
+#[derive(Debug, Clone)]
+pub struct TwoPassParams {
+    /// Seed-injection controls for the second pass.
+    pub seed: SeedProposalParams,
+    /// Keep pass-1 detections that are not present in pass-2 output.
+    pub keep_pass1_markers: bool,
+}
+
+impl Default for TwoPassParams {
+    fn default() -> Self {
+        Self {
+            seed: SeedProposalParams::default(),
+            keep_pass1_markers: true,
+        }
+    }
+}
+
+/// Estimator interface for deriving a pixel mapper from pass-1 detection output.
+///
+/// Implementations may keep and use multi-image state internally.
+pub trait PixelMapperEstimator {
+    /// Estimate a mapper using the current image and pass-1 result.
+    fn estimate_mapper(
+        &mut self,
+        gray: &GrayImage,
+        pass1: &DetectionResult,
+    ) -> Option<Box<dyn PixelMapper>>;
 }
 
 /// Configuration for homography-guided completion: attempt local fits for
@@ -165,6 +221,11 @@ pub struct DetectConfig {
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
+    /// Optional camera model for distortion-aware processing.
+    ///
+    /// When set, local fitting/sampling runs in the undistorted pixel frame
+    /// and all reported marker geometry/centers use that working frame.
+    pub camera: Option<crate::camera::CameraModel>,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -198,6 +259,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            camera: None,
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -213,31 +275,282 @@ impl Default for DetectConfig {
     }
 }
 
+fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
+    config.camera.as_ref().map(|c| c as &dyn PixelMapper)
+}
+
+fn capped_len<T>(slice: &[T], max_len: Option<usize>) -> usize {
+    max_len.unwrap_or(slice.len()).min(slice.len())
+}
+
+pub(super) fn find_proposals_with_seeds(
+    gray: &GrayImage,
+    proposal_cfg: &ProposalConfig,
+    seed_centers_image: &[[f32; 2]],
+    seed_cfg: &SeedProposalParams,
+) -> Vec<Proposal> {
+    let mut proposals = find_proposals(gray, proposal_cfg);
+    if seed_centers_image.is_empty() {
+        return proposals;
+    }
+
+    let merge_r2 = seed_cfg.merge_radius_px.max(0.0).powi(2);
+    for seed in seed_centers_image
+        .iter()
+        .take(capped_len(seed_centers_image, seed_cfg.max_seeds))
+    {
+        if !seed[0].is_finite() || !seed[1].is_finite() {
+            continue;
+        }
+
+        let mut merged = false;
+        for p in &mut proposals {
+            let dx = p.x - seed[0];
+            let dy = p.y - seed[1];
+            if dx * dx + dy * dy <= merge_r2 {
+                p.score = p.score.max(seed_cfg.seed_score);
+                merged = true;
+                break;
+            }
+        }
+        if !merged {
+            proposals.push(Proposal {
+                x: seed[0],
+                y: seed[1],
+                score: seed_cfg.seed_score,
+            });
+        }
+    }
+
+    proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    proposals
+}
+
+fn map_centers_to_image_space(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper) {
+    let mut failed_primary = 0usize;
+    let mut failed_projective = 0usize;
+    for m in markers.iter_mut() {
+        if let Some(center_img) = mapper.working_to_image_pixel(m.center) {
+            m.center = center_img;
+        } else {
+            failed_primary += 1;
+        }
+        if let Some(c_proj) = m.center_projective {
+            if let Some(c_proj_img) = mapper.working_to_image_pixel(c_proj) {
+                m.center_projective = Some(c_proj_img);
+            } else {
+                failed_projective += 1;
+                m.center_projective = None;
+            }
+        }
+    }
+    if failed_primary > 0 || failed_projective > 0 {
+        tracing::warn!(
+            failed_primary,
+            failed_projective,
+            "failed to map some working-space centers back to image space"
+        );
+    }
+}
+
+fn merge_two_pass_markers(
+    pass1: &[DetectedMarker],
+    mut pass2: Vec<DetectedMarker>,
+    keep_pass1_markers: bool,
+    dedup_radius: f64,
+) -> Vec<DetectedMarker> {
+    if keep_pass1_markers {
+        let ids_pass2: HashSet<usize> = pass2.iter().filter_map(|m| m.id).collect();
+        for m in pass1 {
+            if let Some(id) = m.id {
+                if ids_pass2.contains(&id) {
+                    continue;
+                }
+            }
+            pass2.push(m.clone());
+        }
+    }
+
+    let mut merged = dedup_markers(pass2, dedup_radius);
+    dedup_by_id(&mut merged);
+    merged
+}
+
+fn collect_seed_centers_image(
+    pass1: &DetectionResult,
+    seed_cfg: &SeedProposalParams,
+) -> Vec<[f32; 2]> {
+    pass1
+        .detected_markers
+        .iter()
+        .take(capped_len(&pass1.detected_markers, seed_cfg.max_seeds))
+        .filter_map(|m| {
+            let x = m.center[0] as f32;
+            let y = m.center[1] as f32;
+            if x.is_finite() && y.is_finite() {
+                Some([x, y])
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn detect_rings_with_mapper_and_seeds(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    seed_centers_image: &[[f32; 2]],
+    seed_cfg: &SeedProposalParams,
+) -> DetectionResult {
+    stages::run(gray, config, mapper, seed_centers_image, seed_cfg)
+}
+
 /// Run the full ring detection pipeline.
 pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    non_debug::run(gray, config)
+    detect_rings_with_mapper_and_seeds(
+        gray,
+        config,
+        config_mapper(config),
+        &[],
+        &SeedProposalParams::default(),
+    )
+}
+
+/// Run the full ring detection pipeline with an optional custom pixel mapper.
+///
+/// This allows users to plug in camera/distortion models via a lightweight trait adapter.
+/// When a mapper is provided, detection runs in two passes:
+/// raw pass-1, then mapper-aware pass-2 with pass-1 seed injection.
+pub fn detect_rings_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    if let Some(mapper) = mapper {
+        detect_rings_two_pass_with_mapper(gray, config, mapper, &TwoPassParams::default())
+    } else {
+        detect_rings_with_mapper_and_seeds(gray, config, None, &[], &SeedProposalParams::default())
+    }
+}
+
+/// Run two-pass detection:
+/// - pass-1 in raw image space,
+/// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+pub fn detect_rings_two_pass_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: &dyn PixelMapper,
+    params: &TwoPassParams,
+) -> DetectionResult {
+    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
+    let seed_centers_image = collect_seed_centers_image(&pass1, &params.seed);
+
+    let mut pass2 = detect_rings_with_mapper_and_seeds(
+        gray,
+        config,
+        Some(mapper),
+        &seed_centers_image,
+        &params.seed,
+    );
+    if pass2.detected_markers.is_empty() && !seed_centers_image.is_empty() {
+        tracing::info!("seeded pass-2 returned no detections; retrying pass-2 without seeds");
+        pass2 = detect_rings_with_mapper_and_seeds(gray, config, Some(mapper), &[], &params.seed);
+    }
+    map_centers_to_image_space(&mut pass2.detected_markers, mapper);
+    pass2.detected_markers = merge_two_pass_markers(
+        &pass1.detected_markers,
+        pass2.detected_markers,
+        params.keep_pass1_markers,
+        config.dedup_radius,
+    );
+    pass2
+}
+
+/// Run two-pass detection where the pass-2 mapper is estimated from pass-1 output.
+pub fn detect_rings_two_pass_with_estimator(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    estimator: &mut dyn PixelMapperEstimator,
+    params: &TwoPassParams,
+) -> DetectionResult {
+    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
+    let Some(mapper) = estimator.estimate_mapper(gray, &pass1) else {
+        return pass1;
+    };
+
+    let seed_centers_image = collect_seed_centers_image(&pass1, &params.seed);
+    let mut pass2 = detect_rings_with_mapper_and_seeds(
+        gray,
+        config,
+        Some(mapper.as_ref()),
+        &seed_centers_image,
+        &params.seed,
+    );
+    if pass2.detected_markers.is_empty() && !seed_centers_image.is_empty() {
+        tracing::info!("seeded pass-2 returned no detections; retrying pass-2 without seeds");
+        pass2 = detect_rings_with_mapper_and_seeds(
+            gray,
+            config,
+            Some(mapper.as_ref()),
+            &[],
+            &params.seed,
+        );
+    }
+    map_centers_to_image_space(&mut pass2.detected_markers, mapper.as_ref());
+    pass2.detected_markers = merge_two_pass_markers(
+        &pass1.detected_markers,
+        pass2.detected_markers,
+        params.keep_pass1_markers,
+        config.dedup_radius,
+    );
+    pass2
 }
 
 /// Run the full ring detection pipeline and collect a versioned debug dump.
+///
+/// Debug collection currently uses single-pass execution.
+#[cfg(feature = "debug-trace")]
 pub fn detect_rings_with_debug(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
-    debug_pipeline::run(gray, config, debug_cfg)
+    detect_rings_with_debug_and_mapper(gray, config, debug_cfg, config_mapper(config))
 }
 
-pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig) {
-    if config.circle_refinement == CircleRefinementMethod::None {
+/// Run the full ring detection pipeline with debug collection and optional custom mapper.
+///
+/// Debug collection currently uses single-pass execution.
+#[cfg(feature = "debug-trace")]
+pub fn detect_rings_with_debug_and_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    debug_cfg: &DebugCollectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> (DetectionResult, dbg::DebugDumpV1) {
+    stages::run_with_debug(
+        gray,
+        config,
+        debug_cfg,
+        mapper,
+        &[],
+        &SeedProposalParams::default(),
+    )
+}
+
+pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
+    if config.circle_refinement == CircleRefinementMethod::None || has_mapper {
         return;
     }
 
     tracing::warn!(
         "center correction is running without camera intrinsics/undistortion; \
-         lens distortion can bias corrected centers (planned to be addressed in R4)"
+         lens distortion can still bias corrected centers"
     );
 }
 
+#[cfg(feature = "debug-trace")]
 fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,
@@ -246,6 +559,7 @@ fn dedup_with_debug(
     dedup_with_debug_impl(markers, cand_idx, radius)
 }
 
+#[cfg(feature = "debug-trace")]
 fn global_filter_with_debug(
     markers: &[DetectedMarker],
     cand_idx: &[usize],
@@ -259,13 +573,15 @@ fn global_filter_with_debug(
     global_filter_with_debug_impl(markers, cand_idx, config)
 }
 
+#[cfg(feature = "debug-trace")]
 fn refine_with_homography_with_debug(
     gray: &GrayImage,
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
-    refine_h::refine_with_homography_with_debug(gray, markers, h, config)
+    refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
@@ -295,8 +611,10 @@ fn refine_with_homography(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
-    let (refined, _debug) = refine_with_homography_with_debug(gray, markers, h, config);
+    let (refined, _debug) =
+        refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper);
     refined
 }
 
@@ -309,6 +627,7 @@ fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
@@ -317,6 +636,7 @@ fn complete_with_h(
         h,
         markers,
         config,
+        mapper,
         store_points_in_debug,
         record_debug,
     )
@@ -453,6 +773,7 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::PixelMapper;
     use crate::conic::ConicCoeffs;
     use crate::FitMetrics;
     use image::GrayImage;
@@ -460,6 +781,7 @@ mod tests {
     use nalgebra::Matrix3;
     use nalgebra::Vector3;
 
+    #[cfg(feature = "debug-trace")]
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
         let img = GrayImage::new(64, 64);
@@ -481,6 +803,85 @@ mod tests {
         assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V1);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
+    }
+
+    #[test]
+    fn seeded_proposals_include_injected_centers() {
+        let img = GrayImage::new(32, 32);
+        let seeds = vec![[10.0f32, 12.0f32], [20.0f32, 22.0f32]];
+        let props = find_proposals_with_seeds(
+            &img,
+            &ProposalConfig::default(),
+            &seeds,
+            &SeedProposalParams::default(),
+        );
+        assert_eq!(props.len(), seeds.len());
+    }
+
+    #[test]
+    fn map_centers_to_image_space_maps_primary_and_projective_centers() {
+        struct ShiftMapper;
+        impl PixelMapper for ShiftMapper {
+            fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some([image_xy[0] - 5.0, image_xy[1] + 2.0])
+            }
+            fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some([working_xy[0] + 5.0, working_xy[1] - 2.0])
+            }
+        }
+
+        let mut markers = vec![DetectedMarker {
+            id: Some(0),
+            confidence: 1.0,
+            center: [1.0, 2.0],
+            center_projective: Some([3.0, 4.0]),
+            vanishing_line: None,
+            center_projective_residual: None,
+            ellipse_outer: None,
+            ellipse_inner: None,
+            fit: FitMetrics::default(),
+            decode: None,
+        }];
+
+        map_centers_to_image_space(&mut markers, &ShiftMapper);
+        assert_eq!(markers[0].center, [6.0, 0.0]);
+        assert_eq!(markers[0].center_projective, Some([8.0, 2.0]));
+    }
+
+    #[cfg(feature = "debug-trace")]
+    #[test]
+    fn detect_accepts_custom_pixel_mapper_adapter() {
+        struct IdentityMapper;
+        impl PixelMapper for IdentityMapper {
+            fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some(image_xy)
+            }
+            fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+                Some(working_xy)
+            }
+        }
+
+        let img = GrayImage::new(64, 64);
+        let cfg = DetectConfig {
+            use_global_filter: false,
+            refine_with_h: false,
+            ..DetectConfig::default()
+        };
+        let dbg_cfg = DebugCollectConfig {
+            image_path: None,
+            marker_diameter_px: 32.0,
+            max_candidates: 10,
+            store_points: false,
+        };
+
+        let mapper = IdentityMapper;
+        let (res, _dump) = detect_rings_with_debug_and_mapper(
+            &img,
+            &cfg,
+            &dbg_cfg,
+            Some(&mapper as &dyn PixelMapper),
+        );
+        assert_eq!(res.image_size, [64, 64]);
     }
 
     #[test]
@@ -531,7 +932,8 @@ mod tests {
         cfg.decode.min_decode_confidence = 1.0; // force decode rejection (avoid mismatch gate)
 
         let mut markers: Vec<DetectedMarker> = Vec::new();
-        let (stats, _attempts) = complete_with_h(&img, &h_matrix, &mut markers, &cfg, false, false);
+        let (stats, _attempts) =
+            complete_with_h(&img, &h_matrix, &mut markers, &cfg, None, false, false);
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, Some(id));

@@ -133,6 +133,168 @@ def project_point(H: np.ndarray, x: float, y: float) -> tuple[float, float]:
     return float(p[0] / p[2]), float(p[1] / p[2])
 
 
+def project_circle_points(
+    H: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    n: int = 64,
+) -> np.ndarray:
+    """Project sampled circle points through homography H into working coordinates."""
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    pts_board = np.column_stack([
+        cx + radius * np.cos(angles),
+        cy + radius * np.sin(angles),
+        np.ones(n),
+    ])
+    pts_img = (H @ pts_board.T).T
+    return pts_img[:, :2] / pts_img[:, 2:3]
+
+
+def camera_has_distortion(camera: Optional[dict]) -> bool:
+    if not camera:
+        return False
+    d = camera["distortion"]
+    return any(abs(float(d[k])) > 1e-15 for k in ("k1", "k2", "p1", "p2", "k3"))
+
+
+def distort_normalized(
+    x: np.ndarray | float,
+    y: np.ndarray | float,
+    distortion: dict[str, float],
+) -> tuple[np.ndarray | float, np.ndarray | float]:
+    """Apply Brown-Conrady radial-tangential distortion in normalized coordinates."""
+    k1 = float(distortion["k1"])
+    k2 = float(distortion["k2"])
+    p1 = float(distortion["p1"])
+    p2 = float(distortion["p2"])
+    k3 = float(distortion["k3"])
+
+    r2 = x * x + y * y
+    r4 = r2 * r2
+    r6 = r4 * r2
+    radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6
+    x_tan = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
+    y_tan = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
+    return x * radial + x_tan, y * radial + y_tan
+
+
+def distort_pixel(camera: dict, x_u: float, y_u: float) -> Optional[tuple[float, float]]:
+    """Map working (undistorted) pixel coordinates to distorted image pixel coordinates."""
+    k = camera["intrinsics"]
+    fx = float(k["fx"])
+    fy = float(k["fy"])
+    cx = float(k["cx"])
+    cy = float(k["cy"])
+    if abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        return None
+
+    xn = (x_u - cx) / fx
+    yn = (y_u - cy) / fy
+    xd, yd = distort_normalized(xn, yn, camera["distortion"])
+    x_d = fx * xd + cx
+    y_d = fy * yd + cy
+    if not (math.isfinite(x_d) and math.isfinite(y_d)):
+        return None
+    return float(x_d), float(y_d)
+
+
+def undistort_pixel(
+    camera: dict,
+    x_d: np.ndarray,
+    y_d: np.ndarray,
+    max_iters: int = 15,
+    eps: float = 1e-12,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Invert radial-tangential distortion by fixed-point iteration."""
+    k = camera["intrinsics"]
+    fx = float(k["fx"])
+    fy = float(k["fy"])
+    cx = float(k["cx"])
+    cy = float(k["cy"])
+    if abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        raise ValueError("invalid camera intrinsics for undistortion")
+
+    xd = (x_d - cx) / fx
+    yd = (y_d - cy) / fy
+    x = xd.copy()
+    y = yd.copy()
+
+    d = camera["distortion"]
+    k1 = float(d["k1"])
+    k2 = float(d["k2"])
+    p1 = float(d["p1"])
+    p2 = float(d["p2"])
+    k3 = float(d["k3"])
+
+    for _ in range(max(1, int(max_iters))):
+        r2 = x * x + y * y
+        r4 = r2 * r2
+        r6 = r4 * r2
+        radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6
+        radial = np.where(np.abs(radial) < 1e-12, np.nan, radial)
+
+        dx_tan = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
+        dy_tan = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
+        x_next = (xd - dx_tan) / radial
+        y_next = (yd - dy_tan) / radial
+
+        diff = np.nanmax((x_next - x) ** 2 + (y_next - y) ** 2)
+        x = x_next
+        y = y_next
+        if not np.isfinite(diff) or math.sqrt(float(diff)) <= max(0.0, eps):
+            break
+
+    x_u = fx * x + cx
+    y_u = fy * y + cy
+    return x_u, y_u
+
+
+def bilinear_sample_gray(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Bilinear sample grayscale image at float coordinates; out-of-bounds -> 0."""
+    h, w = img.shape
+    x0 = np.floor(x).astype(np.int64)
+    y0 = np.floor(y).astype(np.int64)
+    x1 = x0 + 1
+    y1 = y0 + 1
+
+    inb = (x0 >= 0) & (y0 >= 0) & (x1 < w) & (y1 < h)
+    out = np.zeros_like(x, dtype=np.float64)
+    if not np.any(inb):
+        return out
+
+    fx = x - x0
+    fy = y - y0
+    idx = np.where(inb)[0]
+
+    p00 = img[y0[idx], x0[idx]]
+    p10 = img[y0[idx], x1[idx]]
+    p01 = img[y1[idx], x0[idx]]
+    p11 = img[y1[idx], x1[idx]]
+
+    out[idx] = (
+        (1.0 - fx[idx]) * (1.0 - fy[idx]) * p00
+        + fx[idx] * (1.0 - fy[idx]) * p10
+        + (1.0 - fx[idx]) * fy[idx] * p01
+        + fx[idx] * fy[idx] * p11
+    )
+    return out
+
+
+def apply_radial_tangential_distortion(img_working: np.ndarray, camera: Optional[dict]) -> np.ndarray:
+    """Warp working-frame image into distorted image frame using camera model."""
+    if not camera or not camera_has_distortion(camera):
+        return img_working
+
+    h, w = img_working.shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    xd = xx.ravel()
+    yd = yy.ravel()
+    xu, yu = undistort_pixel(camera, xd, yd)
+    vals = bilinear_sample_gray(img_working, xu, yu)
+    return vals.reshape(h, w)
+
+
 def project_ellipse_params(
     H: np.ndarray,
     cx: float, cy: float,
@@ -143,17 +305,7 @@ def project_ellipse_params(
     Returns approximate ellipse parameters in image coords.
     Uses sample-based approach: project points on the circle, fit ellipse.
     """
-    n = 64
-    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
-    pts_board = np.column_stack([
-        cx + radius * np.cos(angles),
-        cy + radius * np.sin(angles),
-        np.ones(n),
-    ])
-    pts_img = (H @ pts_board.T).T
-    pts_img = pts_img[:, :2] / pts_img[:, 2:3]
-
-    # Fit ellipse via direct conic fit
+    pts_img = project_circle_points(H, cx, cy, radius, n=64)
     return fit_ellipse_from_points(pts_img)
 
 
@@ -927,6 +1079,49 @@ def _draw_scale_bar_raster(
 
 # ── Main generator ──────────────────────────────────────────────────────
 
+def camera_from_args(args: argparse.Namespace) -> Optional[dict]:
+    """Build camera model dict from CLI args, or return None."""
+    intr = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
+    has_any_intr = any(v is not None for v in intr)
+    has_all_intr = all(v is not None for v in intr)
+    has_dist_coeff = any(
+        abs(float(v)) > 1e-15
+        for v in (args.cam_k1, args.cam_k2, args.cam_p1, args.cam_p2, args.cam_k3)
+    )
+
+    if has_any_intr and not has_all_intr:
+        raise ValueError("camera intrinsics require all of --cam-fx --cam-fy --cam-cx --cam-cy")
+    if not has_any_intr and has_dist_coeff:
+        raise ValueError("non-zero distortion requires camera intrinsics")
+    if not has_any_intr:
+        return None
+
+    fx = float(args.cam_fx)
+    fy = float(args.cam_fy)
+    cx = float(args.cam_cx)
+    cy = float(args.cam_cy)
+    if not (math.isfinite(fx) and math.isfinite(fy) and math.isfinite(cx) and math.isfinite(cy)):
+        raise ValueError("camera intrinsics must be finite")
+    if abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        raise ValueError("camera intrinsics fx/fy must be non-zero")
+
+    return {
+        "intrinsics": {
+            "fx": fx,
+            "fy": fy,
+            "cx": cx,
+            "cy": cy,
+        },
+        "distortion": {
+            "k1": float(args.cam_k1),
+            "k2": float(args.cam_k2),
+            "p1": float(args.cam_p1),
+            "p2": float(args.cam_p2),
+            "k3": float(args.cam_k3),
+        },
+    }
+
+
 def generate_one_sample(
     idx: int,
     out_dir: Path,
@@ -942,6 +1137,7 @@ def generate_one_sample(
     projective: bool,
     tilt_strength: float,
     seed: int,
+    camera: Optional[dict] = None,
     stress_inner_confusion: bool = False,
     stress_outer_confusion: bool = False,
 ) -> dict:
@@ -967,6 +1163,9 @@ def generate_one_sample(
         stress_outer_confusion=stress_outer_confusion,
     )
 
+    # Geometric distortion (working -> image frame), then photometric effects.
+    img = apply_radial_tangential_distortion(img, camera)
+
     # Post-processing
     img = apply_anisotropic_blur(img, blur_px, rng)
     img = apply_illumination_gradient(img, rng, strength=illum_strength)
@@ -984,12 +1183,43 @@ def generate_one_sample(
     gt_markers = []
     for i, (q, r, mx, my) in enumerate(markers):
         code_id = i % len(codebook)
-        # True projected center
-        ix, iy = project_point(H, mx, my)
+        # True projected center in working frame and image frame.
+        wx, wy = project_point(H, mx, my)
+        if camera:
+            dxy = distort_pixel(camera, wx, wy)
+            ix, iy = dxy if dxy is not None else (float("nan"), float("nan"))
+        else:
+            ix, iy = wx, wy
 
-        # Projected outer ellipse
-        outer_ell = project_ellipse_params(H, mx, my, outer_radius)
-        inner_ell = project_ellipse_params(H, mx, my, inner_radius)
+        # Circle projections in working frame.
+        outer_pts_work = project_circle_points(H, mx, my, outer_radius, n=96)
+        inner_pts_work = project_circle_points(H, mx, my, inner_radius, n=96)
+        outer_ell_work = fit_ellipse_from_points(outer_pts_work)
+        inner_ell_work = fit_ellipse_from_points(inner_pts_work)
+
+        # Approximate projected curves in image frame after distortion.
+        if camera and camera_has_distortion(camera):
+            outer_pts_img = []
+            for p in outer_pts_work:
+                qd = distort_pixel(camera, float(p[0]), float(p[1]))
+                if qd is not None:
+                    outer_pts_img.append(qd)
+            inner_pts_img = []
+            for p in inner_pts_work:
+                qd = distort_pixel(camera, float(p[0]), float(p[1]))
+                if qd is not None:
+                    inner_pts_img.append(qd)
+            if len(outer_pts_img) >= 6:
+                outer_ell_img = fit_ellipse_from_points(np.asarray(outer_pts_img, dtype=np.float64))
+            else:
+                outer_ell_img = outer_ell_work
+            if len(inner_pts_img) >= 6:
+                inner_ell_img = fit_ellipse_from_points(np.asarray(inner_pts_img, dtype=np.float64))
+            else:
+                inner_ell_img = inner_ell_work
+        else:
+            outer_ell_img = outer_ell_work
+            inner_ell_img = inner_ell_work
 
         visible = (0 <= ix < img_w) and (0 <= iy < img_h)
 
@@ -998,9 +1228,12 @@ def generate_one_sample(
             "q": q,
             "r": r,
             "board_xy_mm": [float(mx), float(my)],
+            "true_working_center": [float(wx), float(wy)],
             "true_image_center": [float(ix), float(iy)],
-            "outer_ellipse": outer_ell,
-            "inner_ellipse": inner_ell,
+            "outer_ellipse": outer_ell_img,
+            "inner_ellipse": inner_ell_img,
+            "outer_ellipse_working": outer_ell_work,
+            "inner_ellipse_working": inner_ell_work,
             "visible": visible,
         })
 
@@ -1017,6 +1250,7 @@ def generate_one_sample(
         "noise_sigma": noise_sigma,
         "projective": projective,
         "tilt_strength": tilt,
+        "camera": camera,
         "stress_inner_confusion": stress_inner_confusion,
         "stress_outer_confusion": stress_outer_confusion,
         "seed": seed + idx,
@@ -1059,6 +1293,15 @@ def main() -> None:
         default=0.02,
         help="Additive Gaussian noise sigma in normalized image intensity units (0 disables).",
     )
+    parser.add_argument("--cam-fx", type=float, default=None, help="Camera fx (pixels) for synthetic radial-tangential distortion.")
+    parser.add_argument("--cam-fy", type=float, default=None, help="Camera fy (pixels) for synthetic radial-tangential distortion.")
+    parser.add_argument("--cam-cx", type=float, default=None, help="Camera cx (pixels) for synthetic radial-tangential distortion.")
+    parser.add_argument("--cam-cy", type=float, default=None, help="Camera cy (pixels) for synthetic radial-tangential distortion.")
+    parser.add_argument("--cam-k1", type=float, default=0.0, help="Synthetic radial distortion k1.")
+    parser.add_argument("--cam-k2", type=float, default=0.0, help="Synthetic radial distortion k2.")
+    parser.add_argument("--cam-p1", type=float, default=0.0, help="Synthetic tangential distortion p1.")
+    parser.add_argument("--cam-p2", type=float, default=0.0, help="Synthetic tangential distortion p2.")
+    parser.add_argument("--cam-k3", type=float, default=0.0, help="Synthetic radial distortion k3.")
     parser.add_argument(
         "--stress-inner-confusion",
         action="store_true",
@@ -1111,6 +1354,10 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        camera = camera_from_args(args)
+    except ValueError as e:
+        parser.error(str(e))
 
     if args.print_all:
         args.print_png = True
@@ -1137,6 +1384,7 @@ def main() -> None:
         "marker_code_band_outer_radius_mm": marker_code_band_outer_radius,
         "marker_code_band_inner_radius_mm": marker_code_band_inner_radius,
         "n_markers": len(lattice),
+        "camera": camera,
         "markers": [
             {"id": i, "q": q, "r": r, "xy_mm": [round(x, 4), round(y, 4)]}
             for i, (q, r, x, y) in enumerate(lattice)
@@ -1192,6 +1440,7 @@ def main() -> None:
             projective=args.projective,
             tilt_strength=args.tilt_strength,
             seed=args.seed,
+            camera=camera,
             stress_inner_confusion=args.stress_inner_confusion,
             stress_outer_confusion=args.stress_outer_confusion,
         )

@@ -246,6 +246,8 @@ pub struct DetectConfig {
     pub nl_refine: refine::RefineParams,
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
+    /// Self-undistort estimation controls.
+    pub self_undistort: crate::self_undistort::SelfUndistortConfig,
 }
 
 impl DetectConfig {
@@ -307,6 +309,7 @@ impl Default for DetectConfig {
             refine_with_h: true,
             nl_refine: refine::RefineParams::default(),
             board: BoardLayout::default(),
+            self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
         }
     }
 }
@@ -381,6 +384,8 @@ fn map_marker_image_to_working(
     out.ellipse_outer = None;
     out.ellipse_inner = None;
     out.vanishing_line = None;
+    out.edge_points_outer = None;
+    out.edge_points_inner = None;
     Some(out)
 }
 
@@ -890,6 +895,8 @@ mod tests {
             center_projective_residual: None,
             ellipse_outer: None,
             ellipse_inner: None,
+            edge_points_outer: None,
+            edge_points_inner: None,
             fit: FitMetrics::default(),
             decode: None,
         };
@@ -901,6 +908,8 @@ mod tests {
         assert!(mapped.ellipse_outer.is_none());
         assert!(mapped.ellipse_inner.is_none());
         assert!(mapped.vanishing_line.is_none());
+        assert!(mapped.edge_points_outer.is_none());
+        assert!(mapped.edge_points_inner.is_none());
     }
 
     #[test]
@@ -1041,6 +1050,8 @@ mod tests {
             center_projective_residual: None,
             ellipse_outer: Some(outer),
             ellipse_inner: Some(inner),
+            edge_points_outer: None,
+            edge_points_inner: None,
             fit: FitMetrics::default(),
             decode: None,
         }];
@@ -1114,6 +1125,8 @@ mod tests {
             center_projective_residual: None,
             ellipse_outer: Some(outer),
             ellipse_inner: Some(inner),
+            edge_points_outer: None,
+            edge_points_inner: None,
             fit: FitMetrics::default(),
             decode: None,
         }];

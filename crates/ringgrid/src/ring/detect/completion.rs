@@ -484,6 +484,8 @@ pub(super) fn complete_with_h(
             quality.center,
             Some(crate::EllipseParams::from(&outer)),
             inner_params.clone(),
+            Some(edge.outer_points.clone()),
+            Some(inner_fit.points_inner.clone()),
             fit.clone(),
             decode_metrics,
         ));

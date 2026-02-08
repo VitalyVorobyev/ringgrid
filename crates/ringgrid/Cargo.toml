@@ -1,5 +1,5 @@
 [package]
-name = "ringgrid-core"
+name = "ringgrid"
 version = "0.1.0"
 edition = "2021"
 description = "Core algorithms for ringgrid circle/ring calibration target detection"

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ringgrid-core",
+    "crates/ringgrid",
     "crates/ringgrid-cli",
 ]
 

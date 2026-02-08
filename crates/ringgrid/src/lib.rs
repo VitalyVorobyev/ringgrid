@@ -28,6 +28,7 @@ pub mod marker_spec;
 pub mod projective_center;
 pub mod refine;
 pub mod ring;
+pub mod self_undistort;
 
 /// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -157,6 +158,12 @@ pub struct DetectedMarker {
     /// Inner ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_inner: Option<EllipseParams>,
+    /// Raw sub-pixel outer edge inlier points used for ellipse fitting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_outer: Option<Vec<[f64; 2]>>,
+    /// Raw sub-pixel inner edge inlier points used for ellipse fitting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_inner: Option<Vec<[f64; 2]>>,
     /// Fit quality metrics.
     pub fit: FitMetrics,
     /// Decode metrics (present if decoding was attempted).
@@ -195,6 +202,9 @@ pub struct DetectionResult {
     /// Camera model used for distortion-aware processing, if configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub camera: Option<camera::CameraModel>,
+    /// Estimated self-undistort division model, if self-undistort was run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub self_undistort: Option<self_undistort::SelfUndistortResult>,
 }
 
 impl DetectionResult {
@@ -206,6 +216,7 @@ impl DetectionResult {
             homography: None,
             ransac: None,
             camera: None,
+            self_undistort: None,
         }
     }
 }

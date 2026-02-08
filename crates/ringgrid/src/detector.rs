@@ -131,6 +131,52 @@ impl Detector {
     ) -> (DetectionResult, DebugDumpV1) {
         crate::ring::detect::detect_rings_with_debug(image, &self.config, debug_cfg)
     }
+
+    /// Detect markers, then estimate and optionally apply a self-undistort model.
+    ///
+    /// Runs the standard pipeline first. If the self-undistort config (in
+    /// `DetectConfig`) is enabled and enough markers with inner+outer edge points
+    /// are found, estimates a 1-parameter division-model distortion. If the
+    /// improvement exceeds the threshold, re-runs detection with the estimated
+    /// model as a `PixelMapper` (two-pass pipeline).
+    pub fn detect_with_self_undistort(&self, image: &GrayImage) -> DetectionResult {
+        use crate::ring::detect::{detect_rings, detect_rings_two_pass_with_mapper, TwoPassParams};
+        use crate::self_undistort::estimate_self_undistort;
+
+        let mut result = detect_rings(image, &self.config);
+        let su_cfg = &self.config.self_undistort;
+        if !su_cfg.enable {
+            return result;
+        }
+
+        let image_size = result.image_size;
+        let su_result = match estimate_self_undistort(&result.detected_markers, image_size, su_cfg)
+        {
+            Some(r) => r,
+            None => return result,
+        };
+
+        if su_result.applied {
+            let model = su_result.model;
+            let pass2 = detect_rings_two_pass_with_mapper(
+                image,
+                &self.config,
+                &model,
+                &TwoPassParams::default(),
+            );
+            result = pass2;
+        }
+
+        result.self_undistort = Some(su_result);
+        result
+    }
+
+    /// Detect with known camera intrinsics for precision mode.
+    ///
+    /// Thin wrapper around [`detect_with_camera`](Self::detect_with_camera).
+    pub fn detect_precision(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
+        self.detect_with_camera(image, camera)
+    }
 }
 
 #[cfg(test)]

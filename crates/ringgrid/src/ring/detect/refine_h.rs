@@ -114,6 +114,8 @@ pub(super) fn refine_with_homography_with_debug(
             center,
             Some(crate::EllipseParams::from(&outer)),
             inner_params.clone(),
+            Some(edge.outer_points.clone()),
+            Some(inner_fit.points_inner.clone()),
             fit.clone(),
             decode_metrics,
         );

@@ -62,6 +62,7 @@ pub(super) fn run(
                     homography: None,
                     ransac: None,
                     camera: config.camera,
+                    self_undistort: None,
                 },
                 None,
             );
@@ -350,6 +351,7 @@ pub(super) fn run(
         homography: final_h,
         ransac: final_ransac,
         camera: config.camera,
+        self_undistort: None,
     };
 
     let dump = if let Some(debug_cfg) = debug_cfg {

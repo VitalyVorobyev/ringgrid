@@ -62,12 +62,15 @@ pub(crate) fn decode_metrics_from_result(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn marker_with_defaults(
     id: Option<usize>,
     confidence: f32,
     center: [f64; 2],
     ellipse_outer: Option<EllipseParams>,
     ellipse_inner: Option<EllipseParams>,
+    edge_points_outer: Option<Vec<[f64; 2]>>,
+    edge_points_inner: Option<Vec<[f64; 2]>>,
     fit: FitMetrics,
     decode: Option<DecodeMetrics>,
 ) -> DetectedMarker {
@@ -80,6 +83,8 @@ pub(crate) fn marker_with_defaults(
         center_projective_residual: None,
         ellipse_outer,
         ellipse_inner,
+        edge_points_outer,
+        edge_points_inner,
         fit,
         decode,
     }

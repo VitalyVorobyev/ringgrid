@@ -159,8 +159,8 @@ Optional radial-tangential distortion model (`camera.rs`). When camera intrinsic
 - All methods delegate to existing `ring::detect::*` free functions; no behavior change
 - Re-exported as `ringgrid_core::Detector` and `ringgrid_core::TargetSpec`
 
-## Known Correctness Issues (to fix during refactoring)
+## Correctness Notes (updated)
 
-1. **Two-pass mapper ellipse inconsistency**: `map_centers_to_image_space()` maps marker centers but not ellipse parameters — output mixes coordinate frames
-2. **Completion gate ordering**: Decode-mismatch path uses 0.35x reproj_gate before normal gates, creating inconsistent acceptance
-3. **H refit convergence**: Loop exits with original H if first iteration degrades; should track best-so-far
+1. **Two-pass mapper frame consistency**: fixed. Two-pass outputs now remain in mapper working coordinates; retained pass-1 fallback markers are remapped to working frame and non-preservable geometry fields are dropped to avoid mixed-frame output.
+2. **Completion gate ordering**: fixed. Completion now applies the standard quality gates first; decode mismatch is recorded as an acceptance note instead of using a separate stricter pre-gate.
+3. **H refit best-so-far selection**: fixed. Final H refit now compares candidate vs current reprojection error and keeps the better transform instead of blindly replacing with the last refit.

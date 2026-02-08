@@ -219,7 +219,7 @@ pub(super) fn run(
             if config.nl_refine.enable_h_refit && final_markers.len() >= 10 {
                 let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
                 let mut h_prev = h0;
-                let mut mean_prev = mean_reproj_error_px(&h_prev, &final_markers, &config.board);
+                let mut best_mean = mean_reproj_error_px(&h_prev, &final_markers, &config.board);
                 for iter in 0..max_iters {
                     let Some((h_next, _stats1)) = refit_homography_matrix(
                         &final_markers,
@@ -233,18 +233,18 @@ pub(super) fn run(
                     };
 
                     let mean_next = mean_reproj_error_px(&h_next, &final_markers, &config.board);
-                    if mean_next.is_finite() && (mean_next < mean_prev || !mean_prev.is_finite()) {
+                    if mean_next.is_finite() && (mean_next < best_mean || !best_mean.is_finite()) {
                         if let Some(nld) = nl_refine_debug.as_mut() {
                             nld.h_refit = Some(matrix3_to_array(&h_next));
                             nld.notes.push(format!(
                                 "h_refit_iter{}:accepted mean_err_px {:.3} -> {:.3}",
-                                iter, mean_prev, mean_next
+                                iter, best_mean, mean_next
                             ));
                         }
 
                         h_current = Some(h_next);
                         h_prev = h_next;
-                        mean_prev = mean_next;
+                        best_mean = mean_next;
 
                         let (stats_i, records_i) = refine::refine_markers_circle_board_with_mapper(
                             gray,
@@ -264,7 +264,7 @@ pub(super) fn run(
                         if let Some(nld) = nl_refine_debug.as_mut() {
                             nld.notes.push(format!(
                                 "h_refit_iter{}:rejected mean_err_px {:.3} -> {:.3}",
-                                iter, mean_prev, mean_next
+                                iter, best_mean, mean_next
                             ));
                         }
                         break;
@@ -290,12 +290,28 @@ pub(super) fn run(
         apply_projective_centers(&mut final_markers, config);
     }
 
+    let completion_h_available = h_current.is_some();
+
     // Final H: refit after refinement if enabled
     let did_refit = config.refine_with_h && final_markers.len() >= 10;
     let final_h_matrix = if did_refit {
-        refit_homography_matrix(&final_markers, &config.ransac_homography, &config.board)
-            .map(|(h, _stats)| h)
-            .or(h_current)
+        let h_refit =
+            refit_homography_matrix(&final_markers, &config.ransac_homography, &config.board)
+                .map(|(h, _stats)| h);
+        match (h_current, h_refit) {
+            (Some(h_cur), Some(h_new)) => {
+                let cur_err = mean_reproj_error_px(&h_cur, &final_markers, &config.board);
+                let new_err = mean_reproj_error_px(&h_new, &final_markers, &config.board);
+                if new_err.is_finite() && (new_err < cur_err || !cur_err.is_finite()) {
+                    Some(h_new)
+                } else {
+                    Some(h_cur)
+                }
+            }
+            (None, Some(h_new)) => Some(h_new),
+            (Some(h_cur), None) => Some(h_cur),
+            (None, None) => None,
+        }
     } else {
         h_current
     };
@@ -340,7 +356,7 @@ pub(super) fn run(
         use crate::codebook::{CODEBOOK_BITS, CODEBOOK_N};
 
         let completion_debug = dbg::CompletionDebugV1 {
-            enabled: config.completion.enable && h_current.is_some(),
+            enabled: config.completion.enable && completion_h_available,
             params: dbg::CompletionParamsDebugV1 {
                 roi_radius_px: config.completion.roi_radius_px,
                 reproj_gate_px: config.completion.reproj_gate_px,

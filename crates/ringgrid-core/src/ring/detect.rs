@@ -362,31 +362,26 @@ pub(super) fn find_proposals_with_seeds(
     proposals
 }
 
-fn map_centers_to_image_space(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper) {
-    let mut failed_primary = 0usize;
-    let mut failed_projective = 0usize;
-    for m in markers.iter_mut() {
-        if let Some(center_img) = mapper.working_to_image_pixel(m.center) {
-            m.center = center_img;
-        } else {
-            failed_primary += 1;
-        }
-        if let Some(c_proj) = m.center_projective {
-            if let Some(c_proj_img) = mapper.working_to_image_pixel(c_proj) {
-                m.center_projective = Some(c_proj_img);
-            } else {
-                failed_projective += 1;
-                m.center_projective = None;
-            }
-        }
+fn map_marker_image_to_working(
+    marker: &DetectedMarker,
+    mapper: &dyn PixelMapper,
+) -> Option<DetectedMarker> {
+    let mut out = marker.clone();
+    out.center = mapper.image_to_working_pixel(marker.center)?;
+
+    out.center_projective = marker
+        .center_projective
+        .and_then(|c| mapper.image_to_working_pixel(c));
+    if marker.center_projective.is_some() && out.center_projective.is_none() {
+        out.center_projective_residual = None;
     }
-    if failed_primary > 0 || failed_projective > 0 {
-        tracing::warn!(
-            failed_primary,
-            failed_projective,
-            "failed to map some working-space centers back to image space"
-        );
-    }
+
+    // A non-linear mapper does not preserve ellipse/line structure exactly.
+    // Avoid mixed-frame output by dropping these fields for pass-1 fallback markers.
+    out.ellipse_outer = None;
+    out.ellipse_inner = None;
+    out.vanishing_line = None;
+    Some(out)
 }
 
 fn merge_two_pass_markers(
@@ -394,7 +389,9 @@ fn merge_two_pass_markers(
     mut pass2: Vec<DetectedMarker>,
     keep_pass1_markers: bool,
     dedup_radius: f64,
+    mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
+    let mut failed_pass1_reproject = 0usize;
     if keep_pass1_markers {
         let ids_pass2: HashSet<usize> = pass2.iter().filter_map(|m| m.id).collect();
         for m in pass1 {
@@ -403,8 +400,23 @@ fn merge_two_pass_markers(
                     continue;
                 }
             }
-            pass2.push(m.clone());
+            if let Some(mapper) = mapper {
+                if let Some(mm) = map_marker_image_to_working(m, mapper) {
+                    pass2.push(mm);
+                } else {
+                    failed_pass1_reproject += 1;
+                }
+            } else {
+                pass2.push(m.clone());
+            }
         }
+    }
+
+    if failed_pass1_reproject > 0 {
+        tracing::warn!(
+            failed_pass1_reproject,
+            "failed to map some pass-1 markers into mapper working frame; dropping them"
+        );
     }
 
     let mut merged = dedup_markers(pass2, dedup_radius);
@@ -473,6 +485,9 @@ pub fn detect_rings_with_mapper(
 /// Run two-pass detection:
 /// - pass-1 in raw image space,
 /// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+///
+/// Returned detections stay in pass-2 mapper working coordinates. Any retained
+/// pass-1 fallback markers are remapped to the same working frame.
 pub fn detect_rings_two_pass_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -493,12 +508,12 @@ pub fn detect_rings_two_pass_with_mapper(
         tracing::info!("seeded pass-2 returned no detections; retrying pass-2 without seeds");
         pass2 = detect_rings_with_mapper_and_seeds(gray, config, Some(mapper), &[], &params.seed);
     }
-    map_centers_to_image_space(&mut pass2.detected_markers, mapper);
     pass2.detected_markers = merge_two_pass_markers(
         &pass1.detected_markers,
         pass2.detected_markers,
         params.keep_pass1_markers,
         config.dedup_radius,
+        Some(mapper),
     );
     pass2
 }
@@ -533,12 +548,12 @@ pub fn detect_rings_two_pass_with_estimator(
             &params.seed,
         );
     }
-    map_centers_to_image_space(&mut pass2.detected_markers, mapper.as_ref());
     pass2.detected_markers = merge_two_pass_markers(
         &pass1.detected_markers,
         pass2.detected_markers,
         params.keep_pass1_markers,
         config.dedup_radius,
+        Some(mapper.as_ref()),
     );
     pass2
 }
@@ -855,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn map_centers_to_image_space_maps_primary_and_projective_centers() {
+    fn map_marker_image_to_working_maps_primary_and_projective_centers() {
         struct ShiftMapper;
         impl PixelMapper for ShiftMapper {
             fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
@@ -866,7 +881,7 @@ mod tests {
             }
         }
 
-        let mut markers = vec![DetectedMarker {
+        let marker = DetectedMarker {
             id: Some(0),
             confidence: 1.0,
             center: [1.0, 2.0],
@@ -877,11 +892,15 @@ mod tests {
             ellipse_inner: None,
             fit: FitMetrics::default(),
             decode: None,
-        }];
+        };
 
-        map_centers_to_image_space(&mut markers, &ShiftMapper);
-        assert_eq!(markers[0].center, [6.0, 0.0]);
-        assert_eq!(markers[0].center_projective, Some([8.0, 2.0]));
+        let mapped = map_marker_image_to_working(&marker, &ShiftMapper)
+            .expect("center mapping should succeed");
+        assert_eq!(mapped.center, [-4.0, 4.0]);
+        assert_eq!(mapped.center_projective, Some([-2.0, 6.0]));
+        assert!(mapped.ellipse_outer.is_none());
+        assert!(mapped.ellipse_inner.is_none());
+        assert!(mapped.vanishing_line.is_none());
     }
 
     #[test]

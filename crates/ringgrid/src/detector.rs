@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::board_layout::BoardLayout;
 use crate::camera::{CameraModel, PixelMapper};
 #[cfg(feature = "cli-internal")]
-use crate::debug_dump::DebugDumpV1;
+use crate::debug_dump::DebugDump;
 #[cfg(feature = "cli-internal")]
 use crate::ring::detect::DebugCollectConfig;
 use crate::ring::detect::DetectConfig;
@@ -121,7 +121,7 @@ impl Detector {
         &self,
         image: &GrayImage,
         debug_cfg: &DebugCollectConfig,
-    ) -> (DetectionResult, DebugDumpV1) {
+    ) -> (DetectionResult, DebugDump) {
         crate::ring::detect::detect_rings_with_debug(image, &self.config, debug_cfg)
     }
 

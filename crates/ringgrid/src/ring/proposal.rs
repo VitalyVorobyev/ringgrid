@@ -8,7 +8,7 @@
 use image::GrayImage;
 
 /// Configuration for center proposal detection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProposalConfig {
     /// Minimum voting radius (pixels).
     pub r_min: f32,
@@ -38,7 +38,7 @@ impl Default for ProposalConfig {
 }
 
 /// A proposed marker center with its vote score.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Proposal {
     /// X coordinate (pixels).
     pub x: f32,

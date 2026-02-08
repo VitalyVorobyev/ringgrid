@@ -23,8 +23,6 @@ use super::pipeline::global_filter::global_filter_with_debug as global_filter_wi
 use super::proposal::{find_proposals, Proposal, ProposalConfig};
 #[path = "detect/completion.rs"]
 mod completion;
-#[path = "detect/debug_conv.rs"]
-mod debug_conv;
 #[path = "detect/homography_utils.rs"]
 mod homography_utils;
 #[path = "detect/inner_fit.rs"]
@@ -37,14 +35,15 @@ mod outer_fit;
 mod refine_h;
 #[path = "detect/stages/mod.rs"]
 mod stages;
-use completion::{CompletionAttemptRecord, CompletionDebugOptions, CompletionStats};
+use completion::CompletionDebugOptions;
+pub(crate) use completion::{CompletionAttemptRecord, CompletionStats};
 use outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     mean_axis_px_from_marker, median_outer_radius_from_neighbors_px, OuterFitCandidate,
 };
 
 /// Debug collection options for `detect_rings_with_debug`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DebugCollectConfig {
     /// Optional source image path copied into debug dump metadata.
     pub image_path: Option<String>,
@@ -57,7 +56,7 @@ pub struct DebugCollectConfig {
 }
 
 /// Seed-injection controls for proposal generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeedProposalParams {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
@@ -78,7 +77,7 @@ impl Default for SeedProposalParams {
 }
 
 /// Two-pass orchestration parameters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TwoPassParams {
     /// Seed-injection controls for the second pass.
     pub seed: SeedProposalParams,
@@ -97,7 +96,7 @@ impl Default for TwoPassParams {
 
 /// Configuration for homography-guided completion: attempt local fits for
 /// missing IDs at H-projected board locations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionParams {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
@@ -131,7 +130,7 @@ impl Default for CompletionParams {
 }
 
 /// Projective-only unbiased center recovery from inner/outer conics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectiveCenterParams {
     /// Enable projective unbiased center estimation.
     pub enable: bool,
@@ -167,7 +166,7 @@ impl Default for ProjectiveCenterParams {
 }
 
 /// Center-correction strategy used after local fits are accepted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CircleRefinementMethod {
     /// Disable center correction.
     None,
@@ -561,7 +560,7 @@ pub fn detect_rings_with_debug(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
-) -> (DetectionResult, dbg::DebugDumpV1) {
+) -> (DetectionResult, dbg::DebugDump) {
     detect_rings_with_debug_and_mapper(gray, config, debug_cfg, config_mapper(config))
 }
 
@@ -573,7 +572,7 @@ pub fn detect_rings_with_debug_and_mapper(
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> (DetectionResult, dbg::DebugDumpV1) {
+) -> (DetectionResult, dbg::DebugDump) {
     let (result, dump) = stages::run(
         gray,
         config,
@@ -603,7 +602,7 @@ fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,
     radius: f64,
-) -> (Vec<DetectedMarker>, Vec<usize>, dbg::DedupDebugV1) {
+) -> (Vec<DetectedMarker>, Vec<usize>, dbg::DedupDebug) {
     dedup_with_debug_impl(markers, cand_idx, radius)
 }
 
@@ -616,7 +615,7 @@ fn global_filter_with_debug(
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
-    dbg::RansacDebugV1,
+    dbg::RansacDebug,
 ) {
     global_filter_with_debug_impl(markers, cand_idx, config, board)
 }
@@ -628,7 +627,7 @@ fn refine_with_homography_with_debug(
     config: &DetectConfig,
     board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
-) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
+) -> (Vec<DetectedMarker>, dbg::RefineDebug) {
     refine_h::refine_with_homography_with_debug(gray, markers, h, config, board, mapper)
 }
 
@@ -847,7 +846,7 @@ mod tests {
 
         let (res, dump) = detect_rings_with_debug(&img, &cfg, &dbg_cfg);
         assert_eq!(res.image_size, [64, 64]);
-        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V1);
+        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V2);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
     }

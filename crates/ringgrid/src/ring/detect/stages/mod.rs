@@ -10,7 +10,7 @@ pub(super) fn run(
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
     debug_cfg: Option<&DebugCollectConfig>,
-) -> (DetectionResult, Option<crate::debug_dump::DebugDumpV1>) {
+) -> (DetectionResult, Option<crate::debug_dump::DebugDump>) {
     let (w, h) = gray.dimensions();
     let fit_out = stage_fit_decode::run(
         gray,

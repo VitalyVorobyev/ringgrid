@@ -5,7 +5,6 @@ use crate::debug_dump as dbg;
 use crate::homography::project;
 use crate::DetectedMarker;
 
-use super::debug_conv;
 use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
@@ -17,7 +16,7 @@ pub(super) fn refine_with_homography_with_debug(
     config: &super::DetectConfig,
     board: &BoardLayout,
     mapper: Option<&dyn crate::camera::PixelMapper>,
-) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
+) -> (Vec<DetectedMarker>, dbg::RefineDebug) {
     let mut refined = Vec::with_capacity(markers.len());
     let mut refined_dbg = Vec::with_capacity(markers.len());
     let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
@@ -75,19 +74,10 @@ pub(super) fn refine_with_homography_with_debug(
         if decode_result.is_none() || !scale_ok {
             // Refinement is best-effort and must not degrade decoded detections.
             refined.push(m.clone());
-            refined_dbg.push(dbg::RefinedMarkerDebugV1 {
+            refined_dbg.push(dbg::RefinedMarkerDebug {
                 id,
-                prior_center_xy: [prior[0] as f32, prior[1] as f32],
-                refined_center_xy: [m.center[0] as f32, m.center[1] as f32],
-                ellipse_outer: m
-                    .ellipse_outer
-                    .as_ref()
-                    .map(debug_conv::ellipse_from_params),
-                ellipse_inner: m
-                    .ellipse_inner
-                    .as_ref()
-                    .map(debug_conv::ellipse_from_params),
-                fit: m.fit.clone(),
+                prior_center_xy: [prior[0], prior[1]],
+                refined_marker: m.clone(),
             });
             continue;
         }
@@ -120,13 +110,10 @@ pub(super) fn refine_with_homography_with_debug(
             decode_metrics,
         );
 
-        refined_dbg.push(dbg::RefinedMarkerDebugV1 {
+        refined_dbg.push(dbg::RefinedMarkerDebug {
             id,
-            prior_center_xy: [prior[0] as f32, prior[1] as f32],
-            refined_center_xy: [center[0] as f32, center[1] as f32],
-            ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
-            ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
-            fit,
+            prior_center_xy: [prior[0], prior[1]],
+            refined_marker: updated.clone(),
         });
 
         refined.push(updated);
@@ -134,7 +121,7 @@ pub(super) fn refine_with_homography_with_debug(
 
     (
         refined,
-        dbg::RefineDebugV1 {
+        dbg::RefineDebug {
             h_prior: super::matrix3_to_array(h),
             refined_markers: refined_dbg,
             h_refit: None,

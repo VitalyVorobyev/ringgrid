@@ -15,7 +15,7 @@ use super::radial_profile;
 pub use super::radial_profile::Polarity;
 
 /// Outcome category for inner-edge estimation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InnerStatus {
     /// Inner-edge estimate is valid and passed quality gates.
     Ok,
@@ -26,7 +26,7 @@ pub enum InnerStatus {
 }
 
 /// Inner-edge estimation result anchored on the fitted outer ellipse.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InnerEstimate {
     /// Expected normalized inner radius (`Rin/Rout`).
     pub r_inner_expected: f32,

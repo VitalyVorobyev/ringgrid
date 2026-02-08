@@ -16,7 +16,7 @@ use crate::conic::Ellipse;
 use super::edge_sample::DistortionAwareSampler;
 
 /// Configuration for sector decoding.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeConfig {
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the
@@ -45,7 +45,7 @@ impl Default for DecodeConfig {
 }
 
 /// Result of decoding a marker.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeResult {
     /// Matched marker ID (codebook index).
     pub id: usize,
@@ -62,7 +62,7 @@ pub struct DecodeResult {
 }
 
 /// Debug/diagnostic information about a decode attempt.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeDiagnostics {
     /// Per-sector average intensities sampled from the code band.
     pub sector_intensities: [f32; 16],

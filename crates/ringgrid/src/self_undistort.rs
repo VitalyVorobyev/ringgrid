@@ -123,7 +123,7 @@ impl PixelMapper for DivisionModel {
 }
 
 /// Configuration for self-undistort estimation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelfUndistortConfig {
     /// Enable self-undistort refinement.
     pub enable: bool,

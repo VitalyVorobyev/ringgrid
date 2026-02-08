@@ -60,7 +60,7 @@ pub use ring::proposal::ProposalConfig;
 pub use self_undistort::{DivisionModel, SelfUndistortConfig, SelfUndistortResult};
 
 #[cfg(feature = "cli-internal")]
-pub use debug_dump::DebugDumpV1;
+pub use debug_dump::DebugDump;
 #[cfg(feature = "cli-internal")]
 pub use ring::detect::DebugCollectConfig;
 

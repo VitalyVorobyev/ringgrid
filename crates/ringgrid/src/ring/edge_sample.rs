@@ -5,7 +5,7 @@ use image::GrayImage;
 use crate::camera::PixelMapper;
 
 /// Configuration for radial edge sampling.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EdgeSampleConfig {
     /// Number of radial rays to cast.
     pub n_rays: usize,
@@ -35,7 +35,7 @@ impl Default for EdgeSampleConfig {
 }
 
 /// Result of edge sampling for one candidate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EdgeSampleResult {
     /// Outer edge points (sub-pixel positions in image coords).
     pub outer_points: Vec<[f64; 2]>,

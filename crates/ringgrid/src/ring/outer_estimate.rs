@@ -15,7 +15,7 @@ use super::radial_profile;
 use super::radial_profile::Polarity;
 
 /// Outcome category for outer-edge estimation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OuterStatus {
     /// Outer-radius estimate is valid and passed quality gates.
     Ok,
@@ -24,7 +24,7 @@ pub enum OuterStatus {
 }
 
 /// Candidate outer-radius hypothesis from aggregated radial response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterHypothesis {
     /// Outer radius in pixels.
     pub r_outer_px: f32,
@@ -35,7 +35,7 @@ pub struct OuterHypothesis {
 }
 
 /// Outer-radius estimation result with optional debug traces.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterEstimate {
     /// Expected outer radius (pixels) from current scale prior.
     pub r_outer_expected_px: f32,
@@ -56,7 +56,7 @@ pub struct OuterEstimate {
 }
 
 /// Configuration for outer-radius estimation around a center prior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
     pub search_halfwidth_px: f32,

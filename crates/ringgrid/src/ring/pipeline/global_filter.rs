@@ -7,15 +7,7 @@ struct GlobalFilterOutcome {
     filtered: Vec<DetectedMarker>,
     result: Option<homography::RansacHomographyResult>,
     stats: Option<RansacStats>,
-    debug: Option<dbg::RansacDebugV1>,
-}
-
-fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
-    [
-        [m[(0, 0)], m[(0, 1)], m[(0, 2)]],
-        [m[(1, 0)], m[(1, 1)], m[(1, 2)]],
-        [m[(2, 0)], m[(2, 1)], m[(2, 2)]],
-    ]
+    debug: Option<dbg::RansacDebug>,
 }
 
 fn run_global_filter(
@@ -59,21 +51,14 @@ fn run_global_filter(
         }
 
         let debug = if collect_debug {
-            Some(dbg::RansacDebugV1 {
+            Some(dbg::RansacDebug {
                 enabled: true,
-                h_best: None,
+                result: None,
+                stats: None,
                 correspondences_used: src_pts.len(),
                 inlier_ids: Vec::new(),
                 outlier_ids: Vec::new(),
-                per_id_error_px: None,
-                stats: dbg::RansacStatsDebugV1 {
-                    iters: config.max_iters,
-                    thresh_px: config.inlier_threshold,
-                    n_corr: src_pts.len(),
-                    n_inliers: 0,
-                    mean_err_inliers: 0.0,
-                    p95_err_inliers: 0.0,
-                },
+                per_id_error_px: Vec::new(),
                 notes: vec![format!("too_few_correspondences({}<4)", src_pts.len())],
             })
         } else {
@@ -96,21 +81,14 @@ fn run_global_filter(
             }
 
             let debug = if collect_debug {
-                Some(dbg::RansacDebugV1 {
+                Some(dbg::RansacDebug {
                     enabled: true,
-                    h_best: None,
+                    result: None,
+                    stats: None,
                     correspondences_used: src_pts.len(),
                     inlier_ids: Vec::new(),
                     outlier_ids: Vec::new(),
-                    per_id_error_px: None,
-                    stats: dbg::RansacStatsDebugV1 {
-                        iters: config.max_iters,
-                        thresh_px: config.inlier_threshold,
-                        n_corr: src_pts.len(),
-                        n_inliers: 0,
-                        mean_err_inliers: 0.0,
-                        p95_err_inliers: 0.0,
-                    },
+                    per_id_error_px: Vec::new(),
                     notes: vec![format!("ransac_failed:{}", e)],
                 })
             } else {
@@ -131,12 +109,12 @@ fn run_global_filter(
     let mut inlier_errors: Vec<f64> = Vec::new();
     let mut inlier_ids: Vec<usize> = Vec::new();
     let mut outlier_ids: Vec<usize> = Vec::new();
-    let mut per_id_error: Vec<dbg::PerIdErrorDebugV1> = Vec::new();
+    let mut per_id_error: Vec<dbg::PerIdErrorDebug> = Vec::new();
 
     for (j, &id) in corr_ids.iter().enumerate() {
         let err = result.errors[j];
         if collect_debug {
-            per_id_error.push(dbg::PerIdErrorDebugV1 {
+            per_id_error.push(dbg::PerIdErrorDebug {
                 id,
                 reproj_err_px: err,
             });
@@ -184,21 +162,14 @@ fn run_global_filter(
     }
 
     let debug = if collect_debug {
-        Some(dbg::RansacDebugV1 {
+        Some(dbg::RansacDebug {
             enabled: true,
-            h_best: Some(matrix3_to_array(&result.h)),
+            result: Some(result.clone()),
+            stats: Some(stats.clone()),
             correspondences_used: src_pts.len(),
             inlier_ids,
             outlier_ids,
-            per_id_error_px: Some(per_id_error),
-            stats: dbg::RansacStatsDebugV1 {
-                iters: config.max_iters,
-                thresh_px: config.inlier_threshold,
-                n_corr: src_pts.len(),
-                n_inliers: result.n_inliers,
-                mean_err_inliers: mean_err,
-                p95_err_inliers: p95_err,
-            },
+            per_id_error_px: per_id_error,
             notes: Vec::new(),
         })
     } else {
@@ -222,7 +193,7 @@ pub fn global_filter_with_debug(
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
-    dbg::RansacDebugV1,
+    dbg::RansacDebug,
 ) {
     let out = run_global_filter(markers, config, board, true, false);
     (

@@ -31,11 +31,11 @@ fn dedup_by_proximity(
 ) -> (
     Vec<DetectedMarker>,
     Option<Vec<usize>>,
-    Vec<dbg::KeptByProximityDebugV1>,
+    Vec<dbg::KeptByProximityDebug>,
 ) {
     let mut keep = vec![true; markers.len()];
     let r2 = radius * radius;
-    let mut kept_by_proximity: Vec<dbg::KeptByProximityDebugV1> = Vec::new();
+    let mut kept_by_proximity: Vec<dbg::KeptByProximityDebug> = Vec::new();
 
     for i in 0..markers.len() {
         if !keep[i] {
@@ -57,7 +57,7 @@ fn dedup_by_proximity(
 
         if collect_debug && !dropped_j.is_empty() {
             if let Some(ref idx) = cand_idx {
-                kept_by_proximity.push(dbg::KeptByProximityDebugV1 {
+                kept_by_proximity.push(dbg::KeptByProximityDebug {
                     kept_cand_idx: idx[i],
                     dropped_cand_indices: dropped_j.into_iter().map(|j| idx[j]).collect(),
                     reasons: vec!["within_dedup_radius".to_string()],
@@ -87,7 +87,7 @@ fn dedup_by_id_core(
 ) -> (
     Vec<DetectedMarker>,
     Option<Vec<usize>>,
-    Vec<dbg::KeptByIdDebugV1>,
+    Vec<dbg::KeptByIdDebug>,
 ) {
     let mut best_idx: HashMap<usize, usize> = HashMap::new();
 
@@ -104,7 +104,7 @@ fn dedup_by_id_core(
 
     let keep_set: HashSet<usize> = best_idx.values().copied().collect();
 
-    let mut kept_by_id: Vec<dbg::KeptByIdDebugV1> = Vec::new();
+    let mut kept_by_id: Vec<dbg::KeptByIdDebug> = Vec::new();
     if collect_debug {
         if let Some(ref idx) = cand_idx {
             for (&id, &kept_i) in best_idx.iter() {
@@ -118,7 +118,7 @@ fn dedup_by_id_core(
                     }
                 }
                 if !dropped.is_empty() {
-                    kept_by_id.push(dbg::KeptByIdDebugV1 {
+                    kept_by_id.push(dbg::KeptByIdDebug {
                         id,
                         kept_cand_idx: idx[kept_i],
                         dropped_cand_indices: dropped,
@@ -165,7 +165,7 @@ pub fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,
     radius: f64,
-) -> (Vec<DetectedMarker>, Vec<usize>, dbg::DedupDebugV1) {
+) -> (Vec<DetectedMarker>, Vec<usize>, dbg::DedupDebug) {
     let (markers, cand_idx) = sort_by_confidence(markers, Some(cand_idx));
     let (markers, cand_idx, kept_by_proximity) =
         dedup_by_proximity(markers, cand_idx, radius, true);
@@ -174,7 +174,7 @@ pub fn dedup_with_debug(
     (
         markers,
         cand_idx.unwrap_or_default(),
-        dbg::DedupDebugV1 {
+        dbg::DedupDebug {
             kept_by_proximity,
             kept_by_id,
             notes: Vec::new(),

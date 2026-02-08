@@ -186,7 +186,7 @@ pub fn estimate_homography_dlt(
 // ── RANSAC ───────────────────────────────────────────────────────────────
 
 /// RANSAC configuration for homography fitting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RansacHomographyConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,
@@ -210,7 +210,7 @@ impl Default for RansacHomographyConfig {
 }
 
 /// Result of RANSAC homography fitting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RansacHomographyResult {
     /// The fitted homography.
     pub h: Matrix3<f64>,

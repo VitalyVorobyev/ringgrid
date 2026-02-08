@@ -6,11 +6,11 @@ use crate::debug_dump as dbg;
 use crate::homography::project;
 use crate::ring::edge_sample::EdgeSampleResult;
 use crate::ring::outer_estimate::OuterEstimate;
-use crate::DetectedMarker;
+use crate::{DetectedMarker, FitMetrics};
 
 use super::inner_fit::InnerFitResult;
 use super::{
-    compute_center, debug_conv, fit_outer_ellipse_robust_with_reason,
+    compute_center, fit_outer_ellipse_robust_with_reason,
     marker_build::{
         decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params,
         marker_with_defaults,
@@ -19,8 +19,9 @@ use super::{
     DetectConfig, OuterFitCandidate,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CompletionAttemptStatus {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionAttemptStatus {
     Added,
     SkippedPresent,
     SkippedOob,
@@ -28,25 +29,25 @@ pub(super) enum CompletionAttemptStatus {
     FailedGate,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct CompletionAttemptRecord {
-    pub(super) id: usize,
-    pub(super) projected_center_xy: [f32; 2],
-    pub(super) status: CompletionAttemptStatus,
-    pub(super) reason: Option<String>,
-    pub(super) reproj_err_px: Option<f32>,
-    pub(super) fit_confidence: Option<f32>,
-    pub(super) fit: Option<dbg::RingFitDebugV1>,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionAttemptRecord {
+    pub id: usize,
+    pub projected_center_xy: [f32; 2],
+    pub status: CompletionAttemptStatus,
+    pub reason: Option<String>,
+    pub reproj_err_px: Option<f32>,
+    pub fit_confidence: Option<f32>,
+    pub fit: Option<dbg::RingFitDebug>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub(super) struct CompletionStats {
-    pub(super) n_candidates_total: usize,
-    pub(super) n_in_image: usize,
-    pub(super) n_attempted: usize,
-    pub(super) n_added: usize,
-    pub(super) n_failed_fit: usize,
-    pub(super) n_failed_gate: usize,
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CompletionStats {
+    pub n_candidates_total: usize,
+    pub n_in_image: usize,
+    pub n_attempted: usize,
+    pub n_added: usize,
+    pub n_failed_fit: usize,
+    pub n_failed_gate: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -168,7 +169,7 @@ fn make_attempt_record(
     status: CompletionAttemptStatus,
     reason: Option<String>,
     quality: Option<&CandidateQuality>,
-    fit: Option<dbg::RingFitDebugV1>,
+    fit: Option<dbg::RingFitDebug>,
 ) -> CompletionAttemptRecord {
     CompletionAttemptRecord {
         id,
@@ -181,25 +182,14 @@ fn make_attempt_record(
     }
 }
 
-fn build_edges_debug(edge: &EdgeSampleResult) -> dbg::RingEdgesDebugV1 {
-    dbg::RingEdgesDebugV1 {
-        n_angles_total: edge.n_total_rays,
-        n_angles_with_both: edge.n_good_rays,
-        inner_peak_r: if edge.inner_radii.is_empty() {
-            None
-        } else {
-            Some(edge.inner_radii.clone())
-        },
-        outer_peak_r: Some(edge.outer_radii.clone()),
+fn edge_for_debug(edge: &EdgeSampleResult, store_points: bool) -> EdgeSampleResult {
+    if store_points {
+        return edge.clone();
     }
-}
-
-fn points_debug(pts: &[[f64; 2]], store: bool) -> Option<Vec<[f32; 2]>> {
-    if store {
-        Some(pts.iter().map(|p| [p[0] as f32, p[1] as f32]).collect())
-    } else {
-        None
-    }
+    let mut out = edge.clone();
+    out.outer_points.clear();
+    out.inner_points.clear();
+    out
 }
 
 struct FitDebugContext<'a> {
@@ -211,28 +201,26 @@ struct FitDebugContext<'a> {
     store_points: bool,
 }
 
-fn build_pre_gate_fit_debug(ctx: &FitDebugContext<'_>) -> dbg::RingFitDebugV1 {
-    dbg::RingFitDebugV1 {
-        center_xy_fit: [ctx.quality.center[0] as f32, ctx.quality.center[1] as f32],
-        edges: build_edges_debug(ctx.edge),
-        outer_estimation: Some(debug_conv::outer_estimation_debug(
-            ctx.outer_estimate,
-            ctx.chosen_hypothesis,
-        )),
-        ellipse_outer: Some(debug_conv::ellipse_from_conic(ctx.outer)),
+fn build_pre_gate_fit_debug(ctx: &FitDebugContext<'_>) -> dbg::RingFitDebug {
+    dbg::RingFitDebug {
+        center_xy_fit: [ctx.quality.center[0], ctx.quality.center[1]],
+        edge: edge_for_debug(ctx.edge, ctx.store_points),
+        outer_estimation: Some(ctx.outer_estimate.clone()),
+        chosen_outer_hypothesis: Some(ctx.chosen_hypothesis),
+        ellipse_outer: Some(crate::EllipseParams::from(*ctx.outer)),
         ellipse_inner: None,
         inner_estimation: None,
-        metrics: dbg::RingFitMetricsDebugV1 {
-            inlier_ratio_inner: None,
-            inlier_ratio_outer: Some(ctx.quality.inlier_ratio),
-            mean_resid_inner: None,
-            mean_resid_outer: Some(rms_sampson_distance(ctx.outer, &ctx.edge.outer_points) as f32),
-            arc_coverage: ctx.quality.arc_cov,
-            valid_inner: false,
-            valid_outer: true,
+        fit: FitMetrics {
+            n_angles_total: ctx.edge.n_total_rays,
+            n_angles_with_both_edges: ctx.edge.n_good_rays,
+            n_points_outer: ctx.edge.outer_points.len(),
+            n_points_inner: ctx.edge.inner_points.len(),
+            ransac_inlier_ratio_outer: Some(ctx.quality.inlier_ratio),
+            ransac_inlier_ratio_inner: None,
+            rms_residual_outer: Some(rms_sampson_distance(ctx.outer, &ctx.edge.outer_points)),
+            rms_residual_inner: None,
         },
-        points_outer: points_debug(&ctx.edge.outer_points, ctx.store_points),
-        points_inner: points_debug(&ctx.edge.inner_points, ctx.store_points),
+        inner_points_fit: None,
     }
 }
 
@@ -241,25 +229,21 @@ fn build_success_fit_debug(
     inner_fit: &InnerFitResult,
     inner_params: Option<&crate::EllipseParams>,
     fit: &crate::FitMetrics,
-) -> dbg::RingFitDebugV1 {
-    dbg::RingFitDebugV1 {
-        center_xy_fit: [ctx.quality.center[0] as f32, ctx.quality.center[1] as f32],
-        edges: build_edges_debug(ctx.edge),
-        outer_estimation: Some(debug_conv::outer_estimation_debug(
-            ctx.outer_estimate,
-            ctx.chosen_hypothesis,
-        )),
-        ellipse_outer: Some(debug_conv::ellipse_from_conic(ctx.outer)),
-        ellipse_inner: inner_params.map(debug_conv::ellipse_from_params),
-        inner_estimation: Some(debug_conv::inner_estimation_debug(&inner_fit.estimate)),
-        metrics: debug_conv::ring_fit_metrics(
-            fit,
-            ctx.quality.arc_cov,
-            inner_params.is_some(),
-            true,
-        ),
-        points_outer: points_debug(&ctx.edge.outer_points, ctx.store_points),
-        points_inner: points_debug(&inner_fit.points_inner, ctx.store_points),
+) -> dbg::RingFitDebug {
+    dbg::RingFitDebug {
+        center_xy_fit: [ctx.quality.center[0], ctx.quality.center[1]],
+        edge: edge_for_debug(ctx.edge, ctx.store_points),
+        outer_estimation: Some(ctx.outer_estimate.clone()),
+        chosen_outer_hypothesis: Some(ctx.chosen_hypothesis),
+        ellipse_outer: Some(crate::EllipseParams::from(*ctx.outer)),
+        ellipse_inner: inner_params.cloned(),
+        inner_estimation: Some(inner_fit.estimate.clone()),
+        fit: fit.clone(),
+        inner_points_fit: if ctx.store_points {
+            Some(inner_fit.points_inner.clone())
+        } else {
+            None
+        },
     }
 }
 

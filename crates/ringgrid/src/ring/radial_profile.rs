@@ -3,7 +3,7 @@
 use crate::marker_spec::AngularAggregator;
 
 /// Sign convention for radial derivative peaks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Polarity {
     /// Positive radial derivative peak (`dI/dr > 0`).
     Pos,

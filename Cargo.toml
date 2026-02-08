@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.dependencies]
-nalgebra = "0.33"
+nalgebra = { version = "0.33", features = ["serde-serialize"] }
 image = "0.25"
 imageproc = "0.25"
 rayon = "1.10"

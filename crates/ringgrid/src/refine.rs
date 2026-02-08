@@ -22,7 +22,7 @@ mod solver;
 use sampling::{OuterSampleConfig, SampleOutcome};
 
 /// Solver backend used for fixed-radius circle-center optimization in board space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CircleCenterSolver {
     /// Robust Gauss-Newton / IRLS update on geometric residuals.
     Irls,
@@ -32,7 +32,7 @@ pub enum CircleCenterSolver {
 }
 
 /// Configuration for board-plane center refinement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RefineParams {
     /// Master enable switch for board-plane center refinement.
     pub enabled: bool,
@@ -68,7 +68,7 @@ impl Default for RefineParams {
 }
 
 /// Aggregate statistics produced by one refinement pass.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RefineStats {
     /// Number of detections with a valid board correspondence.
     pub n_inliers: usize,
@@ -87,7 +87,7 @@ pub struct RefineStats {
 }
 
 /// Final status of one per-marker refinement attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MarkerRefineStatus {
     /// Refinement succeeded and update was accepted.
     Ok,
@@ -100,7 +100,7 @@ pub enum MarkerRefineStatus {
 }
 
 /// Per-marker refinement record for debug tooling and analysis.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MarkerRefineRecord {
     /// Marker id.
     pub id: usize,

@@ -1,17 +1,27 @@
-use super::super::debug_conv;
 use super::super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
 use super::super::*;
 
 use crate::debug_dump as dbg;
+use crate::ring::edge_sample::EdgeSampleResult;
 
 pub(super) struct FitDecodeCoreOutput {
     pub(super) markers: Vec<DetectedMarker>,
     pub(super) marker_cand_idx: Vec<usize>,
-    pub(super) stage0: Option<dbg::StageDebugV1>,
-    pub(super) stage1: Option<dbg::StageDebugV1>,
-    pub(super) stage2: Option<dbg::DedupDebugV1>,
+    pub(super) stage0: Option<dbg::StageDebug>,
+    pub(super) stage1: Option<dbg::StageDebug>,
+    pub(super) stage2: Option<dbg::DedupDebug>,
+}
+
+fn edge_for_debug(edge: &EdgeSampleResult, store_points: bool) -> EdgeSampleResult {
+    if store_points {
+        return edge.clone();
+    }
+    let mut out = edge.clone();
+    out.outer_points.clear();
+    out.inner_points.clear();
+    out
 }
 
 pub(super) fn run(
@@ -33,7 +43,7 @@ pub(super) fn run(
     let n_rec = debug_cfg
         .map(|cfg| proposals.len().min(cfg.max_candidates))
         .unwrap_or(0);
-    let mut stage0 = debug_cfg.map(|_| dbg::StageDebugV1 {
+    let mut stage0 = debug_cfg.map(|_| dbg::StageDebug {
         n_total: proposals.len(),
         n_recorded: n_rec,
         candidates: Vec::with_capacity(n_rec),
@@ -41,19 +51,16 @@ pub(super) fn run(
     });
     if let Some(stage0) = stage0.as_mut() {
         for (i, p) in proposals.iter().take(n_rec).enumerate() {
-            stage0.candidates.push(dbg::CandidateDebugV1 {
+            stage0.candidates.push(dbg::CandidateDebug {
                 cand_idx: i,
-                proposal: dbg::ProposalDebugV1 {
-                    center_xy: [p.x, p.y],
-                    score: p.score,
-                },
+                proposal: *p,
                 ring_fit: None,
                 decode: None,
-                decision: dbg::DecisionDebugV1 {
-                    status: dbg::DecisionStatusV1::Accepted,
+                decision: dbg::DecisionDebug {
+                    status: dbg::DecisionStatus::Accepted,
                     reason: "proposal".to_string(),
                 },
-                derived: dbg::DerivedDebugV1 {
+                derived: dbg::DerivedDebug {
                     id: None,
                     confidence: None,
                     center_xy: None,
@@ -62,7 +69,7 @@ pub(super) fn run(
         }
     }
 
-    let mut stage1 = debug_cfg.map(|_| dbg::StageDebugV1 {
+    let mut stage1 = debug_cfg.map(|_| dbg::StageDebug {
         n_total: proposals.len(),
         n_recorded: n_rec,
         candidates: Vec::with_capacity(n_rec),
@@ -79,19 +86,16 @@ pub(super) fn run(
         };
 
         let mut cand_debug = if debug_cfg.is_some() && i < n_rec {
-            Some(dbg::CandidateDebugV1 {
+            Some(dbg::CandidateDebug {
                 cand_idx: i,
-                proposal: dbg::ProposalDebugV1 {
-                    center_xy: [proposal.x, proposal.y],
-                    score: proposal.score,
-                },
+                proposal: *proposal,
                 ring_fit: None,
                 decode: None,
-                decision: dbg::DecisionDebugV1 {
-                    status: dbg::DecisionStatusV1::Rejected,
+                decision: dbg::DecisionDebug {
+                    status: dbg::DecisionStatus::Rejected,
                     reason: "unprocessed".to_string(),
                 },
-                derived: dbg::DerivedDebugV1 {
+                derived: dbg::DerivedDebug {
                     id: None,
                     confidence: None,
                     center_xy: None,
@@ -114,8 +118,8 @@ pub(super) fn run(
             Ok(v) => v,
             Err(reason) => {
                 if let Some(cd) = cand_debug.as_mut() {
-                    cd.decision = dbg::DecisionDebugV1 {
-                        status: dbg::DecisionStatusV1::Rejected,
+                    cd.decision = dbg::DecisionDebug {
+                        status: dbg::DecisionStatus::Rejected,
                         reason,
                     };
                 }
@@ -163,96 +167,53 @@ pub(super) fn run(
             decode_result.as_ref().map(|d| d.id),
             confidence,
             center,
-            Some(crate::EllipseParams::from(&outer)),
+            Some(crate::EllipseParams::from(outer)),
             inner_params.clone(),
             Some(edge.outer_points.clone()),
             Some(inner_fit.points_inner.clone()),
             fit_metrics.clone(),
-            decode_metrics,
+            decode_metrics.clone(),
         );
 
         markers.push(marker);
         marker_cand_idx.push(i);
 
         if let Some(cd) = cand_debug.as_mut() {
-            let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
-            cd.ring_fit = Some(dbg::RingFitDebugV1 {
-                center_xy_fit: [center[0] as f32, center[1] as f32],
-                edges: dbg::RingEdgesDebugV1 {
-                    n_angles_total: edge.n_total_rays,
-                    n_angles_with_both: edge.n_good_rays,
-                    inner_peak_r: if edge.inner_radii.is_empty() {
-                        None
-                    } else {
-                        Some(edge.inner_radii.clone())
-                    },
-                    outer_peak_r: Some(edge.outer_radii.clone()),
-                },
-                outer_estimation: Some(debug_conv::outer_estimation_debug(
-                    &outer_estimate,
-                    chosen_hypothesis,
-                )),
-                ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
-                ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
-                inner_estimation: Some(debug_conv::inner_estimation_debug(&inner_fit.estimate)),
-                metrics: debug_conv::ring_fit_metrics(
-                    &fit_metrics,
-                    arc_cov,
-                    inner_params.is_some(),
-                    true,
-                ),
-                points_outer: if store_points {
-                    Some(
-                        edge.outer_points
-                            .iter()
-                            .map(|p| [p[0] as f32, p[1] as f32])
-                            .collect(),
-                    )
-                } else {
-                    None
-                },
-                points_inner: if store_points {
-                    Some(
-                        inner_fit
-                            .points_inner
-                            .iter()
-                            .map(|p| [p[0] as f32, p[1] as f32])
-                            .collect(),
-                    )
+            cd.ring_fit = Some(dbg::RingFitDebug {
+                center_xy_fit: center,
+                edge: edge_for_debug(&edge, store_points),
+                outer_estimation: Some(outer_estimate.clone()),
+                chosen_outer_hypothesis: Some(chosen_hypothesis),
+                ellipse_outer: Some(crate::EllipseParams::from(outer)),
+                ellipse_inner: inner_params.clone(),
+                inner_estimation: Some(inner_fit.estimate.clone()),
+                fit: fit_metrics.clone(),
+                inner_points_fit: if store_points {
+                    Some(inner_fit.points_inner.clone())
                 } else {
                     None
                 },
             });
 
-            cd.decode = Some(dbg::DecodeDebugV1 {
-                sector_means: decode_diag.sector_intensities,
-                threshold: decode_diag.threshold,
-                observed_word_hex: format!("0x{:04X}", decode_diag.used_word),
-                inverted_used: decode_diag.inverted_used,
-                r#match: dbg::DecodeMatchDebugV1 {
-                    best_id: decode_diag.best_id,
-                    best_rotation: decode_diag.best_rotation,
-                    best_dist: decode_diag.best_dist,
-                    margin: decode_diag.margin,
-                    decode_confidence: decode_diag.decode_confidence,
-                },
-                accepted: Some(decode_result.is_some()),
-                reject_reason: decode_diag.reject_reason.clone(),
+            cd.decode = Some(dbg::DecodeDebug {
+                diagnostics: decode_diag.clone(),
+                result: decode_result.clone(),
+                decode_metrics: decode_metrics.clone(),
             });
 
             let derived_id = decode_result.as_ref().map(|d| d.id);
-            cd.decision = dbg::DecisionDebugV1 {
-                status: dbg::DecisionStatusV1::Accepted,
-                reason: if let Some(r) = decode_diag.reject_reason {
+            cd.decision = dbg::DecisionDebug {
+                status: dbg::DecisionStatus::Accepted,
+                reason: if let Some(r) = decode_diag.reject_reason.as_ref() {
                     format!("ok_with_decode_reject:{}", r)
                 } else {
                     "ok".to_string()
                 },
             };
-            cd.derived = dbg::DerivedDebugV1 {
+            cd.derived = dbg::DerivedDebug {
                 id: derived_id,
                 confidence: Some(confidence),
-                center_xy: Some([center[0] as f32, center[1] as f32]),
+                center_xy: Some(center),
             };
         }
 
@@ -268,8 +229,7 @@ pub(super) fn run(
                 if cand_idx < n_rec {
                     if let Some(stage1) = stage1.as_mut() {
                         if let Some(cd) = stage1.candidates.get_mut(cand_idx) {
-                            cd.derived.center_xy =
-                                Some([marker.center[0] as f32, marker.center[1] as f32]);
+                            cd.derived.center_xy = Some(marker.center);
                         }
                     }
                 }

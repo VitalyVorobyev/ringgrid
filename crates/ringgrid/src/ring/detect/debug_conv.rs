@@ -57,7 +57,6 @@ pub(super) fn outer_estimation_debug(
         theta_consistency: chosen.map(|h| h.theta_consistency),
         status: match outer_estimate.status {
             OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
-            OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
             OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
         },
         reason: outer_estimate.reason.clone(),

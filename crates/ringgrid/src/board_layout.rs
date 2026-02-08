@@ -283,9 +283,7 @@ fn generate_markers(
 
     for row_idx in 0..rows {
         let r = row_idx as i32 - row_mid;
-        let n_cols = if rows == 1 {
-            long_row_cols
-        } else if ((r + long_row_cols as i32 - 1) & 1) == 0 {
+        let n_cols = if rows == 1 || ((r + long_row_cols as i32 - 1) & 1) == 0 {
             long_row_cols
         } else {
             short_row_cols

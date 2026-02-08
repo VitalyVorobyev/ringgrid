@@ -37,16 +37,10 @@ impl Default for EdgeSampleConfig {
 /// Result of edge sampling for one candidate.
 #[derive(Debug, Clone)]
 pub struct EdgeSampleResult {
-    /// Candidate center (unchanged from input).
-    pub center: [f32; 2],
     /// Outer edge points (sub-pixel positions in image coords).
     pub outer_points: Vec<[f64; 2]>,
     /// Inner edge points (sub-pixel positions in image coords).
     pub inner_points: Vec<[f64; 2]>,
-    /// Median outer radius from ray measurements.
-    pub outer_radius: f32,
-    /// Median inner radius from ray measurements.
-    pub inner_radius: f32,
     /// Per-ray outer radii for rays where both edges were found.
     pub outer_radii: Vec<f32>,
     /// Per-ray inner radii for rays where both edges were found.
@@ -112,12 +106,6 @@ impl<'a> DistortionAwareSampler<'a> {
         let img_xy = self.working_to_image_xy([x_working, y_working])?;
         bilinear_sample_u8_checked(self.img, img_xy[0], img_xy[1])
     }
-
-    /// Sample at a working-frame coordinate; returns 0.0 out-of-bounds.
-    #[inline]
-    pub fn sample(self, x_working: f32, y_working: f32) -> f32 {
-        self.sample_checked(x_working, y_working).unwrap_or(0.0)
-    }
 }
 
 /// Sample a grayscale image at sub-pixel position using bilinear interpolation.
@@ -155,18 +143,7 @@ pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32
     if x0 + 1 >= w || y0 + 1 >= h {
         return None;
     }
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    let p00 = img.get_pixel(x0, y0)[0] as f32 / 255.0;
-    let p10 = img.get_pixel(x0 + 1, y0)[0] as f32 / 255.0;
-    let p01 = img.get_pixel(x0, y0 + 1)[0] as f32 / 255.0;
-    let p11 = img.get_pixel(x0 + 1, y0 + 1)[0] as f32 / 255.0;
-    Some(
-        (1.0 - fx) * (1.0 - fy) * p00
-            + fx * (1.0 - fy) * p10
-            + (1.0 - fx) * fy * p01
-            + fx * fy * p11,
-    )
+    Some(bilinear_sample_u8(img, x, y))
 }
 
 #[cfg(test)]

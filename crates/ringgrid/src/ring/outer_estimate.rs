@@ -7,7 +7,7 @@
 
 use image::GrayImage;
 
-use crate::camera::{CameraModel, PixelMapper};
+use crate::camera::PixelMapper;
 use crate::marker_spec::{AngularAggregator, GradPolarity};
 
 use super::edge_sample::DistortionAwareSampler;
@@ -19,8 +19,6 @@ use super::radial_profile::Polarity;
 pub enum OuterStatus {
     /// Outer-radius estimate is valid and passed quality gates.
     Ok,
-    /// Estimate was computed but rejected by quality gates.
-    Rejected,
     /// Estimation failed (invalid inputs or insufficient data).
     Failed,
 }
@@ -114,26 +112,7 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
 
 /// Estimate outer radius around a center prior using radial derivatives.
 ///
-/// Returns one or more radius hypotheses along with quality statistics and
-/// optional response traces used by debug tooling.
-pub fn estimate_outer_from_prior(
-    gray: &GrayImage,
-    center_prior: [f32; 2],
-    r_outer_expected_px: f32,
-    cfg: &OuterEstimationConfig,
-    store_response: bool,
-) -> OuterEstimate {
-    estimate_outer_from_prior_with_mapper(
-        gray,
-        center_prior,
-        r_outer_expected_px,
-        cfg,
-        None,
-        store_response,
-    )
-}
-
-/// Distortion-aware variant of [`estimate_outer_from_prior`] using an abstract mapper.
+/// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn estimate_outer_from_prior_with_mapper(
     gray: &GrayImage,
     center_prior: [f32; 2],
@@ -347,25 +326,6 @@ pub fn estimate_outer_from_prior_with_mapper(
     })
 }
 
-/// Distortion-aware variant of [`estimate_outer_from_prior`] using [`CameraModel`].
-pub fn estimate_outer_from_prior_with_camera(
-    gray: &GrayImage,
-    center_prior: [f32; 2],
-    r_outer_expected_px: f32,
-    cfg: &OuterEstimationConfig,
-    camera: Option<&CameraModel>,
-    store_response: bool,
-) -> OuterEstimate {
-    estimate_outer_from_prior_with_mapper(
-        gray,
-        center_prior,
-        r_outer_expected_px,
-        cfg,
-        camera.map(|c| c as &dyn PixelMapper),
-        store_response,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,7 +399,7 @@ mod tests {
         };
 
         // If we search around r_outer, we should land near r_outer, not the stronger inner edge.
-        let est = estimate_outer_from_prior(&img, [cx, cy], r_outer, &cfg, true);
+        let est = estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_outer, &cfg, None, true);
         assert_eq!(
             est.status,
             OuterStatus::Ok,

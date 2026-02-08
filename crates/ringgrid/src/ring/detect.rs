@@ -95,18 +95,6 @@ impl Default for TwoPassParams {
     }
 }
 
-/// Estimator interface for deriving a pixel mapper from pass-1 detection output.
-///
-/// Implementations may keep and use multi-image state internally.
-pub trait PixelMapperEstimator {
-    /// Estimate a mapper using the current image and pass-1 result.
-    fn estimate_mapper(
-        &mut self,
-        gray: &GrayImage,
-        pass1: &DetectionResult,
-    ) -> Option<Box<dyn PixelMapper>>;
-}
-
 /// Configuration for homography-guided completion: attempt local fits for
 /// missing IDs at H-projected board locations.
 #[derive(Debug, Clone)]
@@ -562,46 +550,6 @@ pub fn detect_rings_two_pass_with_mapper(
         params.keep_pass1_markers,
         config.dedup_radius,
         Some(mapper),
-    );
-    pass2
-}
-
-/// Run two-pass detection where the pass-2 mapper is estimated from pass-1 output.
-pub fn detect_rings_two_pass_with_estimator(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    estimator: &mut dyn PixelMapperEstimator,
-    params: &TwoPassParams,
-) -> DetectionResult {
-    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
-    let Some(mapper) = estimator.estimate_mapper(gray, &pass1) else {
-        return pass1;
-    };
-
-    let seed_centers_image = collect_seed_centers_image(&pass1, &params.seed);
-    let mut pass2 = detect_rings_with_mapper_and_seeds(
-        gray,
-        config,
-        Some(mapper.as_ref()),
-        &seed_centers_image,
-        &params.seed,
-    );
-    if pass2.detected_markers.is_empty() && !seed_centers_image.is_empty() {
-        tracing::info!("seeded pass-2 returned no detections; retrying pass-2 without seeds");
-        pass2 = detect_rings_with_mapper_and_seeds(
-            gray,
-            config,
-            Some(mapper.as_ref()),
-            &[],
-            &params.seed,
-        );
-    }
-    pass2.detected_markers = merge_two_pass_markers(
-        &pass1.detected_markers,
-        pass2.detected_markers,
-        params.keep_pass1_markers,
-        config.dedup_radius,
-        Some(mapper.as_ref()),
     );
     pass2
 }

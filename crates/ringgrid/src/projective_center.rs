@@ -43,14 +43,6 @@ impl Default for RingCenterProjectiveOptions {
 pub struct RingCenterProjectiveDebug {
     /// Geometric residual for the selected candidate.
     pub selected_residual: f64,
-    /// Full selector score for the selected candidate.
-    pub selected_score: f64,
-    /// Real part of selected eigenvalue.
-    pub selected_lambda: f64,
-    /// Imaginary part magnitude of selected eigenvalue.
-    pub selected_lambda_imag: f64,
-    /// Imaginary norm of selected eigenvector.
-    pub selected_imag_u_norm: f64,
     /// Separation from nearest competing eigenvalue.
     pub selected_eig_separation: f64,
 }
@@ -102,9 +94,6 @@ struct Candidate {
     residual: f64,
     score: f64,
     eig_separation: f64,
-    lambda_re: f64,
-    lambda_im: f64,
-    imag_u_norm: f64,
 }
 
 fn as_complex_matrix(m: &Matrix3<f64>) -> Matrix3<C64> {
@@ -171,20 +160,6 @@ fn normalize_line(line: Vector3<f64>, eps: f64) -> Option<Vector3<f64>> {
         return Some(line / n);
     }
     None
-}
-
-/// Compute projective unbiased ring center and vanishing line from inner/outer conics.
-pub fn ring_center_projective(
-    q_inner: &Matrix3<f64>,
-    q_outer: &Matrix3<f64>,
-    expected_ratio: Option<f64>,
-) -> Result<(Point2<f64>, Vector3<f64>), ProjectiveCenterError> {
-    let opts = RingCenterProjectiveOptions {
-        expected_ratio,
-        ..Default::default()
-    };
-    let res = ring_center_projective_with_debug(q_inner, q_outer, opts)?;
-    Ok((res.center, res.vanishing_line))
 }
 
 /// Compute projective unbiased ring center and expose selection residual/debug.
@@ -306,9 +281,6 @@ pub fn ring_center_projective_with_debug(
                     residual,
                     score,
                     eig_separation: eig_sep[i],
-                    lambda_re: lambda.re,
-                    lambda_im: lambda.im,
-                    imag_u_norm,
                 };
 
                 match best {
@@ -337,10 +309,6 @@ pub fn ring_center_projective_with_debug(
         vanishing_line: b.vanishing_line,
         debug: RingCenterProjectiveDebug {
             selected_residual: b.residual,
-            selected_score: b.score,
-            selected_lambda: b.lambda_re,
-            selected_lambda_imag: b.lambda_im,
-            selected_imag_u_norm: b.imag_u_norm,
             selected_eig_separation: b.eig_separation,
         },
     })
@@ -389,8 +357,16 @@ mod tests {
         let q1 = project_conic(&circle_conic(r_in), &h);
         let q2 = project_conic(&circle_conic(r_out), &h);
 
-        let (c, _l) =
-            ring_center_projective(&q1, &q2, Some(r_in / r_out)).expect("center recovery");
+        let c = ring_center_projective_with_debug(
+            &q1,
+            &q2,
+            RingCenterProjectiveOptions {
+                expected_ratio: Some(r_in / r_out),
+                ..Default::default()
+            },
+        )
+        .expect("center recovery")
+        .center;
         let gt = gt_center(&h);
         let err = ((c.x - gt.x).powi(2) + (c.y - gt.y).powi(2)).sqrt();
         assert!(
@@ -408,9 +384,12 @@ mod tests {
         let q1 = project_conic(&circle_conic(r_in), &h);
         let q2 = project_conic(&circle_conic(r_out), &h);
 
-        let (c0, _) = ring_center_projective(&q1, &q2, None).expect("base");
-        let (c1, _) =
-            ring_center_projective(&(q1 * 3.7), &(q2 * -2.1), None).expect("scaled conics");
+        let c0 = ring_center_projective_with_debug(&q1, &q2, Default::default())
+            .expect("base")
+            .center;
+        let c1 = ring_center_projective_with_debug(&(q1 * 3.7), &(q2 * -2.1), Default::default())
+            .expect("scaled conics")
+            .center;
 
         let err = ((c0.x - c1.x).powi(2) + (c0.y - c1.y).powi(2)).sqrt();
         assert!(err < 1e-10, "scale invariance violated, err={:.3e}", err);

@@ -2,7 +2,6 @@
 
 use super::fit_conic_direct;
 use super::types::{ConicError, Ellipse, RansacConfig, RansacResult};
-use super::ConicCoeffs;
 
 /// Fit an ellipse robustly using RANSAC.
 ///
@@ -18,7 +17,6 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
 
     let mut rng = StdRng::seed_from_u64(config.seed);
     let mut best_inlier_count = 0usize;
-    let mut best_conic: Option<ConicCoeffs> = None;
     let mut best_ellipse: Option<Ellipse> = None;
     let mut best_mask: Vec<bool> = vec![false; n];
 
@@ -49,7 +47,6 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
 
         if inlier_count > best_inlier_count {
             best_inlier_count = inlier_count;
-            best_conic = Some(conic);
             best_ellipse = Some(ellipse);
             best_mask = mask;
 
@@ -73,25 +70,21 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         .map(|(_, &p)| p)
         .collect();
 
-    let (final_conic, final_ellipse) = fit_conic_direct(&inlier_pts)
-        .and_then(|conic| conic.to_ellipse().map(|ellipse| (conic, ellipse)))
-        .or_else(|| best_conic.zip(best_ellipse))?;
+    let final_ellipse = fit_conic_direct(&inlier_pts)
+        .and_then(|conic| conic.to_ellipse())
+        .or(best_ellipse)?;
 
-    // Recompute inlier mask with final model using Sampson distance
-    let mut final_mask = vec![false; n];
+    // Recompute inlier count with final model using Sampson distance
     let mut final_count = 0;
-    for (i, &[x, y]) in points.iter().enumerate() {
+    for &[x, y] in points {
         let dist = final_ellipse.sampson_distance(x, y);
         if dist < config.inlier_threshold {
-            final_mask[i] = true;
             final_count += 1;
         }
     }
 
     Some(RansacResult {
         ellipse: final_ellipse,
-        conic: final_conic,
-        inlier_mask: final_mask,
         num_inliers: final_count,
     })
 }
@@ -123,35 +116,150 @@ fn sample_indices(rng: &mut impl rand::Rng, n: usize, k: usize) -> Vec<usize> {
     indices
 }
 
-// ── Residual computation ───────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+    use rand::prelude::*;
 
-/// Compute RMS algebraic distance of points to a (normalized) conic.
-pub fn rms_algebraic_distance(conic: &ConicCoeffs, points: &[[f64; 2]]) -> f64 {
-    if points.is_empty() {
-        return 0.0;
+    /// Helper: create an ellipse and sample points on it.
+    fn make_test_ellipse() -> Ellipse {
+        Ellipse {
+            cx: 100.0,
+            cy: 80.0,
+            a: 30.0,
+            b: 15.0,
+            angle: 0.3, // ~17 degrees
+        }
     }
-    let conic_n = conic.normalized().unwrap_or(*conic);
-    let sum_sq: f64 = points
-        .iter()
-        .map(|&[x, y]| {
-            let d = conic_n.algebraic_distance(x, y);
-            d * d
-        })
-        .sum();
-    (sum_sq / points.len() as f64).sqrt()
-}
 
-/// Compute RMS Sampson distance of points to an ellipse.
-pub fn rms_sampson_distance(ellipse: &Ellipse, points: &[[f64; 2]]) -> f64 {
-    if points.is_empty() {
-        return 0.0;
+    #[test]
+    fn test_ransac_no_outliers() {
+        let e = make_test_ellipse();
+        let pts = e.sample_points(100);
+
+        let config = RansacConfig {
+            max_iters: 100,
+            inlier_threshold: 0.1, // Sampson distance in pixels
+            min_inliers: 6,
+            seed: 42,
+        };
+
+        let result = fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed");
+        assert_eq!(result.num_inliers, 100);
+        assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 1e-4);
+        assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 1e-4);
     }
-    let sum_sq: f64 = points
-        .iter()
-        .map(|&[x, y]| {
-            let d = ellipse.sampson_distance(x, y);
-            d * d
-        })
-        .sum();
-    (sum_sq / points.len() as f64).sqrt()
+
+    #[test]
+    fn test_ransac_with_outliers() {
+        let e = make_test_ellipse();
+        let mut pts = e.sample_points(80);
+        let mut rng = StdRng::seed_from_u64(999);
+
+        // Add 20 random outliers
+        for _ in 0..20 {
+            pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
+        }
+
+        let config = RansacConfig {
+            max_iters: 500,
+            inlier_threshold: 0.1, // Sampson distance in pixels
+            min_inliers: 20,
+            seed: 42,
+        };
+
+        let result =
+            fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed with outliers");
+
+        // Should recover the original ellipse despite 20% outliers
+        assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 0.5);
+        assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 0.5);
+        assert_relative_eq!(result.ellipse.a, e.a, epsilon = 0.5);
+        assert_relative_eq!(result.ellipse.b, e.b, epsilon = 0.5);
+
+        // Most true points should be inliers
+        assert!(
+            result.num_inliers >= 60,
+            "expected >= 60 inliers, got {}",
+            result.num_inliers
+        );
+    }
+
+    #[test]
+    fn test_ransac_with_noise_and_outliers() {
+        let e = make_test_ellipse();
+        let mut pts = e.sample_points(150);
+        let mut rng = StdRng::seed_from_u64(777);
+        let noise_sigma = 0.3;
+
+        // Add Gaussian-ish noise to inliers
+        for p in pts.iter_mut() {
+            p[0] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[1] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+        }
+
+        // Add 50 outliers
+        for _ in 0..50 {
+            pts.push([rng.gen_range(20.0..180.0), rng.gen_range(20.0..160.0)]);
+        }
+
+        let config = RansacConfig {
+            max_iters: 2000,
+            inlier_threshold: 1.0, // Sampson distance in pixels; generous for σ=0.3
+            min_inliers: 20,
+            seed: 42,
+        };
+
+        let result =
+            fit_ellipse_ransac(&pts, &config).expect("RANSAC should succeed with noise + outliers");
+
+        assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 2.0);
+        assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 2.0);
+        assert_relative_eq!(result.ellipse.a, e.a, epsilon = 3.0);
+        assert_relative_eq!(result.ellipse.b, e.b, epsilon = 3.0);
+    }
+
+    #[test]
+    fn test_ransac_early_exit() {
+        // With all clean points, RANSAC should exit early
+        let e = make_test_ellipse();
+        let pts = e.sample_points(200);
+        let config = RansacConfig {
+            max_iters: 10000, // many iterations, but should exit early
+            inlier_threshold: 0.5,
+            min_inliers: 6,
+            seed: 42,
+        };
+        // Should succeed quickly (early exit at 90% inliers)
+        let result = fit_ellipse_ransac(&pts, &config).expect("should succeed");
+        assert_eq!(result.num_inliers, 200);
+    }
+
+    #[test]
+    fn test_ransac_partial_arc_with_outliers() {
+        let e = make_test_ellipse();
+        let all_pts = e.sample_points(400);
+        // Keep only a half-arc
+        let mut arc_pts: Vec<[f64; 2]> = all_pts.into_iter().filter(|&[_, y]| y > e.cy).collect();
+
+        // Add outliers
+        let mut rng = StdRng::seed_from_u64(333);
+        for _ in 0..20 {
+            arc_pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
+        }
+
+        let config = RansacConfig {
+            max_iters: 1000,
+            inlier_threshold: 1.0,
+            min_inliers: 10,
+            seed: 42,
+        };
+
+        let result =
+            fit_ellipse_ransac(&arc_pts, &config).expect("RANSAC should succeed on partial arc");
+
+        assert_relative_eq!(result.ellipse.cx, e.cx, epsilon = 5.0);
+        assert_relative_eq!(result.ellipse.cy, e.cy, epsilon = 5.0);
+    }
 }

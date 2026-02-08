@@ -6,7 +6,7 @@
 
 use image::GrayImage;
 
-use crate::camera::{CameraModel, PixelMapper};
+use crate::camera::PixelMapper;
 use crate::conic::Ellipse;
 use crate::marker_spec::{GradPolarity, MarkerSpec};
 
@@ -52,19 +52,7 @@ pub struct InnerEstimate {
 
 /// Estimate inner ring scale from a fitted outer ellipse.
 ///
-/// This estimator samples radial profiles in the normalized outer-ellipse frame,
-/// aggregates edge responses across theta, and returns a robust single-radius
-/// inner-scale estimate with quality diagnostics.
-pub fn estimate_inner_scale_from_outer(
-    gray: &GrayImage,
-    outer: &Ellipse,
-    spec: &MarkerSpec,
-    store_response: bool,
-) -> InnerEstimate {
-    estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, None, store_response)
-}
-
-/// Distortion-aware variant of [`estimate_inner_scale_from_outer`] using an abstract mapper.
+/// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn estimate_inner_scale_from_outer_with_mapper(
     gray: &GrayImage,
     outer: &Ellipse,
@@ -282,23 +270,6 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
     })
 }
 
-/// Distortion-aware variant of [`estimate_inner_scale_from_outer`] using [`CameraModel`].
-pub fn estimate_inner_scale_from_outer_with_camera(
-    gray: &GrayImage,
-    outer: &Ellipse,
-    spec: &MarkerSpec,
-    camera: Option<&CameraModel>,
-    store_response: bool,
-) -> InnerEstimate {
-    estimate_inner_scale_from_outer_with_mapper(
-        gray,
-        outer,
-        spec,
-        camera.map(|c| c as &dyn PixelMapper),
-        store_response,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,7 +358,8 @@ mod tests {
             ..MarkerSpec::default()
         };
 
-        let est = estimate_inner_scale_from_outer(&img, &outer_ellipse, &spec, true);
+        let est =
+            estimate_inner_scale_from_outer_with_mapper(&img, &outer_ellipse, &spec, None, true);
         assert_eq!(
             est.status,
             InnerStatus::Ok,

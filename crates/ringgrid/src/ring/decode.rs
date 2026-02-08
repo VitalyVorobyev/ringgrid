@@ -9,7 +9,7 @@
 
 use image::GrayImage;
 
-use crate::camera::{CameraModel, PixelMapper};
+use crate::camera::PixelMapper;
 use crate::codec::Codebook;
 use crate::conic::Ellipse;
 
@@ -59,12 +59,6 @@ pub struct DecodeResult {
     pub margin: u8,
     /// Cyclic rotation applied to the codeword.
     pub rotation: u8,
-    /// Per-sector average intensities (for debug).
-    pub sector_intensities: [f32; 16],
-    /// Threshold used to binarize sector intensities.
-    pub threshold: f32,
-    /// Whether the inverted polarity was used.
-    pub inverted: bool,
 }
 
 /// Debug/diagnostic information about a decode attempt.
@@ -74,8 +68,6 @@ pub struct DecodeDiagnostics {
     pub sector_intensities: [f32; 16],
     /// Threshold used to binarize sector intensities.
     pub threshold: f32,
-    /// Word formed by thresholding `sector_intensities`.
-    pub word: u16,
     /// Word actually matched against the codebook (possibly inverted).
     pub used_word: u16,
     /// Whether the matched word was polarity-inverted before matching.
@@ -94,62 +86,9 @@ pub struct DecodeDiagnostics {
     pub reject_reason: Option<String>,
 }
 
-/// Decode a marker ID from the image using the fitted outer ellipse.
+/// Decode a marker and return `(accepted_result, diagnostics)`.
 ///
-/// Samples sector intensities along a circle at the code band radius,
-/// centered on the ellipse center. Uses circular (not elliptical) sampling
-/// because the ellipse orientation axis does not correspond to the
-/// board-to-image rotation — it reflects perspective distortion instead.
-/// The codebook matcher handles the unknown rotation via cyclic matching
-/// over all 16 sector offsets.
-///
-/// Returns `None` if decoding quality is insufficient.
-pub fn decode_marker(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-) -> Option<DecodeResult> {
-    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, None).0
-}
-
-/// Distortion-aware variant of [`decode_marker`] using an abstract mapper.
-pub fn decode_marker_with_mapper(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> Option<DecodeResult> {
-    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, mapper).0
-}
-
-/// Distortion-aware variant of [`decode_marker`].
-pub fn decode_marker_with_camera(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-    camera: Option<&CameraModel>,
-) -> Option<DecodeResult> {
-    decode_marker_with_mapper(
-        gray,
-        outer_ellipse,
-        config,
-        camera.map(|c| c as &dyn PixelMapper),
-    )
-}
-
-/// Decode a marker and return (accepted_result, diagnostics).
-///
-/// The detection pipeline uses the accepted result; debug tools can use the
-/// returned diagnostics even when decoding is rejected.
-pub fn decode_marker_with_diagnostics(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    decode_marker_with_diagnostics_and_mapper(gray, outer_ellipse, config, None)
-}
-
-/// Distortion-aware variant of [`decode_marker_with_diagnostics`] using an abstract mapper.
+/// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn decode_marker_with_diagnostics_and_mapper(
     gray: &GrayImage,
     outer_ellipse: &Ellipse,
@@ -157,21 +96,6 @@ pub fn decode_marker_with_diagnostics_and_mapper(
     mapper: Option<&dyn PixelMapper>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
     decode_marker_impl(gray, outer_ellipse, config, mapper)
-}
-
-/// Distortion-aware variant of [`decode_marker_with_diagnostics`].
-pub fn decode_marker_with_diagnostics_and_camera(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-    camera: Option<&CameraModel>,
-) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    decode_marker_impl(
-        gray,
-        outer_ellipse,
-        config,
-        camera.map(|c| c as &dyn PixelMapper),
-    )
 }
 
 fn decode_marker_impl(
@@ -187,7 +111,6 @@ fn decode_marker_impl(
             DecodeDiagnostics {
                 sector_intensities: [0.0; 16],
                 threshold: 0.0,
-                word: 0,
                 used_word: 0,
                 inverted_used: false,
                 best_id: 0,
@@ -260,7 +183,6 @@ fn decode_marker_impl(
             DecodeDiagnostics {
                 sector_intensities,
                 threshold: (sorted[0] + sorted[15]) / 2.0,
-                word: 0,
                 used_word: 0,
                 inverted_used: false,
                 best_id: 0,
@@ -337,7 +259,6 @@ fn decode_marker_impl(
             DecodeDiagnostics {
                 sector_intensities,
                 threshold,
-                word,
                 used_word,
                 inverted_used: inverted,
                 best_id: best_match.id,
@@ -357,15 +278,11 @@ fn decode_marker_impl(
         dist: best_match.dist,
         margin: best_match.margin,
         rotation: best_match.rotation,
-        sector_intensities,
-        threshold,
-        inverted,
     };
 
     let diag = DecodeDiagnostics {
         sector_intensities,
         threshold,
-        word,
         used_word,
         inverted_used: inverted,
         best_id: best_match.id,
@@ -450,11 +367,12 @@ mod tests {
         let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
         let config = DecodeConfig::default();
 
-        let result = decode_marker(&img, &ellipse, &config);
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
         assert!(result.is_some(), "should decode successfully");
         let result = result.unwrap();
         assert_eq!(result.id, 42, "decoded id should be 42, got {}", result.id);
-        assert!(!result.inverted, "should not use inverted polarity");
+        assert!(!diag.inverted_used, "should not use inverted polarity");
     }
 
     #[test]
@@ -472,13 +390,14 @@ mod tests {
         let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
         let config = DecodeConfig::default();
 
-        let result = decode_marker(&img, &ellipse, &config);
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
         assert!(
             result.is_some(),
             "should decode successfully with inverted polarity"
         );
         let result = result.unwrap();
         assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
-        assert!(result.inverted, "should use inverted polarity");
+        assert!(diag.inverted_used, "should use inverted polarity");
     }
 }

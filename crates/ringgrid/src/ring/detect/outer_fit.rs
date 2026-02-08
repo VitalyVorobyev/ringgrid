@@ -284,13 +284,9 @@ pub(super) fn fit_outer_ellipse_robust_with_reason(
             continue;
         }
 
-        let outer_radius = median_f32(&outer_radii);
         let edge = EdgeSampleResult {
-            center: center_prior,
             outer_points,
             inner_points: Vec::new(),
-            outer_radius,
-            inner_radius: 0.0,
             outer_radii,
             inner_radii: Vec::new(),
             n_good_rays: 0,

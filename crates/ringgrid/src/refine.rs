@@ -8,7 +8,7 @@ use image::GrayImage;
 use nalgebra as na;
 
 use crate::board_layout::BoardLayout;
-use crate::camera::{CameraModel, PixelMapper};
+use crate::camera::PixelMapper;
 use crate::ring::inner_estimate::Polarity;
 use crate::{DetectedMarker, EllipseParams};
 #[path = "refine/math.rs"]
@@ -226,19 +226,7 @@ fn solve_circle_center_mm(
 
 /// Refine marker centers in board coordinates using fixed-radius circle fitting.
 ///
-/// Returns aggregate statistics and one record per processed marker.
-pub fn refine_markers_circle_board(
-    gray: &GrayImage,
-    h: &na::Matrix3<f64>,
-    detections: &mut [DetectedMarker],
-    params: &RefineParams,
-    board: &BoardLayout,
-    store_points: bool,
-) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    refine_markers_circle_board_with_mapper(gray, h, detections, params, board, None, store_points)
-}
-
-/// Distortion-aware variant of [`refine_markers_circle_board`] using an abstract mapper.
+/// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn refine_markers_circle_board_with_mapper(
     gray: &GrayImage,
     h: &na::Matrix3<f64>,
@@ -249,27 +237,6 @@ pub fn refine_markers_circle_board_with_mapper(
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
     pipeline::run(gray, h, detections, params, board, mapper, store_points)
-}
-
-/// Distortion-aware variant of [`refine_markers_circle_board`] using [`CameraModel`].
-pub fn refine_markers_circle_board_with_camera(
-    gray: &GrayImage,
-    h: &na::Matrix3<f64>,
-    detections: &mut [DetectedMarker],
-    params: &RefineParams,
-    board: &BoardLayout,
-    camera: Option<&CameraModel>,
-    store_points: bool,
-) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    refine_markers_circle_board_with_mapper(
-        gray,
-        h,
-        detections,
-        params,
-        board,
-        camera.map(|c| c as &dyn PixelMapper),
-        store_points,
-    )
 }
 
 #[cfg(test)]

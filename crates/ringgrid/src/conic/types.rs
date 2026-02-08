@@ -1,6 +1,6 @@
 //! Core conic and ellipse types with conversions.
 
-use nalgebra::{Matrix3, Vector3};
+use nalgebra::Matrix3;
 use serde::{Deserialize, Serialize};
 
 // ── Error type ─────────────────────────────────────────────────────────────
@@ -15,12 +15,6 @@ pub enum ConicError {
         /// Provided number of points.
         got: usize,
     },
-    /// The fitted conic is degenerate (e.g., a line pair or point).
-    DegenerateConic,
-    /// The fitted conic is not an ellipse (hyperbola or parabola).
-    NotAnEllipse,
-    /// Numerical failure (singular matrix, etc.).
-    NumericalFailure(String),
     /// RANSAC could not find enough inliers.
     InsufficientInliers {
         /// Required minimum number of inliers.
@@ -36,9 +30,6 @@ impl std::fmt::Display for ConicError {
             Self::TooFewPoints { needed, got } => {
                 write!(f, "too few points: need {}, got {}", needed, got)
             }
-            Self::DegenerateConic => write!(f, "degenerate conic"),
-            Self::NotAnEllipse => write!(f, "conic is not an ellipse"),
-            Self::NumericalFailure(msg) => write!(f, "numerical failure: {}", msg),
             Self::InsufficientInliers { needed, found } => {
                 write!(f, "insufficient inliers: need {}, found {}", needed, found)
             }
@@ -120,16 +111,6 @@ impl Conic2D {
         }
         Some(Self { mat: self.mat / n })
     }
-
-    /// Invert the conic matrix.
-    pub fn invert(&self) -> Option<Matrix3<f64>> {
-        self.mat.try_inverse()
-    }
-
-    /// Evaluate `x^T Q x` for homogeneous `x`.
-    pub fn eval_h(&self, x: Vector3<f64>) -> f64 {
-        x.dot(&(self.mat * x))
-    }
 }
 
 /// Configuration for RANSAC ellipse fitting.
@@ -161,11 +142,7 @@ impl Default for RansacConfig {
 pub struct RansacResult {
     /// Final geometric ellipse fitted on the inlier set.
     pub ellipse: Ellipse,
-    /// Final conic coefficients corresponding to `ellipse`.
-    pub conic: ConicCoeffs,
-    /// Inlier mask over the input points.
-    pub inlier_mask: Vec<bool>,
-    /// Number of `true` entries in `inlier_mask`.
+    /// Number of inliers under the configured Sampson threshold.
     pub num_inliers: usize,
 }
 
@@ -199,8 +176,8 @@ impl ConicCoeffs {
 
     /// Convert to geometric ellipse parameters.
     /// Returns `None` if the conic is not an ellipse.
-    pub fn to_ellipse(&self) -> Option<Ellipse> {
-        conic_to_ellipse(self)
+    pub fn to_ellipse(self) -> Option<Ellipse> {
+        conic_to_ellipse(&self)
     }
 }
 
@@ -228,8 +205,8 @@ impl Ellipse {
     }
 
     /// Convert back to conic coefficients.
-    pub fn to_conic(&self) -> ConicCoeffs {
-        ellipse_to_conic(self)
+    pub fn to_conic(self) -> ConicCoeffs {
+        ellipse_to_conic(&self)
     }
 
     /// Sample `n` points on the ellipse boundary.

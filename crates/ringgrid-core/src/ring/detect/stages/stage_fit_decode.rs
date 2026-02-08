@@ -1,7 +1,7 @@
 #[cfg(feature = "debug-trace")]
 use super::super::debug_conv;
 use super::super::marker_build::{
-    decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
 use super::super::*;
 
@@ -230,16 +230,9 @@ fn run_core(
                 inner_fit.reason
             );
         }
-        let inner_params = inner_fit.ellipse_inner.as_ref().map(crate::EllipseParams::from);
+        let inner_params = inner_ellipse_params(&inner_fit);
 
-        let fit_metrics = fit_metrics_from_outer(
-            &edge,
-            &outer,
-            outer_ransac.as_ref(),
-            inner_fit.points_inner.len(),
-            inner_fit.ransac_inlier_ratio_inner,
-            inner_fit.rms_residual_inner,
-        );
+        let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
 
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let decode_metrics = decode_metrics_from_result(decode_result.as_ref());

@@ -24,104 +24,6 @@ struct RunContext<'a> {
     store_points: bool,
 }
 
-fn to_debug_points(points: &[[f64; 2]], store_points: bool) -> Option<Vec<[f32; 2]>> {
-    if !store_points {
-        return None;
-    }
-    Some(
-        points
-            .iter()
-            .take(256)
-            .map(|p| [p[0] as f32, p[1] as f32])
-            .collect(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn make_record(
-    id: usize,
-    n_points: usize,
-    init_center_board_mm: [f64; 2],
-    center_img_before: [f64; 2],
-    refined_center_board_mm: Option<[f64; 2]>,
-    center_img_after: Option<[f64; 2]>,
-    before_rms_mm: Option<f64>,
-    after_rms_mm: Option<f64>,
-    delta_center_mm: Option<f64>,
-    sampled_points: Option<&[[f64; 2]]>,
-    points_board: Option<&[[f64; 2]]>,
-    store_points: bool,
-    status: MarkerRefineStatus,
-    reason: Option<String>,
-) -> MarkerRefineRecord {
-    MarkerRefineRecord {
-        id,
-        n_points,
-        init_center_board_mm,
-        refined_center_board_mm,
-        center_img_before,
-        center_img_after,
-        before_rms_mm,
-        after_rms_mm,
-        delta_center_mm,
-        edge_points_img: sampled_points.and_then(|p| to_debug_points(p, store_points)),
-        edge_points_board_mm: points_board.and_then(|p| to_debug_points(p, store_points)),
-        status,
-        reason,
-    }
-}
-
-fn invalid_radius_records(detections: &[DetectedMarker]) -> Vec<MarkerRefineRecord> {
-    detections
-        .iter()
-        .filter_map(|m| m.id)
-        .map(|id| {
-            make_record(
-                id,
-                0,
-                [0.0, 0.0],
-                [0.0, 0.0],
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                false,
-                MarkerRefineStatus::Failed,
-                Some("invalid_marker_outer_radius_mm".to_string()),
-            )
-        })
-        .collect()
-}
-
-fn homography_not_invertible_records(detections: &[DetectedMarker]) -> Vec<MarkerRefineRecord> {
-    let mut records = Vec::new();
-    for m in detections {
-        if let Some(id) = m.id {
-            let init_center_board_mm = board_spec::xy_mm(id).map(|v| [v[0] as f64, v[1] as f64]);
-            records.push(make_record(
-                id,
-                0,
-                init_center_board_mm.unwrap_or([0.0, 0.0]),
-                m.center,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                false,
-                MarkerRefineStatus::Failed,
-                Some("homography_not_invertible".to_string()),
-            ));
-        }
-    }
-    records
-}
-
 fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<MarkerProcessResult> {
     let id = m.id?;
     let center_img_before = m.center;
@@ -129,23 +31,15 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let init_center_board_mm = match board_spec::xy_mm(id) {
         Some(v) => [v[0] as f64, v[1] as f64],
         None => {
+            let rec = MarkerRefineRecord::new(
+                id,
+                [0.0, 0.0],
+                center_img_before,
+                MarkerRefineStatus::Skipped,
+            )
+            .with_reason("id_not_in_board_spec");
             return Some(MarkerProcessResult {
-                record: make_record(
-                    id,
-                    0,
-                    [0.0, 0.0],
-                    center_img_before,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    false,
-                    MarkerRefineStatus::Skipped,
-                    Some("id_not_in_board_spec".to_string()),
-                ),
+                record: rec,
                 accepted_rms: None,
             });
         }
@@ -154,23 +48,15 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let ellipse_outer = match &m.ellipse_outer {
         Some(e) => e.clone(),
         None => {
+            let rec = MarkerRefineRecord::new(
+                id,
+                init_center_board_mm,
+                center_img_before,
+                MarkerRefineStatus::Skipped,
+            )
+            .with_reason("missing_outer_ellipse");
             return Some(MarkerProcessResult {
-                record: make_record(
-                    id,
-                    0,
-                    init_center_board_mm,
-                    center_img_before,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    false,
-                    MarkerRefineStatus::Skipped,
-                    Some("missing_outer_ellipse".to_string()),
-                ),
+                record: rec,
                 accepted_rms: None,
             });
         }
@@ -202,27 +88,20 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     };
 
     if sampled_points.len() < ctx.params.min_points {
+        let rec = MarkerRefineRecord::new(
+            id,
+            init_center_board_mm,
+            center_img_before,
+            MarkerRefineStatus::Failed,
+        )
+        .with_reason(format!(
+            "insufficient_edge_points({}<{})",
+            sampled_points.len(),
+            ctx.params.min_points
+        ))
+        .with_points(sampled_points.len(), Some(&sampled_points), None, ctx.store_points);
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                sampled_points.len(),
-                init_center_board_mm,
-                center_img_before,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&sampled_points),
-                None,
-                ctx.store_points,
-                MarkerRefineStatus::Failed,
-                Some(format!(
-                    "insufficient_edge_points({}<{})",
-                    sampled_points.len(),
-                    ctx.params.min_points
-                )),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
@@ -235,50 +114,46 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     }
 
     if points_board.len() < ctx.params.min_points {
+        let rec = MarkerRefineRecord::new(
+            id,
+            init_center_board_mm,
+            center_img_before,
+            MarkerRefineStatus::Failed,
+        )
+        .with_reason(format!(
+            "insufficient_unprojected_points({}<{})",
+            points_board.len(),
+            ctx.params.min_points
+        ))
+        .with_points(
+            points_board.len(),
+            Some(&sampled_points),
+            Some(&points_board),
+            ctx.store_points,
+        );
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                points_board.len(),
-                init_center_board_mm,
-                center_img_before,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&sampled_points),
-                Some(&points_board),
-                ctx.store_points,
-                MarkerRefineStatus::Failed,
-                Some(format!(
-                    "insufficient_unprojected_points({}<{})",
-                    points_board.len(),
-                    ctx.params.min_points
-                )),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
 
     let before_rms = rms_circle_residual_mm(&points_board, init_center_board_mm, ctx.radius_mm);
     if !before_rms.is_finite() {
+        let rec = MarkerRefineRecord::new(
+            id,
+            init_center_board_mm,
+            center_img_before,
+            MarkerRefineStatus::Failed,
+        )
+        .with_reason("before_rms_nan")
+        .with_points(
+            points_board.len(),
+            Some(&sampled_points),
+            Some(&points_board),
+            ctx.store_points,
+        );
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                points_board.len(),
-                init_center_board_mm,
-                center_img_before,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&sampled_points),
-                Some(&points_board),
-                ctx.store_points,
-                MarkerRefineStatus::Failed,
-                Some("before_rms_nan".to_string()),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
@@ -293,23 +168,22 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     ) {
         Some(c) => c,
         None => {
+            let mut rec = MarkerRefineRecord::new(
+                id,
+                init_center_board_mm,
+                center_img_before,
+                MarkerRefineStatus::Failed,
+            )
+            .with_reason("solver_failed")
+            .with_points(
+                points_board.len(),
+                Some(&sampled_points),
+                Some(&points_board),
+                ctx.store_points,
+            );
+            rec.before_rms_mm = Some(before_rms);
             return Some(MarkerProcessResult {
-                record: make_record(
-                    id,
-                    points_board.len(),
-                    init_center_board_mm,
-                    center_img_before,
-                    None,
-                    None,
-                    Some(before_rms),
-                    None,
-                    None,
-                    Some(&sampled_points),
-                    Some(&points_board),
-                    ctx.store_points,
-                    MarkerRefineStatus::Failed,
-                    Some("solver_failed".to_string()),
-                ),
+                record: rec,
                 accepted_rms: None,
             });
         }
@@ -320,95 +194,61 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let dy = refined_center[1] - init_center_board_mm[1];
     let delta_center_mm = (dx * dx + dy * dy).sqrt();
 
+    // Build common partial record for post-solve outcomes
+    let mut rec = MarkerRefineRecord::new(
+        id,
+        init_center_board_mm,
+        center_img_before,
+        MarkerRefineStatus::Ok, // overridden below if rejected
+    )
+    .with_points(
+        points_board.len(),
+        Some(&sampled_points),
+        Some(&points_board),
+        ctx.store_points,
+    );
+    rec.before_rms_mm = Some(before_rms);
+    rec.refined_center_board_mm = Some(refined_center);
+
     if !after_rms.is_finite() {
+        rec.status = MarkerRefineStatus::Failed;
+        rec.reason = Some("after_rms_nan".to_string());
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                points_board.len(),
-                init_center_board_mm,
-                center_img_before,
-                None,
-                None,
-                Some(before_rms),
-                None,
-                None,
-                Some(&sampled_points),
-                Some(&points_board),
-                ctx.store_points,
-                MarkerRefineStatus::Failed,
-                Some("after_rms_nan".to_string()),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
 
+    rec.after_rms_mm = Some(after_rms);
+    rec.delta_center_mm = Some(delta_center_mm);
+
     if delta_center_mm > ctx.params.reject_thresh_mm.max(0.0) {
+        rec.status = MarkerRefineStatus::Rejected;
+        rec.reason = Some(format!(
+            "delta_center_mm({:.3}>{:.3})",
+            delta_center_mm, ctx.params.reject_thresh_mm
+        ));
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                points_board.len(),
-                init_center_board_mm,
-                center_img_before,
-                Some(refined_center),
-                None,
-                Some(before_rms),
-                Some(after_rms),
-                Some(delta_center_mm),
-                Some(&sampled_points),
-                Some(&points_board),
-                ctx.store_points,
-                MarkerRefineStatus::Rejected,
-                Some(format!(
-                    "delta_center_mm({:.3}>{:.3})",
-                    delta_center_mm, ctx.params.reject_thresh_mm
-                )),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
 
     if after_rms > before_rms {
+        rec.status = MarkerRefineStatus::Rejected;
+        rec.reason = Some("rms_not_improved".to_string());
         return Some(MarkerProcessResult {
-            record: make_record(
-                id,
-                points_board.len(),
-                init_center_board_mm,
-                center_img_before,
-                Some(refined_center),
-                None,
-                Some(before_rms),
-                Some(after_rms),
-                Some(delta_center_mm),
-                Some(&sampled_points),
-                Some(&points_board),
-                ctx.store_points,
-                MarkerRefineStatus::Rejected,
-                Some("rms_not_improved".to_string()),
-            ),
+            record: rec,
             accepted_rms: None,
         });
     }
 
     let refined_img = project(ctx.h, refined_center[0], refined_center[1]);
     m.center = refined_img;
+    rec.center_img_after = Some(refined_img);
 
     Some(MarkerProcessResult {
-        record: make_record(
-            id,
-            points_board.len(),
-            init_center_board_mm,
-            center_img_before,
-            Some(refined_center),
-            Some(refined_img),
-            Some(before_rms),
-            Some(after_rms),
-            Some(delta_center_mm),
-            Some(&sampled_points),
-            Some(&points_board),
-            ctx.store_points,
-            MarkerRefineStatus::Ok,
-            None,
-        ),
+        record: rec,
         accepted_rms: Some((before_rms, after_rms)),
     })
 }
@@ -466,16 +306,37 @@ pub(super) fn run(
 
     let radius_mm = board_spec::marker_outer_radius_mm() as f64;
     if !radius_mm.is_finite() || radius_mm <= 0.0 {
-        return (RefineStats::default(), invalid_radius_records(detections));
+        let records: Vec<_> = detections
+            .iter()
+            .filter_map(|m| m.id)
+            .map(|id| {
+                MarkerRefineRecord::new(id, [0.0, 0.0], [0.0, 0.0], MarkerRefineStatus::Failed)
+                    .with_reason("invalid_marker_outer_radius_mm")
+            })
+            .collect();
+        return (RefineStats::default(), records);
     }
 
     let h_inv = match h.try_inverse() {
         Some(v) => v,
         None => {
-            return (
-                RefineStats::default(),
-                homography_not_invertible_records(detections),
-            )
+            let records: Vec<_> = detections
+                .iter()
+                .filter_map(|m| {
+                    let id = m.id?;
+                    let board = board_spec::xy_mm(id).map(|v| [v[0] as f64, v[1] as f64]);
+                    Some(
+                        MarkerRefineRecord::new(
+                            id,
+                            board.unwrap_or([0.0, 0.0]),
+                            m.center,
+                            MarkerRefineStatus::Failed,
+                        )
+                        .with_reason("homography_not_invertible"),
+                    )
+                })
+                .collect();
+            return (RefineStats::default(), records);
         }
     };
 

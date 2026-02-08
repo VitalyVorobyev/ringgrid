@@ -7,7 +7,7 @@ use crate::DetectedMarker;
 
 use super::debug_conv;
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
 
 pub(super) fn refine_with_homography_with_debug(
@@ -101,18 +101,8 @@ pub(super) fn refine_with_homography_with_debug(
             &inner_fit_cfg,
             false,
         );
-        let inner_params = inner_fit
-            .ellipse_inner
-            .as_ref()
-            .map(crate::EllipseParams::from);
-        let fit = fit_metrics_from_outer(
-            &edge,
-            &outer,
-            outer_ransac.as_ref(),
-            inner_fit.points_inner.len(),
-            inner_fit.ransac_inlier_ratio_inner,
-            inner_fit.rms_residual_inner,
-        );
+        let inner_params = inner_ellipse_params(&inner_fit);
+        let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
 
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let decode_metrics = decode_metrics_from_result(decode_result.as_ref());

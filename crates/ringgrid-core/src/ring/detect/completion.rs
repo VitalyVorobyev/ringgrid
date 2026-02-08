@@ -9,7 +9,10 @@ use crate::DetectedMarker;
 
 use super::{
     compute_center, debug_conv, fit_outer_ellipse_robust_with_reason,
-    marker_build::{decode_metrics_from_result, fit_metrics_from_outer, marker_with_defaults},
+    marker_build::{
+        decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params,
+        marker_with_defaults,
+    },
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, DetectConfig,
     OuterFitCandidate,
 };
@@ -425,17 +428,10 @@ pub(super) fn complete_with_h(
             &inner_fit_cfg,
             record_debug || store_points_in_debug,
         );
-        let inner_params = inner_fit.ellipse_inner.as_ref().map(crate::EllipseParams::from);
+        let inner_params = inner_ellipse_params(&inner_fit);
 
         // Build fit metrics and marker.
-        let fit = fit_metrics_from_outer(
-            &edge,
-            &outer,
-            outer_ransac.as_ref(),
-            inner_fit.points_inner.len(),
-            inner_fit.ransac_inlier_ratio_inner,
-            inner_fit.rms_residual_inner,
-        );
+        let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
 
         let decode_metrics =
             decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));

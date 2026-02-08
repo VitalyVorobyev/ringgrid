@@ -264,12 +264,7 @@ fn build_success_fit_debug(
         ellipse_outer: Some(debug_conv::ellipse_from_conic(outer)),
         ellipse_inner: inner_params.map(debug_conv::ellipse_from_params),
         inner_estimation: Some(debug_conv::inner_estimation_debug(&inner_fit.estimate)),
-        metrics: debug_conv::ring_fit_metrics(
-            fit,
-            quality.arc_cov,
-            inner_params.is_some(),
-            true,
-        ),
+        metrics: debug_conv::ring_fit_metrics(fit, quality.arc_cov, inner_params.is_some(), true),
         points_outer: points_debug(&edge.outer_points, store_points),
         points_inner: points_debug(&inner_fit.points_inner, store_points),
     }
@@ -342,8 +337,12 @@ pub(super) fn complete_with_h(
         if present_ids.contains(&id) {
             if let Some(a) = attempts.as_mut() {
                 a.push(make_attempt_record(
-                    id, proj_xy_f32, CompletionAttemptStatus::SkippedPresent,
-                    None, None, None,
+                    id,
+                    proj_xy_f32,
+                    CompletionAttemptStatus::SkippedPresent,
+                    None,
+                    None,
+                    None,
                 ));
             }
             continue;
@@ -353,8 +352,12 @@ pub(super) fn complete_with_h(
         if !projected_center[0].is_finite() || !projected_center[1].is_finite() {
             if let Some(a) = attempts.as_mut() {
                 a.push(make_attempt_record(
-                    id, proj_xy_f32, CompletionAttemptStatus::SkippedOob,
-                    Some("projected_center_nan".to_string()), None, None,
+                    id,
+                    proj_xy_f32,
+                    CompletionAttemptStatus::SkippedOob,
+                    Some("projected_center_nan".to_string()),
+                    None,
+                    None,
                 ));
             }
             continue;
@@ -366,8 +369,12 @@ pub(super) fn complete_with_h(
         {
             if let Some(a) = attempts.as_mut() {
                 a.push(make_attempt_record(
-                    id, proj_xy_f32, CompletionAttemptStatus::SkippedOob,
-                    Some("projected_center_outside_safe_bounds".to_string()), None, None,
+                    id,
+                    proj_xy_f32,
+                    CompletionAttemptStatus::SkippedOob,
+                    Some("projected_center_outside_safe_bounds".to_string()),
+                    None,
+                    None,
                 ));
             }
             continue;
@@ -389,46 +396,70 @@ pub(super) fn complete_with_h(
         let fit_cand = match fit_outer_ellipse_robust_with_reason(
             gray,
             [projected_center[0] as f32, projected_center[1] as f32],
-            r_expected, config, mapper, &edge_cfg, store_points_in_debug,
+            r_expected,
+            config,
+            mapper,
+            &edge_cfg,
+            store_points_in_debug,
         ) {
             Ok(v) => v,
             Err(reason) => {
                 stats.n_failed_fit += 1;
                 if let Some(a) = attempts.as_mut() {
                     a.push(make_attempt_record(
-                        id, proj_xy_f32, CompletionAttemptStatus::FailedFit,
-                        Some(reason), None, None,
+                        id,
+                        proj_xy_f32,
+                        CompletionAttemptStatus::FailedFit,
+                        Some(reason),
+                        None,
+                        None,
                     ));
                 }
                 continue;
             }
         };
         let OuterFitCandidate {
-            edge, outer, outer_ransac, outer_estimate, chosen_hypothesis, decode_result, ..
+            edge,
+            outer,
+            outer_ransac,
+            outer_estimate,
+            chosen_hypothesis,
+            decode_result,
+            ..
         } = fit_cand;
 
         let quality = compute_candidate_quality(
-            &edge, &outer, outer_ransac.as_ref(), projected_center, r_expected,
+            &edge,
+            &outer,
+            outer_ransac.as_ref(),
+            projected_center,
+            r_expected,
         );
         let fit_dbg_pre = if record_debug {
             Some(build_pre_gate_fit_debug(
-                &edge, &outer, &outer_estimate, chosen_hypothesis,
-                &quality, store_points_in_debug,
+                &edge,
+                &outer,
+                &outer_estimate,
+                chosen_hypothesis,
+                &quality,
+                store_points_in_debug,
             ))
         } else {
             None
         };
 
         // Decode-mismatch gate.
-        let added_reason = match check_decode_gate(
-            decode_result.as_ref(), id, &quality, params,
-        ) {
+        let added_reason = match check_decode_gate(decode_result.as_ref(), id, &quality, params) {
             Err(reason) => {
                 stats.n_failed_gate += 1;
                 if let Some(a) = attempts.as_mut() {
                     a.push(make_attempt_record(
-                        id, proj_xy_f32, CompletionAttemptStatus::FailedGate,
-                        Some(reason), Some(&quality), fit_dbg_pre.clone(),
+                        id,
+                        proj_xy_f32,
+                        CompletionAttemptStatus::FailedGate,
+                        Some(reason),
+                        Some(&quality),
+                        fit_dbg_pre.clone(),
                     ));
                 }
                 continue;
@@ -441,8 +472,12 @@ pub(super) fn complete_with_h(
             stats.n_failed_gate += 1;
             if let Some(a) = attempts.as_mut() {
                 a.push(make_attempt_record(
-                    id, proj_xy_f32, CompletionAttemptStatus::FailedGate,
-                    Some(reason), Some(&quality), fit_dbg_pre.clone(),
+                    id,
+                    proj_xy_f32,
+                    CompletionAttemptStatus::FailedGate,
+                    Some(reason),
+                    Some(&quality),
+                    fit_dbg_pre.clone(),
                 ));
             }
             continue;
@@ -450,7 +485,11 @@ pub(super) fn complete_with_h(
 
         // Inner fit + marker construction.
         let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
-            gray, &outer, &config.marker_spec, mapper, &inner_fit_cfg,
+            gray,
+            &outer,
+            &config.marker_spec,
+            mapper,
+            &inner_fit_cfg,
             record_debug || store_points_in_debug,
         );
         let inner_params = inner_ellipse_params(&inner_fit);
@@ -463,26 +502,44 @@ pub(super) fn complete_with_h(
             .unwrap_or(quality.fit_confidence);
 
         markers.push(marker_with_defaults(
-            Some(id), confidence, quality.center,
+            Some(id),
+            confidence,
+            quality.center,
             Some(crate::EllipseParams::from(&outer)),
-            inner_params.clone(), fit.clone(), decode_metrics,
+            inner_params.clone(),
+            fit.clone(),
+            decode_metrics,
         ));
         stats.n_added += 1;
-        tracing::debug!("Completion added id={} reproj_err={:.2}px", id, quality.reproj_err);
+        tracing::debug!(
+            "Completion added id={} reproj_err={:.2}px",
+            id,
+            quality.reproj_err
+        );
 
         if let Some(a) = attempts.as_mut() {
             let fit_dbg = if record_debug {
                 Some(build_success_fit_debug(
-                    &edge, &outer, &outer_estimate, chosen_hypothesis,
-                    &inner_fit, inner_params.as_ref(), &fit,
-                    &quality, store_points_in_debug,
+                    &edge,
+                    &outer,
+                    &outer_estimate,
+                    chosen_hypothesis,
+                    &inner_fit,
+                    inner_params.as_ref(),
+                    &fit,
+                    &quality,
+                    store_points_in_debug,
                 ))
             } else {
                 None
             };
             a.push(make_attempt_record(
-                id, proj_xy_f32, CompletionAttemptStatus::Added,
-                added_reason, Some(&quality), fit_dbg,
+                id,
+                proj_xy_f32,
+                CompletionAttemptStatus::Added,
+                added_reason,
+                Some(&quality),
+                fit_dbg,
             ));
         }
     }
@@ -490,12 +547,15 @@ pub(super) fn complete_with_h(
     if stats.n_added > 0 {
         tracing::info!(
             "Completion: added {} markers (attempted {}, in_image {})",
-            stats.n_added, stats.n_attempted, stats.n_in_image
+            stats.n_added,
+            stats.n_attempted,
+            stats.n_in_image
         );
     } else {
         tracing::info!(
             "Completion: added 0 markers (attempted {}, in_image {})",
-            stats.n_attempted, stats.n_in_image
+            stats.n_attempted,
+            stats.n_in_image
         );
     }
 

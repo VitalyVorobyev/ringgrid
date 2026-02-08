@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::board_layout::BoardLayout;
 use crate::camera::{CameraModel, PixelMapper};
 use crate::debug_dump::DebugDumpV1;
-use crate::ring::detect::{DetectConfig, DebugCollectConfig};
+use crate::ring::detect::{DebugCollectConfig, DetectConfig};
 use crate::DetectionResult;
 
 /// Target specification describing the board to detect.
@@ -108,11 +108,7 @@ impl Detector {
     }
 
     /// Detect with a camera model (sets camera in config, runs standard pipeline).
-    pub fn detect_with_camera(
-        &self,
-        image: &GrayImage,
-        camera: &CameraModel,
-    ) -> DetectionResult {
+    pub fn detect_with_camera(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
         let mut cfg = self.config.clone();
         cfg.camera = Some(*camera);
         crate::ring::detect::detect_rings(image, &cfg)

@@ -16,13 +16,13 @@ pub mod board_layout;
 #[allow(missing_docs)]
 pub mod board_spec;
 pub mod camera;
-pub mod detector;
 #[allow(missing_docs)]
 pub mod codebook;
 pub mod codec;
 pub mod conic;
 #[allow(missing_docs)]
 pub mod debug_dump;
+pub mod detector;
 pub mod homography;
 pub mod marker_spec;
 pub mod projective_center;

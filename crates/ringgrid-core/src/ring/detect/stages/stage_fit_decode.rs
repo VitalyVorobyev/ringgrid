@@ -192,9 +192,7 @@ pub(super) fn run(
                 )),
                 ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
                 ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
-                inner_estimation: Some(debug_conv::inner_estimation_debug(
-                    &inner_fit.estimate,
-                )),
+                inner_estimation: Some(debug_conv::inner_estimation_debug(&inner_fit.estimate)),
                 metrics: debug_conv::ring_fit_metrics(
                     &fit_metrics,
                     arc_cov,

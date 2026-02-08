@@ -159,11 +159,11 @@ struct CliDetectArgs {
     self_undistort: bool,
 
     /// Self-undistort: minimum lambda search bound.
-    #[arg(long, default_value = "-2e-7")]
+    #[arg(long, default_value = "-8e-7")]
     self_undistort_lambda_min: f64,
 
     /// Self-undistort: maximum lambda search bound.
-    #[arg(long, default_value = "2e-7")]
+    #[arg(long, default_value = "8e-7")]
     self_undistort_lambda_max: f64,
 
     /// Self-undistort: minimum number of markers with inner+outer edge points.
@@ -314,8 +314,7 @@ impl CliDetectArgs {
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
         let mut circle_refinement = self.circle_refine_method.to_core();
-        if self.no_nl_refine
-            && circle_refinement == ringgrid::ring::CircleRefinementMethod::NlBoard
+        if self.no_nl_refine && circle_refinement == ringgrid::ring::CircleRefinementMethod::NlBoard
         {
             circle_refinement = ringgrid::ring::CircleRefinementMethod::None;
         }

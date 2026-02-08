@@ -150,8 +150,12 @@ impl Detector {
         }
 
         let image_size = result.image_size;
-        let su_result = match estimate_self_undistort(&result.detected_markers, image_size, su_cfg)
-        {
+        let su_result = match estimate_self_undistort(
+            &result.detected_markers,
+            image_size,
+            su_cfg,
+            Some(&self.config.board),
+        ) {
             Some(r) => r,
             None => return result,
         };

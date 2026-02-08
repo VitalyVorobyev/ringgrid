@@ -1,7 +1,7 @@
 //! Self-undistort: intrinsics-free distortion estimation from ring markers.
 //!
-//! Uses a 1-parameter division model to estimate lens distortion from the
-//! projective-center residuals of detected inner/outer ring conic pairs.
+//! Uses a 1-parameter division model to estimate lens distortion from
+//! conic-consistency of detected inner/outer ring edge points.
 //! The division model maps distorted → undistorted coordinates:
 //!
 //!   x_u = cx + (x_d - cx) / (1 + λ r²)
@@ -11,13 +11,15 @@
 //! (typically image center).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+use crate::board_layout::BoardLayout;
 use crate::camera::PixelMapper;
+use crate::homography;
 
 /// Edge point data for a single marker: (outer_points, inner_points).
 type MarkerEdgeData = (Vec<[f64; 2]>, Vec<[f64; 2]>);
-use crate::conic::{fit_ellipse_direct, Conic2D};
-use crate::projective_center::{ring_center_projective_with_debug, RingCenterProjectiveOptions};
+use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
 use crate::DetectedMarker;
 
 /// Single-parameter division distortion model.
@@ -134,16 +136,47 @@ pub struct SelfUndistortConfig {
     /// Relative improvement threshold: accept only if
     /// `(baseline - optimum) / baseline > improvement_threshold`.
     pub improvement_threshold: f64,
+    /// Minimum absolute objective improvement required to apply the model.
+    ///
+    /// This prevents applying when the objective is near numerical noise floor.
+    pub min_abs_improvement: f64,
+    /// Trim fraction for robust aggregation of per-marker objective values.
+    ///
+    /// `0.1` means drop 10% low and 10% high scores before averaging.
+    pub trim_fraction: f64,
+    /// Minimum |lambda| required for applying the model.
+    ///
+    /// Very small lambda values are effectively identity and are treated as
+    /// "no correction" even if relative improvement is non-zero.
+    pub min_lambda_abs: f64,
+    /// Reject solutions that land too close to lambda-range boundaries.
+    pub reject_range_edge: bool,
+    /// Relative margin of the lambda range treated as unstable boundary area.
+    pub range_edge_margin_frac: f64,
+    /// Minimum decoded-ID correspondences needed for homography validation.
+    pub validation_min_markers: usize,
+    /// Minimum absolute homography self-error improvement (pixels) required.
+    pub validation_abs_improvement_px: f64,
+    /// Minimum relative homography self-error improvement required.
+    pub validation_rel_improvement: f64,
 }
 
 impl Default for SelfUndistortConfig {
     fn default() -> Self {
         Self {
             enable: false,
-            lambda_range: [-2e-7, 2e-7],
+            lambda_range: [-8e-7, 8e-7],
             max_evals: 40,
             min_markers: 6,
             improvement_threshold: 0.01,
+            min_abs_improvement: 1e-4,
+            trim_fraction: 0.1,
+            min_lambda_abs: 5e-9,
+            reject_range_edge: true,
+            range_edge_margin_frac: 0.02,
+            validation_min_markers: 24,
+            validation_abs_improvement_px: 0.05,
+            validation_rel_improvement: 0.03,
         }
     }
 }
@@ -165,18 +198,33 @@ pub struct SelfUndistortResult {
 
 /// Minimum number of edge points per ring required for conic refit.
 const MIN_EDGE_POINTS: usize = 6;
+fn trimmed_mean(values: &mut [f64], trim_fraction: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = values.len();
+    let trim = ((n as f64) * trim_fraction.clamp(0.0, 0.49)).floor() as usize;
+    if 2 * trim >= n {
+        return None;
+    }
+    let slice = &values[trim..(n - trim)];
+    if slice.is_empty() {
+        return None;
+    }
+    Some(slice.iter().sum::<f64>() / slice.len() as f64)
+}
 
-/// Compute the mean projective-center residual across markers when edge points
+/// Compute a robust projective-conic objective across markers when edge points
 /// are undistorted with the given lambda.
 fn self_undistort_objective(
     lambda: f64,
     marker_edge_data: &[MarkerEdgeData],
     image_center: [f64; 2],
-    proj_opts: &RingCenterProjectiveOptions,
+    trim_fraction: f64,
 ) -> f64 {
     let model = DivisionModel::new(lambda, image_center[0], image_center[1]);
-    let mut total_residual = 0.0;
-    let mut count = 0usize;
+    let mut marker_objective = Vec::with_capacity(marker_edge_data.len());
 
     for (outer_pts, inner_pts) in marker_edge_data {
         // Undistort edge points.
@@ -184,31 +232,34 @@ fn self_undistort_objective(
         let inner_ud = model.undistort_points(inner_pts);
 
         // Refit conics.
-        let Some((_outer_coeffs, _outer_ellipse)) = fit_ellipse_direct(&outer_ud) else {
+        let Some((_outer_coeffs, outer_ellipse)) = fit_ellipse_direct(&outer_ud) else {
             continue;
         };
-        let Some((_inner_coeffs, _inner_ellipse)) = fit_ellipse_direct(&inner_ud) else {
-            continue;
-        };
-
-        let q_outer = Conic2D::from_coeffs(&_outer_coeffs).mat;
-        let q_inner = Conic2D::from_coeffs(&_inner_coeffs).mat;
-
-        // Compute projective center residual.
-        let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, *proj_opts) else {
+        let Some((_inner_coeffs, inner_ellipse)) = fit_ellipse_direct(&inner_ud) else {
             continue;
         };
 
-        if res.debug.selected_residual.is_finite() {
-            total_residual += res.debug.selected_residual;
-            count += 1;
+        let rms_outer = rms_sampson_distance(&outer_ellipse, &outer_ud);
+        let rms_inner = rms_sampson_distance(&inner_ellipse, &inner_ud);
+        if !rms_outer.is_finite() || !rms_inner.is_finite() {
+            continue;
+        }
+        let value = 0.5 * (rms_outer + rms_inner);
+        if value.is_finite() {
+            marker_objective.push(value);
         }
     }
 
-    if count == 0 {
+    if marker_objective.is_empty() {
         return f64::MAX;
     }
-    total_residual / count as f64
+    let Some(base) = trimmed_mean(&mut marker_objective, trim_fraction) else {
+        return f64::MAX;
+    };
+    // Mild regularization to avoid unstable large-|lambda| solutions when
+    // objective curvature is flat.
+    let lambda_reg = 1e-6 * (lambda * 1.0e6).powi(2);
+    base + lambda_reg
 }
 
 /// Golden-section search for the minimum of `f` on `[a, b]`.
@@ -253,11 +304,79 @@ fn golden_section_minimize(
     }
 }
 
+fn homography_self_error_px(
+    markers: &[DetectedMarker],
+    board: &BoardLayout,
+    mapper: &dyn PixelMapper,
+) -> Option<(f64, usize)> {
+    let mut by_id: HashMap<usize, (f32, [f64; 2])> = HashMap::new();
+    for m in markers {
+        let Some(id) = m.id else {
+            continue;
+        };
+        let Some(center_w) = mapper.image_to_working_pixel(m.center) else {
+            continue;
+        };
+        if !center_w[0].is_finite() || !center_w[1].is_finite() {
+            continue;
+        }
+        let conf = m.confidence;
+        match by_id.get_mut(&id) {
+            Some((best_conf, best_center)) => {
+                if conf > *best_conf {
+                    *best_conf = conf;
+                    *best_center = center_w;
+                }
+            }
+            None => {
+                by_id.insert(id, (conf, center_w));
+            }
+        }
+    }
+
+    let mut src = Vec::<[f64; 2]>::new();
+    let mut dst = Vec::<[f64; 2]>::new();
+    for (id, (_conf, center_w)) in by_id {
+        let Some(xy) = board.xy_mm(id) else {
+            continue;
+        };
+        src.push([xy[0] as f64, xy[1] as f64]);
+        dst.push(center_w);
+    }
+    if src.len() < 4 {
+        return None;
+    }
+    let ransac_cfg = homography::RansacHomographyConfig {
+        max_iters: 1000,
+        inlier_threshold: 5.0,
+        min_inliers: 8,
+        seed: 0,
+    };
+    let Ok(res) = homography::fit_homography_ransac(&src, &dst, &ransac_cfg) else {
+        return None;
+    };
+    if res.n_inliers == 0 {
+        return None;
+    }
+    let mut sum = 0.0;
+    let mut n = 0usize;
+    for (i, e) in res.errors.iter().enumerate() {
+        if res.inlier_mask.get(i).copied().unwrap_or(false) && e.is_finite() {
+            sum += *e;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        None
+    } else {
+        Some((sum / n as f64, n))
+    }
+}
+
 /// Estimate a division-model distortion parameter from detected markers.
 ///
-/// Uses the projective-center residual of inner/outer ring conic pairs as the
-/// objective: correct distortion makes conic pairs more consistent, yielding
-/// lower residuals.
+/// Uses a robust mean of Sampson residuals of fitted inner/outer ellipses:
+/// correct distortion makes ring boundaries more conic-like.
 ///
 /// Returns `None` if fewer than `min_markers` have both inner and outer edge
 /// points with sufficient count.
@@ -265,56 +384,131 @@ pub fn estimate_self_undistort(
     markers: &[DetectedMarker],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
+    board: Option<&BoardLayout>,
 ) -> Option<SelfUndistortResult> {
-    // Collect edge data from markers with sufficient points.
-    let marker_edge_data: Vec<MarkerEdgeData> = markers
-        .iter()
-        .filter_map(|m| {
-            let outer = m.edge_points_outer.as_ref()?;
-            let inner = m.edge_points_inner.as_ref()?;
-            if outer.len() >= MIN_EDGE_POINTS && inner.len() >= MIN_EDGE_POINTS {
-                Some((outer.clone(), inner.clone()))
+    let image_center = [image_size[0] as f64 / 2.0, image_size[1] as f64 / 2.0];
+
+    // Prefer homography-based objective when enough decoded markers are present.
+    let board_zero = board.and_then(|b| {
+        let zero_model = DivisionModel::centered(0.0, image_size[0], image_size[1]);
+        homography_self_error_px(markers, b, &zero_model).and_then(|(err, n)| {
+            if n >= config.validation_min_markers {
+                Some((b, err, n))
             } else {
                 None
             }
         })
-        .collect();
+    });
 
-    if marker_edge_data.len() < config.min_markers {
-        return None;
-    }
+    let (objective_at_zero, lambda_opt, objective_at_lambda, n_markers_used) =
+        if let Some((board, err0, n0)) = board_zero {
+            let (lambda_opt, objective_at_lambda) = golden_section_minimize(
+                |lambda| {
+                    let model = DivisionModel::centered(lambda, image_size[0], image_size[1]);
+                    homography_self_error_px(markers, board, &model)
+                        .map(|(e, _)| e)
+                        .unwrap_or(f64::MAX)
+                },
+                config.lambda_range[0],
+                config.lambda_range[1],
+                config.max_evals,
+            );
+            (err0, lambda_opt, objective_at_lambda, n0)
+        } else {
+            // Fallback objective: conic-consistency from edge points.
+            let marker_edge_data: Vec<MarkerEdgeData> = markers
+                .iter()
+                .filter_map(|m| {
+                    let outer = m.edge_points_outer.as_ref()?;
+                    let inner = m.edge_points_inner.as_ref()?;
+                    if outer.len() >= MIN_EDGE_POINTS && inner.len() >= MIN_EDGE_POINTS {
+                        Some((outer.clone(), inner.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if marker_edge_data.len() < config.min_markers {
+                return None;
+            }
+            let objective_at_zero = self_undistort_objective(
+                0.0,
+                &marker_edge_data,
+                image_center,
+                config.trim_fraction,
+            );
+            if !objective_at_zero.is_finite() {
+                return None;
+            }
+            let (lambda_opt, objective_at_lambda) = golden_section_minimize(
+                |lambda| {
+                    self_undistort_objective(
+                        lambda,
+                        &marker_edge_data,
+                        image_center,
+                        config.trim_fraction,
+                    )
+                },
+                config.lambda_range[0],
+                config.lambda_range[1],
+                config.max_evals,
+            );
+            (
+                objective_at_zero,
+                lambda_opt,
+                objective_at_lambda,
+                marker_edge_data.len(),
+            )
+        };
 
-    let image_center = [image_size[0] as f64 / 2.0, image_size[1] as f64 / 2.0];
-    let proj_opts = RingCenterProjectiveOptions::default();
-
-    // Baseline: objective at lambda = 0.
-    let objective_at_zero =
-        self_undistort_objective(0.0, &marker_edge_data, image_center, &proj_opts);
-    if !objective_at_zero.is_finite() {
-        return None;
-    }
-
-    // Optimize lambda via golden-section search.
-    let (lambda_opt, objective_at_lambda) = golden_section_minimize(
-        |lambda| self_undistort_objective(lambda, &marker_edge_data, image_center, &proj_opts),
-        config.lambda_range[0],
-        config.lambda_range[1],
-        config.max_evals,
-    );
-
+    let abs_improvement = objective_at_zero - objective_at_lambda;
     let improvement = if objective_at_zero > 1e-18 {
-        (objective_at_zero - objective_at_lambda) / objective_at_zero
+        abs_improvement / objective_at_zero
     } else {
         0.0
     };
 
-    let applied = improvement > config.improvement_threshold && objective_at_lambda.is_finite();
+    let mut applied = objective_at_lambda.is_finite()
+        && abs_improvement.is_finite()
+        && abs_improvement > config.min_abs_improvement
+        && improvement > config.improvement_threshold
+        && lambda_opt.abs() >= config.min_lambda_abs;
+
+    if applied && config.reject_range_edge {
+        let lo = config.lambda_range[0].min(config.lambda_range[1]);
+        let hi = config.lambda_range[0].max(config.lambda_range[1]);
+        let span = (hi - lo).abs();
+        let margin = span * config.range_edge_margin_frac.clamp(0.0, 0.49);
+        if span > 0.0 && ((lambda_opt - lo).abs() <= margin || (hi - lambda_opt).abs() <= margin) {
+            applied = false;
+        }
+    }
+
+    if applied {
+        if let Some(board) = board {
+            let zero_model = DivisionModel::centered(0.0, image_size[0], image_size[1]);
+            let opt_model = DivisionModel::centered(lambda_opt, image_size[0], image_size[1]);
+            let err0 = homography_self_error_px(markers, board, &zero_model);
+            let err1 = homography_self_error_px(markers, board, &opt_model);
+            if let (Some((err0, n0)), Some((err1, n1))) = (err0, err1) {
+                let abs_gain = err0 - err1;
+                let rel_gain = if err0 > 1e-12 { abs_gain / err0 } else { 0.0 };
+                let by_abs = abs_gain >= config.validation_abs_improvement_px;
+                let by_rel = rel_gain >= config.validation_rel_improvement;
+                let enough_ids =
+                    n0 >= config.validation_min_markers && n1 >= config.validation_min_markers;
+                if enough_ids && !(by_abs && by_rel) {
+                    applied = false;
+                }
+            }
+        }
+    }
 
     Some(SelfUndistortResult {
         model: DivisionModel::centered(lambda_opt, image_size[0], image_size[1]),
         objective_at_lambda,
         objective_at_zero,
-        n_markers_used: marker_edge_data.len(),
+        n_markers_used,
         applied,
     })
 }
@@ -458,8 +652,7 @@ mod tests {
             marker.edge_points_inner.unwrap(),
         )];
         let image_center = [320.0, 240.0];
-        let proj_opts = RingCenterProjectiveOptions::default();
-        let obj = self_undistort_objective(0.0, &edge_data, image_center, &proj_opts);
+        let obj = self_undistort_objective(0.0, &edge_data, image_center, 0.0);
         assert!(
             obj < 1e-6,
             "objective for perfect circles should be near zero, got {}",
@@ -492,12 +685,9 @@ mod tests {
             .collect();
 
         let image_center = [500.0, 500.0];
-        let proj_opts = RingCenterProjectiveOptions::default();
-
-        let obj_zero = self_undistort_objective(0.0, &edge_data, image_center, &proj_opts);
-        let obj_true = self_undistort_objective(true_lambda, &edge_data, image_center, &proj_opts);
-        let obj_wrong =
-            self_undistort_objective(-true_lambda, &edge_data, image_center, &proj_opts);
+        let obj_zero = self_undistort_objective(0.0, &edge_data, image_center, 0.0);
+        let obj_true = self_undistort_objective(true_lambda, &edge_data, image_center, 0.0);
+        let obj_wrong = self_undistort_objective(-true_lambda, &edge_data, image_center, 0.0);
 
         assert!(
             obj_true < obj_zero,
@@ -533,7 +723,7 @@ mod tests {
             min_markers: 6,
             ..Default::default()
         };
-        let result = estimate_self_undistort(&markers, [640, 480], &config);
+        let result = estimate_self_undistort(&markers, [640, 480], &config, None);
         assert!(result.is_none());
     }
 
@@ -571,9 +761,11 @@ mod tests {
             max_evals: 60,
             min_markers: 6,
             improvement_threshold: 0.001,
+            min_abs_improvement: 0.0,
+            ..SelfUndistortConfig::default()
         };
 
-        let result = estimate_self_undistort(&markers, [image_w, image_h], &config)
+        let result = estimate_self_undistort(&markers, [image_w, image_h], &config, None)
             .expect("should find result");
 
         // Tolerance is generous: the 1D division model is an approximation

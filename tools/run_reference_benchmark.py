@@ -22,6 +22,8 @@ ALL_MODES = {
     "nl_board_irls": ["--circle-refine-method", "nl-board", "--nl-solver", "irls"],
 }
 
+ALL_CORRECTIONS = ("none", "external", "self_undistort")
+
 
 def find_ringgrid_binary() -> str | None:
     for candidate in ("target/release/ringgrid", "target/debug/ringgrid"):
@@ -42,6 +44,20 @@ def binary_supports_camera_cli(binary: str) -> bool:
         return False
     text = (result.stdout or "") + "\n" + (result.stderr or "")
     return "--cam-fx" in text
+
+
+def binary_supports_self_undistort_cli(binary: str) -> bool:
+    try:
+        result = subprocess.run(
+            [binary, "detect", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    text = (result.stdout or "") + "\n" + (result.stderr or "")
+    return "--self-undistort" in text
 
 
 def camera_cli_args_from_gt(gt_data: dict) -> list[str]:
@@ -105,6 +121,25 @@ def mean_of(rows: list[dict], key: str) -> float | None:
     return sum(vals) / len(vals)
 
 
+def resolve_pred_frame_for_detection(correction: str, det_data: dict) -> str:
+    if correction == "external":
+        return "working"
+    if correction == "self_undistort":
+        su = det_data.get("self_undistort")
+        if isinstance(su, dict) and bool(su.get("applied", False)):
+            return "working"
+        return "image"
+    return "image"
+
+
+def parse_correction_names(args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[str]:
+    if args.corrections is None:
+        return ["external"] if args.pass_camera_to_detector else ["none"]
+    if args.pass_camera_to_detector:
+        parser.error("--pass-camera-to-detector is deprecated; use --corrections external")
+    return list(ALL_CORRECTIONS) if "all" in args.corrections else args.corrections
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run clean reference benchmark")
     parser.add_argument("--out_dir", type=str, default="tools/out/reference_benchmark")
@@ -125,7 +160,25 @@ def main() -> None:
     parser.add_argument("--cam-p1", type=float, default=0.0)
     parser.add_argument("--cam-p2", type=float, default=0.0)
     parser.add_argument("--cam-k3", type=float, default=0.0)
-    parser.add_argument("--pass-camera-to-detector", action="store_true")
+    parser.add_argument(
+        "--pass-camera-to-detector",
+        action="store_true",
+        help="Deprecated alias for --corrections external.",
+    )
+    parser.add_argument(
+        "--corrections",
+        nargs="+",
+        default=None,
+        choices=["all", *ALL_CORRECTIONS],
+        help=(
+            "Distortion correction variants to benchmark. "
+            "Use 'none', 'external', 'self_undistort', or 'all'. "
+            "Default: 'none' unless --pass-camera-to-detector is set."
+        ),
+    )
+    parser.add_argument("--self-undistort-lambda-min", type=float, default=-8e-7)
+    parser.add_argument("--self-undistort-lambda-max", type=float, default=8e-7)
+    parser.add_argument("--self-undistort-min-markers", type=int, default=6)
     parser.add_argument(
         "--modes",
         nargs="+",
@@ -151,6 +204,9 @@ def main() -> None:
         parser.error("non-zero distortion requires camera intrinsics")
 
     mode_names = list(ALL_MODES.keys()) if "all" in args.modes else args.modes
+    correction_names = parse_correction_names(args, parser)
+    if "external" in correction_names and not has_all_intr:
+        parser.error("correction 'external' requires camera intrinsics in generated GT")
 
     out_dir = Path(args.out_dir)
     synth_dir = out_dir / "synth"
@@ -213,10 +269,17 @@ def main() -> None:
     use_cargo_run = ringgrid_bin is None
     if (
         not use_cargo_run
-        and args.pass_camera_to_detector
+        and "external" in correction_names
         and not binary_supports_camera_cli(ringgrid_bin)
     ):
         print("  NOTE: selected ringgrid binary does not support camera CLI flags; falling back to cargo run")
+        use_cargo_run = True
+    if (
+        not use_cargo_run
+        and "self_undistort" in correction_names
+        and not binary_supports_self_undistort_cli(ringgrid_bin)
+    ):
+        print("  NOTE: selected ringgrid binary does not support self-undistort CLI flags; falling back to cargo run")
         use_cargo_run = True
 
     print("[2/3] Run detection variants")
@@ -233,6 +296,7 @@ def main() -> None:
             "metric_frame": "image",
             "pass_camera_to_detector": bool(args.pass_camera_to_detector),
             "modes": mode_names,
+            "corrections": correction_names,
             "camera": (
                 {
                     "fx": args.cam_fx,
@@ -252,98 +316,114 @@ def main() -> None:
         "modes": {},
     }
 
-    for mode in mode_names:
-        mode_args = ALL_MODES[mode]
-        mode_dir = out_dir / mode
-        mode_dir.mkdir(parents=True, exist_ok=True)
-        scores: list[dict] = []
-        for idx in range(args.n_images):
-            img_path = synth_dir / f"img_{idx:04d}.png"
-            gt_path = synth_dir / f"gt_{idx:04d}.json"
-            det_path = mode_dir / f"det_{idx:04d}.json"
-            score_path = mode_dir / f"score_{idx:04d}.json"
+    for correction in correction_names:
+        for mode in mode_names:
+            mode_args = ALL_MODES[mode]
+            run_name = f"{mode}__{correction}"
+            mode_dir = out_dir / correction / mode
+            mode_dir.mkdir(parents=True, exist_ok=True)
+            scores: list[dict] = []
+            for idx in range(args.n_images):
+                img_path = synth_dir / f"img_{idx:04d}.png"
+                gt_path = synth_dir / f"gt_{idx:04d}.json"
+                det_path = mode_dir / f"det_{idx:04d}.json"
+                score_path = mode_dir / f"score_{idx:04d}.json"
 
-            if use_cargo_run:
-                detect_cmd = [
-                    "cargo",
-                    "run",
-                    "--quiet",
-                    "--",
-                    "detect",
-                    "--image",
-                    str(img_path),
-                    "--out",
-                    str(det_path),
-                    "--marker-diameter",
-                    str(args.marker_diameter),
-                    *mode_args,
-                ]
-            else:
-                detect_cmd = [
-                    ringgrid_bin,
-                    "detect",
-                    "--image",
-                    str(img_path),
-                    "--out",
-                    str(det_path),
-                    "--marker-diameter",
-                    str(args.marker_diameter),
-                    *mode_args,
-                ]
-            if args.pass_camera_to_detector:
-                with open(gt_path) as f:
-                    gt_data = json.load(f)
-                detect_cmd.extend(camera_cli_args_from_gt(gt_data))
-            run_checked(detect_cmd)
-            run_checked(
-                [
-                    sys.executable,
-                    "tools/score_detect.py",
-                    "--gt",
-                    str(gt_path),
-                    "--pred",
-                    str(det_path),
-                    "--gate",
-                    str(args.gate),
-                    "--center-gt-key",
-                    "image",
-                    "--homography-gt-key",
-                    "image",
-                    "--pred-center-frame",
-                    "working" if args.pass_camera_to_detector else "image",
-                    "--pred-homography-frame",
-                    "working" if args.pass_camera_to_detector else "image",
-                    "--out",
-                    str(score_path),
-                ]
-            )
-            with open(score_path) as f:
-                scores.append(json.load(f))
+                if use_cargo_run:
+                    detect_cmd = [
+                        "cargo",
+                        "run",
+                        "--quiet",
+                        "--",
+                        "detect",
+                        "--image",
+                        str(img_path),
+                        "--out",
+                        str(det_path),
+                        "--marker-diameter",
+                        str(args.marker_diameter),
+                        *mode_args,
+                    ]
+                else:
+                    detect_cmd = [
+                        ringgrid_bin,
+                        "detect",
+                        "--image",
+                        str(img_path),
+                        "--out",
+                        str(det_path),
+                        "--marker-diameter",
+                        str(args.marker_diameter),
+                        *mode_args,
+                    ]
+                if correction == "external":
+                    with open(gt_path) as f:
+                        gt_data = json.load(f)
+                    detect_cmd.extend(camera_cli_args_from_gt(gt_data))
+                elif correction == "self_undistort":
+                    detect_cmd.extend(
+                        [
+                            "--self-undistort",
+                            f"--self-undistort-lambda-min={args.self_undistort_lambda_min}",
+                            f"--self-undistort-lambda-max={args.self_undistort_lambda_max}",
+                            f"--self-undistort-min-markers={args.self_undistort_min_markers}",
+                        ]
+                    )
+                run_checked(detect_cmd)
+                with open(det_path) as f:
+                    det_data = json.load(f)
+                pred_frame = resolve_pred_frame_for_detection(correction, det_data)
+                run_checked(
+                    [
+                        sys.executable,
+                        "tools/score_detect.py",
+                        "--gt",
+                        str(gt_path),
+                        "--pred",
+                        str(det_path),
+                        "--gate",
+                        str(args.gate),
+                        "--center-gt-key",
+                        "image",
+                        "--homography-gt-key",
+                        "image",
+                        "--pred-center-frame",
+                        pred_frame,
+                        "--pred-homography-frame",
+                        pred_frame,
+                        "--out",
+                        str(score_path),
+                    ]
+                )
+                with open(score_path) as f:
+                    scores.append(json.load(f))
 
-        rows = [score_to_row(s) for s in scores]
-        summary["modes"][mode] = {
-            "per_image": rows,
-            "avg_precision": mean_of(rows, "precision"),
-            "avg_recall": mean_of(rows, "recall"),
-            "avg_center_mean_px": mean_of(rows, "center_mean_px"),
-            "avg_h_self_mean_px": mean_of(rows, "h_self_mean_px"),
-            "avg_h_self_p95_px": mean_of(rows, "h_self_p95_px"),
-            "avg_h_vs_gt_mean_px": mean_of(rows, "h_vs_gt_mean_px"),
-            "avg_h_vs_gt_p95_px": mean_of(rows, "h_vs_gt_p95_px"),
-            "avg_tp": mean_of(rows, "n_tp"),
-            "avg_fp": mean_of(rows, "n_fp"),
-            "avg_miss": mean_of(rows, "n_miss"),
-        }
+            rows = [score_to_row(s) for s in scores]
+            summary["modes"][run_name] = {
+                "mode": mode,
+                "correction": correction,
+                "per_image": rows,
+                "avg_precision": mean_of(rows, "precision"),
+                "avg_recall": mean_of(rows, "recall"),
+                "avg_center_mean_px": mean_of(rows, "center_mean_px"),
+                "avg_h_self_mean_px": mean_of(rows, "h_self_mean_px"),
+                "avg_h_self_p95_px": mean_of(rows, "h_self_p95_px"),
+                "avg_h_vs_gt_mean_px": mean_of(rows, "h_vs_gt_mean_px"),
+                "avg_h_vs_gt_p95_px": mean_of(rows, "h_vs_gt_p95_px"),
+                "avg_tp": mean_of(rows, "n_tp"),
+                "avg_fp": mean_of(rows, "n_fp"),
+                "avg_miss": mean_of(rows, "n_miss"),
+            }
 
     summary_path = out_dir / "summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
     print("[3/3] Summary")
-    print("mode | precision | recall | center_mean | H_self_mean/p95 | H_vs_GT_mean/p95")
-    for mode, vals in summary["modes"].items():
+    print("correction | mode | precision | recall | center_mean | H_self_mean/p95 | H_vs_GT_mean/p95")
+    for _, vals in summary["modes"].items():
         print(
-            f"{mode} | "
+            f"{vals['correction']} | {vals['mode']} | "
             f"{vals['avg_precision']:.3f} | {vals['avg_recall']:.3f} | "
             f"{vals['avg_center_mean_px']:.3f} | "
             f"{vals['avg_h_self_mean_px']:.3f}/{vals['avg_h_self_p95_px']:.3f} | "

@@ -71,6 +71,7 @@ pub(super) fn run(
             &fit_out.markers,
             &fit_out.marker_cand_idx,
             &config.ransac_homography,
+            &config.board,
         );
         ransac_debug = Some(rdbg);
         ransac_stats = stats;
@@ -80,8 +81,14 @@ pub(super) fn run(
         let (refined, rd) = if config.refine_with_h {
             if let Some(h) = h_matrix {
                 if filtered.len() >= 10 {
-                    let (refined, refine_dbg) =
-                        refine_with_homography_with_debug(gray, &filtered, h, config, mapper);
+                    let (refined, refine_dbg) = refine_with_homography_with_debug(
+                        gray,
+                        &filtered,
+                        h,
+                        config,
+                        &config.board,
+                        mapper,
+                    );
                     (refined, Some(refine_dbg))
                 } else {
                     (filtered, None)
@@ -97,7 +104,7 @@ pub(super) fn run(
     } else {
         // Non-debug global filter path
         let (filtered, h_result, stats) =
-            global_filter(&fit_out.markers, &config.ransac_homography);
+            global_filter(&fit_out.markers, &config.ransac_homography, &config.board);
         ransac_debug = None;
         ransac_stats = stats;
         h_current = h_result.as_ref().map(|r| r.h);
@@ -106,7 +113,7 @@ pub(super) fn run(
         final_markers = if config.refine_with_h {
             if let Some(h) = h_matrix {
                 if filtered.len() >= 10 {
-                    refine_with_homography(gray, &filtered, h, config, mapper)
+                    refine_with_homography(gray, &filtered, h, config, &config.board, mapper)
                 } else {
                     filtered
                 }
@@ -128,6 +135,7 @@ pub(super) fn run(
                 h,
                 &mut final_markers,
                 config,
+                &config.board,
                 mapper,
                 store_points,
                 collect_debug,
@@ -169,7 +177,7 @@ pub(super) fn run(
                 reject_shift_mm: config.nl_refine.reject_thresh_mm,
                 enable_h_refit: config.nl_refine.enable_h_refit,
                 h_refit_iters: config.nl_refine.h_refit_iters,
-                marker_outer_radius_mm: crate::board_spec::marker_outer_radius_mm() as f64,
+                marker_outer_radius_mm: config.board.marker_outer_radius_mm() as f64,
             },
             h_used: h_current.as_ref().map(matrix3_to_array),
             h_refit: None,
@@ -196,6 +204,7 @@ pub(super) fn run(
                 &h0,
                 &mut final_markers,
                 &config.nl_refine,
+                &config.board,
                 mapper,
                 store_points,
             );
@@ -208,19 +217,20 @@ pub(super) fn run(
             if config.nl_refine.enable_h_refit && final_markers.len() >= 10 {
                 let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
                 let mut h_prev = h0;
-                let mut mean_prev = mean_reproj_error_px(&h_prev, &final_markers);
+                let mut mean_prev = mean_reproj_error_px(&h_prev, &final_markers, &config.board);
                 for iter in 0..max_iters {
-                    let Some((h_next, _stats1)) =
-                        refit_homography_matrix(&final_markers, &config.ransac_homography)
-                    else {
+                    let Some((h_next, _stats1)) = refit_homography_matrix(
+                        &final_markers,
+                        &config.ransac_homography,
+                        &config.board,
+                    ) else {
                         if let Some(nld) = nl_refine_debug.as_mut() {
-                            nld.notes
-                                .push(format!("h_refit_iter{}:refit_failed", iter));
+                            nld.notes.push(format!("h_refit_iter{}:refit_failed", iter));
                         }
                         break;
                     };
 
-                    let mean_next = mean_reproj_error_px(&h_next, &final_markers);
+                    let mean_next = mean_reproj_error_px(&h_next, &final_markers, &config.board);
                     if mean_next.is_finite() && (mean_next < mean_prev || !mean_prev.is_finite()) {
                         if let Some(nld) = nl_refine_debug.as_mut() {
                             nld.h_refit = Some(matrix3_to_array(&h_next));
@@ -239,6 +249,7 @@ pub(super) fn run(
                             &h_prev,
                             &mut final_markers,
                             &config.nl_refine,
+                            &config.board,
                             mapper,
                             store_points,
                         );
@@ -280,7 +291,7 @@ pub(super) fn run(
     // Final H: refit after refinement if enabled
     let did_refit = config.refine_with_h && final_markers.len() >= 10;
     let final_h_matrix = if did_refit {
-        refit_homography_matrix(&final_markers, &config.ransac_homography)
+        refit_homography_matrix(&final_markers, &config.ransac_homography, &config.board)
             .map(|(h, _stats)| h)
             .or(h_current)
     } else {
@@ -290,7 +301,12 @@ pub(super) fn run(
     let final_ransac = final_h_matrix
         .as_ref()
         .and_then(|h| {
-            compute_h_stats(h, &final_markers, config.ransac_homography.inlier_threshold)
+            compute_h_stats(
+                h,
+                &final_markers,
+                config.ransac_homography.inlier_threshold,
+                &config.board,
+            )
         })
         .or(ransac_stats.take());
 
@@ -319,7 +335,6 @@ pub(super) fn run(
     };
 
     let dump = if let Some(debug_cfg) = debug_cfg {
-        use crate::board_spec::{BOARD_N, BOARD_PITCH_MM, BOARD_SIZE_MM};
         use crate::codebook::{CODEBOOK_BITS, CODEBOOK_N};
 
         let completion_debug = dbg::CompletionDebugV1 {
@@ -349,10 +364,10 @@ pub(super) fn run(
                 height: h,
             },
             board: dbg::BoardDebugV1 {
-                pitch_mm: BOARD_PITCH_MM,
-                board_mm: BOARD_SIZE_MM[0],
-                board_size_mm: BOARD_SIZE_MM,
-                marker_count: BOARD_N,
+                pitch_mm: config.board.pitch_mm,
+                board_mm: config.board.board_size_mm[0],
+                board_size_mm: config.board.board_size_mm,
+                marker_count: config.board.n_markers(),
                 codebook_bits: CODEBOOK_BITS,
                 codebook_n: CODEBOOK_N,
             },
@@ -410,9 +425,7 @@ pub(super) fn run(
                     max_selected_residual: config.projective_center.max_selected_residual,
                     min_eig_separation: config.projective_center.min_eig_separation,
                 }),
-                nl_refine: nl_refine_debug
-                    .as_ref()
-                    .map(|nld| nld.params.clone()),
+                nl_refine: nl_refine_debug.as_ref().map(|nld| nld.params.clone()),
                 min_semi_axis: config.min_semi_axis,
                 max_semi_axis: config.max_semi_axis,
                 max_aspect_ratio: config.max_aspect_ratio,
@@ -431,15 +444,9 @@ pub(super) fn run(
                 },
             },
             stages: dbg::StagesDebugV1 {
-                stage0_proposals: fit_out
-                    .stage0
-                    .expect("stage0 debug should be present"),
-                stage1_fit_decode: fit_out
-                    .stage1
-                    .expect("stage1 debug should be present"),
-                stage2_dedup: fit_out
-                    .stage2
-                    .expect("stage2 debug should be present"),
+                stage0_proposals: fit_out.stage0.expect("stage0 debug should be present"),
+                stage1_fit_decode: fit_out.stage1.expect("stage1 debug should be present"),
+                stage2_dedup: fit_out.stage2.expect("stage2 debug should be present"),
                 stage3_ransac: ransac_debug.expect("ransac debug should be present"),
                 stage4_refine: refine_debug,
                 stage5_completion: Some(completion_debug),

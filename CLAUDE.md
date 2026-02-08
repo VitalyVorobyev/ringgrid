@@ -26,9 +26,6 @@ cargo test --workspace --all-features
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Build with debug dump support (enables --debug-json CLI flag)
-cargo build --features debug-trace
-
 # Run detector
 cargo run -- detect --image <path> --out <path> --marker-diameter 32.0
 
@@ -61,7 +58,7 @@ The core pipeline flows through these stages in order:
 
 ## Key Math Modules
 
-- `conic.rs` (~1265 LOC) — ellipse/conic fitting, generalized eigenvalue solver, RANSAC
+- `conic/` — ellipse/conic types (`types.rs`), direct fitting (`fit.rs`), generalized eigenvalue solver (`eigen.rs`), RANSAC (`ransac.rs`)
 - `homography.rs` — DLT with Hartley normalization + RANSAC
 - `projective_center.rs` — unbiased center recovery from inner+outer conics
 - `refine/` — LM (tiny-solver) and IRLS solvers for board-plane circle fitting
@@ -88,89 +85,63 @@ Optional radial-tangential distortion model (`camera.rs`). When camera intrinsic
 - `codebook.rs` and `board_spec.rs` are generated — regenerate via Python scripts, never hand-edit
 - Debug schema is versioned (`ringgrid.debug.v1`)
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
-- `debug-trace` feature is compile-time gated (default off) — will be replaced by observer pattern
+- Debug collection is runtime-gated via `Option<&DebugCollectConfig>` — no compile-time feature flag needed
 
 ## Refactoring Plan (Internals-First → API)
 
-### Phase 1: Internal Cleanup
+### Phase 1: Internal Cleanup (completed)
 
-**R5A — Split conic.rs (~1265 LOC → 3-4 modules):**
+**R5A — Split conic.rs (~1265 LOC → 4 modules):** completed
 - `conic/types.rs`: ConicCoeffs, Ellipse, Conic2D, conversions, normalization
 - `conic/fit.rs`: Direct ellipse fitting (Fitzgibbon), design matrix construction
 - `conic/ransac.rs`: RANSAC wrapper, sampling, inlier counting
 - `conic/eigen.rs`: Generalized eigenvalue solver (GEP), cubic root solver, null vector
 
-**R5B — Unify fit-decode-build pipeline:**
-- Extract shared "single marker fit" function from `stage_fit_decode`, `completion.rs`, and `refine_h.rs` (currently 3 copies of outer_fit → decode → inner_fit → marker_build)
-- All three call sites become thin wrappers around the shared function with different priors/gates
+**R5B — Unify fit-decode-build pipeline:** completed
+- Extracted shared helpers (`fit_metrics_with_inner`, `inner_ellipse_params`) into `marker_build.rs`
+- `stage_fit_decode`, `completion.rs`, and `refine_h.rs` now use shared helpers
 
-**R5C — Extract radial profile helpers:**
-- Move duplicated code from `outer_estimate.rs` and `inner_estimate.rs` into `radial_profile.rs`:
-  - `compute_radial_derivative_curve()` — identical in both modules
-  - `smooth_curve_3point()` — identical in both modules
-  - `compute_theta_consistency()` — identical logic with same heuristic
+**R5C — Extract radial profile helpers:** completed (R2)
+- Shared `ring/radial_profile.rs` used by inner/outer estimators
 
-**R5D — Unify gradient polarity enums:**
-- Merge `InnerGradPolarity` and `OuterGradPolarity` into single `GradPolarity` enum (identical variants: DarkToLight, LightToDark, Auto)
+**R5D — Unify gradient polarity enums:** completed (R2)
+- Single `GradPolarity` enum in `marker_spec.rs`
 
-**R5E — Move parameter scaling to core:**
-- Create `DetectConfig::from_marker_diameter(f32)` in core (currently in CLI `build_detect_config()`)
-- Name and document magic scaling constants (0.4, 1.7, 0.8, 2.0, 0.3, 2.5, etc.)
+**R5E — Move parameter scaling to core:** completed (R2)
+- `DetectConfig::from_marker_diameter_px(f32)` in core
 
-**R5F — Simplify refine/pipeline.rs:**
-- Replace 11-exit-path + 15-param `make_record()` with `RefineError` enum
-- Core function returns `Result<RefineOk, RefineError>`, record built from the result
-- Separate validation, geometry, and record creation
+**R5F — Simplify refine/pipeline.rs:** deferred to Phase 4
+**R5G — Unify ellipse representation:** deferred to Phase 4
 
-**R5G — Unify ellipse representation:**
-- Decide canonical internal type (likely keep `Ellipse` from conic.rs)
-- `EllipseParams` becomes a serde wrapper with `From<Ellipse>` conversion only at API boundary
-- Eliminate field-name confusion (`center_xy` vs `cx/cy`)
+### Phase 2: Remove debug-trace feature gate (completed)
 
-### Phase 2: Observer Pattern for Debug
+**R6 — Runtime debug collection:**
+- Removed all `#[cfg(feature = "debug-trace")]` annotations across 14 files
+- Merged `run()` / `run_with_debug()` pairs into single functions with `Option<&DebugCollectConfig>`
+- Removed `FitDecodeDebugOutput` — `FitDecodeCoreOutput` serves both roles
+- Debug CLI flags (`--debug-json`, `--debug-store-points`) are always available
+- Removed `debug-trace` feature from both Cargo.toml files
+- 60 tests pass (2 previously feature-gated tests now always compiled)
 
-**R6A — Design `DetectionObserver` trait:**
-```rust
-pub trait DetectionObserver {
-    fn on_proposal(&mut self, proposals: &[Proposal]) {}
-    fn on_marker_fit(&mut self, id: usize, result: &MarkerFitResult) {}
-    fn on_global_filter(&mut self, h: &Homography, stats: &RansacStats) {}
-    fn on_completion(&mut self, stats: &CompletionStats) {}
-    fn on_refine(&mut self, record: &MarkerRefineRecord) {}
-    // ... etc
-}
-```
+### Phase 3: Runtime Target Specification (completed)
 
-**R6B — Eliminate debug code duplication:**
-- Remove `run_with_debug()` variants from stage_fit_decode and stage_finalize
-- Replace with single code path that calls observer methods at key points
-- `NullObserver` (default) has zero-cost via monomorphization
-- `DebugDumpObserver` replaces current debug-trace feature
+**R7A — `BoardLayout` struct:**
+- Created `board_layout.rs` with `BoardLayout` and `BoardMarker` structs
+- HashMap-based ID lookup, serde JSON support, `Default` from embedded `board_spec` constants
+- Methods: `xy_mm(id)`, `n_markers()`, `marker_outer_radius_mm()`, `marker_ids()`, `from_json_file()`
 
-**R6C — Remove `debug-trace` feature gate:**
-- Observer pattern makes it unnecessary
-- Debug output availability controlled by which observer is passed, not compile-time features
+**R7B — Config integration:**
+- Added `board: BoardLayout` field to `DetectConfig`
+- Initialized from `BoardLayout::default()` in all config constructors
 
-### Phase 3: Target Specification
+**R7C — Pipeline threading:**
+- Replaced all 8 direct `board_spec::` call sites across 6 pipeline files with `&BoardLayout` parameters
+- Files updated: `global_filter.rs`, `homography_utils.rs`, `completion.rs`, `refine_h.rs`, `refine/pipeline.rs`, `stage_finalize.rs`
+- `board_spec.rs` remains as data source for `BoardLayout::default()` only
 
-**R7A — Predefined dictionary approach:**
-- Single large dictionary (893+ codewords, current codebook)
-- Board layout selects a subset of IDs from the dictionary
-- Board layout provided as runtime JSON (marker positions, geometry)
-
-**R7B — Design `TargetSpec` struct:**
-```rust
-pub struct TargetSpec {
-    pub dictionary: &'static Dictionary,  // predefined, embedded
-    pub board: BoardLayout,               // runtime JSON: marker positions + geometry
-    pub marker_geometry: MarkerGeometry,  // radii, sector count
-}
-```
-
-**R7C — Runtime board layout:**
-- JSON schema for board layout (marker positions in mm, optional hex coordinates)
-- Remove hard dependency on compile-time `board_spec::xy_mm()` in detection pipeline
-- `board_spec.rs` becomes one provider of `BoardLayout`, not the only one
+**R7E — CLI target flag:**
+- Added `--target <path.json>` to load board layout from JSON at runtime
+- Without `--target`, embedded default is used (backward compatible)
 
 ### Phase 4: Public API Design
 

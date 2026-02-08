@@ -3,6 +3,7 @@
 use image::GrayImage;
 use std::collections::HashSet;
 
+use crate::board_layout::BoardLayout;
 use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
@@ -243,6 +244,8 @@ pub struct DetectConfig {
     pub refine_with_h: bool,
     /// Non-linear per-marker refinement using board-plane circle fits.
     pub nl_refine: refine::RefineParams,
+    /// Board layout: marker positions and geometry.
+    pub board: BoardLayout,
 }
 
 impl DetectConfig {
@@ -273,8 +276,7 @@ impl DetectConfig {
         cfg.max_semi_axis = r_outer as f64 * 2.5;
 
         // Completion ROI
-        cfg.completion.roi_radius_px =
-            ((diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32;
+        cfg.completion.roi_radius_px = ((diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32;
 
         // Projective center max shift
         cfg.projective_center.max_center_shift_px = Some(diameter_px as f64);
@@ -304,6 +306,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
             nl_refine: refine::RefineParams::default(),
+            board: BoardLayout::default(),
         }
     }
 }
@@ -568,7 +571,10 @@ pub fn detect_rings_with_debug_and_mapper(
         &SeedProposalParams::default(),
         Some(debug_cfg),
     );
-    (result, dump.expect("debug dump present when debug_cfg is provided"))
+    (
+        result,
+        dump.expect("debug dump present when debug_cfg is provided"),
+    )
 }
 
 pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
@@ -594,13 +600,14 @@ fn global_filter_with_debug(
     markers: &[DetectedMarker],
     cand_idx: &[usize],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
     dbg::RansacDebugV1,
 ) {
-    global_filter_with_debug_impl(markers, cand_idx, config)
+    global_filter_with_debug_impl(markers, cand_idx, config, board)
 }
 
 fn refine_with_homography_with_debug(
@@ -608,9 +615,10 @@ fn refine_with_homography_with_debug(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
-    refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper)
+    refine_h::refine_with_homography_with_debug(gray, markers, h, config, board, mapper)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
@@ -625,12 +633,13 @@ fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
 fn global_filter(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
-    global_filter_impl(markers, config)
+    global_filter_impl(markers, config, board)
 }
 
 /// Refine marker centers using H: project board coords through H as priors,
@@ -640,10 +649,11 @@ fn refine_with_homography(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
     let (refined, _debug) =
-        refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper);
+        refine_h::refine_with_homography_with_debug(gray, markers, h, config, board, mapper);
     refined
 }
 
@@ -656,6 +666,7 @@ fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
@@ -665,6 +676,7 @@ fn complete_with_h(
         h,
         markers,
         config,
+        board,
         mapper,
         store_points_in_debug,
         record_debug,
@@ -675,23 +687,29 @@ fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
     homography_utils::matrix3_to_array(m)
 }
 
-fn mean_reproj_error_px(h: &nalgebra::Matrix3<f64>, markers: &[DetectedMarker]) -> f64 {
-    homography_utils::mean_reproj_error_px(h, markers)
+fn mean_reproj_error_px(
+    h: &nalgebra::Matrix3<f64>,
+    markers: &[DetectedMarker],
+    board: &BoardLayout,
+) -> f64 {
+    homography_utils::mean_reproj_error_px(h, markers, board)
 }
 
 fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     thresh_px: f64,
+    board: &BoardLayout,
 ) -> Option<RansacStats> {
-    homography_utils::compute_h_stats(h, markers, thresh_px)
+    homography_utils::compute_h_stats(h, markers, thresh_px, board)
 }
 
 fn refit_homography_matrix(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
-    homography_utils::refit_homography_matrix(markers, config)
+    homography_utils::refit_homography_matrix(markers, config, board)
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within dedup_radius.
@@ -959,8 +977,16 @@ mod tests {
         cfg.decode.min_decode_confidence = 1.0; // force decode rejection (avoid mismatch gate)
 
         let mut markers: Vec<DetectedMarker> = Vec::new();
-        let (stats, _attempts) =
-            complete_with_h(&img, &h_matrix, &mut markers, &cfg, None, false, false);
+        let (stats, _attempts) = complete_with_h(
+            &img,
+            &h_matrix,
+            &mut markers,
+            &cfg,
+            &cfg.board,
+            None,
+            false,
+            false,
+        );
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, Some(id));

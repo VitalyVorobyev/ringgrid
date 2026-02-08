@@ -57,11 +57,11 @@ pub(super) fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    board: &crate::board_layout::BoardLayout,
     mapper: Option<&dyn crate::camera::PixelMapper>,
     store_points_in_debug: bool,
     record_debug: bool,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
-    use crate::board_spec;
     use std::collections::HashSet;
 
     let params = &config.completion;
@@ -92,23 +92,22 @@ pub(super) fn complete_with_h(
     edge_cfg.min_rays_with_ring = edge_cfg.min_rays_with_ring.min(edge_cfg.n_rays);
 
     let mut stats = CompletionStats {
-        n_candidates_total: board_spec::n_markers(),
+        n_candidates_total: board.n_markers(),
         ..Default::default()
     };
 
     let mut attempts: Option<Vec<CompletionAttemptRecord>> = if record_debug {
-        Some(Vec::with_capacity(board_spec::n_markers()))
+        Some(Vec::with_capacity(board.n_markers()))
     } else {
         None
     };
 
     let mut attempted_fits = 0usize;
 
-    for id in 0..board_spec::n_markers() {
-        let projected_center = if let Some(xy) = board_spec::xy_mm(id) {
-            project(h, xy[0] as f64, xy[1] as f64)
-        } else {
-            [f64::NAN, f64::NAN]
+    for id in board.marker_ids() {
+        let projected_center = match board.xy_mm(id) {
+            Some(xy) => project(h, xy[0] as f64, xy[1] as f64),
+            None => continue,
         };
 
         let proj_xy_f32 = [projected_center[0] as f32, projected_center[1] as f32];

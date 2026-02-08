@@ -7,6 +7,7 @@
 use image::GrayImage;
 use nalgebra as na;
 
+use crate::board_layout::BoardLayout;
 use crate::camera::{CameraModel, PixelMapper};
 use crate::ring::inner_estimate::Polarity;
 use crate::{DetectedMarker, EllipseParams};
@@ -231,9 +232,10 @@ pub fn refine_markers_circle_board(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    refine_markers_circle_board_with_mapper(gray, h, detections, params, None, store_points)
+    refine_markers_circle_board_with_mapper(gray, h, detections, params, board, None, store_points)
 }
 
 /// Distortion-aware variant of [`refine_markers_circle_board`] using an abstract mapper.
@@ -242,10 +244,11 @@ pub fn refine_markers_circle_board_with_mapper(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    pipeline::run(gray, h, detections, params, mapper, store_points)
+    pipeline::run(gray, h, detections, params, board, mapper, store_points)
 }
 
 /// Distortion-aware variant of [`refine_markers_circle_board`] using [`CameraModel`].
@@ -254,6 +257,7 @@ pub fn refine_markers_circle_board_with_camera(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     camera: Option<&CameraModel>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
@@ -262,6 +266,7 @@ pub fn refine_markers_circle_board_with_camera(
         h,
         detections,
         params,
+        board,
         camera.map(|c| c as &dyn PixelMapper),
         store_points,
     )

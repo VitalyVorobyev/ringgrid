@@ -1,7 +1,7 @@
 use image::GrayImage;
 use nalgebra as na;
 
-use crate::board_spec;
+use crate::board_layout::BoardLayout;
 use crate::camera::PixelMapper;
 use crate::homography::project;
 
@@ -18,6 +18,7 @@ struct RunContext<'a> {
     h: &'a na::Matrix3<f64>,
     h_inv: &'a na::Matrix3<f64>,
     params: &'a RefineParams,
+    board: &'a BoardLayout,
     radius_mm: f64,
     sample_cfg: OuterSampleConfig,
     mapper: Option<&'a dyn PixelMapper>,
@@ -28,7 +29,7 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
     let id = m.id?;
     let center_img_before = m.center;
 
-    let init_center_board_mm = match board_spec::xy_mm(id) {
+    let init_center_board_mm = match ctx.board.xy_mm(id) {
         Some(v) => [v[0] as f64, v[1] as f64],
         None => {
             let rec = MarkerRefineRecord::new(
@@ -99,7 +100,12 @@ fn process_marker(ctx: &RunContext<'_>, m: &mut DetectedMarker) -> Option<Marker
             sampled_points.len(),
             ctx.params.min_points
         ))
-        .with_points(sampled_points.len(), Some(&sampled_points), None, ctx.store_points);
+        .with_points(
+            sampled_points.len(),
+            Some(&sampled_points),
+            None,
+            ctx.store_points,
+        );
         return Some(MarkerProcessResult {
             record: rec,
             accepted_rms: None,
@@ -297,6 +303,7 @@ pub(super) fn run(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
@@ -304,7 +311,7 @@ pub(super) fn run(
         return (RefineStats::default(), Vec::new());
     }
 
-    let radius_mm = board_spec::marker_outer_radius_mm() as f64;
+    let radius_mm = board.marker_outer_radius_mm() as f64;
     if !radius_mm.is_finite() || radius_mm <= 0.0 {
         let records: Vec<_> = detections
             .iter()
@@ -324,11 +331,11 @@ pub(super) fn run(
                 .iter()
                 .filter_map(|m| {
                     let id = m.id?;
-                    let board = board_spec::xy_mm(id).map(|v| [v[0] as f64, v[1] as f64]);
+                    let board_xy = board.xy_mm(id).map(|v| [v[0] as f64, v[1] as f64]);
                     Some(
                         MarkerRefineRecord::new(
                             id,
-                            board.unwrap_or([0.0, 0.0]),
+                            board_xy.unwrap_or([0.0, 0.0]),
                             m.center,
                             MarkerRefineStatus::Failed,
                         )
@@ -355,6 +362,7 @@ pub(super) fn run(
         h,
         h_inv: &h_inv,
         params,
+        board,
         radius_mm,
         sample_cfg,
         mapper,

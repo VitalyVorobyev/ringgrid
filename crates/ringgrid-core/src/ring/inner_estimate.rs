@@ -213,8 +213,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
 
         // Consistency: how many per-theta peaks agree with r_star
         let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
-        let theta_consistency =
-            radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.02);
+        let theta_consistency = radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.02);
 
         let peak_strength = peak_val.abs();
 

@@ -39,6 +39,11 @@ enum Commands {
 
 #[derive(Debug, Clone, Args)]
 struct CliDetectArgs {
+    /// Path to a board layout JSON file (target specification).
+    /// When omitted, uses the embedded default board.
+    #[arg(long)]
+    target: Option<PathBuf>,
+
     /// Path to the input image.
     #[arg(long)]
     image: PathBuf,
@@ -475,7 +480,26 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     let preset = args.to_preset();
     let overrides = args.to_overrides()?;
-    let config = build_detect_config(preset, &overrides);
+    let mut config = build_detect_config(preset, &overrides);
+
+    if let Some(target_path) = &args.target {
+        let board = ringgrid_core::board_layout::BoardLayout::from_json_file(target_path).map_err(
+            |e| -> CliError {
+                format!(
+                    "Failed to load target spec {}: {}",
+                    target_path.display(),
+                    e
+                )
+                .into()
+            },
+        )?;
+        tracing::info!(
+            "Loaded board layout '{}' with {} markers",
+            board.name,
+            board.n_markers()
+        );
+        config.board = board;
+    }
 
     let deprecated_debug_path = args.debug.as_deref();
     let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);

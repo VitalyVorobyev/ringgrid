@@ -87,7 +87,7 @@ cargo run -- detect \
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- Debug dump CLI flags (`--debug-json`, `--debug-store-points`) are available only when built with `--features debug-trace`.
+- Debug dump CLI flags (`--debug-json`, `--debug-store-points`) are always available (no feature flag needed).
 - NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine`.
 
 ### 4) Score detections
@@ -113,7 +113,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 - `crates/ringgrid-core/src/ring/detect/completion.rs` (~634 LOC): completion logic + gates + debug mapping in one module.
 - `crates/ringgrid-core/src/refine/pipeline.rs` (~524 LOC): per-marker refine flow still long, although now isolated from API/types.
-- `crates/ringgrid-core/src/conic.rs` (~1180 LOC): core model types, conversion, direct fit, generalized eigen solver, cubic root solver, and RANSAC in one file.
+- `crates/ringgrid-core/src/conic/` (split into `types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`): still contains multiple algorithmic layers but now separated into focused modules.
 - `crates/ringgrid-cli/src/main.rs` (~400 LOC): CLI parsing and parameter-scaling policy are tightly coupled (`run_detect` uses many arguments).
 
 ### 2) Redundant logic / data paths
@@ -136,9 +136,11 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
    - `CliDetectArgs -> DetectPreset + DetectOverrides -> DetectConfig`.
 8. Completed (R2): removed legacy `sample_edges` path and kept only active sampling paths (`outer_estimate` + `outer_fit` + inner estimator).
 9. Completed (R2): merged debug/non-debug detection execution into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) and removed `ring/detect/debug_pipeline.rs`.
-10. Completed (R2): added compile-time debug tracing feature (`debug-trace`), default-disabled.
-11. Completed (R2): debug API/CLI is unavailable at compile time unless `debug-trace` is enabled.
-12. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
+10. Completed (R2→R6): debug tracing was initially compile-time feature-gated; now replaced with runtime `Option<&DebugCollectConfig>` — no feature flag needed.
+11. Completed (R5A): split `conic.rs` (~1265 LOC) into `conic/` module with `types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`.
+12. Completed (R5B): extracted shared marker-build helpers (`fit_metrics_with_inner`, `inner_ellipse_params`) to reduce duplication across stage_fit_decode, completion, and refine_h.
+13. Completed (R7): replaced all direct `board_spec::` calls in pipeline with runtime `BoardLayout` struct; added `--target` CLI flag for JSON board loading.
+14. Completed (R3A): added projective-only unbiased center recovery (`projective_center.rs`) and integrated it into both detection flows.
 13. Completed (R3B): added `circle_refinement` method selector in detect config and CLI.
 14. Completed (R3C): center correction is now treated as a strict single-choice strategy (`none` | `projective_center` | `nl_board`) with no sequential chaining.
 15. Completed (R3C): when `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers.

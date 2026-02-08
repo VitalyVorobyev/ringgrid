@@ -91,9 +91,8 @@ pub fn try_fit_ellipse_direct(points: &[[f64; 2]]) -> Result<(ConicCoeffs, Ellip
     if n < 6 {
         return Err(ConicError::TooFewPoints { needed: 6, got: n });
     }
-    fit_ellipse_direct(points).ok_or_else(|| {
-        ConicError::NumericalFailure("direct fit returned None".into())
-    })
+    fit_ellipse_direct(points)
+        .ok_or_else(|| ConicError::NumericalFailure("direct fit returned None".into()))
 }
 
 /// Compute normalization parameters for a point set.

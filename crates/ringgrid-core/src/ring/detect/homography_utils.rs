@@ -1,17 +1,18 @@
-use crate::board_spec;
+use crate::board_layout::BoardLayout;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::{DetectedMarker, RansacStats};
 
 pub(super) fn refit_homography(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let mut src = Vec::new();
     let mut dst = Vec::new();
 
     for m in markers {
         if let Some(id) = m.id {
-            if let Some(xy) = board_spec::xy_mm(id) {
+            if let Some(xy) = board.xy_mm(id) {
                 src.push([xy[0] as f64, xy[1] as f64]);
                 dst.push(m.center);
             }
@@ -81,14 +82,18 @@ pub(super) fn array_to_matrix3(m: &[[f64; 3]; 3]) -> nalgebra::Matrix3<f64> {
     )
 }
 
-pub(super) fn mean_reproj_error_px(h: &nalgebra::Matrix3<f64>, markers: &[DetectedMarker]) -> f64 {
+pub(super) fn mean_reproj_error_px(
+    h: &nalgebra::Matrix3<f64>,
+    markers: &[DetectedMarker],
+    board: &BoardLayout,
+) -> f64 {
     let mut sum = 0.0f64;
     let mut n = 0usize;
     for m in markers {
         let Some(id) = m.id else {
             continue;
         };
-        let Some(xy) = board_spec::xy_mm(id) else {
+        let Some(xy) = board.xy_mm(id) else {
             continue;
         };
         let err = homography::reprojection_error(
@@ -112,13 +117,14 @@ pub(super) fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     thresh_px: f64,
+    board: &BoardLayout,
 ) -> Option<RansacStats> {
     let mut errors: Vec<f64> = Vec::new();
     for m in markers {
         let Some(id) = m.id else {
             continue;
         };
-        let Some(xy) = board_spec::xy_mm(id) else {
+        let Some(xy) = board.xy_mm(id) else {
             continue;
         };
         let err = homography::reprojection_error(
@@ -161,8 +167,9 @@ pub(super) fn compute_h_stats(
 pub(super) fn refit_homography_matrix(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
-    let (h_arr, stats) = refit_homography(markers, config);
+    let (h_arr, stats) = refit_homography(markers, config, board);
     match (h_arr, stats) {
         (Some(h_arr), Some(stats)) => Some((array_to_matrix3(&h_arr), stats)),
         _ => None,

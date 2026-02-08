@@ -1,6 +1,6 @@
 use image::GrayImage;
 
-use crate::board_spec;
+use crate::board_layout::BoardLayout;
 use crate::debug_dump as dbg;
 use crate::homography::project;
 use crate::DetectedMarker;
@@ -15,6 +15,7 @@ pub(super) fn refine_with_homography_with_debug(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &super::DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn crate::camera::PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
     let mut refined = Vec::with_capacity(markers.len());
@@ -30,7 +31,7 @@ pub(super) fn refine_with_homography_with_debug(
             }
         };
 
-        let xy = match board_spec::xy_mm(id) {
+        let xy = match board.xy_mm(id) {
             Some(xy) => xy,
             None => {
                 refined.push(m.clone());

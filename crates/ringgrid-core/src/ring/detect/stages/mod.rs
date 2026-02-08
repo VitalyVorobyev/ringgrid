@@ -12,7 +12,13 @@ pub(super) fn run(
     debug_cfg: Option<&DebugCollectConfig>,
 ) -> (DetectionResult, Option<crate::debug_dump::DebugDumpV1>) {
     let (w, h) = gray.dimensions();
-    let fit_out =
-        stage_fit_decode::run(gray, config, mapper, seed_centers_image, seed_cfg, debug_cfg);
+    let fit_out = stage_fit_decode::run(
+        gray,
+        config,
+        mapper,
+        seed_centers_image,
+        seed_cfg,
+        debug_cfg,
+    );
     stage_finalize::run(gray, fit_out, [w, h], config, mapper, debug_cfg)
 }

@@ -12,6 +12,7 @@
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
+pub mod board_layout;
 #[allow(missing_docs)]
 pub mod board_spec;
 pub mod camera;

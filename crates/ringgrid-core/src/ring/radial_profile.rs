@@ -93,12 +93,7 @@ pub fn smooth_3point(d: &mut [f32]) {
 /// Compute fraction of per-theta peaks that agree with a selected radius.
 ///
 /// `min_delta` provides a floor for the tolerance window.
-pub fn theta_consistency(
-    per_theta_peaks: &[f32],
-    r_star: f32,
-    r_step: f32,
-    min_delta: f32,
-) -> f32 {
+pub fn theta_consistency(per_theta_peaks: &[f32], r_star: f32, r_step: f32, min_delta: f32) -> f32 {
     let delta = (4.0 * r_step).max(min_delta);
     let n_close = per_theta_peaks
         .iter()

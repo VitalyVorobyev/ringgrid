@@ -7,3 +7,4 @@ tools/out/
 __pycache__/
 *.pyc
 .DS_Store
+Cargo.lock

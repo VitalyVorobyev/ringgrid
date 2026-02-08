@@ -73,6 +73,31 @@ def binary_supports_camera_cli(binary: str) -> bool:
     return "--cam-fx" in text
 
 
+def binary_supports_self_undistort_cli(binary: str) -> bool:
+    """Check whether binary detect subcommand supports self-undistort CLI flags."""
+    try:
+        result = subprocess.run(
+            [binary, "detect", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    text = (result.stdout or "") + "\n" + (result.stderr or "")
+    return "--self-undistort" in text
+
+
+def resolve_pred_frame(args: argparse.Namespace, det_data: dict) -> str:
+    if args.pass_camera_to_detector:
+        return "working"
+    if args.self_undistort:
+        su = det_data.get("self_undistort")
+        if isinstance(su, dict) and bool(su.get("applied", False)):
+            return "working"
+    return "image"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run synthetic eval pipeline")
     parser.add_argument("--n", type=int, default=3, help="Number of images")
@@ -112,6 +137,29 @@ def main():
         action="store_true",
         help="Pass per-image camera intrinsics/distortion from GT JSON into ringgrid detect CLI.",
     )
+    parser.add_argument(
+        "--self_undistort",
+        action="store_true",
+        help="Enable detector self-undistort mode (two-pass with estimated division mapper).",
+    )
+    parser.add_argument(
+        "--self_undistort_lambda_min",
+        type=float,
+        default=-8e-7,
+        help="Self-undistort lambda search minimum (passed to CLI).",
+    )
+    parser.add_argument(
+        "--self_undistort_lambda_max",
+        type=float,
+        default=8e-7,
+        help="Self-undistort lambda search maximum (passed to CLI).",
+    )
+    parser.add_argument(
+        "--self_undistort_min_markers",
+        type=int,
+        default=6,
+        help="Minimum markers with edge pairs for self-undistort estimation.",
+    )
     args = parser.parse_args()
 
     intr_values = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
@@ -124,6 +172,8 @@ def main():
         parser.error("camera intrinsics are partial; provide all of --cam-fx --cam-fy --cam-cx --cam-cy")
     if not has_any_intr and has_dist_coeff:
         parser.error("non-zero distortion requires camera intrinsics (--cam-fx/--cam-fy/--cam-cx/--cam-cy)")
+    if args.pass_camera_to_detector and args.self_undistort:
+        parser.error("--pass_camera_to_detector and --self_undistort are mutually exclusive in this script")
 
     out_dir = Path(args.out_dir)
     synth_dir = out_dir / "synth"
@@ -172,6 +222,13 @@ def main():
     if not use_cargo_run and args.pass_camera_to_detector and not binary_supports_camera_cli(binary):
         print("  NOTE: selected ringgrid binary does not support camera CLI flags; falling back to cargo run")
         use_cargo_run = True
+    if (
+        not use_cargo_run
+        and args.self_undistort
+        and not binary_supports_self_undistort_cli(binary)
+    ):
+        print("  NOTE: selected ringgrid binary does not support self-undistort CLI flags; falling back to cargo run")
+        use_cargo_run = True
 
     print(f"\n[2/3] Running detection on {args.n} images...")
     for i in range(args.n):
@@ -203,6 +260,15 @@ def main():
             with open(gt_path) as f:
                 gt_data = json.load(f)
             cmd.extend(camera_cli_args_from_gt(gt_data))
+        if args.self_undistort:
+            cmd.extend(
+                [
+                    "--self-undistort",
+                    f"--self-undistort-lambda-min={args.self_undistort_lambda_min}",
+                    f"--self-undistort-lambda-max={args.self_undistort_lambda_max}",
+                    f"--self-undistort-min-markers={args.self_undistort_min_markers}",
+                ]
+            )
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -235,10 +301,10 @@ def main():
         ]
         # All benchmark metrics are evaluated in distorted image pixel space.
         cmd.extend(["--center-gt-key", "image", "--homography-gt-key", "image"])
-        if args.pass_camera_to_detector:
-            cmd.extend(["--pred-center-frame", "working", "--pred-homography-frame", "working"])
-        else:
-            cmd.extend(["--pred-center-frame", "image", "--pred-homography-frame", "image"])
+        with open(det_path) as f:
+            det_data = json.load(f)
+        pred_frame = resolve_pred_frame(args, det_data)
+        cmd.extend(["--pred-center-frame", pred_frame, "--pred-homography-frame", pred_frame])
         result = subprocess.run(cmd, capture_output=True, text=True)
         print(result.stdout.strip())
 

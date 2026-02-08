@@ -137,8 +137,10 @@ pub(super) fn run(
                 config,
                 &config.board,
                 mapper,
-                store_points,
-                collect_debug,
+                CompletionDebugOptions {
+                    store_points,
+                    record: collect_debug,
+                },
             )
         } else {
             (

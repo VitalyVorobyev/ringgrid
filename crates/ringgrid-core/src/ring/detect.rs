@@ -37,7 +37,7 @@ mod outer_fit;
 mod refine_h;
 #[path = "detect/stages/mod.rs"]
 mod stages;
-use completion::{CompletionAttemptRecord, CompletionStats};
+use completion::{CompletionAttemptRecord, CompletionDebugOptions, CompletionStats};
 use outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     mean_axis_px_from_marker, median_outer_radius_from_neighbors_px, OuterFitCandidate,
@@ -668,19 +668,9 @@ fn complete_with_h(
     config: &DetectConfig,
     board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
-    store_points_in_debug: bool,
-    record_debug: bool,
+    debug: CompletionDebugOptions,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
-    completion::complete_with_h(
-        gray,
-        h,
-        markers,
-        config,
-        board,
-        mapper,
-        store_points_in_debug,
-        record_debug,
-    )
+    completion::complete_with_h(gray, h, markers, config, board, mapper, debug)
 }
 
 fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
@@ -984,8 +974,7 @@ mod tests {
             &cfg,
             &cfg.board,
             None,
-            false,
-            false,
+            CompletionDebugOptions::default(),
         );
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);

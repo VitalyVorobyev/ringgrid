@@ -106,33 +106,20 @@ fn compute_candidate_quality(
 // Helper: decode-mismatch gate
 // ---------------------------------------------------------------------------
 
-/// Returns `Ok(None)` for normal accept, `Ok(Some(reason))` for decode-mismatch
-/// accept, `Err(reason)` for rejection.
+/// Returns `Some(reason)` when decode disagrees with expected ID.
 fn check_decode_gate(
     decode_result: Option<&crate::ring::decode::DecodeResult>,
     expected_id: usize,
-    quality: &CandidateQuality,
-    params: &CompletionParams,
-) -> Result<Option<String>, String> {
+) -> Option<String> {
     if let Some(d) = decode_result {
         if d.id != expected_id {
-            let accept_by_h = quality.reproj_err <= (params.reproj_gate_px * 0.35).max(0.75)
-                && quality.fit_confidence >= params.min_fit_confidence.max(0.60)
-                && quality.arc_cov >= params.min_arc_coverage.max(0.45)
-                && quality.scale_ok;
-            if !accept_by_h {
-                return Err(format!(
-                    "decode_mismatch(expected={}, got={})",
-                    expected_id, d.id
-                ));
-            }
-            return Ok(Some(format!(
+            return Some(format!(
                 "decode_mismatch_accepted(expected={}, got={})",
                 expected_id, d.id
-            )));
+            ));
         }
     }
-    Ok(None)
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -454,25 +441,6 @@ pub(super) fn complete_with_h(
             None
         };
 
-        // Decode-mismatch gate.
-        let added_reason = match check_decode_gate(decode_result.as_ref(), id, &quality, params) {
-            Err(reason) => {
-                stats.n_failed_gate += 1;
-                if let Some(a) = attempts.as_mut() {
-                    a.push(make_attempt_record(
-                        id,
-                        proj_xy_f32,
-                        CompletionAttemptStatus::FailedGate,
-                        Some(reason),
-                        Some(&quality),
-                        fit_dbg_pre.clone(),
-                    ));
-                }
-                continue;
-            }
-            Ok(reason) => reason,
-        };
-
         // Quality gates.
         if let Err(reason) = check_quality_gates(&quality, params, r_expected) {
             stats.n_failed_gate += 1;
@@ -488,6 +456,9 @@ pub(super) fn complete_with_h(
             }
             continue;
         }
+
+        // Decode-mismatch note (quality-gate order is now uniform).
+        let added_reason = check_decode_gate(decode_result.as_ref(), id);
 
         // Inner fit + marker construction.
         let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(

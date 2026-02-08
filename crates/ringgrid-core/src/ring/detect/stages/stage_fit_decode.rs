@@ -5,8 +5,6 @@ use super::super::marker_build::{
 use super::super::*;
 
 use crate::debug_dump as dbg;
-use crate::ring::inner_estimate::{InnerStatus, Polarity};
-use crate::ring::outer_estimate::OuterStatus;
 
 pub(super) struct FitDecodeCoreOutput {
     pub(super) markers: Vec<DetectedMarker>,
@@ -188,59 +186,15 @@ pub(super) fn run(
                     },
                     outer_peak_r: Some(edge.outer_radii.clone()),
                 },
-                outer_estimation: Some({
-                    let chosen = outer_estimate.hypotheses.get(chosen_hypothesis);
-                    dbg::OuterEstimationDebugV1 {
-                        r_outer_expected_px: outer_estimate.r_outer_expected_px,
-                        search_window_px: outer_estimate.search_window_px,
-                        r_outer_found_px: chosen.map(|h| h.r_outer_px),
-                        polarity: outer_estimate.polarity.map(|p| match p {
-                            Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
-                            Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
-                        }),
-                        peak_strength: chosen.map(|h| h.peak_strength),
-                        theta_consistency: chosen.map(|h| h.theta_consistency),
-                        status: match outer_estimate.status {
-                            OuterStatus::Ok => dbg::OuterEstimationStatusDebugV1::Ok,
-                            OuterStatus::Rejected => dbg::OuterEstimationStatusDebugV1::Rejected,
-                            OuterStatus::Failed => dbg::OuterEstimationStatusDebugV1::Failed,
-                        },
-                        reason: outer_estimate.reason.clone(),
-                        hypotheses: outer_estimate
-                            .hypotheses
-                            .iter()
-                            .map(|h| dbg::OuterHypothesisDebugV1 {
-                                r_outer_px: h.r_outer_px,
-                                peak_strength: h.peak_strength,
-                                theta_consistency: h.theta_consistency,
-                            })
-                            .collect(),
-                        chosen_hypothesis: Some(chosen_hypothesis),
-                        radial_response_agg: outer_estimate.radial_response_agg.clone(),
-                        r_samples: outer_estimate.r_samples.clone(),
-                    }
-                }),
+                outer_estimation: Some(debug_conv::outer_estimation_debug(
+                    &outer_estimate,
+                    chosen_hypothesis,
+                )),
                 ellipse_outer: Some(debug_conv::ellipse_from_conic(&outer)),
                 ellipse_inner: inner_params.as_ref().map(debug_conv::ellipse_from_params),
-                inner_estimation: Some(dbg::InnerEstimationDebugV1 {
-                    r_inner_expected: inner_fit.estimate.r_inner_expected,
-                    search_window: inner_fit.estimate.search_window,
-                    r_inner_found: inner_fit.estimate.r_inner_found,
-                    polarity: inner_fit.estimate.polarity.map(|p| match p {
-                        Polarity::Pos => dbg::InnerPolarityDebugV1::Pos,
-                        Polarity::Neg => dbg::InnerPolarityDebugV1::Neg,
-                    }),
-                    peak_strength: inner_fit.estimate.peak_strength,
-                    theta_consistency: inner_fit.estimate.theta_consistency,
-                    status: match inner_fit.estimate.status {
-                        InnerStatus::Ok => dbg::InnerEstimationStatusDebugV1::Ok,
-                        InnerStatus::Rejected => dbg::InnerEstimationStatusDebugV1::Rejected,
-                        InnerStatus::Failed => dbg::InnerEstimationStatusDebugV1::Failed,
-                    },
-                    reason: inner_fit.estimate.reason.clone(),
-                    radial_response_agg: inner_fit.estimate.radial_response_agg.clone(),
-                    r_samples: inner_fit.estimate.r_samples.clone(),
-                }),
+                inner_estimation: Some(debug_conv::inner_estimation_debug(
+                    &inner_fit.estimate,
+                )),
                 metrics: debug_conv::ring_fit_metrics(
                     &fit_metrics,
                     arc_cov,

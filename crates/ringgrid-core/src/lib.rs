@@ -16,6 +16,7 @@ pub mod board_layout;
 #[allow(missing_docs)]
 pub mod board_spec;
 pub mod camera;
+pub mod detector;
 #[allow(missing_docs)]
 pub mod codebook;
 pub mod codec;

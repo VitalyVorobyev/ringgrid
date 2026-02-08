@@ -32,6 +32,7 @@ crates/
       marker_spec.rs      # marker geometry priors and estimator controls
       board_spec.rs       # generated embedded board constants
       board_layout.rs     # runtime BoardLayout struct (wraps board_spec or JSON)
+      detector.rs         # public Detector + TargetSpec API
       lib.rs              # public result/data structs
   ringgrid-cli/
     src/main.rs           # CLI and config wiring
@@ -97,7 +98,7 @@ For each proposal:
 
 ### Mixed responsibilities
 
-- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/completion.rs` (~634 LOC) is still a large mixed-responsibility module.
+- `ring/detect.rs` is now a slim orchestrator; `ring/detect/completion.rs` (~503 LOC) has been refactored into focused helpers (gate checks, quality computation, debug builders) with a clean orchestrator loop.
 - `refine.rs` is now slim, but `refine/pipeline.rs` (~524 LOC) still concentrates many per-marker decision branches.
 - `conic/` module is now split into focused files (`types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`) but still contains tightly coupled algorithmic layers.
 - CLI `run_detect` has broad parameter plumbing and policy coupling.
@@ -254,9 +255,29 @@ Exit criteria:
 - No direct `board_spec::` imports in pipeline code. Completed.
 - CLI `--target` produces same results as embedded default. Completed.
 
-### Phase R5: Public API and target-spec stabilization
+### Phase R8: Completion refactor + public API
 
-- Introduce a stable `Detector` API with layered options.
+Status: completed.
+
+**R8A — Refactor `complete_with_h`:**
+- Extracted 8+ helper functions: `CandidateQuality` struct, `compute_candidate_quality`, `check_decode_gate`, `check_quality_gates`, `make_attempt_record`, `build_pre_gate_fit_debug`, `build_success_fit_debug`, `build_edges_debug`, `points_debug`.
+- Added shared `outer_estimation_debug` and `inner_estimation_debug` helpers to `debug_conv.rs`, replacing 5 duplicated inline constructions across `completion.rs` and `stage_fit_decode.rs`.
+- Main function reduced to ~220 lines of orchestration; no behavior change.
+
+**R8B — `Detector` API:**
+- Created `detector.rs` with `Detector` and `TargetSpec` structs.
+- `TargetSpec` wraps `BoardLayout` as an extension point for future additions (codebook, marker geometry).
+- `Detector` provides: `new(marker_diameter_px)`, `with_target(target, diameter)`, `with_config(config)`, `config()`, `config_mut()`.
+- Detection methods: `detect`, `detect_with_camera`, `detect_with_mapper`, `detect_with_debug`.
+- All methods delegate to existing `ring::detect::*` free functions.
+- Re-exported from `lib.rs` as `ringgrid_core::{Detector, TargetSpec}`.
+
+Exit criteria:
+- All 66 tests pass (3 new for Detector). Completed.
+- No behavior change from refactoring. Completed.
+
+### Phase R5: Public API and target-spec stabilization (future)
+
 - Reduce default exposed parameter set; move advanced tunables into nested expert config.
 - Adopt versioned runtime target specification schema.
 

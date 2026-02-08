@@ -111,7 +111,7 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 
 ### 1) Mixed-responsibility hotspots
 
-- `crates/ringgrid-core/src/ring/detect/completion.rs` (~634 LOC): completion logic + gates + debug mapping in one module.
+- `crates/ringgrid-core/src/ring/detect/completion.rs` (~503 LOC): completion logic refactored into focused helpers (`CandidateQuality`, gate checks, debug builders); main function is orchestration-only.
 - `crates/ringgrid-core/src/refine/pipeline.rs` (~524 LOC): per-marker refine flow still long, although now isolated from API/types.
 - `crates/ringgrid-core/src/conic/` (split into `types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`): still contains multiple algorithmic layers but now separated into focused modules.
 - `crates/ringgrid-cli/src/main.rs` (~400 LOC): CLI parsing and parameter-scaling policy are tightly coupled (`run_detect` uses many arguments).
@@ -146,6 +146,8 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 15. Completed (R3C): when `nl_board` is selected but homography is unavailable, pipeline keeps uncorrected centers.
 16. Completed (R3C): when correction runs without camera intrinsics, pipeline still runs and emits warnings (R4 will add undistortion path).
 17. Completed (R3C): board-circle center solve now supports selectable solver backends (`lm` and `irls`) via config/CLI/debug metadata.
+18. Completed (R8A): refactored `complete_with_h` from 530-line monolith into orchestrator + 8 focused helpers; added shared `outer_estimation_debug`/`inner_estimation_debug` to `debug_conv.rs`.
+19. Completed (R8B): created `Detector` + `TargetSpec` public API in `detector.rs`, re-exported from `lib.rs`.
 
 ## Center correction strategy (R3C re-plan)
 
@@ -207,22 +209,32 @@ Remaining:
 
 1. Add larger real-image validation and threshold tuning with/without intrinsics.
 
-## Public API target shape
+## Public API (implemented)
 
-Design target for `ringgrid-core`:
+`ringgrid-core` exposes a `Detector` struct as the primary entry point:
 
-- Keep a simple entrypoint for common usage.
-- Expose expert controls in nested structs; avoid flat parameter sprawl.
+```rust
+use ringgrid_core::detector::{Detector, TargetSpec};
 
-Proposed API direction:
+let detector = Detector::new(32.0);               // default board, marker diameter
+let detector = Detector::with_target(target, 32.0); // custom board
+let detector = Detector::with_config(config);       // full control
 
-- `Detector` object holding immutable target/codebook/camera context.
-- `target` comes from runtime JSON and is mandatory in public API v1.
-- `Detector::detect(&GrayImage) -> DetectionResult`
-- `Detector::detect_with_debug(&GrayImage, DebugOptions) -> (DetectionResult, DebugDumpV1)`
-- `DetectionOptions` with two tiers:
-  - Stable user-facing fields (small set).
-  - `advanced` optional sub-structs for proposal/edge/decode/refine internals.
+let result = detector.detect(&image);
+let result = detector.detect_with_camera(&image, &camera);
+let result = detector.detect_with_mapper(&image, &mapper);
+let (result, debug) = detector.detect_with_debug(&image, &debug_cfg);
+
+detector.config_mut().completion.enable = false;   // post-construction tuning
+```
+
+Design decisions:
+- `TargetSpec` wraps `BoardLayout`; extension point for codebook/geometry variants.
+- `config_mut()` instead of builder — config is already a plain struct with public fields.
+- Free functions (`detect_rings`, etc.) remain for backward compatibility.
+- No observer trait — debug dump covers the actual use case (CLI JSON).
+
+Future API stabilization:
 
 Initial stable parameter surface (v1, provisional):
 

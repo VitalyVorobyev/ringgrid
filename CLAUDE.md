@@ -143,37 +143,21 @@ Optional radial-tangential distortion model (`camera.rs`). When camera intrinsic
 - Added `--target <path.json>` to load board layout from JSON at runtime
 - Without `--target`, embedded default is used (backward compatible)
 
-### Phase 4: Public API Design
+### Phase 4: Completion Refactor + Public API (completed)
 
-**R8A — `Detector` object:**
-```rust
-pub struct Detector {
-    target: TargetSpec,
-    config: DetectConfig,
-}
-impl Detector {
-    pub fn new(target: TargetSpec) -> Self;
-    pub fn with_config(target: TargetSpec, config: DetectConfig) -> Self;
-    pub fn detect(&self, image: &GrayImage) -> DetectionResult;
-    pub fn detect_with_camera(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult;
-    pub fn detect_with_observer(&self, image: &GrayImage, observer: &mut dyn DetectionObserver) -> DetectionResult;
-}
-```
+**R8A — Refactor `complete_with_h`:**
+- Extracted 8+ helper functions from the 530-line monolithic function in `completion.rs`
+- New helpers: `CandidateQuality`, `compute_candidate_quality`, `check_decode_gate`, `check_quality_gates`, `make_attempt_record`, `build_pre_gate_fit_debug`, `build_success_fit_debug`, `build_edges_debug`, `points_debug`
+- Added shared `outer_estimation_debug` and `inner_estimation_debug` helpers to `debug_conv.rs`, replacing 5 duplicated inline constructions across `completion.rs` and `stage_fit_decode.rs`
+- Main function reduced to orchestration; no behavior change (66 tests pass)
 
-**R8B — Clean output types:**
-- `DetectedMarker`: id, center, confidence (always present); ellipses and metrics behind accessor methods
-- `DetectionResult`: markers, homography (as `[[f64;3];3]`), image_size
-- Feature-gated `nalgebra` re-exports for consumers who want Matrix3 interop
-
-**R8C — Configuration tiers:**
-- Simple: `DetectConfig::default()` + `marker_diameter_px` (covers 90% of use cases)
-- Advanced: nested structs for proposal/edge/decode/refine internals
-- `DetectConfig::from_marker_diameter(px)` handles all scaling
-
-**R8D — Error handling:**
-- Public functions return `Result<DetectionResult, DetectionError>`
-- `DetectionError` enum with variants for invalid config, image too small, etc.
-- Detection with zero markers is success (empty result), not error
+**R8B — `Detector` API:**
+- Created `detector.rs` with `Detector` and `TargetSpec` structs
+- `TargetSpec` wraps `BoardLayout` (extension point for codebook/geometry variants)
+- `Detector` methods: `new(marker_diameter_px)`, `with_target(target, diameter)`, `with_config(config)`, `config()`, `config_mut()`
+- Detection: `detect(&GrayImage)`, `detect_with_camera(&GrayImage, &CameraModel)`, `detect_with_mapper(&GrayImage, &dyn PixelMapper)`, `detect_with_debug(&GrayImage, &DebugCollectConfig)`
+- All methods delegate to existing `ring::detect::*` free functions; no behavior change
+- Re-exported as `ringgrid_core::Detector` and `ringgrid_core::TargetSpec`
 
 ## Known Correctness Issues (to fix during refactoring)
 

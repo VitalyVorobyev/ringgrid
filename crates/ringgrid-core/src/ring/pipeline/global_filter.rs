@@ -1,4 +1,4 @@
-use crate::board_spec;
+use crate::board_layout::BoardLayout;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::{DetectedMarker, RansacStats};
@@ -7,7 +7,6 @@ struct GlobalFilterOutcome {
     filtered: Vec<DetectedMarker>,
     result: Option<homography::RansacHomographyResult>,
     stats: Option<RansacStats>,
-    #[allow(dead_code)]
     debug: Option<dbg::RansacDebugV1>,
 }
 
@@ -22,6 +21,7 @@ fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
 fn run_global_filter(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
     collect_debug: bool,
     log_messages: bool,
 ) -> GlobalFilterOutcome {
@@ -33,7 +33,7 @@ fn run_global_filter(
 
     for (i, m) in markers.iter().enumerate() {
         if let Some(id) = m.id {
-            if let Some(xy) = board_spec::xy_mm(id) {
+            if let Some(xy) = board.xy_mm(id) {
                 src_pts.push([xy[0] as f64, xy[1] as f64]);
                 dst_pts.push(m.center);
                 corr_ids.push(id);
@@ -213,18 +213,18 @@ fn run_global_filter(
     }
 }
 
-#[allow(dead_code)]
 pub fn global_filter_with_debug(
     markers: &[DetectedMarker],
     _cand_idx: &[usize],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
     dbg::RansacDebugV1,
 ) {
-    let out = run_global_filter(markers, config, true, false);
+    let out = run_global_filter(markers, config, board, true, false);
     (
         out.filtered,
         out.result,
@@ -239,11 +239,12 @@ pub fn global_filter_with_debug(
 pub fn global_filter(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
-    let out = run_global_filter(markers, config, false, true);
+    let out = run_global_filter(markers, config, board, false, true);
     (out.filtered, out.result, out.stats)
 }

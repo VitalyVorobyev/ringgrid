@@ -3,8 +3,8 @@
 use image::GrayImage;
 use std::collections::HashSet;
 
+use crate::board_layout::BoardLayout;
 use crate::camera::PixelMapper;
-#[cfg(feature = "debug-trace")]
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
@@ -14,13 +14,11 @@ use crate::{DetectedMarker, DetectionResult, RansacStats};
 use super::decode::DecodeConfig;
 use super::edge_sample::EdgeSampleConfig;
 use super::outer_estimate::OuterEstimationConfig;
-#[cfg(feature = "debug-trace")]
 use super::pipeline::dedup::dedup_with_debug as dedup_with_debug_impl;
 use super::pipeline::dedup::{
     dedup_by_id as dedup_by_id_impl, dedup_markers as dedup_markers_impl,
 };
 use super::pipeline::global_filter::global_filter as global_filter_impl;
-#[cfg(feature = "debug-trace")]
 use super::pipeline::global_filter::global_filter_with_debug as global_filter_with_debug_impl;
 use super::proposal::{find_proposals, Proposal, ProposalConfig};
 #[path = "detect/completion.rs"]
@@ -39,15 +37,13 @@ mod outer_fit;
 mod refine_h;
 #[path = "detect/stages/mod.rs"]
 mod stages;
-use completion::{CompletionAttemptRecord, CompletionStats};
+use completion::{CompletionAttemptRecord, CompletionDebugOptions, CompletionStats};
 use outer_fit::{
-    compute_center, ellipse_to_params, fit_outer_ellipse_robust_with_reason,
-    marker_outer_radius_expected_px, mean_axis_px_from_marker,
-    median_outer_radius_from_neighbors_px, OuterFitCandidate,
+    compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
+    mean_axis_px_from_marker, median_outer_radius_from_neighbors_px, OuterFitCandidate,
 };
 
 /// Debug collection options for `detect_rings_with_debug`.
-#[cfg(feature = "debug-trace")]
 #[derive(Debug, Clone)]
 pub struct DebugCollectConfig {
     /// Optional source image path copied into debug dump metadata.
@@ -248,6 +244,45 @@ pub struct DetectConfig {
     pub refine_with_h: bool,
     /// Non-linear per-marker refinement using board-plane circle fits.
     pub nl_refine: refine::RefineParams,
+    /// Board layout: marker positions and geometry.
+    pub board: BoardLayout,
+}
+
+impl DetectConfig {
+    /// Build a configuration with all scale-dependent parameters derived from
+    /// the expected marker outer diameter in pixels.
+    ///
+    /// This is the recommended constructor for library users. After calling it,
+    /// individual fields can be overridden as needed.
+    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
+        let r_outer = diameter_px / 2.0;
+        let mut cfg = Self {
+            marker_diameter_px: diameter_px,
+            ..Default::default()
+        };
+
+        // Proposal search radii
+        cfg.proposal.r_min = (r_outer * 0.4).max(2.0);
+        cfg.proposal.r_max = r_outer * 1.7;
+        cfg.proposal.nms_radius = r_outer * 0.8;
+
+        // Edge sampling range
+        cfg.edge_sample.r_max = r_outer * 2.0;
+        cfg.edge_sample.r_min = 1.5;
+        cfg.outer_estimation.theta_samples = cfg.edge_sample.n_rays;
+
+        // Ellipse validation bounds
+        cfg.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
+        cfg.max_semi_axis = r_outer as f64 * 2.5;
+
+        // Completion ROI
+        cfg.completion.roi_radius_px = ((diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32;
+
+        // Projective center max shift
+        cfg.projective_center.max_center_shift_px = Some(diameter_px as f64);
+
+        cfg
+    }
 }
 
 impl Default for DetectConfig {
@@ -271,6 +306,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
             nl_refine: refine::RefineParams::default(),
+            board: BoardLayout::default(),
         }
     }
 }
@@ -403,7 +439,7 @@ fn detect_rings_with_mapper_and_seeds(
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
 ) -> DetectionResult {
-    stages::run(gray, config, mapper, seed_centers_image, seed_cfg)
+    stages::run(gray, config, mapper, seed_centers_image, seed_cfg, None).0
 }
 
 /// Run the full ring detection pipeline.
@@ -510,7 +546,6 @@ pub fn detect_rings_two_pass_with_estimator(
 /// Run the full ring detection pipeline and collect a versioned debug dump.
 ///
 /// Debug collection currently uses single-pass execution.
-#[cfg(feature = "debug-trace")]
 pub fn detect_rings_with_debug(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -522,20 +557,23 @@ pub fn detect_rings_with_debug(
 /// Run the full ring detection pipeline with debug collection and optional custom mapper.
 ///
 /// Debug collection currently uses single-pass execution.
-#[cfg(feature = "debug-trace")]
 pub fn detect_rings_with_debug_and_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
-    stages::run_with_debug(
+    let (result, dump) = stages::run(
         gray,
         config,
-        debug_cfg,
         mapper,
         &[],
         &SeedProposalParams::default(),
+        Some(debug_cfg),
+    );
+    (
+        result,
+        dump.expect("debug dump present when debug_cfg is provided"),
     )
 }
 
@@ -550,7 +588,6 @@ pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
     );
 }
 
-#[cfg(feature = "debug-trace")]
 fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,
@@ -559,29 +596,29 @@ fn dedup_with_debug(
     dedup_with_debug_impl(markers, cand_idx, radius)
 }
 
-#[cfg(feature = "debug-trace")]
 fn global_filter_with_debug(
     markers: &[DetectedMarker],
     cand_idx: &[usize],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
     dbg::RansacDebugV1,
 ) {
-    global_filter_with_debug_impl(markers, cand_idx, config)
+    global_filter_with_debug_impl(markers, cand_idx, config, board)
 }
 
-#[cfg(feature = "debug-trace")]
 fn refine_with_homography_with_debug(
     gray: &GrayImage,
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebugV1) {
-    refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper)
+    refine_h::refine_with_homography_with_debug(gray, markers, h, config, board, mapper)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
@@ -596,12 +633,13 @@ fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
 fn global_filter(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> (
     Vec<DetectedMarker>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
-    global_filter_impl(markers, config)
+    global_filter_impl(markers, config, board)
 }
 
 /// Refine marker centers using H: project board coords through H as priors,
@@ -611,10 +649,11 @@ fn refine_with_homography(
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
     let (refined, _debug) =
-        refine_h::refine_with_homography_with_debug(gray, markers, h, config, mapper);
+        refine_h::refine_with_homography_with_debug(gray, markers, h, config, board, mapper);
     refined
 }
 
@@ -627,42 +666,40 @@ fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
-    store_points_in_debug: bool,
-    record_debug: bool,
+    debug: CompletionDebugOptions,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
-    completion::complete_with_h(
-        gray,
-        h,
-        markers,
-        config,
-        mapper,
-        store_points_in_debug,
-        record_debug,
-    )
+    completion::complete_with_h(gray, h, markers, config, board, mapper, debug)
 }
 
 fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
     homography_utils::matrix3_to_array(m)
 }
 
-fn mean_reproj_error_px(h: &nalgebra::Matrix3<f64>, markers: &[DetectedMarker]) -> f64 {
-    homography_utils::mean_reproj_error_px(h, markers)
+fn mean_reproj_error_px(
+    h: &nalgebra::Matrix3<f64>,
+    markers: &[DetectedMarker],
+    board: &BoardLayout,
+) -> f64 {
+    homography_utils::mean_reproj_error_px(h, markers, board)
 }
 
 fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     thresh_px: f64,
+    board: &BoardLayout,
 ) -> Option<RansacStats> {
-    homography_utils::compute_h_stats(h, markers, thresh_px)
+    homography_utils::compute_h_stats(h, markers, thresh_px, board)
 }
 
 fn refit_homography_matrix(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
+    board: &BoardLayout,
 ) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
-    homography_utils::refit_homography_matrix(markers, config)
+    homography_utils::refit_homography_matrix(markers, config, board)
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within dedup_radius.
@@ -781,7 +818,6 @@ mod tests {
     use nalgebra::Matrix3;
     use nalgebra::Vector3;
 
-    #[cfg(feature = "debug-trace")]
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
         let img = GrayImage::new(64, 64);
@@ -848,7 +884,6 @@ mod tests {
         assert_eq!(markers[0].center_projective, Some([8.0, 2.0]));
     }
 
-    #[cfg(feature = "debug-trace")]
     #[test]
     fn detect_accepts_custom_pixel_mapper_adapter() {
         struct IdentityMapper;
@@ -932,8 +967,15 @@ mod tests {
         cfg.decode.min_decode_confidence = 1.0; // force decode rejection (avoid mismatch gate)
 
         let mut markers: Vec<DetectedMarker> = Vec::new();
-        let (stats, _attempts) =
-            complete_with_h(&img, &h_matrix, &mut markers, &cfg, None, false, false);
+        let (stats, _attempts) = complete_with_h(
+            &img,
+            &h_matrix,
+            &mut markers,
+            &cfg,
+            &cfg.board,
+            None,
+            CompletionDebugOptions::default(),
+        );
         assert_eq!(stats.n_added, 1, "expected one completion addition");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, Some(id));
@@ -961,11 +1003,7 @@ mod tests {
                 q_sym[(2, 2)],
             ]);
             let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
-            crate::EllipseParams {
-                center_xy: [e.cx, e.cy],
-                semi_axes: [e.a, e.b],
-                angle: e.angle,
-            }
+            crate::EllipseParams::from(e)
         }
 
         let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);
@@ -1038,11 +1076,7 @@ mod tests {
                 q_sym[(2, 2)],
             ]);
             let e = coeffs.to_ellipse().expect("projected circle is an ellipse");
-            crate::EllipseParams {
-                center_xy: [e.cx, e.cy],
-                semi_axes: [e.a, e.b],
-                angle: e.angle,
-            }
+            crate::EllipseParams::from(e)
         }
 
         let h = Matrix3::new(1.12, 0.21, 321.0, -0.17, 0.94, 245.0, 8.0e-4, -6.0e-4, 1.0);

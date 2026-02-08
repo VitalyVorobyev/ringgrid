@@ -39,6 +39,11 @@ enum Commands {
 
 #[derive(Debug, Clone, Args)]
 struct CliDetectArgs {
+    /// Path to a board layout JSON file (target specification).
+    /// When omitted, uses the embedded default board.
+    #[arg(long)]
+    target: Option<PathBuf>,
+
     /// Path to the input image.
     #[arg(long)]
     image: PathBuf,
@@ -48,22 +53,18 @@ struct CliDetectArgs {
     out: PathBuf,
 
     /// DEPRECATED: use --debug-json. Writes a versioned debug dump (JSON).
-    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug: Option<PathBuf>,
 
     /// Path to write a comprehensive versioned debug dump (JSON).
-    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug_json: Option<PathBuf>,
 
     /// Include edge point arrays in debug dump (can get large).
-    #[cfg(feature = "debug-trace")]
     #[arg(long)]
     debug_store_points: bool,
 
     /// Maximum number of candidates to record in the debug dump.
-    #[cfg(feature = "debug-trace")]
     #[arg(long, default_value = "300")]
     debug_max_candidates: usize,
 
@@ -327,26 +328,8 @@ fn build_detect_config(
     preset: DetectPreset,
     overrides: &DetectOverrides,
 ) -> ringgrid_core::ring::DetectConfig {
-    // Configure detection parameters from marker_diameter
-    let r_outer = preset.marker_diameter_px / 2.0;
-    let mut config = ringgrid_core::ring::DetectConfig {
-        marker_diameter_px: preset.marker_diameter_px,
-        ..Default::default()
-    };
-
-    // Scale proposal search radii
-    config.proposal.r_min = (r_outer * 0.4).max(2.0);
-    config.proposal.r_max = r_outer * 1.7;
-    config.proposal.nms_radius = r_outer * 0.8;
-
-    // Scale edge sampling range
-    config.edge_sample.r_max = r_outer * 2.0;
-    config.edge_sample.r_min = 1.5;
-    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
-
-    // Scale ellipse validation
-    config.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
-    config.max_semi_axis = r_outer as f64 * 2.5;
+    let mut config =
+        ringgrid_core::ring::DetectConfig::from_marker_diameter_px(preset.marker_diameter_px);
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -358,19 +341,17 @@ fn build_detect_config(
     config.completion.enable = overrides.completion_enable;
     config.completion.reproj_gate_px = overrides.completion_reproj_gate_px;
     config.completion.min_fit_confidence = overrides.completion_min_fit_confidence;
-    config.completion.roi_radius_px = overrides
-        .completion_roi_radius_px
-        .unwrap_or(((preset.marker_diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32);
+    if let Some(roi) = overrides.completion_roi_radius_px {
+        config.completion.roi_radius_px = roi;
+    }
     config.camera = overrides.camera;
 
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
-    config.projective_center.max_center_shift_px = Some(
-        overrides
-            .projective_center_max_shift_px
-            .unwrap_or(preset.marker_diameter_px as f64),
-    );
+    if let Some(shift) = overrides.projective_center_max_shift_px {
+        config.projective_center.max_center_shift_px = Some(shift);
+    }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
 
@@ -499,19 +480,34 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     let preset = args.to_preset();
     let overrides = args.to_overrides()?;
-    let config = build_detect_config(preset, &overrides);
+    let mut config = build_detect_config(preset, &overrides);
 
-    #[cfg(feature = "debug-trace")]
+    if let Some(target_path) = &args.target {
+        let board = ringgrid_core::board_layout::BoardLayout::from_json_file(target_path).map_err(
+            |e| -> CliError {
+                format!(
+                    "Failed to load target spec {}: {}",
+                    target_path.display(),
+                    e
+                )
+                .into()
+            },
+        )?;
+        tracing::info!(
+            "Loaded board layout '{}' with {} markers",
+            board.name,
+            board.n_markers()
+        );
+        config.board = board;
+    }
+
     let deprecated_debug_path = args.debug.as_deref();
-    #[cfg(feature = "debug-trace")]
     let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);
 
-    #[cfg(feature = "debug-trace")]
     if deprecated_debug_path.is_some() && args.debug_json.is_none() {
         tracing::warn!("--debug is deprecated; use --debug-json instead");
     }
 
-    #[cfg(feature = "debug-trace")]
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid_core::ring::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
@@ -524,9 +520,6 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     } else {
         (ringgrid_core::ring::detect_rings(&gray, &config), None)
     };
-
-    #[cfg(not(feature = "debug-trace"))]
-    let result = ringgrid_core::ring::detect_rings(&gray, &config);
 
     let n_with_id = result
         .detected_markers
@@ -555,7 +548,6 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     tracing::info!("Results written to {}", args.out.display());
 
     // Write debug dump (versioned schema)
-    #[cfg(feature = "debug-trace")]
     if let Some(debug_path) = debug_out_path {
         let dump = debug_dump.expect("debug dump present when debug_out_path is set");
         let debug_json = serde_json::to_string_pretty(&dump)?;

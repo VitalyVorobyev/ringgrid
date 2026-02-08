@@ -8,21 +8,11 @@
 use image::GrayImage;
 
 use crate::camera::{CameraModel, PixelMapper};
-use crate::marker_spec::AngularAggregator;
+use crate::marker_spec::{AngularAggregator, GradPolarity};
 
 use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;
 use super::radial_profile::Polarity;
-/// Expected sign convention for the outer-edge radial derivative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OuterGradPolarity {
-    /// Intensity increases as radius increases (dark → light).
-    DarkToLight,
-    /// Intensity decreases as radius increases (light → dark).
-    LightToDark,
-    /// Try both and pick the more coherent peak.
-    Auto,
-}
 
 /// Outcome category for outer-edge estimation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +69,7 @@ pub struct OuterEstimationConfig {
     /// Aggregation method across theta.
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
-    pub grad_polarity: OuterGradPolarity,
+    pub grad_polarity: GradPolarity,
     /// Minimum fraction of theta samples required for an estimate.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree with the selected peak.
@@ -99,7 +89,7 @@ impl Default for OuterEstimationConfig {
             radial_samples: 64,
             theta_samples: 48,
             aggregator: AngularAggregator::Median,
-            grad_polarity: OuterGradPolarity::DarkToLight,
+            grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.6,
             min_theta_consistency: 0.35,
             allow_two_hypotheses: true,
@@ -202,26 +192,8 @@ pub fn estimate_outer_from_prior_with_mapper(
             continue;
         }
 
-        // dI/dr via central differences
-        let mut d = vec![0.0f32; n_r];
-        for ri in 0..n_r {
-            if ri == 0 {
-                d[ri] = (i_vals[1] - i_vals[0]) / r_step;
-            } else if ri + 1 == n_r {
-                d[ri] = (i_vals[n_r - 1] - i_vals[n_r - 2]) / r_step;
-            } else {
-                d[ri] = (i_vals[ri + 1] - i_vals[ri - 1]) / (2.0 * r_step);
-            }
-        }
-
-        // Light smoothing
-        if n_r >= 5 {
-            let mut d2 = d.clone();
-            for ri in 1..(n_r - 1) {
-                d2[ri] = (d[ri - 1] + d[ri] + d[ri + 1]) / 3.0;
-            }
-            d = d2;
-        }
+        let mut d = radial_profile::radial_derivative(&i_vals, r_step);
+        radial_profile::smooth_3point(&mut d);
 
         curves.push(d);
     }
@@ -248,9 +220,9 @@ pub fn estimate_outer_from_prior_with_mapper(
     }
 
     let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
-        OuterGradPolarity::DarkToLight => vec![Polarity::Pos],
-        OuterGradPolarity::LightToDark => vec![Polarity::Neg],
-        OuterGradPolarity::Auto => vec![Polarity::Pos, Polarity::Neg],
+        GradPolarity::DarkToLight => vec![Polarity::Pos],
+        GradPolarity::LightToDark => vec![Polarity::Neg],
+        GradPolarity::Auto => vec![Polarity::Pos, Polarity::Neg],
     };
 
     let mut best: Option<(OuterEstimate, f32)> = None;
@@ -311,12 +283,8 @@ pub fn estimate_outer_from_prior_with_mapper(
                 }
             }
 
-            let delta = (4.0 * r_step).max(0.75);
-            let n_close = per_theta
-                .iter()
-                .filter(|&&r| (r - r_star).abs() <= delta)
-                .count();
-            let theta_consistency = n_close as f32 / per_theta.len().max(1) as f32;
+            let theta_consistency =
+                radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.75);
 
             if theta_consistency < cfg.min_theta_consistency {
                 continue;
@@ -462,7 +430,7 @@ mod tests {
             radial_samples: 64,
             theta_samples: 64,
             aggregator: AngularAggregator::Median,
-            grad_polarity: OuterGradPolarity::DarkToLight,
+            grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.5,
             min_theta_consistency: 0.35,
             allow_two_hypotheses: true,

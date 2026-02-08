@@ -23,7 +23,7 @@ crates/
         pipeline/         # dedup + global-filter shared stages
         inner_estimate.rs # inner radius estimation constrained by outer ellipse
         decode.rs         # 16-sector sampling + codebook matching
-      conic.rs            # ellipse/conic fit and utilities
+      conic/              # ellipse/conic types, fit, eigen solver, RANSAC
       homography.rs       # DLT + RANSAC homography fitting
       projective_center.rs # projective unbiased center from inner/outer conics
       refine.rs           # public refine API + wrappers
@@ -31,6 +31,8 @@ crates/
       debug_dump.rs       # versioned debug schema
       marker_spec.rs      # marker geometry priors and estimator controls
       board_spec.rs       # generated embedded board constants
+      board_layout.rs     # runtime BoardLayout struct (wraps board_spec or JSON)
+      detector.rs         # public Detector + TargetSpec API
       lib.rs              # public result/data structs
   ringgrid-cli/
     src/main.rs           # CLI and config wiring
@@ -96,16 +98,16 @@ For each proposal:
 
 ### Mixed responsibilities
 
-- `ring/detect.rs` is now a slim orchestrator, but `ring/detect/completion.rs` (~634 LOC) is still a large mixed-responsibility module.
+- `ring/detect.rs` is now a slim orchestrator; `ring/detect/completion.rs` (~503 LOC) has been refactored into focused helpers (gate checks, quality computation, debug builders) with a clean orchestrator loop.
 - `refine.rs` is now slim, but `refine/pipeline.rs` (~524 LOC) still concentrates many per-marker decision branches.
-- `conic.rs` combines model definitions and multiple algorithmic layers (fit + solver internals + RANSAC).
+- `conic/` module is now split into focused files (`types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`) but still contains tightly coupled algorithmic layers.
 - CLI `run_detect` has broad parameter plumbing and policy coupling.
 
 ### Duplicate or near-duplicate logic
 
-- Debug/non-debug pipeline execution has been merged into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) with feature-gated trace collection.
+- Debug/non-debug pipeline execution has been merged into shared stage modules (`stages/stage_fit_decode.rs`, `stages/stage_finalize.rs`) with runtime `Option<&DebugCollectConfig>` gating.
 - Marker assembly is still repeated across some stage modules.
-- Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is repeated at several call sites.
+- Marker assembly (`FitMetrics`, `DecodeMetrics`, `DetectedMarker`) is now centralized in `marker_build.rs` with shared helpers.
 - `inner_estimate.rs` and `outer_estimate.rs` repeat similar radial aggregation/peak-consistency code.
 - Radial edge probing code appears in both `ring/detect/*` and `refine/*`.
 - Legacy `ring/edge_sample.rs::sample_edges` path has been removed.
@@ -140,7 +142,9 @@ Work completed under this phase so far:
 - Marker construction helpers are now centralized in `ring/detect/marker_build.rs` and reused by stage-fit, completion, and H-refine paths.
 - Legacy `sample_edges` implementation was removed (decision: deprecate/remove, not adopt).
 - Debug/non-debug execution was unified into shared stage modules and `ring/detect/debug_pipeline.rs` was removed.
-- Compile-time trace feature `debug-trace` was added (default-disabled). Debug API/CLI are unavailable when the feature is not enabled.
+- Debug collection replaced compile-time `debug-trace` feature with runtime `Option<&DebugCollectConfig>`. Debug API/CLI are always available.
+- Split `conic.rs` into `conic/` module: `types.rs`, `fit.rs`, `eigen.rs`, `ransac.rs`.
+- Extracted shared marker-build helpers (`fit_metrics_with_inner`, `inner_ellipse_params`) reducing duplication across stage_fit_decode, completion, and refine_h.
 
 Exit criteria:
 - Duplicate-path functions removed or wrapped by common core path.
@@ -235,9 +239,45 @@ Exit criteria:
 - Distorted synthetic benchmarks improve center precision.
 - No regression when camera params are absent.
 
-### Phase R5: Public API and target-spec stabilization
+### Phase R7: Runtime target specification
 
-- Introduce a stable `Detector` API with layered options.
+Status: completed.
+
+- Created `BoardLayout` struct in `board_layout.rs` with HashMap-based ID lookup and serde JSON support.
+- `BoardLayout::default()` reads from embedded `board_spec` constants for backward compatibility.
+- Added `board: BoardLayout` field to `DetectConfig`.
+- Replaced all 8 direct `board_spec::` call sites across 6 pipeline files (`global_filter.rs`, `homography_utils.rs`, `completion.rs`, `refine_h.rs`, `refine/pipeline.rs`, `stage_finalize.rs`) with `&BoardLayout` parameters.
+- Added `--target <path.json>` CLI flag for runtime board loading.
+- `board_spec.rs` remains as data source for `BoardLayout::default()` only; pipeline code no longer imports it directly.
+
+Exit criteria:
+- All tests pass (63 total, 3 new for board_layout). Completed.
+- No direct `board_spec::` imports in pipeline code. Completed.
+- CLI `--target` produces same results as embedded default. Completed.
+
+### Phase R8: Completion refactor + public API
+
+Status: completed.
+
+**R8A — Refactor `complete_with_h`:**
+- Extracted 8+ helper functions: `CandidateQuality` struct, `compute_candidate_quality`, `check_decode_gate`, `check_quality_gates`, `make_attempt_record`, `build_pre_gate_fit_debug`, `build_success_fit_debug`, `build_edges_debug`, `points_debug`.
+- Added shared `outer_estimation_debug` and `inner_estimation_debug` helpers to `debug_conv.rs`, replacing 5 duplicated inline constructions across `completion.rs` and `stage_fit_decode.rs`.
+- Main function reduced to ~220 lines of orchestration; no behavior change.
+
+**R8B — `Detector` API:**
+- Created `detector.rs` with `Detector` and `TargetSpec` structs.
+- `TargetSpec` wraps `BoardLayout` as an extension point for future additions (codebook, marker geometry).
+- `Detector` provides: `new(marker_diameter_px)`, `with_target(target, diameter)`, `with_config(config)`, `config()`, `config_mut()`.
+- Detection methods: `detect`, `detect_with_camera`, `detect_with_mapper`, `detect_with_debug`.
+- All methods delegate to existing `ring::detect::*` free functions.
+- Re-exported from `lib.rs` as `ringgrid_core::{Detector, TargetSpec}`.
+
+Exit criteria:
+- All 66 tests pass (3 new for Detector). Completed.
+- No behavior change from refactoring. Completed.
+
+### Phase R5: Public API and target-spec stabilization (future)
+
 - Reduce default exposed parameter set; move advanced tunables into nested expert config.
 - Adopt versioned runtime target specification schema.
 

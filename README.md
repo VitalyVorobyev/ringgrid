@@ -24,14 +24,15 @@ cargo build --release
 ### 2. Install Python tooling deps (for synth/eval/viz)
 
 ```bash
-python3 -m pip install -U pip
-python3 -m pip install numpy matplotlib
+python3 -m venv .venv
+./.venv/bin/python -m pip install -U pip
+./.venv/bin/python -m pip install numpy matplotlib
 ```
 
 ### 3. Generate one synthetic sample
 
 ```bash
-python3 tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 1.0
+./.venv/bin/python tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 1.0
 ```
 
 ### 4. Run detection
@@ -43,13 +44,10 @@ target/release/ringgrid detect \
   --marker-diameter 32.0
 ```
 
-Debug dump support is compile-time gated (disabled by default).  
-Build with `--features debug-trace` to enable `--debug-json` / `--debug-store-points`.
-
 ### 5. Score against ground truth
 
 ```bash
-python3 tools/score_detect.py \
+./.venv/bin/python tools/score_detect.py \
   --gt tools/out/synth_001/gt_0000.json \
   --pred tools/out/synth_001/det_0000.json \
   --gate 8.0 \
@@ -61,6 +59,8 @@ python3 tools/score_detect.py \
 ```bash
 tools/run_synth_viz.sh tools/out/synth_001 0
 ```
+
+`tools/run_synth_viz.sh` auto-uses `.venv/bin/python` when present.
 
 ## Project Layout
 
@@ -95,8 +95,8 @@ Other commonly used toggles:
 - `--no-global-filter`
 - `--no-refine`
 - `--no-complete`
-- `--debug-json <path>` (requires `debug-trace` feature)
-- `--debug-store-points` (requires `debug-trace` feature)
+- `--debug-json <path>`
+- `--debug-store-points`
 
 ## Metrics (Synthetic Scoring)
 
@@ -113,6 +113,7 @@ Interpretation:
 - For cross-run comparisons, evaluate all metrics in distorted image space.
 - Use `--center-gt-key image --homography-gt-key image`.
 - Set predicted frame explicitly via `--pred-center-frame image|working` and `--pred-homography-frame image|working`.
+- Benchmark scripts in this repository set these frame flags explicitly (no `auto`), so reported numbers are frame-consistent and reproducible.
 
 Distortion-aware eval example:
 
@@ -185,7 +186,7 @@ Run command:
 | `none` | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
 | `projective-center` | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
 | `nl-board + lm` | 0.047 | 0.027 / 0.089 | 0.038 / 0.052 |
-| `nl-board + irls` | 0.069 | 0.061 / 0.123 | 0.034 / 0.048 |
+| `nl-board + irls` | 0.069 | 0.061 / 0.122 | 0.034 / 0.048 |
 
 ### Regression Batch (10 images)
 
@@ -200,7 +201,7 @@ Example image from this stress set:
 Run command:
 
 ```bash
-python3 tools/run_synth_eval.py \
+./.venv/bin/python tools/run_synth_eval.py \
   --n 10 \
   --blur_px 3.0 \
   --out_dir tools/out/regress_r2_batch \

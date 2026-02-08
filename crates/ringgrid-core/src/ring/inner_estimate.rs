@@ -8,7 +8,7 @@ use image::GrayImage;
 
 use crate::camera::{CameraModel, PixelMapper};
 use crate::conic::Ellipse;
-use crate::marker_spec::{InnerGradPolarity, MarkerSpec};
+use crate::marker_spec::{GradPolarity, MarkerSpec};
 
 use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;
@@ -153,26 +153,8 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             continue;
         }
 
-        // Radial derivative dI/dr (central differences)
-        let mut d = vec![0.0f32; n_r];
-        for ri in 0..n_r {
-            if ri == 0 {
-                d[ri] = (i_vals[1] - i_vals[0]) / r_step;
-            } else if ri + 1 == n_r {
-                d[ri] = (i_vals[n_r - 1] - i_vals[n_r - 2]) / r_step;
-            } else {
-                d[ri] = (i_vals[ri + 1] - i_vals[ri - 1]) / (2.0 * r_step);
-            }
-        }
-
-        // Light smoothing to reduce noise
-        if n_r >= 5 {
-            let mut d2 = d.clone();
-            for ri in 1..(n_r - 1) {
-                d2[ri] = (d[ri - 1] + d[ri] + d[ri + 1]) / 3.0;
-            }
-            d = d2;
-        }
+        let mut d = radial_profile::radial_derivative(&i_vals, r_step);
+        radial_profile::smooth_3point(&mut d);
 
         curves.push(d);
         theta_indices.push(ti);
@@ -207,9 +189,9 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
     }
 
     let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
-        InnerGradPolarity::DarkToLight => vec![Polarity::Pos],
-        InnerGradPolarity::LightToDark => vec![Polarity::Neg],
-        InnerGradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
+        GradPolarity::DarkToLight => vec![Polarity::Pos],
+        GradPolarity::LightToDark => vec![Polarity::Neg],
+        GradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
     };
 
     let mut best: Option<(InnerEstimate, f32)> = None;
@@ -231,12 +213,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
 
         // Consistency: how many per-theta peaks agree with r_star
         let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
-        let delta = (4.0 * r_step).max(0.02);
-        let n_close = per_theta
-            .iter()
-            .filter(|&&r| (r - r_star).abs() <= delta)
-            .count();
-        let theta_consistency = n_close as f32 / per_theta.len().max(1) as f32;
+        let theta_consistency = radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.02);
 
         let peak_strength = peak_val.abs();
 
@@ -402,7 +379,7 @@ mod tests {
 
         let spec = MarkerSpec {
             r_inner_expected: r_inner / r_outer,
-            inner_grad_polarity: InnerGradPolarity::LightToDark,
+            inner_grad_polarity: GradPolarity::LightToDark,
             inner_search_halfwidth: 0.08,
             theta_samples: 64,
             radial_samples: 64,

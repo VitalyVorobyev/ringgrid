@@ -69,15 +69,6 @@ pub(super) fn compute_center(outer: &Ellipse) -> [f64; 2] {
     [outer.cx, outer.cy]
 }
 
-/// Helper to create EllipseParams from a conic Ellipse.
-pub(super) fn ellipse_to_params(e: &Ellipse) -> EllipseParams {
-    EllipseParams {
-        center_xy: [e.cx, e.cy],
-        semi_axes: [e.a, e.b],
-        angle: e.angle,
-    }
-}
-
 pub(super) fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
     (config.marker_diameter_px * 0.5).max(2.0)
 }
@@ -236,7 +227,6 @@ pub(super) struct OuterFitCandidate {
     pub(super) outer_estimate: OuterEstimate,
     pub(super) chosen_hypothesis: usize,
     pub(super) decode_result: Option<crate::ring::decode::DecodeResult>,
-    #[cfg_attr(not(feature = "debug-trace"), allow(dead_code))]
     pub(super) decode_diag: crate::ring::decode::DecodeDiagnostics,
     pub(super) score: f32,
 }

@@ -12,6 +12,7 @@
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
 
+pub mod board_layout;
 #[allow(missing_docs)]
 pub mod board_spec;
 pub mod camera;
@@ -21,6 +22,7 @@ pub mod codec;
 pub mod conic;
 #[allow(missing_docs)]
 pub mod debug_dump;
+pub mod detector;
 pub mod homography;
 pub mod marker_spec;
 pub mod projective_center;
@@ -39,6 +41,50 @@ pub struct EllipseParams {
     pub semi_axes: [f64; 2],
     /// Rotation angle in radians.
     pub angle: f64,
+}
+
+impl From<conic::Ellipse> for EllipseParams {
+    fn from(e: conic::Ellipse) -> Self {
+        Self {
+            center_xy: [e.cx, e.cy],
+            semi_axes: [e.a, e.b],
+            angle: e.angle,
+        }
+    }
+}
+
+impl From<&conic::Ellipse> for EllipseParams {
+    fn from(e: &conic::Ellipse) -> Self {
+        Self {
+            center_xy: [e.cx, e.cy],
+            semi_axes: [e.a, e.b],
+            angle: e.angle,
+        }
+    }
+}
+
+impl From<EllipseParams> for conic::Ellipse {
+    fn from(p: EllipseParams) -> Self {
+        Self {
+            cx: p.center_xy[0],
+            cy: p.center_xy[1],
+            a: p.semi_axes[0].abs(),
+            b: p.semi_axes[1].abs(),
+            angle: p.angle,
+        }
+    }
+}
+
+impl From<&EllipseParams> for conic::Ellipse {
+    fn from(p: &EllipseParams) -> Self {
+        Self {
+            cx: p.center_xy[0],
+            cy: p.center_xy[1],
+            a: p.semi_axes[0].abs(),
+            b: p.semi_axes[1].abs(),
+            angle: p.angle,
+        }
+    }
 }
 
 /// Fit quality metrics for a detected marker.

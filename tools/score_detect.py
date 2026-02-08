@@ -663,7 +663,7 @@ def main():
         help=(
             "GT frame for center_error matching: "
             "'image' -> true_image_center, 'working' -> true_working_center, "
-            "'auto' selects working when prediction JSON contains camera metadata."
+            "'auto' defaults to image."
         ),
     )
     parser.add_argument(

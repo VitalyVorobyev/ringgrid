@@ -58,6 +58,8 @@ fi
 py=()
 if [[ -n "${PYTHON:-}" ]]; then
   py=("$PYTHON")
+elif [[ -x ".venv/bin/python" ]]; then
+  py=(".venv/bin/python")
 elif command -v python >/dev/null 2>&1; then
   py=("python")
 else

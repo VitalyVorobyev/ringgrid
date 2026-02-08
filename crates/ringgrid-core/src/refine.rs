@@ -7,6 +7,7 @@
 use image::GrayImage;
 use nalgebra as na;
 
+use crate::board_layout::BoardLayout;
 use crate::camera::{CameraModel, PixelMapper};
 use crate::ring::inner_estimate::Polarity;
 use crate::{DetectedMarker, EllipseParams};
@@ -129,6 +130,60 @@ pub struct MarkerRefineRecord {
     pub reason: Option<String>,
 }
 
+impl MarkerRefineRecord {
+    /// Create a record with required fields and `None` defaults for optional fields.
+    fn new(
+        id: usize,
+        init_center_board_mm: [f64; 2],
+        center_img_before: [f64; 2],
+        status: MarkerRefineStatus,
+    ) -> Self {
+        Self {
+            id,
+            n_points: 0,
+            init_center_board_mm,
+            refined_center_board_mm: None,
+            center_img_before,
+            center_img_after: None,
+            before_rms_mm: None,
+            after_rms_mm: None,
+            delta_center_mm: None,
+            edge_points_img: None,
+            edge_points_board_mm: None,
+            status,
+            reason: None,
+        }
+    }
+
+    fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+
+    fn with_points(
+        mut self,
+        n_points: usize,
+        img: Option<&[[f64; 2]]>,
+        board: Option<&[[f64; 2]]>,
+        store: bool,
+    ) -> Self {
+        self.n_points = n_points;
+        if store {
+            self.edge_points_img = img.map(truncate_f32);
+            self.edge_points_board_mm = board.map(truncate_f32);
+        }
+        self
+    }
+}
+
+fn truncate_f32(points: &[[f64; 2]]) -> Vec<[f32; 2]> {
+    points
+        .iter()
+        .take(256)
+        .map(|p| [p[0] as f32, p[1] as f32])
+        .collect()
+}
+
 fn percentile(sorted: &[f64], q: f64) -> f64 {
     math::percentile(sorted, q)
 }
@@ -177,9 +232,10 @@ pub fn refine_markers_circle_board(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    refine_markers_circle_board_with_mapper(gray, h, detections, params, None, store_points)
+    refine_markers_circle_board_with_mapper(gray, h, detections, params, board, None, store_points)
 }
 
 /// Distortion-aware variant of [`refine_markers_circle_board`] using an abstract mapper.
@@ -188,10 +244,11 @@ pub fn refine_markers_circle_board_with_mapper(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
-    pipeline::run(gray, h, detections, params, mapper, store_points)
+    pipeline::run(gray, h, detections, params, board, mapper, store_points)
 }
 
 /// Distortion-aware variant of [`refine_markers_circle_board`] using [`CameraModel`].
@@ -200,6 +257,7 @@ pub fn refine_markers_circle_board_with_camera(
     h: &na::Matrix3<f64>,
     detections: &mut [DetectedMarker],
     params: &RefineParams,
+    board: &BoardLayout,
     camera: Option<&CameraModel>,
     store_points: bool,
 ) -> (RefineStats, Vec<MarkerRefineRecord>) {
@@ -208,6 +266,7 @@ pub fn refine_markers_circle_board_with_camera(
         h,
         detections,
         params,
+        board,
         camera.map(|c| c as &dyn PixelMapper),
         store_points,
     )

@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "CLI tool for ringgrid circle/ring calibration target detection"
 
-[features]
-default = []
-debug-trace = ["ringgrid-core/debug-trace"]
 
 [[bin]]
 name = "ringgrid"

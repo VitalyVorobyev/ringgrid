@@ -3,10 +3,13 @@
 //! This is the single source of truth for expected inner/outer geometry in
 //! normalized coordinates (outer radius == 1.0).
 
-/// Expected polarity of the radial intensity derivative `dI/dr` at the inner edge.
+/// Expected polarity of the radial intensity derivative `dI/dr` at an edge.
+///
+/// Used by both inner and outer edge estimators to constrain the search
+/// direction. `Auto` tries both polarities and picks the more coherent peak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum InnerGradPolarity {
+pub enum GradPolarity {
     /// Intensity increases as radius increases (dark → light).
     DarkToLight,
     /// Intensity decreases as radius increases (light → dark).
@@ -48,7 +51,7 @@ pub struct MarkerSpec {
     /// Allowed deviation in normalized radius around `r_inner_expected`.
     pub inner_search_halfwidth: f32,
     /// Expected sign of dI/dr at the inner edge.
-    pub inner_grad_polarity: InnerGradPolarity,
+    pub inner_grad_polarity: GradPolarity,
     /// Number of radii samples per theta.
     pub radial_samples: usize,
     /// Number of theta samples.
@@ -84,7 +87,7 @@ impl Default for MarkerSpec {
             // should prevent snapping to code-band edges in difficult cases.
             inner_search_halfwidth: 0.08,
             // For the default synthetic marker, the inner edge is a light→dark transition.
-            inner_grad_polarity: InnerGradPolarity::LightToDark,
+            inner_grad_polarity: GradPolarity::LightToDark,
             radial_samples: 64,
             theta_samples: 96,
             aggregator: AngularAggregator::Median,

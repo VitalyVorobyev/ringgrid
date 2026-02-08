@@ -1,7 +1,8 @@
 //! RANSAC wrapper for outlier-robust ellipse fitting.
 
-use super::fit::fit_ellipse_direct;
-use super::types::{ConicCoeffs, ConicError, Ellipse, RansacConfig, RansacResult};
+use super::fit_conic_direct;
+use super::types::{ConicError, Ellipse, RansacConfig, RansacResult};
+use super::ConicCoeffs;
 
 /// Fit an ellipse robustly using RANSAC.
 ///
@@ -27,7 +28,10 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         let sample_pts: Vec<[f64; 2]> = sample.iter().map(|&i| points[i]).collect();
 
         // Fit ellipse to sample
-        let Some((conic, ellipse)) = fit_ellipse_direct(&sample_pts) else {
+        let Some(conic) = fit_conic_direct(&sample_pts) else {
+            continue;
+        };
+        let Some(ellipse) = conic.to_ellipse() else {
             continue;
         };
 
@@ -69,8 +73,9 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         .map(|(_, &p)| p)
         .collect();
 
-    let (final_conic, final_ellipse) =
-        fit_ellipse_direct(&inlier_pts).or_else(|| best_conic.zip(best_ellipse))?;
+    let (final_conic, final_ellipse) = fit_conic_direct(&inlier_pts)
+        .and_then(|conic| conic.to_ellipse().map(|ellipse| (conic, ellipse)))
+        .or_else(|| best_conic.zip(best_ellipse))?;
 
     // Recompute inlier mask with final model using Sampson distance
     let mut final_mask = vec![false; n];

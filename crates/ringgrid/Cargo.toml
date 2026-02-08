@@ -2,8 +2,11 @@
 name = "ringgrid"
 version = "0.1.0"
 edition = "2021"
-description = "Core algorithms for ringgrid circle/ring calibration target detection"
+description = "Pure-Rust detector for coded ring calibration targets"
 
+[features]
+default = []
+cli-internal = []
 
 [dependencies]
 nalgebra = { workspace = true }

@@ -232,10 +232,10 @@ fn self_undistort_objective(
         let inner_ud = model.undistort_points(inner_pts);
 
         // Refit conics.
-        let Some((_outer_coeffs, outer_ellipse)) = fit_ellipse_direct(&outer_ud) else {
+        let Some(outer_ellipse) = fit_ellipse_direct(&outer_ud) else {
             continue;
         };
-        let Some((_inner_coeffs, inner_ellipse)) = fit_ellipse_direct(&inner_ud) else {
+        let Some(inner_ellipse) = fit_ellipse_direct(&inner_ud) else {
             continue;
         };
 
@@ -582,8 +582,8 @@ mod tests {
         }
 
         // Fit ellipses to (possibly distorted) points.
-        let outer_ellipse = fit_ellipse_direct(&outer_pts).map(|(_, e)| e);
-        let inner_ellipse = fit_ellipse_direct(&inner_pts).map(|(_, e)| e);
+        let outer_ellipse = fit_ellipse_direct(&outer_pts);
+        let inner_ellipse = fit_ellipse_direct(&inner_pts);
 
         let center = projected_center(h);
         DetectedMarker {

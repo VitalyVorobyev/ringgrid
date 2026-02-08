@@ -11,14 +11,11 @@ mod fit;
 mod ransac;
 mod types;
 
-pub use fit::{fit_ellipse_direct, try_fit_ellipse_direct};
-pub use ransac::{
-    fit_ellipse_ransac, rms_algebraic_distance, rms_sampson_distance, try_fit_ellipse_ransac,
-};
-pub use types::{Conic2D, ConicCoeffs, ConicError, Ellipse, RansacConfig, RansacResult};
-
-// Conversions are also available as free functions (in addition to methods on types).
-pub use types::{conic_to_ellipse, ellipse_to_conic};
+pub use fit::{fit_conic_direct, fit_ellipse_direct};
+#[cfg(test)]
+pub(crate) use ransac::{fit_ellipse_ransac, rms_algebraic_distance};
+pub use ransac::{rms_sampson_distance, try_fit_ellipse_ransac};
+pub use types::{Conic2D, ConicCoeffs, Ellipse, RansacConfig, RansacResult};
 
 #[cfg(test)]
 mod tests {
@@ -71,7 +68,8 @@ mod tests {
         let e = make_test_ellipse();
         let pts = e.sample_points(50);
 
-        let (conic, fitted) = fit_ellipse_direct(&pts).expect("fit should succeed");
+        let conic = fit_conic_direct(&pts).expect("fit should succeed");
+        let fitted = conic.to_ellipse().expect("fit should return an ellipse");
 
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 1e-6);
         assert_relative_eq!(fitted.cy, e.cy, epsilon = 1e-6);
@@ -99,7 +97,8 @@ mod tests {
             p[1] += rng.gen::<f64>() * noise_sigma * 2.0 - noise_sigma;
         }
 
-        let (_conic, fitted) = fit_ellipse_direct(&pts).expect("fit should succeed with noise");
+        let conic = fit_conic_direct(&pts).expect("fit should succeed with noise");
+        let fitted = conic.to_ellipse().expect("fit should return an ellipse");
 
         // With noise_sigma=0.5 on ~30px semi-axis, center should be within ~1px
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 1.0);
@@ -119,7 +118,8 @@ mod tests {
             angle: 0.0,
         };
         let pts = e.sample_points(100);
-        let (_conic, fitted) = fit_ellipse_direct(&pts).expect("circle fit should succeed");
+        let conic = fit_conic_direct(&pts).expect("circle fit should succeed");
+        let fitted = conic.to_ellipse().expect("fit should return an ellipse");
 
         assert_relative_eq!(fitted.cx, 50.0, epsilon = 1e-6);
         assert_relative_eq!(fitted.cy, 50.0, epsilon = 1e-6);
@@ -217,14 +217,14 @@ mod tests {
     #[test]
     fn test_too_few_points() {
         let pts = vec![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
-        assert!(fit_ellipse_direct(&pts).is_none());
+        assert!(fit_conic_direct(&pts).is_none());
     }
 
     #[test]
     fn test_collinear_points_rejected() {
         // 6 collinear points — should not form an ellipse
         let pts: Vec<[f64; 2]> = (0..6).map(|i| [i as f64, i as f64 * 2.0]).collect();
-        assert!(fit_ellipse_direct(&pts).is_none());
+        assert!(fit_conic_direct(&pts).is_none());
     }
 
     #[test]
@@ -304,8 +304,9 @@ mod tests {
 
         for (i, e) in test_cases.iter().enumerate() {
             let pts = e.sample_points(100);
-            let (_conic, fitted) = fit_ellipse_direct(&pts)
+            let conic = fit_conic_direct(&pts)
                 .unwrap_or_else(|| panic!("fit should succeed for test case {}", i));
+            let fitted = conic.to_ellipse().expect("fit should return an ellipse");
 
             assert_relative_eq!(fitted.cx, e.cx, epsilon = 1e-4);
             assert_relative_eq!(fitted.cy, e.cy, epsilon = 1e-4);
@@ -336,8 +337,8 @@ mod tests {
             .collect();
         assert!(arc_pts.len() >= 20, "need enough arc points");
 
-        let (_conic, fitted) =
-            fit_ellipse_direct(&arc_pts).expect("partial arc fit should succeed");
+        let conic = fit_conic_direct(&arc_pts).expect("partial arc fit should succeed");
+        let fitted = conic.to_ellipse().expect("fit should return an ellipse");
 
         // Partial arc fits are less accurate, allow larger tolerance
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
@@ -358,12 +359,13 @@ mod tests {
             p[1] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
         }
 
-        let result = fit_ellipse_direct(&pts);
+        let result = fit_conic_direct(&pts);
         assert!(
             result.is_some(),
             "fit should succeed even with strong noise"
         );
-        let (_conic, fitted) = result.unwrap();
+        let conic = result.unwrap();
+        let fitted = conic.to_ellipse().expect("fit should return an ellipse");
         // Allow generous tolerances
         assert_relative_eq!(fitted.cx, e.cx, epsilon = 5.0);
         assert_relative_eq!(fitted.cy, e.cy, epsilon = 5.0);
@@ -373,37 +375,20 @@ mod tests {
     fn test_degenerate_inputs_dont_panic() {
         // Duplicate points
         let pts: Vec<[f64; 2]> = vec![[1.0, 1.0]; 10];
-        assert!(fit_ellipse_direct(&pts).is_none());
+        assert!(fit_conic_direct(&pts).is_none());
 
         // Two clusters
         let mut pts2: Vec<[f64; 2]> = vec![[0.0, 0.0]; 5];
         pts2.extend(vec![[100.0, 100.0]; 5]);
-        assert!(fit_ellipse_direct(&pts2).is_none());
+        assert!(fit_conic_direct(&pts2).is_none());
 
         // Empty
         let empty: Vec<[f64; 2]> = vec![];
-        assert!(fit_ellipse_direct(&empty).is_none());
+        assert!(fit_conic_direct(&empty).is_none());
 
         // Exactly 6 collinear
         let line: Vec<[f64; 2]> = (0..6).map(|i| [i as f64 * 10.0, 0.0]).collect();
-        assert!(fit_ellipse_direct(&line).is_none());
-    }
-
-    #[test]
-    fn test_try_fit_error_types() {
-        // Too few points
-        let pts = vec![[1.0, 2.0], [3.0, 4.0]];
-        let err = try_fit_ellipse_direct(&pts).unwrap_err();
-        assert!(matches!(
-            err,
-            ConicError::TooFewPoints { needed: 6, got: 2 }
-        ));
-
-        // Valid fit should succeed
-        let e = make_test_ellipse();
-        let pts = e.sample_points(50);
-        let result = try_fit_ellipse_direct(&pts);
-        assert!(result.is_ok());
+        assert!(fit_conic_direct(&line).is_none());
     }
 
     #[test]

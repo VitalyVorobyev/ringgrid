@@ -3,7 +3,8 @@
 use nalgebra::{DMatrix, Matrix3, Vector6};
 
 use super::eigen::solve_gep_3x3;
-use super::types::{ConicCoeffs, ConicError, Ellipse};
+use super::types::Ellipse;
+use super::ConicCoeffs;
 
 /// Fit an ellipse to a set of 2D points using the direct least-squares method
 /// of Fitzgibbon et al. (1999).
@@ -11,9 +12,10 @@ use super::types::{ConicCoeffs, ConicError, Ellipse};
 /// The method solves a constrained eigenvalue problem enforcing the ellipse
 /// constraint (B² − 4AC < 0) via the constraint matrix C₁.
 ///
-/// Requires at least 6 points. Returns `None` if the fit fails or produces
-/// a non-ellipse result.
-pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)> {
+/// Requires at least 6 points. Returns conic coefficients on success.
+///
+/// The fitted conic is validated to represent a proper ellipse.
+pub fn fit_conic_direct(points: &[[f64; 2]]) -> Option<ConicCoeffs> {
     let n = points.len();
     if n < 6 {
         return None;
@@ -82,17 +84,14 @@ pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<(ConicCoeffs, Ellipse)>
         return None;
     }
 
-    Some((conic, ellipse))
+    Some(conic)
 }
 
-/// Fit an ellipse, returning a detailed error on failure.
-pub fn try_fit_ellipse_direct(points: &[[f64; 2]]) -> Result<(ConicCoeffs, Ellipse), ConicError> {
-    let n = points.len();
-    if n < 6 {
-        return Err(ConicError::TooFewPoints { needed: 6, got: n });
-    }
-    fit_ellipse_direct(points)
-        .ok_or_else(|| ConicError::NumericalFailure("direct fit returned None".into()))
+/// Fit an ellipse and return geometric ellipse parameters.
+///
+/// Convenience wrapper for call sites that only need the geometric form.
+pub fn fit_ellipse_direct(points: &[[f64; 2]]) -> Option<Ellipse> {
+    fit_conic_direct(points)?.to_ellipse()
 }
 
 /// Compute normalization parameters for a point set.
@@ -137,4 +136,35 @@ fn denormalize_conic(c: &Vector6<f64>, mx: f64, my: f64, s: f64) -> [f64; 6] {
         a_ * s2 * mx * mx + b_ * s2 * mx * my + c_ * s2 * my * my - d_ * s * mx - e_ * s * my + f_;
 
     [a, b, c, d, e, f]
+}
+
+#[cfg(test)]
+mod test {
+    use super::super::types::Ellipse;
+    use super::*;
+
+    /// Helper: create an ellipse and sample points on it.
+    fn make_test_ellipse() -> Ellipse {
+        Ellipse {
+            cx: 100.0,
+            cy: 80.0,
+            a: 30.0,
+            b: 15.0,
+            angle: 0.3, // ~17 degrees
+        }
+    }
+
+    #[test]
+    fn test_try_fit_error_types() {
+        // Too few points
+        let pts = vec![[1.0, 2.0], [3.0, 4.0]];
+        let result = fit_conic_direct(&pts);
+        assert!(result.is_none());
+
+        // Valid fit should succeed
+        let e = make_test_ellipse();
+        let pts = e.sample_points(50);
+        let result = fit_conic_direct(&pts);
+        assert!(result.is_some());
+    }
 }

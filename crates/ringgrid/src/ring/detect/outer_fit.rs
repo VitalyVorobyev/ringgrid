@@ -32,14 +32,14 @@ pub(super) fn fit_outer_ellipse_with_reason(
             Err(_) => {
                 // Fall back to direct fit
                 match fit_ellipse_direct(&edge.outer_points) {
-                    Some((_, e)) => (e, None),
+                    Some(e) => (e, None),
                     None => return Err("fit_outer:direct_failed".to_string()),
                 }
             }
         }
     } else if edge.outer_points.len() >= 6 {
         match fit_ellipse_direct(&edge.outer_points) {
-            Some((_, e)) => (e, None),
+            Some(e) => (e, None),
             None => return Err("fit_outer:direct_failed".to_string()),
         }
     } else {

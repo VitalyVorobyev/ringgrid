@@ -62,11 +62,39 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 
 `tools/run_synth_viz.sh` auto-uses `.venv/bin/python` when present.
 
+## Public API (v1)
+
+Stable surface (library users):
+- `Detector`, `TargetSpec`
+- `DetectConfig` and related config types
+- `BoardLayout`, `CameraModel`, `PixelMapper`
+- Result types: `DetectionResult`, `DetectedMarker`, `EllipseParams`
+
+Design constraints in v1:
+- Target JSON is mandatory for high-level detector construction:
+  `TargetSpec::from_json_file(...)` + `Detector::new(...)`.
+- Low-level math/pipeline modules are internal.
+- Debug dump API is internal/CLI-only (`cli-internal` feature).
+
+Minimal usage:
+
+```rust
+use ringgrid::{Detector, TargetSpec};
+use std::path::Path;
+
+let target = TargetSpec::from_json_file(Path::new("tools/board/board_spec.json"))?;
+let detector = Detector::new(target, 32.0);
+// let result = detector.detect(&gray_image);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Project Layout
 
 ```text
 crates/
-  ringgrid/        # detection algorithms and result structures
+  ringgrid/
+    src/           # library code (curated public API in lib.rs)
+    examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
   gen_synth.py         # synthetic dataset generator
@@ -74,7 +102,22 @@ tools/
   score_detect.py      # scoring utility
   viz_detect_debug.py  # debug overlay rendering
 docs/
-  ARCHITECTURE.md
+  assets/
+```
+
+## Examples
+
+Run crate examples from workspace root:
+
+```bash
+cargo run -p ringgrid --example basic_detect -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+
+cargo run -p ringgrid --example detect_with_camera -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+
+cargo run -p ringgrid --example detect_with_config -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
 ```
 
 ## Detection Modes
@@ -260,10 +303,12 @@ python3 tools/gen_codebook.py \
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/codebook.rs
 
+# Board target is runtime JSON (`ringgrid.target.v1`), no generated Rust module.
 python3 tools/gen_board_spec.py \
-  --pitch_mm 8.0 --board_mm 200.0 \
-  --json_out tools/board/board_spec.json \
-  --rust_out crates/ringgrid/src/board_spec.rs
+  --pitch_mm 8.0 \
+  --rows 15 --long_row_cols 14 \
+  --board_mm 200.0 \
+  --json_out tools/board/board_spec.json
 ```
 
 Then rebuild:

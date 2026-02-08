@@ -266,7 +266,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
                 Some(r.num_inliers as f32 / points_inner.len().max(1) as f32),
             ),
             Err(_) => match conic::fit_ellipse_direct(&points_inner) {
-                Some((_, e)) => (e, None),
+                Some(e) => (e, None),
                 None => {
                     return InnerFitResult {
                         estimate,
@@ -282,7 +282,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
         }
     } else {
         match conic::fit_ellipse_direct(&points_inner) {
-            Some((_, e)) => (e, None),
+            Some(e) => (e, None),
             None => {
                 return InnerFitResult {
                     estimate,

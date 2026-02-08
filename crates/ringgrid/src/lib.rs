@@ -1,4 +1,4 @@
-//! ringgrid-core — algorithms for circle/ring calibration target detection.
+//! ringgrid — pure-Rust detector for coded ring calibration targets.
 //!
 //! Designed for Scheimpflug cameras with strong anisotropic defocus blur.
 //! The pipeline stages are:
@@ -10,25 +10,59 @@
 //!    affine-rectification homography for center-bias correction.
 //! 5. **Refine** – per-marker shared-center dual-ring board-plane refinement.
 //! 6. **Codec** – marker ID decoding from ring sector pattern.
-//! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling → fit → decode.
+//! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling
+//!    → fit → decode.
+//!
+//! # Public API
+//! The stable v1 API is intentionally small:
+//! - [`Detector`] and [`TargetSpec`] as primary entry points
+//! - [`DetectConfig`] for advanced tuning
+//! - camera/mapper traits and result structures
+//!
+//! Low-level math and pipeline internals are not part of the public v1 surface.
 
-pub mod board_layout;
-#[allow(missing_docs)]
-pub mod board_spec;
-pub mod camera;
-#[allow(missing_docs)]
+mod board_layout;
+mod camera;
+#[cfg(feature = "cli-internal")]
 pub mod codebook;
+#[cfg(not(feature = "cli-internal"))]
+mod codebook;
+#[cfg(feature = "cli-internal")]
 pub mod codec;
-pub mod conic;
-#[allow(missing_docs)]
+#[cfg(not(feature = "cli-internal"))]
+mod codec;
+mod conic;
+#[cfg(feature = "cli-internal")]
 pub mod debug_dump;
-pub mod detector;
-pub mod homography;
-pub mod marker_spec;
-pub mod projective_center;
-pub mod refine;
-pub mod ring;
-pub mod self_undistort;
+#[cfg(not(feature = "cli-internal"))]
+mod debug_dump;
+mod detector;
+mod homography;
+mod marker_spec;
+mod projective_center;
+mod refine;
+mod ring;
+mod self_undistort;
+
+pub use board_layout::{BoardLayout, BoardMarker};
+pub use camera::{CameraIntrinsics, CameraModel, PixelMapper, RadialTangentialDistortion};
+pub use detector::{Detector, TargetSpec};
+pub use homography::RansacHomographyConfig;
+pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};
+pub use refine::{CircleCenterSolver, RefineParams};
+pub use ring::decode::DecodeConfig;
+pub use ring::detect::{
+    CircleRefinementMethod, CompletionParams, DetectConfig, ProjectiveCenterParams,
+};
+pub use ring::edge_sample::EdgeSampleConfig;
+pub use ring::outer_estimate::OuterEstimationConfig;
+pub use ring::proposal::ProposalConfig;
+pub use self_undistort::{DivisionModel, SelfUndistortConfig, SelfUndistortResult};
+
+#[cfg(feature = "cli-internal")]
+pub use debug_dump::DebugDumpV1;
+#[cfg(feature = "cli-internal")]
+pub use ring::detect::DebugCollectConfig;
 
 /// Ellipse parameters for serialization (center + geometry).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

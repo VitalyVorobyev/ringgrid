@@ -26,7 +26,7 @@ enum Commands {
     /// Print embedded codebook statistics.
     CodebookInfo,
 
-    /// Print embedded board specification.
+    /// Print default board specification.
     BoardInfo,
 
     /// Decode a 16-bit word against the embedded codebook.
@@ -40,7 +40,7 @@ enum Commands {
 #[derive(Debug, Clone, Args)]
 struct CliDetectArgs {
     /// Path to a board layout JSON file (target specification).
-    /// When omitted, uses the embedded default board.
+    /// When omitted, uses the built-in default board layout.
     #[arg(long)]
     target: Option<PathBuf>,
 
@@ -206,7 +206,7 @@ struct CliCameraArgs {
 }
 
 impl CliCameraArgs {
-    fn to_core(&self) -> CliResult<Option<ringgrid::camera::CameraModel>> {
+    fn to_core(&self) -> CliResult<Option<ringgrid::CameraModel>> {
         let intr = [self.cam_fx, self.cam_fy, self.cam_cx, self.cam_cy];
         let any_intr = intr.iter().any(Option::is_some);
         if !any_intr {
@@ -220,14 +220,14 @@ impl CliCameraArgs {
             );
         }
 
-        let model = ringgrid::camera::CameraModel {
-            intrinsics: ringgrid::camera::CameraIntrinsics {
+        let model = ringgrid::CameraModel {
+            intrinsics: ringgrid::CameraIntrinsics {
                 fx: self.cam_fx.expect("validated"),
                 fy: self.cam_fy.expect("validated"),
                 cx: self.cam_cx.expect("validated"),
                 cy: self.cam_cy.expect("validated"),
             },
-            distortion: ringgrid::camera::RadialTangentialDistortion {
+            distortion: ringgrid::RadialTangentialDistortion {
                 k1: self.cam_k1,
                 k2: self.cam_k2,
                 p1: self.cam_p1,
@@ -250,11 +250,11 @@ enum CircleRefineMethodArg {
 }
 
 impl CircleRefineMethodArg {
-    fn to_core(self) -> ringgrid::ring::CircleRefinementMethod {
+    fn to_core(self) -> ringgrid::CircleRefinementMethod {
         match self {
-            Self::None => ringgrid::ring::CircleRefinementMethod::None,
-            Self::ProjectiveCenter => ringgrid::ring::CircleRefinementMethod::ProjectiveCenter,
-            Self::NlBoard => ringgrid::ring::CircleRefinementMethod::NlBoard,
+            Self::None => ringgrid::CircleRefinementMethod::None,
+            Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
+            Self::NlBoard => ringgrid::CircleRefinementMethod::NlBoard,
         }
     }
 }
@@ -266,10 +266,10 @@ enum NlSolverArg {
 }
 
 impl NlSolverArg {
-    fn to_core(self) -> ringgrid::refine::CircleCenterSolver {
+    fn to_core(self) -> ringgrid::CircleCenterSolver {
         match self {
-            Self::Irls => ringgrid::refine::CircleCenterSolver::Irls,
-            Self::Lm => ringgrid::refine::CircleCenterSolver::Lm,
+            Self::Irls => ringgrid::CircleCenterSolver::Irls,
+            Self::Lm => ringgrid::CircleCenterSolver::Lm,
         }
     }
 }
@@ -289,8 +289,8 @@ struct DetectOverrides {
     completion_reproj_gate_px: f32,
     completion_min_fit_confidence: f32,
     completion_roi_radius_px: Option<f32>,
-    camera: Option<ringgrid::camera::CameraModel>,
-    circle_refinement: ringgrid::ring::CircleRefinementMethod,
+    camera: Option<ringgrid::CameraModel>,
+    circle_refinement: ringgrid::CircleRefinementMethod,
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
     projective_center_min_eig_sep: f64,
@@ -298,7 +298,7 @@ struct DetectOverrides {
     nl_huber_delta_mm: f64,
     nl_min_points: usize,
     nl_reject_shift_mm: f64,
-    nl_solver: ringgrid::refine::CircleCenterSolver,
+    nl_solver: ringgrid::CircleCenterSolver,
     nl_enable_h_refit: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
@@ -314,9 +314,8 @@ impl CliDetectArgs {
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
         let mut circle_refinement = self.circle_refine_method.to_core();
-        if self.no_nl_refine && circle_refinement == ringgrid::ring::CircleRefinementMethod::NlBoard
-        {
-            circle_refinement = ringgrid::ring::CircleRefinementMethod::None;
+        if self.no_nl_refine && circle_refinement == ringgrid::CircleRefinementMethod::NlBoard {
+            circle_refinement = ringgrid::CircleRefinementMethod::None;
         }
 
         Ok(DetectOverrides {
@@ -352,9 +351,11 @@ impl CliDetectArgs {
 fn build_detect_config(
     preset: DetectPreset,
     overrides: &DetectOverrides,
-) -> ringgrid::ring::DetectConfig {
-    let mut config =
-        ringgrid::ring::DetectConfig::from_marker_diameter_px(preset.marker_diameter_px);
+) -> ringgrid::DetectConfig {
+    let mut config = ringgrid::DetectConfig::from_target_and_marker_diameter(
+        ringgrid::BoardLayout::default(),
+        preset.marker_diameter_px,
+    );
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -439,29 +440,36 @@ fn run_codebook_info() -> CliResult<()> {
 // ── board-info ────────────────────────────────────────────────────────
 
 fn run_board_info() -> CliResult<()> {
-    use ringgrid::board_spec::*;
+    let board = ringgrid::BoardLayout::default();
 
-    println!("ringgrid embedded board specification");
-    println!("  name:           {}", BOARD_NAME);
-    println!("  markers:        {}", BOARD_N);
-    println!("  pitch:          {} mm", BOARD_PITCH_MM);
+    println!("ringgrid default board specification");
+    println!("  name:           {}", board.name);
+    println!("  markers:        {}", board.n_markers());
+    println!("  pitch:          {} mm", board.pitch_mm);
+    println!("  rows:           {}", board.rows);
+    println!("  long row cols:  {}", board.long_row_cols);
     println!(
         "  board size:     {}x{} mm",
-        BOARD_SIZE_MM[0], BOARD_SIZE_MM[1]
+        board.board_size_mm[0], board.board_size_mm[1]
     );
 
-    if BOARD_N > 0 {
+    if board.n_markers() > 0 {
+        let first = &board.markers[0];
+        let last = &board.markers[board.n_markers() - 1];
         println!(
             "  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
-            BOARD_XY_MM[0][0], BOARD_XY_MM[0][1], BOARD_QR[0][0], BOARD_QR[0][1]
+            first.xy_mm[0],
+            first.xy_mm[1],
+            first.q.unwrap_or_default(),
+            first.r.unwrap_or_default()
         );
         println!(
             "  marker {}:    ({:.1}, {:.1}) mm  [q={}, r={}]",
-            BOARD_N - 1,
-            BOARD_XY_MM[BOARD_N - 1][0],
-            BOARD_XY_MM[BOARD_N - 1][1],
-            BOARD_QR[BOARD_N - 1][0],
-            BOARD_QR[BOARD_N - 1][1]
+            board.n_markers() - 1,
+            last.xy_mm[0],
+            last.xy_mm[1],
+            last.q.unwrap_or_default(),
+            last.r.unwrap_or_default()
         );
     }
 
@@ -513,16 +521,15 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let mut config = build_detect_config(preset, &overrides);
 
     if let Some(target_path) = &args.target {
-        let board = ringgrid::board_layout::BoardLayout::from_json_file(target_path).map_err(
-            |e| -> CliError {
+        let board =
+            ringgrid::BoardLayout::from_json_file(target_path).map_err(|e| -> CliError {
                 format!(
                     "Failed to load target spec {}: {}",
                     target_path.display(),
                     e
                 )
                 .into()
-            },
-        )?;
+            })?;
         tracing::info!(
             "Loaded board layout '{}' with {} markers",
             board.name,
@@ -538,20 +545,20 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         tracing::warn!("--debug is deprecated; use --debug-json instead");
     }
 
+    let detector = ringgrid::Detector::with_config(config.clone());
     let (result, debug_dump) = if debug_out_path.is_some() {
-        let dbg_cfg = ringgrid::ring::DebugCollectConfig {
+        let dbg_cfg = ringgrid::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
             marker_diameter_px: args.marker_diameter,
             max_candidates: args.debug_max_candidates,
             store_points: args.debug_store_points,
         };
-        let (r, d) = ringgrid::ring::detect_rings_with_debug(&gray, &config, &dbg_cfg);
+        let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg);
         (r, Some(d))
     } else if config.self_undistort.enable {
-        let detector = ringgrid::detector::Detector::with_config(config.clone());
         (detector.detect_with_self_undistort(&gray), None)
     } else {
-        (ringgrid::ring::detect_rings(&gray, &config), None)
+        (detector.detect(&gray), None)
     };
 
     let n_with_id = result

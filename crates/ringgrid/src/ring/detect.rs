@@ -250,18 +250,22 @@ pub struct DetectConfig {
     pub self_undistort: crate::self_undistort::SelfUndistortConfig,
 }
 
+const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
+
 impl DetectConfig {
     /// Build a configuration with all scale-dependent parameters derived from
-    /// the expected marker outer diameter in pixels.
+    /// the expected marker outer diameter in pixels and a runtime target layout.
     ///
     /// This is the recommended constructor for library users. After calling it,
     /// individual fields can be overridden as needed.
-    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
+    pub fn from_target_and_marker_diameter(board: BoardLayout, diameter_px: f32) -> Self {
         let r_outer = diameter_px / 2.0;
         let mut cfg = Self {
             marker_diameter_px: diameter_px,
             ..Default::default()
         };
+        cfg.board = board;
+        apply_target_geometry_priors(&mut cfg);
 
         // Proposal search radii
         cfg.proposal.r_min = (r_outer * 0.4).max(2.0);
@@ -310,6 +314,45 @@ impl Default for DetectConfig {
             nl_refine: refine::RefineParams::default(),
             board: BoardLayout::default(),
             self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
+        }
+    }
+}
+
+impl DetectConfig {
+    /// Build config from marker diameter using the built-in default board layout.
+    ///
+    /// Intended for internal CLI compatibility paths.
+    #[cfg(feature = "cli-internal")]
+    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
+        Self::from_target_and_marker_diameter(BoardLayout::default(), diameter_px)
+    }
+}
+
+fn apply_target_geometry_priors(config: &mut DetectConfig) {
+    let outer = config.board.marker_outer_radius_mm();
+    let inner = config.board.marker_inner_radius_mm();
+    if !(outer.is_finite() && inner.is_finite()) || outer <= 0.0 || inner <= 0.0 || inner >= outer {
+        return;
+    }
+
+    let edge_pad = (outer * EDGE_EXPANSION_FRAC_OUTER).max(0.0);
+    let inner_edge = (inner - edge_pad).max(outer * 0.05);
+    let outer_edge = outer + edge_pad;
+    if inner_edge > 0.0 && inner_edge < outer_edge {
+        config.marker_spec.r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
+    }
+
+    if let (Some(code_outer), Some(code_inner)) = (
+        config.board.marker_code_band_outer_radius_mm(),
+        config.board.marker_code_band_inner_radius_mm(),
+    ) {
+        if code_outer.is_finite()
+            && code_inner.is_finite()
+            && code_outer > code_inner
+            && code_outer < outer
+        {
+            let code_center = 0.5 * (code_outer + code_inner);
+            config.decode.code_band_ratio = (code_center / outer_edge).clamp(0.2, 0.98);
         }
     }
 }
@@ -949,15 +992,15 @@ mod tests {
 
     #[test]
     fn completion_adds_marker_at_h_projected_center() {
-        use crate::board_spec;
-
         let w = 128u32;
         let h = 128u32;
 
-        // Choose an ID that exists on the embedded board and project it to the
+        let cfg = DetectConfig::default();
+
+        // Choose an ID that exists on the default board and project it to the
         // image center with an affine homography.
         let id = 0usize;
-        let xy = board_spec::xy_mm(id).expect("board has id=0");
+        let xy = cfg.board.xy_mm(id).expect("board has id=0");
         let tx = 64.0 - xy[0] as f64;
         let ty = 64.0 - xy[1] as f64;
         let h_matrix = Matrix3::new(1.0, 0.0, tx, 0.0, 1.0, ty, 0.0, 0.0, 1.0);

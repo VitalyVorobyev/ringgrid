@@ -74,6 +74,49 @@ def generate_hex_lattice(
     return points
 
 
+def infer_parametric_layout(markers: list[tuple[int, int, float, float]]) -> tuple[int, int]:
+    """Infer (rows, long_row_cols) from an explicit (q, r, x, y) marker list.
+
+    Raises ValueError when the marker set is not representable by the runtime
+    target schema (`rows + long_row_cols` alternating row lengths).
+    """
+    if not markers:
+        raise ValueError("empty marker set")
+
+    rows_to_q: dict[int, list[int]] = {}
+    for q, r, _x, _y in markers:
+        rows_to_q.setdefault(r, []).append(q)
+
+    row_keys = sorted(rows_to_q.keys())
+    for i in range(1, len(row_keys)):
+        if row_keys[i] != row_keys[i - 1] + 1:
+            raise ValueError("row indices are not contiguous")
+
+    row_counts = [len(rows_to_q[r]) for r in row_keys]
+    long_row_cols = max(row_counts)
+    short_row_cols = long_row_cols - 1
+
+    if len(row_keys) > 1 and short_row_cols < 1:
+        raise ValueError("need long_row_cols >= 2 for multi-row board")
+
+    for r in row_keys:
+        qs = sorted(rows_to_q[r])
+        if any(qs[i] != qs[i - 1] + 1 for i in range(1, len(qs))):
+            raise ValueError(f"row r={r} has non-contiguous q values")
+
+        expected_cols = (
+            long_row_cols
+            if len(row_keys) == 1 or ((r + long_row_cols - 1) & 1) == 0
+            else short_row_cols
+        )
+        if len(qs) != expected_cols:
+            raise ValueError(
+                f"row r={r} has {len(qs)} markers; expected {expected_cols}"
+            )
+
+    return len(row_keys), long_row_cols
+
+
 # ── Codebook loading ────────────────────────────────────────────────────
 
 def load_codebook(path: str) -> list[int]:
@@ -1368,6 +1411,14 @@ def main() -> None:
 
     lattice = generate_hex_lattice(args.board_mm, args.pitch_mm, args.n_markers)
     print(f"Hex lattice: {len(lattice)} markers (pitch={args.pitch_mm}mm, board={args.board_mm}mm)")
+    try:
+        rows, long_row_cols = infer_parametric_layout(lattice)
+    except ValueError as e:
+        parser.error(
+            "generated lattice is not representable by target schema "
+            f"(rows + long_row_cols): {e}. "
+            "Use board/pitch settings that produce contiguous alternating rows."
+        )
 
     # Emit board_spec.json alongside generated images
     marker_outer_radius = args.pitch_mm * 0.6
@@ -1375,7 +1426,10 @@ def main() -> None:
     marker_code_band_outer_radius = args.pitch_mm * 0.58
     marker_code_band_inner_radius = args.pitch_mm * 0.42
     board_spec = {
+        "schema": "ringgrid.target.v1",
         "name": f"ringgrid_{int(args.board_mm)}mm_hex",
+        "rows": rows,
+        "long_row_cols": long_row_cols,
         "board_size_mm": [args.board_mm, args.board_mm],
         "pitch_mm": args.pitch_mm,
         "origin_mm": [0.0, 0.0],
@@ -1383,12 +1437,6 @@ def main() -> None:
         "marker_inner_radius_mm": marker_inner_radius,
         "marker_code_band_outer_radius_mm": marker_code_band_outer_radius,
         "marker_code_band_inner_radius_mm": marker_code_band_inner_radius,
-        "n_markers": len(lattice),
-        "camera": camera,
-        "markers": [
-            {"id": i, "q": q, "r": r, "xy_mm": [round(x, 4), round(y, 4)]}
-            for i, (q, r, x, y) in enumerate(lattice)
-        ],
     }
     board_spec_path = out_dir / "board_spec.json"
     with open(board_spec_path, "w") as f:

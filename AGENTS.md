@@ -35,11 +35,11 @@ python3 -m pip install numpy matplotlib
 
 ## Main dev loops
 
-### 1) Generate embedded codebook + board spec
+### 1) Generate codebook + board spec
 
 These generators produce:
 - JSON references for tooling under `tools/`
-- Embedded Rust constants under `crates/ringgrid/src/` (rebuild after regenerating)
+- Embedded Rust constants only for codebook under `crates/ringgrid/src/`
 
 ```bash
 # Codebook: tools/codebook.json + crates/ringgrid/src/codebook.rs
@@ -48,11 +48,12 @@ python3 tools/gen_codebook.py \
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/codebook.rs
 
-# Board spec: tools/board/board_spec.json + crates/ringgrid/src/board_spec.rs
+# Board spec (runtime JSON): tools/board/board_spec.json
 python3 tools/gen_board_spec.py \
-  --pitch_mm 8.0 --board_mm 200.0 \
-  --json_out tools/board/board_spec.json \
-  --rust_out crates/ringgrid/src/board_spec.rs
+  --pitch_mm 8.0 \
+  --rows 15 --long_row_cols 14 \
+  --board_mm 200.0 \
+  --json_out tools/board/board_spec.json
 
 # Rebuild to pick up embedded constants
 cargo build
@@ -169,8 +170,8 @@ cargo test
 
 ## Do / Don’t
 
-- Do regenerate embedded artifacts via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust).
-- Do keep generator(s) + embedded Rust + decoder/scorer consistent if formats change.
+- Do regenerate generated assets via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust codebook).
+- Do keep generator(s) + runtime target JSON schema + decoder/scorer consistent if formats change.
 - Do keep debug schema evolution versioned (`ringgrid.debug.v1`, `v2`, ...).
 - Don’t change the codebook/board ID conventions without updating:
   - generator scripts

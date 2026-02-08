@@ -37,7 +37,7 @@ python3 tools/score_detect.py --gt <gt.json> --pred <det.json> --gate 8.0 --out 
 
 # Regenerate embedded codebook/board constants (don't hand-edit these)
 python3 tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/codebook.rs
-python3 tools/gen_board_spec.py --pitch_mm 8.0 --board_mm 200.0 --json_out tools/board/board_spec.json --rust_out crates/ringgrid/src/board_spec.rs
+python3 tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
 cargo build  # rebuild after regenerating
 ```
 
@@ -82,7 +82,7 @@ Optional radial-tangential distortion model (`camera.rs`). When camera intrinsic
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`
 - External JSON uses `serde` structs (see `DetectionResult` in `lib.rs`)
 - Never introduce OpenCV bindings
-- `codebook.rs` and `board_spec.rs` are generated — regenerate via Python scripts, never hand-edit
+- `codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
 - Debug schema is versioned (`ringgrid.debug.v1`)
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - Debug collection is runtime-gated via `Option<&DebugCollectConfig>` — no compile-time feature flag needed

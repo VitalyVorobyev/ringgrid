@@ -1,11 +1,9 @@
 use crate::conic::Ellipse;
 use crate::debug_dump as dbg;
+use crate::refine::{MarkerRefineRecord, MarkerRefineStatus, RefineStats};
 use crate::{EllipseParams, FitMetrics};
 
-#[cfg(feature = "debug-trace")]
 use super::completion::{CompletionAttemptRecord, CompletionAttemptStatus, CompletionStats};
-#[cfg(feature = "debug-trace")]
-use crate::refine::{MarkerRefineRecord, MarkerRefineStatus, RefineStats};
 
 pub(super) fn ellipse_from_params(p: &EllipseParams) -> dbg::EllipseParamsDebugV1 {
     dbg::EllipseParamsDebugV1 {
@@ -40,7 +38,6 @@ pub(super) fn ring_fit_metrics(
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn completion_attempt_status(
     status: CompletionAttemptStatus,
 ) -> dbg::CompletionAttemptStatusDebugV1 {
@@ -55,7 +52,6 @@ pub(super) fn completion_attempt_status(
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn completion_attempt(a: CompletionAttemptRecord) -> dbg::CompletionAttemptDebugV1 {
     dbg::CompletionAttemptDebugV1 {
         id: a.id,
@@ -68,7 +64,6 @@ pub(super) fn completion_attempt(a: CompletionAttemptRecord) -> dbg::CompletionA
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn completion_stats(stats: &CompletionStats) -> dbg::CompletionStatsDebugV1 {
     dbg::CompletionStatsDebugV1 {
         n_candidates_total: stats.n_candidates_total,
@@ -80,7 +75,6 @@ pub(super) fn completion_stats(stats: &CompletionStats) -> dbg::CompletionStatsD
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn nl_status(status: MarkerRefineStatus) -> dbg::NlRefineStatusDebugV1 {
     match status {
         MarkerRefineStatus::Ok => dbg::NlRefineStatusDebugV1::Ok,
@@ -90,7 +84,6 @@ pub(super) fn nl_status(status: MarkerRefineStatus) -> dbg::NlRefineStatusDebugV
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn nl_stats(stats: &RefineStats) -> dbg::NlRefineStatsDebugV1 {
     dbg::NlRefineStatsDebugV1 {
         n_inliers: stats.n_inliers,
@@ -103,7 +96,6 @@ pub(super) fn nl_stats(stats: &RefineStats) -> dbg::NlRefineStatsDebugV1 {
     }
 }
 
-#[cfg(feature = "debug-trace")]
 pub(super) fn nl_record(r: MarkerRefineRecord) -> dbg::NlRefinedMarkerDebugV1 {
     dbg::NlRefinedMarkerDebugV1 {
         id: r.id,

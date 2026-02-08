@@ -227,7 +227,6 @@ pub(super) struct OuterFitCandidate {
     pub(super) outer_estimate: OuterEstimate,
     pub(super) chosen_hypothesis: usize,
     pub(super) decode_result: Option<crate::ring::decode::DecodeResult>,
-    #[cfg_attr(not(feature = "debug-trace"), allow(dead_code))]
     pub(super) decode_diag: crate::ring::decode::DecodeDiagnostics,
     pub(super) score: f32,
 }

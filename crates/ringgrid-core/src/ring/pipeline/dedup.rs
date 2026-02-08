@@ -161,7 +161,6 @@ pub fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
     *markers = output;
 }
 
-#[cfg(feature = "debug-trace")]
 pub fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,

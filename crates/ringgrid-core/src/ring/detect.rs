@@ -4,7 +4,6 @@ use image::GrayImage;
 use std::collections::HashSet;
 
 use crate::camera::PixelMapper;
-#[cfg(feature = "debug-trace")]
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
@@ -14,13 +13,11 @@ use crate::{DetectedMarker, DetectionResult, RansacStats};
 use super::decode::DecodeConfig;
 use super::edge_sample::EdgeSampleConfig;
 use super::outer_estimate::OuterEstimationConfig;
-#[cfg(feature = "debug-trace")]
 use super::pipeline::dedup::dedup_with_debug as dedup_with_debug_impl;
 use super::pipeline::dedup::{
     dedup_by_id as dedup_by_id_impl, dedup_markers as dedup_markers_impl,
 };
 use super::pipeline::global_filter::global_filter as global_filter_impl;
-#[cfg(feature = "debug-trace")]
 use super::pipeline::global_filter::global_filter_with_debug as global_filter_with_debug_impl;
 use super::proposal::{find_proposals, Proposal, ProposalConfig};
 #[path = "detect/completion.rs"]
@@ -46,7 +43,6 @@ use outer_fit::{
 };
 
 /// Debug collection options for `detect_rings_with_debug`.
-#[cfg(feature = "debug-trace")]
 #[derive(Debug, Clone)]
 pub struct DebugCollectConfig {
     /// Optional source image path copied into debug dump metadata.
@@ -440,7 +436,7 @@ fn detect_rings_with_mapper_and_seeds(
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
 ) -> DetectionResult {
-    stages::run(gray, config, mapper, seed_centers_image, seed_cfg)
+    stages::run(gray, config, mapper, seed_centers_image, seed_cfg, None).0
 }
 
 /// Run the full ring detection pipeline.
@@ -547,7 +543,6 @@ pub fn detect_rings_two_pass_with_estimator(
 /// Run the full ring detection pipeline and collect a versioned debug dump.
 ///
 /// Debug collection currently uses single-pass execution.
-#[cfg(feature = "debug-trace")]
 pub fn detect_rings_with_debug(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -559,21 +554,21 @@ pub fn detect_rings_with_debug(
 /// Run the full ring detection pipeline with debug collection and optional custom mapper.
 ///
 /// Debug collection currently uses single-pass execution.
-#[cfg(feature = "debug-trace")]
 pub fn detect_rings_with_debug_and_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDumpV1) {
-    stages::run_with_debug(
+    let (result, dump) = stages::run(
         gray,
         config,
-        debug_cfg,
         mapper,
         &[],
         &SeedProposalParams::default(),
-    )
+        Some(debug_cfg),
+    );
+    (result, dump.expect("debug dump present when debug_cfg is provided"))
 }
 
 pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
@@ -587,7 +582,6 @@ pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
     );
 }
 
-#[cfg(feature = "debug-trace")]
 fn dedup_with_debug(
     markers: Vec<DetectedMarker>,
     cand_idx: Vec<usize>,
@@ -596,7 +590,6 @@ fn dedup_with_debug(
     dedup_with_debug_impl(markers, cand_idx, radius)
 }
 
-#[cfg(feature = "debug-trace")]
 fn global_filter_with_debug(
     markers: &[DetectedMarker],
     cand_idx: &[usize],
@@ -610,7 +603,6 @@ fn global_filter_with_debug(
     global_filter_with_debug_impl(markers, cand_idx, config)
 }
 
-#[cfg(feature = "debug-trace")]
 fn refine_with_homography_with_debug(
     gray: &GrayImage,
     markers: &[DetectedMarker],
@@ -818,7 +810,6 @@ mod tests {
     use nalgebra::Matrix3;
     use nalgebra::Vector3;
 
-    #[cfg(feature = "debug-trace")]
     #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
         let img = GrayImage::new(64, 64);
@@ -885,7 +876,6 @@ mod tests {
         assert_eq!(markers[0].center_projective, Some([8.0, 2.0]));
     }
 
-    #[cfg(feature = "debug-trace")]
     #[test]
     fn detect_accepts_custom_pixel_mapper_adapter() {
         struct IdentityMapper;

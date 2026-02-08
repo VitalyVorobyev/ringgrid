@@ -18,8 +18,7 @@ pub(crate) mod radial_profile;
 
 pub use detect::{
     detect_rings, detect_rings_two_pass_with_estimator, detect_rings_two_pass_with_mapper,
-    detect_rings_with_mapper, CircleRefinementMethod, DetectConfig, PixelMapperEstimator,
+    detect_rings_with_debug, detect_rings_with_debug_and_mapper, detect_rings_with_mapper,
+    CircleRefinementMethod, DebugCollectConfig, DetectConfig, PixelMapperEstimator,
     SeedProposalParams, TwoPassParams,
 };
-#[cfg(feature = "debug-trace")]
-pub use detect::{detect_rings_with_debug, detect_rings_with_debug_and_mapper, DebugCollectConfig};

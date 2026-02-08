@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize ringgrid detection debug dumps (ringgrid.debug.v1).
+"""Visualize ringgrid detection debug dumps (ringgrid.debug.v2).
 
 Overlays detection candidates / final detections on top of the input image.
 
@@ -170,7 +170,7 @@ def completion_attempts(debug: dict[str, Any]) -> list[dict[str, Any]]:
 def completion_added_ids(debug: dict[str, Any]) -> set[int]:
     out: set[int] = set()
     for a in completion_attempts(debug):
-        if a.get("status") == "added":
+        if str(a.get("status", "")).lower() == "added":
             out.add(int(a.get("id")))
     return out
 
@@ -297,7 +297,7 @@ def plot_nl_refine(
 
         if show_after:
             ax_, ay_ = (m.get("center_img_after") or [None, None])
-            status = m.get("status", "failed")
+            status = str(m.get("status", "failed")).lower()
             if status == "ok":
                 color = style.nl_after_ok
             elif status == "rejected":
@@ -338,11 +338,14 @@ def plot_candidates(
     stage_name = "stage0_proposals" if stage == "stage0_proposals" else "stage1_fit_decode"
     for c in iter_stage_candidates(debug, stage_name):
         prop = c.get("proposal", {})
-        x, y = prop.get("center_xy", [None, None])
+        x = prop.get("x")
+        y = prop.get("y")
+        if x is None or y is None:
+            x, y = prop.get("center_xy", [None, None])
         if x is None or y is None:
             continue
 
-        status = (c.get("decision", {}) or {}).get("status", "rejected")
+        status = str((c.get("decision", {}) or {}).get("status", "rejected")).lower()
         derived_id = (c.get("derived", {}) or {}).get("id")
 
         if marker_id is not None and derived_id is not None and int(derived_id) != int(marker_id):
@@ -407,7 +410,8 @@ def plot_refine(
             continue
 
         px, py = m.get("prior_center_xy", [None, None])
-        rx, ry = m.get("refined_center_xy", [None, None])
+        refined_marker = m.get("refined_marker") or {}
+        rx, ry = refined_marker.get("center", [None, None])
         if px is not None and py is not None:
             ax.plot(float(px), float(py), "x", color=style.candidate_prior, markersize=6, alpha=alpha)
         if rx is not None and ry is not None:
@@ -417,7 +421,7 @@ def plot_refine(
 
         if show_ellipses:
             for key, color in (("ellipse_outer", style.ellipse_outer), ("ellipse_inner", style.ellipse_inner)):
-                ell = m.get(key)
+                ell = refined_marker.get(key)
                 if ell:
                     xs, ys = sample_ellipse_xy(ell)
                     ax.plot(xs, ys, "-", color=color, linewidth=1.0, alpha=alpha)
@@ -484,8 +488,10 @@ def plot_edge_points_for_id(
         rf = c.get("ring_fit")
         if not rf:
             continue
-        for key, color in (("points_outer", style.ellipse_outer), ("points_inner", style.ellipse_inner)):
-            pts = rf.get(key)
+        edge = rf.get("edge") or {}
+        pts_outer = edge.get("outer_points") or []
+        pts_inner = rf.get("inner_points_fit") or edge.get("inner_points") or []
+        for pts, color in ((pts_outer, style.ellipse_outer), (pts_inner, style.ellipse_inner)):
             if pts:
                 xs = [p[0] for p in pts]
                 ys = [p[1] for p in pts]
@@ -503,7 +509,7 @@ def plot_edge_points_for_id(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Visualize ringgrid.debug.v1 overlays")
+    parser = argparse.ArgumentParser(description="Visualize ringgrid debug overlays")
     parser.add_argument("--image", required=True, type=str)
     parser.add_argument("--debug_json", required=True, type=str)
     parser.add_argument("--out", default=None, type=str, help="Write PNG to this path (otherwise interactive window)")
@@ -558,7 +564,7 @@ def main() -> None:
 
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
-    if schema_version != "ringgrid.debug.v1":
+    if schema_version not in ("ringgrid.debug.v2", "ringgrid.debug.v1"):
         if "detected_markers" in debug and "image_size" in debug:
             raise SystemExit(
                 "Input looks like DetectionResult (normal --out JSON), not a debug dump.\n"
@@ -584,11 +590,15 @@ def main() -> None:
         outer = rf.get("outer_estimation")
         if outer:
             status = outer.get("status")
-            r_found = outer.get("r_outer_found_px")
+            chosen = rf.get("chosen_outer_hypothesis")
+            hypotheses = outer.get("hypotheses") or []
+            r_found = None
+            if chosen is not None and 0 <= int(chosen) < len(hypotheses):
+                h = hypotheses[int(chosen)]
+                r_found = h.get("r_outer_px")
             tc = outer.get("theta_consistency")
             ps = outer.get("peak_strength")
             reason = outer.get("reason")
-            chosen = outer.get("chosen_hypothesis")
             title += (
                 f"\nouter: status={status}"
                 f" r={r_found if r_found is not None else 'NA'}"
@@ -755,7 +765,7 @@ def main() -> None:
         center = None
         refine_m = refine_entry_for_id(debug, args.id)
         if refine_m:
-            center = refine_m.get("refined_center_xy")
+            center = (refine_m.get("refined_marker") or {}).get("center")
         if center is None:
             fm = find_final_marker(debug, args.id)
             if fm:

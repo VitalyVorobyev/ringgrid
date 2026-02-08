@@ -62,11 +62,39 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 
 `tools/run_synth_viz.sh` auto-uses `.venv/bin/python` when present.
 
+## Public API (v1)
+
+Stable surface (library users):
+- `Detector`, `TargetSpec`
+- `DetectConfig` and related config types
+- `BoardLayout`, `CameraModel`, `PixelMapper`
+- Result types: `DetectionResult`, `DetectedMarker`, `EllipseParams`
+
+Design constraints in v1:
+- Target JSON is mandatory for high-level detector construction:
+  `TargetSpec::from_json_file(...)` + `Detector::new(...)`.
+- Low-level math/pipeline modules are internal.
+- Debug dump API is internal/CLI-only (`cli-internal` feature).
+
+Minimal usage:
+
+```rust
+use ringgrid::{Detector, TargetSpec};
+use std::path::Path;
+
+let target = TargetSpec::from_json_file(Path::new("tools/board/board_spec.json"))?;
+let detector = Detector::new(target, 32.0);
+// let result = detector.detect(&gray_image);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Project Layout
 
 ```text
 crates/
-  ringgrid-core/   # detection algorithms and result structures
+  ringgrid/
+    src/           # library code (curated public API in lib.rs)
+    examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
   gen_synth.py         # synthetic dataset generator
@@ -74,7 +102,22 @@ tools/
   score_detect.py      # scoring utility
   viz_detect_debug.py  # debug overlay rendering
 docs/
-  ARCHITECTURE.md
+  assets/
+```
+
+## Examples
+
+Run crate examples from workspace root:
+
+```bash
+cargo run -p ringgrid --example basic_detect -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+
+cargo run -p ringgrid --example detect_with_camera -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+
+cargo run -p ringgrid --example detect_with_config -- \
+  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
 ```
 
 ## Detection Modes
@@ -128,43 +171,61 @@ Distortion-aware eval example:
   --pass_camera_to_detector
 ```
 
+Self-undistort eval example:
+
+```bash
+./.venv/bin/python tools/run_synth_eval.py \
+  --n 3 \
+  --blur_px 0.8 \
+  --out_dir tools/out/r4_self_undistort_eval \
+  --marker_diameter 32.0 \
+  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
+  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
+  --self_undistort
+```
+
+Self-undistort implementation notes:
+- Two-pass flow: pass-1 detection, estimate division-model `lambda`, pass-2 with mapper if accepted.
+- Primary objective is homography self-consistency in mapped working space (when enough decoded IDs exist).
+- Fallback objective is robust conic-consistency (inner/outer Sampson residuals).
+- Apply gates require meaningful improvement, non-trivial `|lambda|`, and reject boundary solutions.
+- Default lambda search range is `[-8e-7, 8e-7]`.
+
 ## Performance Snapshots (Synthetic)
 
 ### Distortion Benchmark (Projective-Center, 3 Images)
 
 Source:
-- `tools/out/r4_benchmark_distorted_nomapper_pc/summary.json`
-- `tools/out/r4_benchmark_distorted_mapper_pc/summary.json`
+- `tools/out/r4_benchmark_distorted_threeway_v4/summary.json`
 
 Example distorted sample used in this benchmark:
 
 ![Distortion benchmark sample](docs/assets/distortion_benchmark_sample.png)
 
-Run commands:
+Run command:
 
 ```bash
 ./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/r4_benchmark_distorted_nomapper_pc \
+  --out_dir tools/out/r4_benchmark_distorted_threeway_v4 \
   --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
   --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
   --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
-  --modes projective_center
-
-./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/r4_benchmark_distorted_mapper_pc \
-  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
-  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
-  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
-  --pass-camera-to-detector \
+  --corrections none external self_undistort \
   --modes projective_center
 ```
 
 Image-space metric snapshot:
 
-| Pipeline | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
+| Correction | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|---:|---:|
-| No mapper | 1.000 | 0.975 | 0.237 | 1.053 / 2.903 | 1.359 / 3.341 |
-| Mapper enabled | 1.000 | 1.000 | 0.079 | 0.077 / 0.155 | 0.022 / 0.031 |
+| `none` | 1.000 | 0.975 | 0.238 | 1.035 / 2.866 | 1.348 / 3.481 |
+| `external` | 1.000 | 1.000 | 0.079 | 0.077 / 0.155 | 0.022 / 0.031 |
+| `self_undistort` | 1.000 | 1.000 | 0.079 | 0.203 / 0.430 | 0.186 / 0.399 |
+
+Notes:
+- Scripts now score in distorted image space for all three correction variants.
+- For `self_undistort`, scoring frame is selected per-image from `self_undistort.applied` in detection JSON.
+- On this synthetic distortion setup, self-undistort is much better than no correction, but still less accurate than external calibration parameters.
 
 ### Reference Benchmark (Clean, 3 Images)
 
@@ -240,12 +301,14 @@ Draft CI is configured under `.github/workflows/`:
 python3 tools/gen_codebook.py \
   --n 893 --seed 1 \
   --out_json tools/codebook.json \
-  --out_rs crates/ringgrid-core/src/codebook.rs
+  --out_rs crates/ringgrid/src/codebook.rs
 
+# Board target is runtime JSON (`ringgrid.target.v1`), no generated Rust module.
 python3 tools/gen_board_spec.py \
-  --pitch_mm 8.0 --board_mm 200.0 \
-  --json_out tools/board/board_spec.json \
-  --rust_out crates/ringgrid-core/src/board_spec.rs
+  --pitch_mm 8.0 \
+  --rows 15 --long_row_cols 14 \
+  --board_mm 200.0 \
+  --json_out tools/board/board_spec.json
 ```
 
 Then rebuild:

@@ -77,7 +77,7 @@ def stats_1d(xs: list[float]) -> dict[str, float]:
 
 
 def parse_camera_model(data: dict[str, Any]) -> Optional[dict[str, dict[str, float]]]:
-    """Parse camera model from prediction JSON."""
+    """Parse radial-tangential camera model from prediction JSON."""
     camera = data.get("camera")
     if not isinstance(camera, dict):
         return None
@@ -105,6 +105,27 @@ def parse_camera_model(data: dict[str, Any]) -> Optional[dict[str, dict[str, flo
     except (KeyError, TypeError, ValueError):
         return None
     return model
+
+
+def parse_division_model(data: dict[str, Any]) -> Optional[dict[str, float]]:
+    """Parse self-undistort division model from prediction JSON."""
+    su = data.get("self_undistort")
+    if not isinstance(su, dict):
+        return None
+    model = su.get("model")
+    if not isinstance(model, dict):
+        return None
+    try:
+        parsed = {
+            "lambda": float(model["lambda"]),
+            "cx": float(model["cx"]),
+            "cy": float(model["cy"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in parsed.values()):
+        return None
+    return parsed
 
 
 def distort_point(camera: dict[str, dict[str, float]], x_u: float, y_u: float) -> Optional[list[float]]:
@@ -182,11 +203,66 @@ def undistort_point(
     return [x_u, y_u]
 
 
+def division_undistort_point(model: dict[str, float], x_d: float, y_d: float) -> Optional[list[float]]:
+    """Division model map: image(distorted) -> working(undistorted)."""
+    lam = model["lambda"]
+    cx = model["cx"]
+    cy = model["cy"]
+    dx = x_d - cx
+    dy = y_d - cy
+    r2 = dx * dx + dy * dy
+    denom = 1.0 + lam * r2
+    if abs(denom) < 1e-12 or not math.isfinite(denom):
+        return None
+    x_u = cx + dx / denom
+    y_u = cy + dy / denom
+    if not (math.isfinite(x_u) and math.isfinite(y_u)):
+        return None
+    return [x_u, y_u]
+
+
+def division_distort_point(
+    model: dict[str, float], x_u: float, y_u: float, max_iters: int = 20, eps: float = 1e-12
+) -> Optional[list[float]]:
+    """Division model inverse map: working(undistorted) -> image(distorted)."""
+    lam = model["lambda"]
+    cx = model["cx"]
+    cy = model["cy"]
+    if abs(lam) < 1e-18:
+        return [x_u, y_u]
+    ux = x_u - cx
+    uy = y_u - cy
+    dx = ux
+    dy = uy
+    for _ in range(max(1, int(max_iters))):
+        r2 = dx * dx + dy * dy
+        factor = 1.0 + lam * r2
+        if abs(factor) < 1e-12 or not math.isfinite(factor):
+            return None
+        dx_next = ux * factor
+        dy_next = uy * factor
+        if not (math.isfinite(dx_next) and math.isfinite(dy_next)):
+            return None
+        diff = (dx_next - dx) * (dx_next - dx) + (dy_next - dy) * (dy_next - dy)
+        dx = dx_next
+        dy = dy_next
+        if not math.isfinite(diff):
+            return None
+        if math.sqrt(diff) <= max(0.0, eps):
+            break
+    x_d = cx + dx
+    y_d = cy + dy
+    if not (math.isfinite(x_d) and math.isfinite(y_d)):
+        return None
+    return [x_d, y_d]
+
+
 def map_point_between_frames(
     point: list[float],
     src_frame: str,
     dst_frame: str,
     camera: Optional[dict[str, dict[str, float]]],
+    division_model: Optional[dict[str, float]],
 ) -> Optional[list[float]]:
     """Map a 2D point between image/working frames."""
     if not isinstance(point, list) or len(point) < 2:
@@ -197,12 +273,18 @@ def map_point_between_frames(
         return None
     if src_frame == dst_frame:
         return [x, y]
-    if camera is None:
-        return None
     if src_frame == "working" and dst_frame == "image":
-        return distort_point(camera, x, y)
+        if camera is not None:
+            return distort_point(camera, x, y)
+        if division_model is not None:
+            return division_distort_point(division_model, x, y)
+        return None
     if src_frame == "image" and dst_frame == "working":
-        return undistort_point(camera, x, y)
+        if camera is not None:
+            return undistort_point(camera, x, y)
+        if division_model is not None:
+            return division_undistort_point(division_model, x, y)
+        return None
     return None
 
 
@@ -236,7 +318,12 @@ def resolve_pred_mode(mode: str, pred_data: dict[str, Any]) -> str:
     """Resolve prediction frame mode from metadata."""
     if mode != "auto":
         return mode
-    return "working" if pred_data.get("camera") is not None else "image"
+    if pred_data.get("camera") is not None:
+        return "working"
+    su = pred_data.get("self_undistort")
+    if isinstance(su, dict) and bool(su.get("applied", False)):
+        return "working"
+    return "image"
 
 
 def score(
@@ -247,6 +334,7 @@ def score(
     center_gt_mode: str = "image",
     pred_center_mode: str = "image",
     camera_model: Optional[dict[str, dict[str, float]]] = None,
+    division_model: Optional[dict[str, float]] = None,
     expected_inner_ratio: Optional[float] = None,
     inner_ratio_tol: float = 0.08,
 ) -> dict:
@@ -279,7 +367,11 @@ def score(
     for pred_m, pred_idx in pred_with_id:
         pred_id = pred_m["id"]
         pred_center = map_point_between_frames(
-            pred_m["center"], pred_center_mode, center_gt_mode, camera_model
+            pred_m["center"],
+            pred_center_mode,
+            center_gt_mode,
+            camera_model,
+            division_model,
         )
         if pred_center is None:
             continue
@@ -357,7 +449,11 @@ def score(
     for pred_m, pred_idx in pred_with_id:
         if pred_idx not in pred_matched:
             fp_center = map_point_between_frames(
-                pred_m["center"], pred_center_mode, center_gt_mode, camera_model
+                pred_m["center"],
+                pred_center_mode,
+                center_gt_mode,
+                camera_model,
+                division_model,
             )
             if fp_center is None:
                 fp_center = pred_m["center"]
@@ -449,6 +545,7 @@ def homography_error_vs_gt(
     gt_mode: str,
     pred_h_mode: str,
     camera_model: Optional[dict[str, dict[str, float]]],
+    division_model: Optional[dict[str, float]],
 ) -> Optional[dict]:
     """Compute absolute geometric error between predicted H and GT projected centers.
 
@@ -474,7 +571,9 @@ def homography_error_vs_gt(
         proj_raw = project_h(h, float(board_xy[0]), float(board_xy[1]))
         if proj_raw is None:
             continue
-        proj = map_point_between_frames(proj_raw, pred_h_mode, gt_mode, camera_model)
+        proj = map_point_between_frames(
+            proj_raw, pred_h_mode, gt_mode, camera_model, division_model
+        )
         if proj is None:
             continue
         errors.append(math.sqrt(dist2(proj, [float(true_center[0]), float(true_center[1])])))
@@ -497,6 +596,7 @@ def homography_self_error(
     pred_center_mode: str,
     pred_h_mode: str,
     camera_model: Optional[dict[str, dict[str, float]]],
+    division_model: Optional[dict[str, float]],
 ) -> Optional[dict]:
     """Compute ||H(board_xy)-pred_center|| in a requested frame."""
     h = pred_data.get("homography")
@@ -530,14 +630,16 @@ def homography_self_error(
         if board_xy is None:
             continue
         center_eval = map_point_between_frames(
-            m.get("center"), pred_center_mode, eval_frame, camera_model
+            m.get("center"), pred_center_mode, eval_frame, camera_model, division_model
         )
         if center_eval is None:
             continue
         proj_raw = project_h(h, board_xy[0], board_xy[1])
         if proj_raw is None:
             continue
-        proj_eval = map_point_between_frames(proj_raw, pred_h_mode, eval_frame, camera_model)
+        proj_eval = map_point_between_frames(
+            proj_raw, pred_h_mode, eval_frame, camera_model, division_model
+        )
         if proj_eval is None:
             continue
         errors.append(math.sqrt(dist2(center_eval, proj_eval)))
@@ -683,7 +785,8 @@ def main():
         help=(
             "Frame of prediction marker centers: "
             "'image' for distorted image pixels, 'working' for undistorted working pixels. "
-            "'auto' chooses 'working' when prediction JSON contains camera metadata."
+            "'auto' chooses 'working' when prediction JSON contains camera metadata "
+            "or self_undistort metadata with applied=true."
         ),
     )
     parser.add_argument(
@@ -692,7 +795,8 @@ def main():
         default="auto",
         help=(
             "Frame of prediction homography outputs. "
-            "'auto' chooses 'working' when prediction JSON contains camera metadata."
+            "'auto' chooses 'working' when prediction JSON contains camera metadata "
+            "or self_undistort metadata with applied=true."
         ),
     )
     parser.add_argument(
@@ -712,6 +816,7 @@ def main():
     gt_markers = visible_gt_markers(gt_data)
     pred_markers, pred_data = load_pred(args.pred)
     camera_model = parse_camera_model(pred_data)
+    division_model = parse_division_model(pred_data)
     center_gt_mode = resolve_gt_mode(args.center_gt_key, pred_data)
     homography_gt_mode = resolve_gt_mode(args.homography_gt_key, pred_data)
     pred_center_mode = resolve_pred_mode(args.pred_center_frame, pred_data)
@@ -744,6 +849,7 @@ def main():
         center_gt_mode=center_gt_mode,
         pred_center_mode=pred_center_mode,
         camera_model=camera_model,
+        division_model=division_model,
         expected_inner_ratio=expected_ratio,
         inner_ratio_tol=args.inner_ratio_tol,
     )
@@ -761,6 +867,7 @@ def main():
         pred_center_mode=pred_center_mode,
         pred_h_mode=pred_h_mode,
         camera_model=camera_model,
+        division_model=division_model,
     )
     if h_self_stats:
         result["homography_self_error"] = h_self_stats
@@ -771,6 +878,7 @@ def main():
         homography_gt_mode,
         pred_h_mode,
         camera_model,
+        division_model,
     )
     if h_gt_stats:
         result["homography_error_vs_gt"] = h_gt_stats

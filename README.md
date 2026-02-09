@@ -304,7 +304,7 @@ python3 tools/gen_codebook.py \
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/codebook.rs
 
-# Board target is runtime JSON (`ringgrid.target.v2`), no generated Rust module.
+# Board target is runtime JSON (`ringgrid.target.v3`), no generated Rust module.
 python3 tools/gen_board_spec.py \
   --pitch_mm 8.0 \
   --rows 15 --long_row_cols 14 \

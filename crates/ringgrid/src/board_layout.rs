@@ -1,13 +1,13 @@
 //! Runtime target layout specification.
 //!
-//! Target JSON follows a parametric schema (`ringgrid.target.v2`): marker
+//! Target JSON follows a parametric schema (`ringgrid.target.v3`): marker
 //! locations are generated at runtime from `(rows, long_row_cols, pitch_mm)`.
 //! Per-marker coordinate lists are intentionally not part of the runtime schema.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-const TARGET_SCHEMA_V2: &str = "ringgrid.target.v2";
+const TARGET_SCHEMA_V3: &str = "ringgrid.target.v3";
 
 const DEFAULT_NAME: &str = "ringgrid_200mm_hex";
 const DEFAULT_PITCH_MM: f32 = 8.0;
@@ -15,9 +15,6 @@ const DEFAULT_ROWS: usize = 15;
 const DEFAULT_LONG_ROW_COLS: usize = 14;
 const DEFAULT_OUTER_RADIUS_MM: f32 = 4.8;
 const DEFAULT_INNER_RADIUS_MM: f32 = 3.2;
-const DEFAULT_CODE_BAND_OUTER_RADIUS_MM: f32 = 4.64;
-const DEFAULT_CODE_BAND_INNER_RADIUS_MM: f32 = 3.36;
-
 /// A single marker's position on the calibration board.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BoardMarker {
@@ -38,8 +35,6 @@ pub struct BoardLayout {
     pub long_row_cols: usize,
     pub marker_outer_radius_mm: f32,
     pub marker_inner_radius_mm: f32,
-    pub marker_code_band_outer_radius_mm: Option<f32>,
-    pub marker_code_band_inner_radius_mm: Option<f32>,
     pub markers: Vec<BoardMarker>,
 
     /// Fast lookup: marker ID -> index into `markers`.
@@ -48,7 +43,7 @@ pub struct BoardLayout {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TargetSpecV2 {
+struct TargetSpecV3 {
     schema: String,
     name: String,
     pitch_mm: f32,
@@ -56,10 +51,6 @@ struct TargetSpecV2 {
     long_row_cols: usize,
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
-    #[serde(default)]
-    marker_code_band_outer_radius_mm: Option<f32>,
-    #[serde(default)]
-    marker_code_band_inner_radius_mm: Option<f32>,
 }
 
 impl BoardLayout {
@@ -92,16 +83,6 @@ impl BoardLayout {
     /// Marker inner radius in board units (mm).
     pub fn marker_inner_radius_mm(&self) -> f32 {
         self.marker_inner_radius_mm
-    }
-
-    /// Marker code-band outer radius in board units (mm), if provided.
-    pub fn marker_code_band_outer_radius_mm(&self) -> Option<f32> {
-        self.marker_code_band_outer_radius_mm
-    }
-
-    /// Marker code-band inner radius in board units (mm), if provided.
-    pub fn marker_code_band_inner_radius_mm(&self) -> Option<f32> {
-        self.marker_code_band_inner_radius_mm
     }
 
     /// Iterator over all marker IDs present on the board.
@@ -143,15 +124,15 @@ impl BoardLayout {
     /// Load a board layout from a JSON file.
     pub fn from_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
-        let spec: TargetSpecV2 = serde_json::from_str(&data)?;
+        let spec: TargetSpecV3 = serde_json::from_str(&data)?;
         Self::from_target_spec(spec).map_err(Into::into)
     }
 
-    fn from_target_spec(spec: TargetSpecV2) -> Result<Self, String> {
-        if spec.schema != TARGET_SCHEMA_V2 {
+    fn from_target_spec(spec: TargetSpecV3) -> Result<Self, String> {
+        if spec.schema != TARGET_SCHEMA_V3 {
             return Err(format!(
                 "unsupported target schema '{}' (expected '{}')",
-                spec.schema, TARGET_SCHEMA_V2
+                spec.schema, TARGET_SCHEMA_V3
             ));
         }
 
@@ -166,8 +147,6 @@ impl BoardLayout {
             long_row_cols: spec.long_row_cols,
             marker_outer_radius_mm: spec.marker_outer_radius_mm,
             marker_inner_radius_mm: spec.marker_inner_radius_mm,
-            marker_code_band_outer_radius_mm: spec.marker_code_band_outer_radius_mm,
-            marker_code_band_inner_radius_mm: spec.marker_code_band_inner_radius_mm,
             markers,
             id_to_idx,
         })
@@ -176,23 +155,21 @@ impl BoardLayout {
 
 impl Default for BoardLayout {
     fn default() -> Self {
-        let spec = TargetSpecV2 {
-            schema: TARGET_SCHEMA_V2.to_string(),
+        let spec = TargetSpecV3 {
+            schema: TARGET_SCHEMA_V3.to_string(),
             name: DEFAULT_NAME.to_string(),
             pitch_mm: DEFAULT_PITCH_MM,
             rows: DEFAULT_ROWS,
             long_row_cols: DEFAULT_LONG_ROW_COLS,
             marker_outer_radius_mm: DEFAULT_OUTER_RADIUS_MM,
             marker_inner_radius_mm: DEFAULT_INNER_RADIUS_MM,
-            marker_code_band_outer_radius_mm: Some(DEFAULT_CODE_BAND_OUTER_RADIUS_MM),
-            marker_code_band_inner_radius_mm: Some(DEFAULT_CODE_BAND_INNER_RADIUS_MM),
         };
 
         Self::from_target_spec(spec).expect("default board spec must be valid")
     }
 }
 
-fn validate_target_spec(spec: &TargetSpecV2) -> Result<(), String> {
+fn validate_target_spec(spec: &TargetSpecV3) -> Result<(), String> {
     if spec.name.trim().is_empty() {
         return Err("target name must not be empty".to_string());
     }
@@ -223,33 +200,6 @@ fn validate_target_spec(spec: &TargetSpecV2) -> Result<(), String> {
 
     if spec.marker_inner_radius_mm >= spec.marker_outer_radius_mm {
         return Err("marker_inner_radius_mm must be < marker_outer_radius_mm".to_string());
-    }
-
-    match (
-        spec.marker_code_band_outer_radius_mm,
-        spec.marker_code_band_inner_radius_mm,
-    ) {
-        (None, None) => {}
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(
-                "marker_code_band_outer_radius_mm and marker_code_band_inner_radius_mm must be set together"
-                    .to_string(),
-            )
-        }
-        (Some(r_outer), Some(r_inner)) => {
-            if !r_outer.is_finite() || !r_inner.is_finite() || r_outer <= 0.0 || r_inner <= 0.0 {
-                return Err("code-band radii must be finite and > 0".to_string());
-            }
-            if r_inner >= r_outer {
-                return Err("marker_code_band_inner_radius_mm must be < marker_code_band_outer_radius_mm".to_string());
-            }
-            if r_outer >= spec.marker_outer_radius_mm {
-                return Err("marker_code_band_outer_radius_mm must be < marker_outer_radius_mm".to_string());
-            }
-            if r_inner <= spec.marker_inner_radius_mm {
-                return Err("marker_code_band_inner_radius_mm must be > marker_inner_radius_mm".to_string());
-            }
-        }
     }
 
     let min_center_spacing = hex_row_spacing_mm(spec.pitch_mm);
@@ -372,9 +322,9 @@ mod tests {
     }
 
     #[test]
-    fn from_json_requires_v2_schema() {
+    fn from_json_requires_v3_schema() {
         let raw = r#"{
-            "schema":"ringgrid.target.v1",
+            "schema":"ringgrid.target.v2",
             "name":"x",
             "pitch_mm":8.0,
             "rows":1,
@@ -382,7 +332,7 @@ mod tests {
             "marker_outer_radius_mm":4.8,
             "marker_inner_radius_mm":3.2
         }"#;
-        let spec: TargetSpecV2 = serde_json::from_str(raw).expect("valid json");
+        let spec: TargetSpecV3 = serde_json::from_str(raw).expect("valid json");
         let err = BoardLayout::from_target_spec(spec).expect_err("expected error");
         assert!(err.contains("unsupported target schema"));
     }
@@ -390,7 +340,7 @@ mod tests {
     #[test]
     fn from_json_rejects_marker_list_field() {
         let raw = r#"{
-            "schema":"ringgrid.target.v2",
+            "schema":"ringgrid.target.v3",
             "name":"x",
             "pitch_mm":8.0,
             "rows":1,
@@ -399,24 +349,26 @@ mod tests {
             "marker_inner_radius_mm":3.2,
             "markers":[{"id":0,"xy_mm":[0.0,0.0]}]
         }"#;
-        let parsed: Result<TargetSpecV2, _> = serde_json::from_str(raw);
+        let parsed: Result<TargetSpecV3, _> = serde_json::from_str(raw);
         assert!(parsed.is_err());
     }
 
     #[test]
     fn from_json_rejects_legacy_fields() {
         let raw = r#"{
-            "schema":"ringgrid.target.v2",
+            "schema":"ringgrid.target.v3",
             "name":"x",
             "pitch_mm":8.0,
             "rows":3,
             "long_row_cols":4,
             "origin_mm":[0.0,0.0],
             "board_size_mm":[200.0,200.0],
+            "marker_code_band_outer_radius_mm":4.64,
+            "marker_code_band_inner_radius_mm":3.36,
             "marker_outer_radius_mm":4.8,
             "marker_inner_radius_mm":3.2
         }"#;
-        let parsed: Result<TargetSpecV2, _> = serde_json::from_str(raw);
+        let parsed: Result<TargetSpecV3, _> = serde_json::from_str(raw);
         assert!(parsed.is_err());
     }
 

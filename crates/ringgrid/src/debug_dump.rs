@@ -22,7 +22,7 @@ use crate::ring::proposal::{Proposal, ProposalConfig};
 use crate::self_undistort::SelfUndistortConfig;
 use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics, RansacStats};
 
-pub const DEBUG_SCHEMA_V4: &str = "ringgrid.debug.v4";
+pub const DEBUG_SCHEMA_V5: &str = "ringgrid.debug.v5";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDump {
@@ -51,10 +51,6 @@ pub struct BoardSummary {
     pub marker_span_mm: Option<[f32; 2]>,
     pub marker_outer_radius_mm: f32,
     pub marker_inner_radius_mm: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub marker_code_band_outer_radius_mm: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub marker_code_band_inner_radius_mm: Option<f32>,
 }
 
 impl From<&BoardLayout> for BoardSummary {
@@ -68,8 +64,6 @@ impl From<&BoardLayout> for BoardSummary {
             marker_span_mm: board.marker_span_mm(),
             marker_outer_radius_mm: board.marker_outer_radius_mm(),
             marker_inner_radius_mm: board.marker_inner_radius_mm(),
-            marker_code_band_outer_radius_mm: board.marker_code_band_outer_radius_mm(),
-            marker_code_band_inner_radius_mm: board.marker_code_band_inner_radius_mm(),
         }
     }
 }
@@ -316,7 +310,7 @@ mod tests {
             store_points: false,
         };
         let dd = DebugDump {
-            schema_version: DEBUG_SCHEMA_V4.to_string(),
+            schema_version: DEBUG_SCHEMA_V5.to_string(),
             image: ImageDebug {
                 path: None,
                 width: 640,
@@ -363,7 +357,7 @@ mod tests {
 
         let s = serde_json::to_string_pretty(&dd).unwrap();
         let dd2: DebugDump = serde_json::from_str(&s).unwrap();
-        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V4);
+        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V5);
         assert_eq!(dd2.image.width, 640);
     }
 }

@@ -315,21 +315,9 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
     let inner_edge = (inner - edge_pad).max(outer * 0.05);
     let outer_edge = outer + edge_pad;
     if inner_edge > 0.0 && inner_edge < outer_edge {
-        config.marker_spec.r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
-    }
-
-    if let (Some(code_outer), Some(code_inner)) = (
-        config.board.marker_code_band_outer_radius_mm(),
-        config.board.marker_code_band_inner_radius_mm(),
-    ) {
-        if code_outer.is_finite()
-            && code_inner.is_finite()
-            && code_outer > code_inner
-            && code_outer < outer
-        {
-            let code_center = 0.5 * (code_outer + code_inner);
-            config.decode.code_band_ratio = (code_center / outer_edge).clamp(0.2, 0.98);
-        }
+        let r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
+        config.marker_spec.r_inner_expected = r_inner_expected;
+        config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
     }
 }
 
@@ -849,7 +837,7 @@ mod tests {
 
         let (res, dump) = detect_rings_with_debug(&img, &cfg, &dbg_cfg);
         assert_eq!(res.image_size, [64, 64]);
-        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V4);
+        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V5);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
     }

@@ -285,13 +285,12 @@ impl CliDetectArgs {
 }
 
 fn build_detect_config(
+    board: ringgrid::BoardLayout,
     preset: DetectPreset,
     overrides: &DetectOverrides,
 ) -> ringgrid::DetectConfig {
-    let mut config = ringgrid::DetectConfig::from_target_and_marker_diameter(
-        ringgrid::BoardLayout::default(),
-        preset.marker_diameter_px,
-    );
+    let mut config =
+        ringgrid::DetectConfig::from_target_and_marker_diameter(board, preset.marker_diameter_px);
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -444,9 +443,8 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     let preset = args.to_preset();
     let overrides = args.to_overrides()?;
-    let mut config = build_detect_config(preset, &overrides);
 
-    if let Some(target_path) = &args.target {
+    let board = if let Some(target_path) = &args.target {
         let board =
             ringgrid::BoardLayout::from_json_file(target_path).map_err(|e| -> CliError {
                 format!(
@@ -461,8 +459,12 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
             board.name,
             board.n_markers()
         );
-        config.board = board;
-    }
+        board
+    } else {
+        ringgrid::BoardLayout::default()
+    };
+
+    let config = build_detect_config(board, preset, &overrides);
 
     let deprecated_debug_path = args.debug.as_deref();
     let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);

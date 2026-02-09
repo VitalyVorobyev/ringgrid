@@ -50,7 +50,7 @@ impl TargetSpec {
 /// use image::GrayImage;
 /// use std::path::Path;
 ///
-/// let target = TargetSpec::from_json_file(Path::new("tools/board/board_spec.json")).unwrap();
+/// let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
 /// let detector = Detector::new(target, 32.0);
 /// let image = GrayImage::new(640, 480);
 /// let result = detector.detect(&image);

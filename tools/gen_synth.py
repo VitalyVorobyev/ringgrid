@@ -1426,13 +1426,11 @@ def main() -> None:
     marker_code_band_outer_radius = args.pitch_mm * 0.58
     marker_code_band_inner_radius = args.pitch_mm * 0.42
     board_spec = {
-        "schema": "ringgrid.target.v1",
+        "schema": "ringgrid.target.v2",
         "name": f"ringgrid_{int(args.board_mm)}mm_hex",
         "rows": rows,
         "long_row_cols": long_row_cols,
-        "board_size_mm": [args.board_mm, args.board_mm],
         "pitch_mm": args.pitch_mm,
-        "origin_mm": [0.0, 0.0],
         "marker_outer_radius_mm": marker_outer_radius,
         "marker_inner_radius_mm": marker_inner_radius,
         "marker_code_band_outer_radius_mm": marker_code_band_outer_radius,

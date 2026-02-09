@@ -849,7 +849,7 @@ mod tests {
 
         let (res, dump) = detect_rings_with_debug(&img, &cfg, &dbg_cfg);
         assert_eq!(res.image_size, [64, 64]);
-        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V3);
+        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V4);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
     }

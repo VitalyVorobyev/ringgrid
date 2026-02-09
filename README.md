@@ -75,6 +75,7 @@ Design constraints in v1:
   `TargetSpec::from_json_file(...)` + `Detector::new(...)`.
 - Low-level math/pipeline modules are internal.
 - Debug dump API is internal/CLI-only (`cli-internal` feature).
+- Example target JSON: `crates/ringgrid/examples/target.json`.
 
 Minimal usage:
 
@@ -82,7 +83,7 @@ Minimal usage:
 use ringgrid::{Detector, TargetSpec};
 use std::path::Path;
 
-let target = TargetSpec::from_json_file(Path::new("tools/board/board_spec.json"))?;
+let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
 let detector = Detector::new(target, 32.0);
 // let result = detector.detect(&gray_image);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -111,13 +112,13 @@ Run crate examples from workspace root:
 
 ```bash
 cargo run -p ringgrid --example basic_detect -- \
-  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
 
 cargo run -p ringgrid --example detect_with_camera -- \
-  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
 
 cargo run -p ringgrid --example detect_with_config -- \
-  tools/board/board_spec.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
 ```
 
 ## Detection Modes
@@ -303,7 +304,7 @@ python3 tools/gen_codebook.py \
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/codebook.rs
 
-# Board target is runtime JSON (`ringgrid.target.v1`), no generated Rust module.
+# Board target is runtime JSON (`ringgrid.target.v2`), no generated Rust module.
 python3 tools/gen_board_spec.py \
   --pitch_mm 8.0 \
   --rows 15 --long_row_cols 14 \

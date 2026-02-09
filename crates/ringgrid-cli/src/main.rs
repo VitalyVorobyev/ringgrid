@@ -375,10 +375,9 @@ fn run_board_info() -> CliResult<()> {
     println!("  pitch:          {} mm", board.pitch_mm);
     println!("  rows:           {}", board.rows);
     println!("  long row cols:  {}", board.long_row_cols);
-    println!(
-        "  board size:     {}x{} mm",
-        board.board_size_mm[0], board.board_size_mm[1]
-    );
+    if let Some(span) = board.marker_span_mm() {
+        println!("  marker span:    {:.3}x{:.3} mm", span[0], span[1]);
+    }
 
     if board.n_markers() > 0 {
         let first = &board.markers[0];

@@ -1,6 +1,6 @@
 {
   "schema": "ringgrid.target.v2",
-  "name": "ringgrid_200mm_hex",
+  "name": "ringgrid_example_hex_200mm",
   "pitch_mm": 8.0,
   "rows": 15,
   "long_row_cols": 14,

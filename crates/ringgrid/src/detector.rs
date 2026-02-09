@@ -13,7 +13,7 @@ use crate::camera::{CameraModel, PixelMapper};
 use crate::debug_dump::DebugDump;
 #[cfg(feature = "cli-internal")]
 use crate::ring::detect::DebugCollectConfig;
-use crate::ring::detect::DetectConfig;
+use crate::ring::detect::{DetectConfig, MarkerScalePrior};
 use crate::DetectionResult;
 
 /// Target specification describing the board to detect.
@@ -51,7 +51,7 @@ impl TargetSpec {
 /// use std::path::Path;
 ///
 /// let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
-/// let detector = Detector::new(target, 32.0);
+/// let detector = Detector::new(target);
 /// let image = GrayImage::new(640, 480);
 /// let result = detector.detect(&image);
 /// println!("Found {} markers", result.detected_markers.len());
@@ -61,19 +61,52 @@ pub struct Detector {
 }
 
 impl Detector {
-    /// Create a detector with a runtime target specification.
-    pub fn new(target: TargetSpec, marker_diameter_px: f32) -> Self {
+    /// Create a detector with a runtime target specification and default
+    /// marker-scale search prior.
+    pub fn new(target: TargetSpec) -> Self {
         Self {
-            config: DetectConfig::from_target_and_marker_diameter(target.board, marker_diameter_px),
+            config: DetectConfig::from_target(target.board),
         }
     }
 
-    /// Load target JSON and create a detector in one step.
-    pub fn from_target_json_file(
+    /// Create a detector with an explicit marker-scale prior.
+    pub fn with_marker_scale(target: TargetSpec, marker_scale: MarkerScalePrior) -> Self {
+        Self {
+            config: DetectConfig::from_target_and_scale_prior(target.board, marker_scale),
+        }
+    }
+
+    /// Create a detector with a fixed marker-diameter hint.
+    pub fn with_marker_diameter_hint(target: TargetSpec, marker_diameter_px: f32) -> Self {
+        Self::with_marker_scale(
+            target,
+            MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
+        )
+    }
+
+    /// Load target JSON and create a detector in one step using default
+    /// marker-scale search prior.
+    pub fn from_target_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self::new(TargetSpec::from_json_file(path)?))
+    }
+
+    /// Load target JSON and create a detector with explicit marker-scale prior.
+    pub fn from_target_json_file_with_scale(
+        path: &Path,
+        marker_scale: MarkerScalePrior,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self::with_marker_scale(
+            TargetSpec::from_json_file(path)?,
+            marker_scale,
+        ))
+    }
+
+    /// Load target JSON and create a detector with fixed marker-diameter hint.
+    pub fn from_target_json_file_with_marker_diameter(
         path: &Path,
         marker_diameter_px: f32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self::new(
+        Ok(Self::with_marker_diameter_hint(
             TargetSpec::from_json_file(path)?,
             marker_diameter_px,
         ))
@@ -182,10 +215,7 @@ mod tests {
 
     #[test]
     fn detector_basic_detect() {
-        let det = Detector::with_config(DetectConfig::from_target_and_marker_diameter(
-            BoardLayout::default(),
-            32.0,
-        ));
+        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
         let img = GrayImage::new(200, 200);
         let result = det.detect(&img);
         assert!(result.detected_markers.is_empty());
@@ -193,10 +223,7 @@ mod tests {
 
     #[test]
     fn detector_config_mut() {
-        let mut det = Detector::with_config(DetectConfig::from_target_and_marker_diameter(
-            BoardLayout::default(),
-            32.0,
-        ));
+        let mut det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
         det.config_mut().completion.enable = false;
         assert!(!det.config().completion.enable);
     }

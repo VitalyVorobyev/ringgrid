@@ -40,8 +40,12 @@ python3 -m venv .venv
 ```bash
 target/release/ringgrid detect \
   --image tools/out/synth_001/img_0000.png \
-  --out tools/out/synth_001/det_0000.json \
-  --marker-diameter 32.0
+  --out tools/out/synth_001/det_0000.json
+
+# Optional scale prior tuning:
+#   --marker-diameter-min 18 --marker-diameter-max 48
+# Legacy fixed-size mode:
+#   --marker-diameter 32
 ```
 
 ### 5. Score against ground truth
@@ -84,7 +88,7 @@ use ringgrid::{Detector, TargetSpec};
 use std::path::Path;
 
 let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
-let detector = Detector::new(target, 32.0);
+let detector = Detector::new(target);
 // let result = detector.detect(&gray_image);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -112,13 +116,13 @@ Run crate examples from workspace root:
 
 ```bash
 cargo run -p ringgrid --example basic_detect -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 
 cargo run -p ringgrid --example detect_with_camera -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 
 cargo run -p ringgrid --example detect_with_config -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png 32.0
+  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 ```
 
 ## Detection Modes
@@ -127,18 +131,14 @@ Core refinement selector:
 
 - `--circle-refine-method none`
 - `--circle-refine-method projective-center` (default)
-- `--circle-refine-method nl-board`
-
-When `nl-board` is used, select solver via:
-
-- `--nl-solver lm`
-- `--nl-solver irls`
 
 Other commonly used toggles:
 
 - `--no-global-filter`
 - `--no-refine`
 - `--no-complete`
+- `--marker-diameter-min <px>`
+- `--marker-diameter-max <px>`
 - `--debug-json <path>`
 - `--debug-store-points`
 
@@ -219,9 +219,9 @@ Image-space metric snapshot:
 
 | Correction | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|---:|---:|
-| `none` | 1.000 | 0.975 | 0.238 | 1.035 / 2.866 | 1.348 / 3.481 |
-| `external` | 1.000 | 1.000 | 0.079 | 0.077 / 0.155 | 0.022 / 0.031 |
-| `self_undistort` | 1.000 | 1.000 | 0.079 | 0.203 / 0.430 | 0.186 / 0.399 |
+| `none` | 1.000 | 0.974 | 0.231 | 1.030 / 2.961 | 1.345 / 3.611 |
+| `external` | 1.000 | 1.000 | 0.077 | 0.075 / 0.146 | 0.020 / 0.029 |
+| `self_undistort` | 1.000 | 1.000 | 0.079 | 0.210 / 0.423 | 0.193 / 0.407 |
 
 Notes:
 - Scripts now score in distorted image space for all three correction variants.
@@ -240,15 +240,14 @@ Run command:
   --n_images 3 \
   --blur_px 0.8 \
   --noise_sigma 0.0 \
-  --marker_diameter 32.0
+  --marker_diameter 32.0 \
+  --modes none projective_center
 ```
 
 | Mode | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|
-| `none` | 0.072 | 0.065 / 0.132 | 0.032 / 0.046 |
-| `projective-center` | 0.054 | 0.051 / 0.101 | 0.019 / 0.027 |
-| `nl-board + lm` | 0.047 | 0.027 / 0.089 | 0.038 / 0.052 |
-| `nl-board + irls` | 0.069 | 0.061 / 0.122 | 0.034 / 0.048 |
+| `none` | 0.072 | 0.065 / 0.131 | 0.033 / 0.049 |
+| `projective-center` | 0.054 | 0.051 / 0.098 | 0.019 / 0.030 |
 
 ### Regression Batch (10 images)
 
@@ -279,9 +278,9 @@ Snapshot:
 | Avg recall | 0.949 |
 | Avg TP / image | 192.6 |
 | Avg FP / image | 0.0 |
-| Avg center error (px) | 0.280 |
-| Avg H vs GT error (px) | 0.150 |
-| Avg H self error (px) | 0.230 |
+| Avg center error (px) | 0.278 |
+| Avg H vs GT error (px) | 0.147 |
+| Avg H self error (px) | 0.235 |
 
 ## CI Workflows
 

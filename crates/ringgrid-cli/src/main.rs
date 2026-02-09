@@ -68,9 +68,20 @@ struct CliDetectArgs {
     #[arg(long, default_value = "300")]
     debug_max_candidates: usize,
 
-    /// Expected marker outer diameter in pixels (for parameter tuning).
-    #[arg(long, default_value = "32.0")]
-    marker_diameter: f64,
+    /// Fixed marker outer diameter in pixels (legacy compatibility path).
+    ///
+    /// When set, this overrides `--marker-diameter-min` / `--marker-diameter-max`
+    /// and uses a fixed-scale prior.
+    #[arg(long)]
+    marker_diameter: Option<f64>,
+
+    /// Minimum marker outer diameter in pixels for scale search.
+    #[arg(long, default_value = "20.0")]
+    marker_diameter_min: f64,
+
+    /// Maximum marker outer diameter in pixels for scale search.
+    #[arg(long, default_value = "56.0")]
+    marker_diameter_max: f64,
 
     /// RANSAC inlier threshold in pixels for homography fitting.
     #[arg(long, default_value = "5.0")]
@@ -100,7 +111,9 @@ struct CliDetectArgs {
     #[arg(long, default_value = "0.45")]
     complete_min_conf: f32,
 
-    /// Completion ROI radius in pixels for edge sampling (default: 0.75 * marker_diameter, clamped).
+    /// Completion ROI radius in pixels for edge sampling.
+    ///
+    /// Default is derived from nominal diameter of the selected marker scale prior.
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
@@ -109,7 +122,8 @@ struct CliDetectArgs {
     circle_refine_method: CircleRefineMethodArg,
 
     /// Projective center gate: maximum allowed correction shift (px).
-    /// Defaults to marker_diameter when omitted.
+    ///
+    /// Default is derived from nominal diameter of the selected marker scale prior.
     #[arg(long)]
     proj_center_max_shift_px: Option<f64>,
 
@@ -227,7 +241,7 @@ impl CircleRefineMethodArg {
 
 #[derive(Debug, Clone, Copy)]
 struct DetectPreset {
-    marker_diameter_px: f32,
+    marker_scale: ringgrid::MarkerScalePrior,
 }
 
 #[derive(Debug, Clone)]
@@ -252,9 +266,15 @@ struct DetectOverrides {
 
 impl CliDetectArgs {
     fn to_preset(&self) -> DetectPreset {
-        DetectPreset {
-            marker_diameter_px: self.marker_diameter as f32,
-        }
+        let marker_scale = if let Some(d) = self.marker_diameter {
+            ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32)
+        } else {
+            ringgrid::MarkerScalePrior::new(
+                self.marker_diameter_min as f32,
+                self.marker_diameter_max as f32,
+            )
+        };
+        DetectPreset { marker_scale }
     }
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
@@ -290,7 +310,7 @@ fn build_detect_config(
     overrides: &DetectOverrides,
 ) -> ringgrid::DetectConfig {
     let mut config =
-        ringgrid::DetectConfig::from_target_and_marker_diameter(board, preset.marker_diameter_px);
+        ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -442,6 +462,11 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     tracing::info!("Image size: {}x{}", w, h);
 
     let preset = args.to_preset();
+    if args.marker_diameter.is_some() {
+        tracing::warn!(
+            "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
+        );
+    }
     let overrides = args.to_overrides()?;
 
     let board = if let Some(target_path) = &args.target {
@@ -477,7 +502,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
-            marker_diameter_px: args.marker_diameter,
+            marker_diameter_px: preset.marker_scale.nominal_diameter_px() as f64,
             max_candidates: args.debug_max_candidates,
             store_points: args.debug_store_points,
         };

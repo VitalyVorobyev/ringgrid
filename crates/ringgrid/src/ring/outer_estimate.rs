@@ -2,7 +2,7 @@
 //!
 //! The outer edge can be confused with stronger inner-ring or code-band edges
 //! under blur/high contrast. This estimator anchors the search to the expected
-//! outer radius (derived from `marker_diameter`) and aggregates radial edge
+//! outer radius (derived from marker scale prior) and aggregates radial edge
 //! responses over theta, similarly to the inner estimator.
 
 use image::GrayImage;

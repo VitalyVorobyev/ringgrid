@@ -15,7 +15,7 @@ Examples:
 
 Outputs (written next to the input image):
   det_XXXX.json          (normal DetectionResult)
-  debug_XXXX.json        (ringgrid.debug.v2)
+  debug_XXXX.json        (ringgrid.debug.v6)
   det_overlay_XXXX.png   (overlay render)
 
 Environment variables:

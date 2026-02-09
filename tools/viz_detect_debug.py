@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize ringgrid detection debug dumps (ringgrid.debug.v2).
+"""Visualize ringgrid detection debug dumps (ringgrid.debug.v1+).
 
 Overlays detection candidates / final detections on top of the input image.
 
@@ -487,7 +487,15 @@ def main() -> None:
 
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
-    if schema_version not in ("ringgrid.debug.v3", "ringgrid.debug.v2", "ringgrid.debug.v1"):
+    supported = {
+        "ringgrid.debug.v6",
+        "ringgrid.debug.v5",
+        "ringgrid.debug.v4",
+        "ringgrid.debug.v3",
+        "ringgrid.debug.v2",
+        "ringgrid.debug.v1",
+    }
+    if schema_version not in supported:
         if "detected_markers" in debug and "image_size" in debug:
             raise SystemExit(
                 "Input looks like DetectionResult (normal --out JSON), not a debug dump.\n"

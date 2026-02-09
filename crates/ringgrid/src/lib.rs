@@ -49,7 +49,8 @@ pub use homography::RansacHomographyConfig;
 pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};
 pub use ring::decode::DecodeConfig;
 pub use ring::detect::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, ProjectiveCenterParams,
+    CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
+    ProjectiveCenterParams,
 };
 pub use ring::edge_sample::EdgeSampleConfig;
 pub use ring::outer_estimate::OuterEstimationConfig;

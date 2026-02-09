@@ -79,7 +79,6 @@ pub(crate) fn marker_with_defaults(
         confidence,
         center,
         center_projective: None,
-        vanishing_line: None,
         center_projective_residual: None,
         ellipse_outer,
         ellipse_inner,

@@ -49,8 +49,9 @@ pub use homography::RansacHomographyConfig;
 pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};
 pub use ring::decode::DecodeConfig;
 pub use ring::detect::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams,
+    detect_rings, detect_rings_two_pass_with_mapper, detect_rings_with_mapper,
+    detect_rings_with_self_undistort, CircleRefinementMethod, CompletionParams, DetectConfig,
+    MarkerScalePrior, ProjectiveCenterParams,
 };
 pub use ring::edge_sample::EdgeSampleConfig;
 pub use ring::outer_estimate::OuterEstimationConfig;
@@ -178,9 +179,6 @@ pub struct DetectedMarker {
     /// Projective unbiased center estimated from inner+outer ring conics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_projective: Option<[f64; 2]>,
-    /// Vanishing line estimate associated with the unbiased center (homogeneous line ax+by+c=0).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vanishing_line: Option<[f64; 3]>,
     /// Selection residual used by the projective-center eigenpair chooser.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_projective_residual: Option<f64>,

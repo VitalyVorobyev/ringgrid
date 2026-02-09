@@ -1,11 +1,22 @@
+use image::GrayImage;
+
+use super::super::inner_fit;
 use super::super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
-use super::super::*;
-
+use super::super::outer_fit::{
+    compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
+    OuterFitCandidate,
+};
+use super::super::{
+    dedup_by_id, dedup_markers, dedup_with_debug, find_proposals_with_seeds, DebugCollectConfig,
+    DetectConfig, SeedProposalParams,
+};
+use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
 use crate::ring::proposal::Proposal;
+use crate::DetectedMarker;
 
 pub(super) struct FitDecodeCoreOutput {
     pub(super) markers: Vec<DetectedMarker>,
@@ -151,7 +162,7 @@ impl DebugState {
 struct CandidateProcessContext<'a> {
     gray: &'a GrayImage,
     config: &'a DetectConfig,
-    mapper: Option<&'a dyn crate::camera::PixelMapper>,
+    mapper: Option<&'a dyn PixelMapper>,
     sampler: DistortionAwareSampler<'a>,
     inner_fit_cfg: &'a inner_fit::InnerFitConfig,
     store_points: bool,
@@ -316,7 +327,7 @@ fn run_dedup_phase(
 pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn PixelMapper>,
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
     debug_cfg: Option<&DebugCollectConfig>,

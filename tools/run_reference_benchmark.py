@@ -190,6 +190,14 @@ def main() -> None:
         ),
     )
     parser.add_argument("--skip_gen", action="store_true")
+    parser.add_argument(
+        "--use-prebuilt-binary",
+        action="store_true",
+        help=(
+            "Use target/(release|debug)/ringgrid if present. "
+            "Default uses `cargo run` to avoid stale-binary drift."
+        ),
+    )
     args = parser.parse_args()
 
     intr_values = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
@@ -265,22 +273,35 @@ def main() -> None:
     else:
         print(f"[1/3] Reuse existing synth set at {synth_dir}")
 
-    ringgrid_bin = find_ringgrid_binary()
-    use_cargo_run = ringgrid_bin is None
-    if (
-        not use_cargo_run
-        and "external" in correction_names
-        and not binary_supports_camera_cli(ringgrid_bin)
-    ):
-        print("  NOTE: selected ringgrid binary does not support camera CLI flags; falling back to cargo run")
-        use_cargo_run = True
-    if (
-        not use_cargo_run
-        and "self_undistort" in correction_names
-        and not binary_supports_self_undistort_cli(ringgrid_bin)
-    ):
-        print("  NOTE: selected ringgrid binary does not support self-undistort CLI flags; falling back to cargo run")
-        use_cargo_run = True
+    ringgrid_bin = None
+    use_cargo_run = True
+    if args.use_prebuilt_binary:
+        ringgrid_bin = find_ringgrid_binary()
+        use_cargo_run = ringgrid_bin is None
+        if (
+            not use_cargo_run
+            and "external" in correction_names
+            and not binary_supports_camera_cli(ringgrid_bin)
+        ):
+            print(
+                "  NOTE: selected ringgrid binary does not support camera CLI flags; "
+                "falling back to cargo run"
+            )
+            use_cargo_run = True
+        if (
+            not use_cargo_run
+            and "self_undistort" in correction_names
+            and not binary_supports_self_undistort_cli(ringgrid_bin)
+        ):
+            print(
+                "  NOTE: selected ringgrid binary does not support self-undistort CLI flags; "
+                "falling back to cargo run"
+            )
+            use_cargo_run = True
+    if use_cargo_run:
+        print("  Runner: cargo run")
+    else:
+        print(f"  Runner: prebuilt binary ({ringgrid_bin})")
 
     print("[2/3] Run detection variants")
     summary: dict[str, dict] = {
@@ -312,6 +333,7 @@ def main() -> None:
                 if has_all_intr
                 else None
             ),
+            "runner": "cargo_run" if use_cargo_run else f"binary:{ringgrid_bin}",
         },
         "modes": {},
     }

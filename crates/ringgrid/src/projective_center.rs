@@ -52,8 +52,6 @@ pub struct RingCenterProjectiveDebug {
 pub struct RingCenterProjectiveResult {
     /// Recovered projective-unbiased center in image coordinates.
     pub center: Point2<f64>,
-    /// Estimated image vanishing line of the marker plane.
-    pub vanishing_line: Vector3<f64>,
     /// Selector diagnostics for the chosen eigenpair.
     pub debug: RingCenterProjectiveDebug,
 }
@@ -90,7 +88,6 @@ impl std::error::Error for ProjectiveCenterError {}
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
     center: Point2<f64>,
-    vanishing_line: Vector3<f64>,
     residual: f64,
     score: f64,
     eig_separation: f64,
@@ -272,12 +269,11 @@ pub fn ring_center_projective_with_debug(
                     + opts.imag_vec_weight.max(0.0) * imag_u_norm
                     + ratio_penalty;
 
-                let Some(vanishing_line) = normalize_line(q1 * p, eps) else {
+                if normalize_line(q1 * p, eps).is_none() {
                     continue;
-                };
+                }
                 let cand = Candidate {
                     center: Point2::new(p[0], p[1]),
-                    vanishing_line,
                     residual,
                     score,
                     eig_separation: eig_sep[i],
@@ -306,7 +302,6 @@ pub fn ring_center_projective_with_debug(
 
     Ok(RingCenterProjectiveResult {
         center: b.center,
-        vanishing_line: b.vanishing_line,
         debug: RingCenterProjectiveDebug {
             selected_residual: b.residual,
             selected_eig_separation: b.eig_separation,

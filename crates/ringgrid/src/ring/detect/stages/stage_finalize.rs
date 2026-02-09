@@ -1,6 +1,16 @@
-use super::super::*;
+use image::GrayImage;
 
+use super::super::completion::CompletionDebugOptions;
+use super::super::{
+    apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
+    global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, refine_with_homography,
+    refine_with_homography_with_debug, refit_homography_matrix,
+    warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionStats,
+    DebugCollectConfig, DetectConfig,
+};
+use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
+use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 #[derive(Clone, Copy)]
 struct FinalizeFlags {
@@ -38,7 +48,7 @@ fn phase_filter_and_refine_h(
     fit_markers: Vec<DetectedMarker>,
     marker_cand_idx: &[usize],
     config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn PixelMapper>,
     flags: FinalizeFlags,
 ) -> FilterPhaseOutput {
     if !config.use_global_filter {
@@ -147,7 +157,7 @@ fn phase_completion(
     final_markers: &mut Vec<DetectedMarker>,
     h_current: Option<&nalgebra::Matrix3<f64>>,
     config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn PixelMapper>,
     flags: FinalizeFlags,
 ) -> CompletionPhaseOutput {
     if !config.completion.enable {
@@ -341,7 +351,7 @@ pub(super) fn run(
     fit_out: super::stage_fit_decode::FitDecodeCoreOutput,
     image_size: [u32; 2],
     config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn PixelMapper>,
     debug_cfg: Option<&DebugCollectConfig>,
 ) -> (DetectionResult, Option<dbg::DebugDump>) {
     warn_center_correction_without_intrinsics(config, mapper.is_some());

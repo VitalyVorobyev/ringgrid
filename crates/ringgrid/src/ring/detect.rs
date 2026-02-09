@@ -8,7 +8,6 @@ use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
-use crate::refine;
 use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 use super::decode::DecodeConfig;
@@ -173,16 +172,9 @@ pub enum CircleRefinementMethod {
     /// Run projective-center recovery from inner/outer conics.
     #[default]
     ProjectiveCenter,
-    /// Run board-plane circle refinement.
-    NlBoard,
 }
 
 impl CircleRefinementMethod {
-    /// Returns `true` when this method includes board-plane circle refinement.
-    pub fn uses_nl_refine(self) -> bool {
-        matches!(self, Self::NlBoard)
-    }
-
     /// Returns `true` when this method includes projective-center recovery.
     pub fn uses_projective_center(self) -> bool {
         matches!(self, Self::ProjectiveCenter)
@@ -229,8 +221,6 @@ pub struct DetectConfig {
     pub ransac_homography: RansacHomographyConfig,
     /// Enable one-iteration refinement using H.
     pub refine_with_h: bool,
-    /// Non-linear per-marker refinement using board-plane circle fits.
-    pub nl_refine: refine::RefineParams,
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
@@ -298,7 +288,6 @@ impl Default for DetectConfig {
             use_global_filter: true,
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
-            nl_refine: refine::RefineParams::default(),
             board: BoardLayout::default(),
             self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
         }
@@ -517,20 +506,18 @@ pub fn detect_rings_with_mapper(
     }
 }
 
-/// Run two-pass detection:
-/// - pass-1 in raw image space,
-/// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+/// Run pass-2 of two-pass detection using existing pass-1 results as seeds.
 ///
-/// Returned detections stay in pass-2 mapper working coordinates. Any retained
-/// pass-1 fallback markers are remapped to the same working frame.
-pub fn detect_rings_two_pass_with_mapper(
+/// This avoids re-running pass-1 when the caller already has pass-1 detections
+/// (e.g. from a prior `detect_rings` call).
+pub(crate) fn detect_rings_pass2_with_seeds(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
+    pass1: &DetectionResult,
     params: &TwoPassParams,
 ) -> DetectionResult {
-    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
-    let seed_centers_image = collect_seed_centers_image(&pass1, &params.seed);
+    let seed_centers_image = collect_seed_centers_image(pass1, &params.seed);
 
     let mut pass2 = detect_rings_with_mapper_and_seeds(
         gray,
@@ -551,6 +538,22 @@ pub fn detect_rings_two_pass_with_mapper(
         Some(mapper),
     );
     pass2
+}
+
+/// Run two-pass detection:
+/// - pass-1 in raw image space,
+/// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+///
+/// Returned detections stay in pass-2 mapper working coordinates. Any retained
+/// pass-1 fallback markers are remapped to the same working frame.
+pub fn detect_rings_two_pass_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: &dyn PixelMapper,
+    params: &TwoPassParams,
+) -> DetectionResult {
+    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
+    detect_rings_pass2_with_seeds(gray, config, mapper, &pass1, params)
 }
 
 /// Run the full ring detection pipeline and collect a versioned debug dump.
@@ -846,7 +849,7 @@ mod tests {
 
         let (res, dump) = detect_rings_with_debug(&img, &cfg, &dbg_cfg);
         assert_eq!(res.image_size, [64, 64]);
-        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V2);
+        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V3);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
     }

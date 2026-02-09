@@ -104,10 +104,6 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
-    /// Disable per-marker board-plane center refinement.
-    #[arg(long)]
-    no_nl_refine: bool,
-
     /// Circle refinement method after local fits are accepted.
     #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
@@ -124,34 +120,6 @@ struct CliDetectArgs {
     /// Projective center gate: reject candidates with eigen-separation below this value.
     #[arg(long, default_value = "1e-6")]
     proj_center_min_eig_sep: f64,
-
-    /// NL refine: maximum solver iterations.
-    #[arg(long, default_value = "20")]
-    nl_max_iters: usize,
-
-    /// NL refine: Huber delta in board units (mm).
-    #[arg(long, default_value = "0.2")]
-    nl_huber_delta_mm: f64,
-
-    /// NL refine: minimum number of edge points required.
-    #[arg(long, default_value = "6")]
-    nl_min_points: usize,
-
-    /// NL refine: reject if refined center shifts more than this (mm) in board coordinates.
-    #[arg(long, default_value = "1.0")]
-    nl_reject_shift_mm: f64,
-
-    /// NL refine: solver backend for fixed-radius circle center optimization.
-    #[arg(long, value_enum, default_value_t = NlSolverArg::Lm)]
-    nl_solver: NlSolverArg,
-
-    /// NL refine: enable a single homography refit from refined centers.
-    #[arg(long, default_value = "true")]
-    nl_h_refit: bool,
-
-    /// NL refine: disable homography refit from refined centers.
-    #[arg(long, conflicts_with = "nl_h_refit")]
-    no_nl_h_refit: bool,
 
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
@@ -246,7 +214,6 @@ impl CliCameraArgs {
 enum CircleRefineMethodArg {
     None,
     ProjectiveCenter,
-    NlBoard,
 }
 
 impl CircleRefineMethodArg {
@@ -254,22 +221,6 @@ impl CircleRefineMethodArg {
         match self {
             Self::None => ringgrid::CircleRefinementMethod::None,
             Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
-            Self::NlBoard => ringgrid::CircleRefinementMethod::NlBoard,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum NlSolverArg {
-    Irls,
-    Lm,
-}
-
-impl NlSolverArg {
-    fn to_core(self) -> ringgrid::CircleCenterSolver {
-        match self {
-            Self::Irls => ringgrid::CircleCenterSolver::Irls,
-            Self::Lm => ringgrid::CircleCenterSolver::Lm,
         }
     }
 }
@@ -294,12 +245,6 @@ struct DetectOverrides {
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
     projective_center_min_eig_sep: f64,
-    nl_max_iters: usize,
-    nl_huber_delta_mm: f64,
-    nl_min_points: usize,
-    nl_reject_shift_mm: f64,
-    nl_solver: ringgrid::CircleCenterSolver,
-    nl_enable_h_refit: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
@@ -313,10 +258,7 @@ impl CliDetectArgs {
     }
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
-        let mut circle_refinement = self.circle_refine_method.to_core();
-        if self.no_nl_refine && circle_refinement == ringgrid::CircleRefinementMethod::NlBoard {
-            circle_refinement = ringgrid::CircleRefinementMethod::None;
-        }
+        let circle_refinement = self.circle_refine_method.to_core();
 
         Ok(DetectOverrides {
             use_global_filter: !self.no_global_filter,
@@ -332,12 +274,6 @@ impl CliDetectArgs {
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
-            nl_max_iters: self.nl_max_iters,
-            nl_huber_delta_mm: self.nl_huber_delta_mm,
-            nl_min_points: self.nl_min_points,
-            nl_reject_shift_mm: self.nl_reject_shift_mm,
-            nl_solver: self.nl_solver.to_core(),
-            nl_enable_h_refit: self.nl_h_refit && !self.no_nl_h_refit,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -380,15 +316,6 @@ fn build_detect_config(
     }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
-
-    // Non-linear refinement options (board-plane circle fit)
-    config.nl_refine.enabled = config.circle_refinement.uses_nl_refine();
-    config.nl_refine.max_iters = overrides.nl_max_iters;
-    config.nl_refine.huber_delta_mm = overrides.nl_huber_delta_mm;
-    config.nl_refine.min_points = overrides.nl_min_points;
-    config.nl_refine.reject_thresh_mm = overrides.nl_reject_shift_mm;
-    config.nl_refine.solver = overrides.nl_solver;
-    config.nl_refine.enable_h_refit = overrides.nl_enable_h_refit;
 
     // Self-undistort options
     config.self_undistort.enable = overrides.self_undistort_enable;

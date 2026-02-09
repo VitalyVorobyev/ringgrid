@@ -143,24 +143,6 @@ impl DebugState {
         }
     }
 
-    fn sync_projective_centers(&mut self, markers: &[DetectedMarker], marker_cand_idx: &[usize]) {
-        let Some(stage1) = self.stage1.as_mut() else {
-            return;
-        };
-        let Some(map) = self.stage1_slot_by_cand_idx.as_ref() else {
-            return;
-        };
-
-        for (marker, &cand_idx) in markers.iter().zip(marker_cand_idx.iter()) {
-            let Some(Some(slot)) = map.get(cand_idx).copied() else {
-                continue;
-            };
-            if let Some(cd) = stage1.candidates.get_mut(slot) {
-                cd.derived.center_xy = Some(marker.center);
-            }
-        }
-    }
-
     fn into_stages(self) -> (Option<dbg::StageDebug>, Option<dbg::StageDebug>) {
         (self.stage0, self.stage1)
     }
@@ -342,8 +324,6 @@ pub(super) fn run(
     let proposals = find_proposals_with_seeds(gray, &config.proposal, seed_centers_image, seed_cfg);
     tracing::info!("{} proposals found", proposals.len());
 
-    let use_projective_center =
-        config.circle_refinement.uses_projective_center() && config.projective_center.enable;
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();
     let sampler = DistortionAwareSampler::new(gray, mapper);
 
@@ -371,11 +351,6 @@ pub(super) fn run(
             marker_cand_idx.push(ci);
         }
         debug_state.record_stage1_candidate(out.debug_candidate);
-    }
-
-    if use_projective_center {
-        apply_projective_centers(&mut markers, config);
-        debug_state.sync_projective_centers(&markers, &marker_cand_idx);
     }
 
     let (markers, marker_cand_idx, stage2) = run_dedup_phase(

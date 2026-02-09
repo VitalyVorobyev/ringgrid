@@ -133,7 +133,7 @@ impl Detector {
     /// improvement exceeds the threshold, re-runs detection with the estimated
     /// model as a `PixelMapper` (two-pass pipeline).
     pub fn detect_with_self_undistort(&self, image: &GrayImage) -> DetectionResult {
-        use crate::ring::detect::{detect_rings, detect_rings_two_pass_with_mapper, TwoPassParams};
+        use crate::ring::detect::{detect_rings, detect_rings_pass2_with_seeds, TwoPassParams};
         use crate::self_undistort::estimate_self_undistort;
 
         let mut result = detect_rings(image, &self.config);
@@ -142,10 +142,9 @@ impl Detector {
             return result;
         }
 
-        let image_size = result.image_size;
         let su_result = match estimate_self_undistort(
             &result.detected_markers,
-            image_size,
+            result.image_size,
             su_cfg,
             Some(&self.config.board),
         ) {
@@ -155,13 +154,14 @@ impl Detector {
 
         if su_result.applied {
             let model = su_result.model;
-            let pass2 = detect_rings_two_pass_with_mapper(
+            // Reuse pass-1 detections as seeds for pass-2 (saves one full pipeline run).
+            result = detect_rings_pass2_with_seeds(
                 image,
                 &self.config,
                 &model,
+                &result,
                 &TwoPassParams::default(),
             );
-            result = pass2;
         }
 
         result.self_undistort = Some(su_result);

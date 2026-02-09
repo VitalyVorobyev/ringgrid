@@ -8,8 +8,7 @@
 //! 3. **Conic** – robust ellipse fitting via direct conic least-squares + RANSAC.
 //! 4. **Lattice** – neighbor graph construction, vanishing line estimation,
 //!    affine-rectification homography for center-bias correction.
-//! 5. **Refine** – per-marker shared-center dual-ring board-plane refinement.
-//! 6. **Codec** – marker ID decoding from ring sector pattern.
+//! 5. **Codec** – marker ID decoding from ring sector pattern.
 //! 7. **Ring** – end-to-end ring detection pipeline: proposal → edge sampling
 //!    → fit → decode.
 //!
@@ -40,7 +39,6 @@ mod detector;
 mod homography;
 mod marker_spec;
 mod projective_center;
-mod refine;
 mod ring;
 mod self_undistort;
 
@@ -49,10 +47,10 @@ pub use camera::{CameraIntrinsics, CameraModel, PixelMapper, RadialTangentialDis
 pub use detector::{Detector, TargetSpec};
 pub use homography::RansacHomographyConfig;
 pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};
-pub use refine::{CircleCenterSolver, RefineParams};
 pub use ring::decode::DecodeConfig;
 pub use ring::detect::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, ProjectiveCenterParams,
+    CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
+    ProjectiveCenterParams,
 };
 pub use ring::edge_sample::EdgeSampleConfig;
 pub use ring::outer_estimate::OuterEstimationConfig;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize ringgrid detection debug dumps (ringgrid.debug.v2).
+"""Visualize ringgrid detection debug dumps (ringgrid.debug.v1+).
 
 Overlays detection candidates / final detections on top of the input image.
 
@@ -60,10 +60,6 @@ class PlotStyle:
     completion_added_text: str = "cyan"
 
     # NL refine (board-plane circle fit)
-    nl_before: str = "orange"
-    nl_after_ok: str = "lime"
-    nl_after_rejected: str = "gold"
-    nl_after_failed: str = "red"
 
     # Labels (use outline for contrast)
     id_text: str = "white"
@@ -198,24 +194,6 @@ def ring_fit_debug_for_id(debug: dict[str, Any], marker_id: int) -> dict[str, An
     return None
 
 
-def nl_refine_stage(debug: dict[str, Any]) -> dict[str, Any] | None:
-    return debug.get("stages", {}).get("stage6_nl_refine")
-
-
-def nl_refine_entries(debug: dict[str, Any]) -> list[dict[str, Any]]:
-    stage = nl_refine_stage(debug)
-    if not stage:
-        return []
-    return stage.get("refined_markers", []) or []
-
-
-def nl_refine_entry_for_id(debug: dict[str, Any], marker_id: int) -> dict[str, Any] | None:
-    for m in nl_refine_entries(debug):
-        if m.get("id") == marker_id:
-            return m
-    return None
-
-
 def plot_completion(
     ax,
     debug: dict[str, Any],
@@ -264,52 +242,6 @@ def plot_completion(
                     if ell:
                         xs, ys = sample_ellipse_xy(ell)
                         ax.plot(xs, ys, "-", color=ecolor, linewidth=1.0, alpha=alpha)
-
-
-def plot_nl_refine(
-    ax,
-    debug: dict[str, Any],
-    *,
-    marker_id: int | None,
-    only_inliers: bool,
-    inlier_ids: set[int],
-    alpha: float,
-    show_after: bool,
-    style: PlotStyle,
-) -> None:
-    stage = nl_refine_stage(debug) or {}
-    if not stage.get("enabled", False):
-        return
-
-    for m in nl_refine_entries(debug):
-        mid = m.get("id")
-        if mid is None:
-            continue
-        mid = int(mid)
-        if marker_id is not None and mid != int(marker_id):
-            continue
-        if only_inliers and mid not in inlier_ids:
-            continue
-
-        bx, by = m.get("center_img_before", [None, None])
-        if bx is not None and by is not None:
-            ax.plot(float(bx), float(by), "x", color=style.nl_before, markersize=6, alpha=alpha)
-
-        if show_after:
-            ax_, ay_ = (m.get("center_img_after") or [None, None])
-            status = str(m.get("status", "failed")).lower()
-            if status == "ok":
-                color = style.nl_after_ok
-            elif status == "rejected":
-                color = style.nl_after_rejected
-            else:
-                color = style.nl_after_failed
-
-            if ax_ is not None and ay_ is not None:
-                ax.plot(float(ax_), float(ay_), "o", color=color, markersize=4, alpha=alpha)
-                add_id_label(ax, float(ax_), float(ay_), str(mid), style)
-            elif bx is not None and by is not None:
-                add_id_label(ax, float(bx), float(by), f"{mid} ({status})", style)
 
 
 def compute_zoom_window(center_xy: list[float], img_w: int, img_h: int, zoom: float) -> tuple[float, float, float, float]:
@@ -524,7 +456,6 @@ def main() -> None:
             "stage3_ransac",
             "stage4_refine",
             "stage5_completion",
-            "stage6_nl_refine",
         ],
     )
     parser.add_argument("--only-inliers", action="store_true")
@@ -541,12 +472,6 @@ def main() -> None:
         default=False,
         help="Overlay homography-guided completion projected centers (if present in debug dump).",
     )
-    parser.add_argument(
-        "--show-nl-refine",
-        action="store_true",
-        default=False,
-        help="Overlay NL refinement centers (before/after) when present in debug dump.",
-    )
     parser.add_argument("--alpha", type=float, default=0.8)
     args = parser.parse_args()
 
@@ -554,8 +479,6 @@ def main() -> None:
         args.zoom = 4.0
     if args.stage == "stage5_completion":
         args.show_completion = True
-    if args.stage == "stage6_nl_refine":
-        args.show_nl_refine = True
 
     maybe_use_agg(args.out)
     import matplotlib.pyplot as plt
@@ -564,7 +487,15 @@ def main() -> None:
 
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
-    if schema_version not in ("ringgrid.debug.v2", "ringgrid.debug.v1"):
+    supported = {
+        "ringgrid.debug.v6",
+        "ringgrid.debug.v5",
+        "ringgrid.debug.v4",
+        "ringgrid.debug.v3",
+        "ringgrid.debug.v2",
+        "ringgrid.debug.v1",
+    }
+    if schema_version not in supported:
         if "detected_markers" in debug and "image_size" in debug:
             raise SystemExit(
                 "Input looks like DetectionResult (normal --out JSON), not a debug dump.\n"
@@ -623,20 +554,6 @@ def main() -> None:
             if reason:
                 title += f" ({reason})"
 
-        nl = nl_refine_entry_for_id(debug, args.id)
-        if nl:
-            status = nl.get("status")
-            br = nl.get("before_rms_mm")
-            ar = nl.get("after_rms_mm")
-            dc = nl.get("delta_center_mm")
-            reason = nl.get("reason")
-            title += (
-                f"\nnl: status={status}"
-                f" rms_mm={br if br is not None else 'NA'}→{ar if ar is not None else 'NA'}"
-                f" Δc_mm={dc if dc is not None else 'NA'}"
-            )
-            if reason:
-                title += f" ({reason})"
     ax.set_title(title)
 
     # If focusing on a marker id and the debug contains the aggregated radial
@@ -731,19 +648,6 @@ def main() -> None:
             marker_id=args.id,
             alpha=args.alpha,
             show_ellipses=args.show_ellipses,
-            style=style,
-        )
-
-    # NL refine overlay (board-plane circle fit)
-    if args.show_nl_refine and args.stage in ("final", "stage6_nl_refine"):
-        plot_nl_refine(
-            ax,
-            debug,
-            marker_id=args.id,
-            only_inliers=args.only_inliers,
-            inlier_ids=inlier_ids,
-            alpha=args.alpha,
-            show_after=args.stage == "stage6_nl_refine",
             style=style,
         )
 

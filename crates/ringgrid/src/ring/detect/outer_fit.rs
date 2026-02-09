@@ -70,7 +70,7 @@ pub(super) fn compute_center(outer: &Ellipse) -> [f64; 2] {
 }
 
 pub(super) fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
-    (config.marker_diameter_px * 0.5).max(2.0)
+    config.marker_scale.nominal_outer_radius_px().max(2.0)
 }
 
 fn mean_axis_px_from_params(params: &EllipseParams) -> f32 {

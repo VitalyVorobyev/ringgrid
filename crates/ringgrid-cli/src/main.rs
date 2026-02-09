@@ -68,9 +68,20 @@ struct CliDetectArgs {
     #[arg(long, default_value = "300")]
     debug_max_candidates: usize,
 
-    /// Expected marker outer diameter in pixels (for parameter tuning).
-    #[arg(long, default_value = "32.0")]
-    marker_diameter: f64,
+    /// Fixed marker outer diameter in pixels (legacy compatibility path).
+    ///
+    /// When set, this overrides `--marker-diameter-min` / `--marker-diameter-max`
+    /// and uses a fixed-scale prior.
+    #[arg(long)]
+    marker_diameter: Option<f64>,
+
+    /// Minimum marker outer diameter in pixels for scale search.
+    #[arg(long, default_value = "20.0")]
+    marker_diameter_min: f64,
+
+    /// Maximum marker outer diameter in pixels for scale search.
+    #[arg(long, default_value = "56.0")]
+    marker_diameter_max: f64,
 
     /// RANSAC inlier threshold in pixels for homography fitting.
     #[arg(long, default_value = "5.0")]
@@ -100,20 +111,19 @@ struct CliDetectArgs {
     #[arg(long, default_value = "0.45")]
     complete_min_conf: f32,
 
-    /// Completion ROI radius in pixels for edge sampling (default: 0.75 * marker_diameter, clamped).
+    /// Completion ROI radius in pixels for edge sampling.
+    ///
+    /// Default is derived from nominal diameter of the selected marker scale prior.
     #[arg(long)]
     complete_roi_radius: Option<f64>,
-
-    /// Disable per-marker board-plane center refinement.
-    #[arg(long)]
-    no_nl_refine: bool,
 
     /// Circle refinement method after local fits are accepted.
     #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
 
     /// Projective center gate: maximum allowed correction shift (px).
-    /// Defaults to marker_diameter when omitted.
+    ///
+    /// Default is derived from nominal diameter of the selected marker scale prior.
     #[arg(long)]
     proj_center_max_shift_px: Option<f64>,
 
@@ -124,34 +134,6 @@ struct CliDetectArgs {
     /// Projective center gate: reject candidates with eigen-separation below this value.
     #[arg(long, default_value = "1e-6")]
     proj_center_min_eig_sep: f64,
-
-    /// NL refine: maximum solver iterations.
-    #[arg(long, default_value = "20")]
-    nl_max_iters: usize,
-
-    /// NL refine: Huber delta in board units (mm).
-    #[arg(long, default_value = "0.2")]
-    nl_huber_delta_mm: f64,
-
-    /// NL refine: minimum number of edge points required.
-    #[arg(long, default_value = "6")]
-    nl_min_points: usize,
-
-    /// NL refine: reject if refined center shifts more than this (mm) in board coordinates.
-    #[arg(long, default_value = "1.0")]
-    nl_reject_shift_mm: f64,
-
-    /// NL refine: solver backend for fixed-radius circle center optimization.
-    #[arg(long, value_enum, default_value_t = NlSolverArg::Lm)]
-    nl_solver: NlSolverArg,
-
-    /// NL refine: enable a single homography refit from refined centers.
-    #[arg(long, default_value = "true")]
-    nl_h_refit: bool,
-
-    /// NL refine: disable homography refit from refined centers.
-    #[arg(long, conflicts_with = "nl_h_refit")]
-    no_nl_h_refit: bool,
 
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
@@ -246,7 +228,6 @@ impl CliCameraArgs {
 enum CircleRefineMethodArg {
     None,
     ProjectiveCenter,
-    NlBoard,
 }
 
 impl CircleRefineMethodArg {
@@ -254,29 +235,13 @@ impl CircleRefineMethodArg {
         match self {
             Self::None => ringgrid::CircleRefinementMethod::None,
             Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
-            Self::NlBoard => ringgrid::CircleRefinementMethod::NlBoard,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum NlSolverArg {
-    Irls,
-    Lm,
-}
-
-impl NlSolverArg {
-    fn to_core(self) -> ringgrid::CircleCenterSolver {
-        match self {
-            Self::Irls => ringgrid::CircleCenterSolver::Irls,
-            Self::Lm => ringgrid::CircleCenterSolver::Lm,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct DetectPreset {
-    marker_diameter_px: f32,
+    marker_scale: ringgrid::MarkerScalePrior,
 }
 
 #[derive(Debug, Clone)]
@@ -294,12 +259,6 @@ struct DetectOverrides {
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
     projective_center_min_eig_sep: f64,
-    nl_max_iters: usize,
-    nl_huber_delta_mm: f64,
-    nl_min_points: usize,
-    nl_reject_shift_mm: f64,
-    nl_solver: ringgrid::CircleCenterSolver,
-    nl_enable_h_refit: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
@@ -307,16 +266,19 @@ struct DetectOverrides {
 
 impl CliDetectArgs {
     fn to_preset(&self) -> DetectPreset {
-        DetectPreset {
-            marker_diameter_px: self.marker_diameter as f32,
-        }
+        let marker_scale = if let Some(d) = self.marker_diameter {
+            ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32)
+        } else {
+            ringgrid::MarkerScalePrior::new(
+                self.marker_diameter_min as f32,
+                self.marker_diameter_max as f32,
+            )
+        };
+        DetectPreset { marker_scale }
     }
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
-        let mut circle_refinement = self.circle_refine_method.to_core();
-        if self.no_nl_refine && circle_refinement == ringgrid::CircleRefinementMethod::NlBoard {
-            circle_refinement = ringgrid::CircleRefinementMethod::None;
-        }
+        let circle_refinement = self.circle_refine_method.to_core();
 
         Ok(DetectOverrides {
             use_global_filter: !self.no_global_filter,
@@ -332,12 +294,6 @@ impl CliDetectArgs {
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
-            nl_max_iters: self.nl_max_iters,
-            nl_huber_delta_mm: self.nl_huber_delta_mm,
-            nl_min_points: self.nl_min_points,
-            nl_reject_shift_mm: self.nl_reject_shift_mm,
-            nl_solver: self.nl_solver.to_core(),
-            nl_enable_h_refit: self.nl_h_refit && !self.no_nl_h_refit,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -349,13 +305,12 @@ impl CliDetectArgs {
 }
 
 fn build_detect_config(
+    board: ringgrid::BoardLayout,
     preset: DetectPreset,
     overrides: &DetectOverrides,
 ) -> ringgrid::DetectConfig {
-    let mut config = ringgrid::DetectConfig::from_target_and_marker_diameter(
-        ringgrid::BoardLayout::default(),
-        preset.marker_diameter_px,
-    );
+    let mut config =
+        ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
 
     // Global filter and refinement options
     config.use_global_filter = overrides.use_global_filter;
@@ -380,15 +335,6 @@ fn build_detect_config(
     }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
-
-    // Non-linear refinement options (board-plane circle fit)
-    config.nl_refine.enabled = config.circle_refinement.uses_nl_refine();
-    config.nl_refine.max_iters = overrides.nl_max_iters;
-    config.nl_refine.huber_delta_mm = overrides.nl_huber_delta_mm;
-    config.nl_refine.min_points = overrides.nl_min_points;
-    config.nl_refine.reject_thresh_mm = overrides.nl_reject_shift_mm;
-    config.nl_refine.solver = overrides.nl_solver;
-    config.nl_refine.enable_h_refit = overrides.nl_enable_h_refit;
 
     // Self-undistort options
     config.self_undistort.enable = overrides.self_undistort_enable;
@@ -448,10 +394,9 @@ fn run_board_info() -> CliResult<()> {
     println!("  pitch:          {} mm", board.pitch_mm);
     println!("  rows:           {}", board.rows);
     println!("  long row cols:  {}", board.long_row_cols);
-    println!(
-        "  board size:     {}x{} mm",
-        board.board_size_mm[0], board.board_size_mm[1]
-    );
+    if let Some(span) = board.marker_span_mm() {
+        println!("  marker span:    {:.3}x{:.3} mm", span[0], span[1]);
+    }
 
     if board.n_markers() > 0 {
         let first = &board.markers[0];
@@ -517,10 +462,14 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     tracing::info!("Image size: {}x{}", w, h);
 
     let preset = args.to_preset();
+    if args.marker_diameter.is_some() {
+        tracing::warn!(
+            "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
+        );
+    }
     let overrides = args.to_overrides()?;
-    let mut config = build_detect_config(preset, &overrides);
 
-    if let Some(target_path) = &args.target {
+    let board = if let Some(target_path) = &args.target {
         let board =
             ringgrid::BoardLayout::from_json_file(target_path).map_err(|e| -> CliError {
                 format!(
@@ -535,8 +484,12 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
             board.name,
             board.n_markers()
         );
-        config.board = board;
-    }
+        board
+    } else {
+        ringgrid::BoardLayout::default()
+    };
+
+    let config = build_detect_config(board, preset, &overrides);
 
     let deprecated_debug_path = args.debug.as_deref();
     let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);
@@ -549,7 +502,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
-            marker_diameter_px: args.marker_diameter,
+            marker_diameter_px: preset.marker_scale.nominal_diameter_px() as f64,
             max_candidates: args.debug_max_candidates,
             store_points: args.debug_store_points,
         };

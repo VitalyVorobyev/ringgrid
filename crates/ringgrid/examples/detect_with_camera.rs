@@ -5,17 +5,13 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 4 {
-        eprintln!(
-            "Usage: {} <target.json> <image.png> <marker_diameter_px>",
-            args[0]
-        );
+    if args.len() < 3 {
+        eprintln!("Usage: {} <target.json> <image.png>", args[0]);
         std::process::exit(2);
     }
 
     let target = TargetSpec::from_json_file(Path::new(&args[1]))?;
     let image = ImageReader::open(&args[2])?.decode()?.to_luma8();
-    let marker_diameter_px: f32 = args[3].parse()?;
     let (w, h) = image.dimensions();
 
     // Example camera parameters; replace with calibrated values.
@@ -35,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     };
 
-    let detector = Detector::new(target, marker_diameter_px);
+    let detector = Detector::new(target);
     let result = detector.detect_with_camera(&image, &camera);
     println!("Detected {} markers.", result.detected_markers.len());
     Ok(())

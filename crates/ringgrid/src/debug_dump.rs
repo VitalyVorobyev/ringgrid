@@ -10,10 +10,9 @@ use crate::board_layout::BoardLayout;
 use crate::camera::CameraModel;
 use crate::homography::RansacHomographyConfig;
 use crate::marker_spec::MarkerSpec;
-use crate::refine::{self, RefineParams};
 use crate::ring::decode::{DecodeConfig, DecodeDiagnostics, DecodeResult};
 use crate::ring::detect::{
-    CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig,
+    CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig, MarkerScalePrior,
     ProjectiveCenterParams,
 };
 use crate::ring::edge_sample::{EdgeSampleConfig, EdgeSampleResult};
@@ -23,7 +22,7 @@ use crate::ring::proposal::{Proposal, ProposalConfig};
 use crate::self_undistort::SelfUndistortConfig;
 use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics, RansacStats};
 
-pub const DEBUG_SCHEMA_V2: &str = "ringgrid.debug.v2";
+pub const DEBUG_SCHEMA_V6: &str = "ringgrid.debug.v6";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDump {
@@ -47,15 +46,11 @@ pub struct BoardSummary {
     pub pitch_mm: f32,
     pub rows: usize,
     pub long_row_cols: usize,
-    pub origin_mm: [f32; 2],
-    pub board_size_mm: [f32; 2],
     pub marker_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker_span_mm: Option<[f32; 2]>,
     pub marker_outer_radius_mm: f32,
     pub marker_inner_radius_mm: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub marker_code_band_outer_radius_mm: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub marker_code_band_inner_radius_mm: Option<f32>,
 }
 
 impl From<&BoardLayout> for BoardSummary {
@@ -65,20 +60,17 @@ impl From<&BoardLayout> for BoardSummary {
             pitch_mm: board.pitch_mm,
             rows: board.rows,
             long_row_cols: board.long_row_cols,
-            origin_mm: board.origin_mm,
-            board_size_mm: board.board_size_mm,
             marker_count: board.n_markers(),
+            marker_span_mm: board.marker_span_mm(),
             marker_outer_radius_mm: board.marker_outer_radius_mm(),
             marker_inner_radius_mm: board.marker_inner_radius_mm(),
-            marker_code_band_outer_radius_mm: board.marker_code_band_outer_radius_mm(),
-            marker_code_band_inner_radius_mm: board.marker_code_band_inner_radius_mm(),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectConfigSnapshot {
-    pub marker_diameter_px: f32,
+    pub marker_scale: MarkerScalePrior,
     pub proposal: ProposalConfig,
     pub edge_sample: EdgeSampleConfig,
     pub outer_estimation: OuterEstimationConfig,
@@ -96,7 +88,6 @@ pub struct DetectConfigSnapshot {
     pub use_global_filter: bool,
     pub ransac_homography: RansacHomographyConfig,
     pub refine_with_h: bool,
-    pub nl_refine: RefineParams,
     pub self_undistort: SelfUndistortConfig,
     pub board: BoardSummary,
     pub debug_collect: DebugCollectConfig,
@@ -105,7 +96,7 @@ pub struct DetectConfigSnapshot {
 impl DetectConfigSnapshot {
     pub fn from_config(config: &DetectConfig, debug_collect: &DebugCollectConfig) -> Self {
         Self {
-            marker_diameter_px: config.marker_diameter_px,
+            marker_scale: config.marker_scale,
             proposal: config.proposal.clone(),
             edge_sample: config.edge_sample.clone(),
             outer_estimation: config.outer_estimation.clone(),
@@ -122,7 +113,6 @@ impl DetectConfigSnapshot {
             use_global_filter: config.use_global_filter,
             ransac_homography: config.ransac_homography.clone(),
             refine_with_h: config.refine_with_h,
-            nl_refine: config.nl_refine.clone(),
             self_undistort: config.self_undistort.clone(),
             board: BoardSummary::from(&config.board),
             debug_collect: debug_collect.clone(),
@@ -140,8 +130,6 @@ pub struct StagesDebug {
     pub stage4_refine: Option<RefineDebug>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage5_completion: Option<CompletionDebug>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage6_nl_refine: Option<NlRefineDebug>,
     #[serde(rename = "final")]
     pub final_: FinalDebug,
 }
@@ -299,20 +287,6 @@ pub struct CompletionDebug {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NlRefineDebug {
-    pub enabled: bool,
-    pub params: refine::RefineParams,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub h_used: Option<[[f64; 3]; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub h_refit: Option<[[f64; 3]; 3]>,
-    pub stats: refine::RefineStats,
-    pub refined_markers: Vec<refine::MarkerRefineRecord>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalDebug {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h_final: Option<[[f64; 3]; 3]>,
@@ -336,7 +310,7 @@ mod tests {
             store_points: false,
         };
         let dd = DebugDump {
-            schema_version: DEBUG_SCHEMA_V2.to_string(),
+            schema_version: DEBUG_SCHEMA_V6.to_string(),
             image: ImageDebug {
                 path: None,
                 width: 640,
@@ -373,7 +347,6 @@ mod tests {
                 },
                 stage4_refine: None,
                 stage5_completion: None,
-                stage6_nl_refine: None,
                 final_: FinalDebug {
                     h_final: None,
                     detections: vec![],
@@ -384,7 +357,7 @@ mod tests {
 
         let s = serde_json::to_string_pretty(&dd).unwrap();
         let dd2: DebugDump = serde_json::from_str(&s).unwrap();
-        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V2);
+        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V6);
         assert_eq!(dd2.image.width, 640);
     }
 }

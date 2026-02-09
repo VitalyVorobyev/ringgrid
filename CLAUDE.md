@@ -54,21 +54,19 @@ The core pipeline flows through these stages in order:
 7. **Global Filter** (`ring/pipeline/global_filter.rs`) — RANSAC homography if ≥4 decoded markers
 8. **H-guided Refinement** (`ring/detect/refine_h.rs`) — local refit at H-projected priors
 9. **Completion** (`ring/detect/completion.rs`) — conservative fits at missing H-projected IDs
-10. **NL Board-plane Refine** (`refine/`) — per-marker nonlinear circle-center optimization
+10. **Projective Center** (`projective_center.rs`) — unbiased center recovery from inner+outer conics
 
 ## Key Math Modules
 
 - `conic/` — ellipse/conic types (`types.rs`), direct fitting (`fit.rs`), generalized eigenvalue solver (`eigen.rs`), RANSAC (`ransac.rs`)
 - `homography.rs` — DLT with Hartley normalization + RANSAC
 - `projective_center.rs` — unbiased center recovery from inner+outer conics
-- `refine/` — LM (tiny-solver) and IRLS solvers for board-plane circle fitting
 
 ## Center Correction Strategies
 
-Single-choice selector (no chaining): `none` | `projective_center` | `nl_board`
+Single-choice selector: `none` | `projective_center`
 
-CLI: `--circle-refine-method {none,projective-center,nl-board}`
-NL solver: `--nl-solver {lm,irls}`
+CLI: `--circle-refine-method {none,projective-center}`
 
 ## Camera / Distortion Support
 
@@ -83,7 +81,7 @@ Optional radial-tangential distortion model (`camera.rs`). When camera intrinsic
 - External JSON uses `serde` structs (see `DetectionResult` in `lib.rs`)
 - Never introduce OpenCV bindings
 - `codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
-- Debug schema is versioned (`ringgrid.debug.v1`)
+- Debug schema is versioned (`ringgrid.debug.v3`)
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - Debug collection is runtime-gated via `Option<&DebugCollectConfig>` — no compile-time feature flag needed
 

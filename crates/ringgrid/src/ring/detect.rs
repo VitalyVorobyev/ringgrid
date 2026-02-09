@@ -8,7 +8,6 @@ use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
 use crate::homography::{self, RansacHomographyConfig};
 use crate::marker_spec::MarkerSpec;
-use crate::refine;
 use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 use super::decode::DecodeConfig;
@@ -173,28 +172,107 @@ pub enum CircleRefinementMethod {
     /// Run projective-center recovery from inner/outer conics.
     #[default]
     ProjectiveCenter,
-    /// Run board-plane circle refinement.
-    NlBoard,
 }
 
 impl CircleRefinementMethod {
-    /// Returns `true` when this method includes board-plane circle refinement.
-    pub fn uses_nl_refine(self) -> bool {
-        matches!(self, Self::NlBoard)
-    }
-
     /// Returns `true` when this method includes projective-center recovery.
     pub fn uses_projective_center(self) -> bool {
         matches!(self, Self::ProjectiveCenter)
     }
 }
 
+/// Scale prior for marker diameter in detector working pixels.
+///
+/// The detector uses this range to derive proposal radii, outer-edge search,
+/// and validation gates. A single known size can be expressed by setting
+/// `diameter_min_px == diameter_max_px`.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct MarkerScalePrior {
+    /// Minimum expected marker outer diameter in pixels.
+    pub diameter_min_px: f32,
+    /// Maximum expected marker outer diameter in pixels.
+    pub diameter_max_px: f32,
+}
+
+impl MarkerScalePrior {
+    const MIN_DIAMETER_FLOOR_PX: f32 = 4.0;
+
+    /// Construct a scale prior from a diameter range in pixels.
+    pub fn new(diameter_min_px: f32, diameter_max_px: f32) -> Self {
+        let mut out = Self {
+            diameter_min_px,
+            diameter_max_px,
+        };
+        out.normalize_in_place();
+        out
+    }
+
+    /// Construct a fixed-size scale prior from one diameter hint.
+    pub fn from_nominal_diameter_px(diameter_px: f32) -> Self {
+        Self::new(diameter_px, diameter_px)
+    }
+
+    /// Return the normalized diameter range `[min, max]` in pixels.
+    pub fn diameter_range_px(self) -> [f32; 2] {
+        let n = self.normalized();
+        [n.diameter_min_px, n.diameter_max_px]
+    }
+
+    /// Return nominal diameter (midpoint of `[min, max]`) in pixels.
+    pub fn nominal_diameter_px(self) -> f32 {
+        let [d_min, d_max] = self.diameter_range_px();
+        0.5 * (d_min + d_max)
+    }
+
+    /// Return nominal outer radius in pixels.
+    pub fn nominal_outer_radius_px(self) -> f32 {
+        self.nominal_diameter_px() * 0.5
+    }
+
+    /// Return a normalized copy with finite, ordered, non-degenerate bounds.
+    pub fn normalized(self) -> Self {
+        let mut out = self;
+        out.normalize_in_place();
+        out
+    }
+
+    fn normalize_in_place(&mut self) {
+        let defaults = MarkerScalePrior::default();
+        let mut d_min = if self.diameter_min_px.is_finite() {
+            self.diameter_min_px
+        } else {
+            defaults.diameter_min_px
+        };
+        let mut d_max = if self.diameter_max_px.is_finite() {
+            self.diameter_max_px
+        } else {
+            defaults.diameter_max_px
+        };
+        if d_min > d_max {
+            std::mem::swap(&mut d_min, &mut d_max);
+        }
+        d_min = d_min.max(Self::MIN_DIAMETER_FLOOR_PX);
+        d_max = d_max.max(d_min);
+        self.diameter_min_px = d_min;
+        self.diameter_max_px = d_max;
+    }
+}
+
+impl Default for MarkerScalePrior {
+    fn default() -> Self {
+        Self {
+            diameter_min_px: 20.0,
+            diameter_max_px: 56.0,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
-    /// Expected marker outer diameter in pixels (for scale-anchored edge extraction).
-    pub marker_diameter_px: f32,
-    /// Outer edge estimation configuration (anchored on `marker_diameter_px`).
+    /// Marker diameter prior (range) in working-frame pixels.
+    pub marker_scale: MarkerScalePrior,
+    /// Outer edge estimation configuration (anchored on `marker_scale`).
     pub outer_estimation: OuterEstimationConfig,
     /// Proposal generation configuration.
     pub proposal: ProposalConfig,
@@ -229,8 +307,6 @@ pub struct DetectConfig {
     pub ransac_homography: RansacHomographyConfig,
     /// Enable one-iteration refinement using H.
     pub refine_with_h: bool,
-    /// Non-linear per-marker refinement using board-plane circle fits.
-    pub nl_refine: refine::RefineParams,
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
@@ -240,48 +316,51 @@ pub struct DetectConfig {
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
 
 impl DetectConfig {
-    /// Build a configuration with all scale-dependent parameters derived from
-    /// the expected marker outer diameter in pixels and a runtime target layout.
+    /// Build a configuration with scale-dependent parameters derived from a
+    /// marker diameter range and a runtime target layout.
     ///
     /// This is the recommended constructor for library users. After calling it,
     /// individual fields can be overridden as needed.
-    pub fn from_target_and_marker_diameter(board: BoardLayout, diameter_px: f32) -> Self {
-        let r_outer = diameter_px / 2.0;
+    pub fn from_target_and_scale_prior(board: BoardLayout, marker_scale: MarkerScalePrior) -> Self {
         let mut cfg = Self {
-            marker_diameter_px: diameter_px,
+            marker_scale: marker_scale.normalized(),
             ..Default::default()
         };
         cfg.board = board;
         apply_target_geometry_priors(&mut cfg);
-
-        // Proposal search radii
-        cfg.proposal.r_min = (r_outer * 0.4).max(2.0);
-        cfg.proposal.r_max = r_outer * 1.7;
-        cfg.proposal.nms_radius = r_outer * 0.8;
-
-        // Edge sampling range
-        cfg.edge_sample.r_max = r_outer * 2.0;
-        cfg.edge_sample.r_min = 1.5;
-        cfg.outer_estimation.theta_samples = cfg.edge_sample.n_rays;
-
-        // Ellipse validation bounds
-        cfg.min_semi_axis = (r_outer as f64 * 0.3).max(2.0);
-        cfg.max_semi_axis = r_outer as f64 * 2.5;
-
-        // Completion ROI
-        cfg.completion.roi_radius_px = ((diameter_px as f64 * 0.75).clamp(24.0, 80.0)) as f32;
-
-        // Projective center max shift
-        cfg.projective_center.max_center_shift_px = Some(diameter_px as f64);
-
+        apply_marker_scale_prior(&mut cfg);
         cfg
+    }
+
+    /// Build a configuration from target layout and default marker scale prior.
+    pub fn from_target(board: BoardLayout) -> Self {
+        Self::from_target_and_scale_prior(board, MarkerScalePrior::default())
+    }
+
+    /// Build a configuration from target layout and a fixed marker diameter hint.
+    pub fn from_target_and_marker_diameter(board: BoardLayout, diameter_px: f32) -> Self {
+        Self::from_target_and_scale_prior(
+            board,
+            MarkerScalePrior::from_nominal_diameter_px(diameter_px),
+        )
+    }
+
+    /// Update marker scale prior and re-derive all scale-coupled parameters.
+    pub fn set_marker_scale_prior(&mut self, marker_scale: MarkerScalePrior) {
+        self.marker_scale = marker_scale.normalized();
+        apply_marker_scale_prior(self);
+    }
+
+    /// Update marker scale prior from a fixed marker diameter hint.
+    pub fn set_marker_diameter_hint_px(&mut self, diameter_px: f32) {
+        self.set_marker_scale_prior(MarkerScalePrior::from_nominal_diameter_px(diameter_px));
     }
 }
 
 impl Default for DetectConfig {
     fn default() -> Self {
-        Self {
-            marker_diameter_px: 32.0,
+        let mut cfg = Self {
+            marker_scale: MarkerScalePrior::default(),
             outer_estimation: OuterEstimationConfig::default(),
             proposal: ProposalConfig::default(),
             edge_sample: EdgeSampleConfig::default(),
@@ -298,10 +377,12 @@ impl Default for DetectConfig {
             use_global_filter: true,
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
-            nl_refine: refine::RefineParams::default(),
             board: BoardLayout::default(),
             self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
-        }
+        };
+        apply_target_geometry_priors(&mut cfg);
+        apply_marker_scale_prior(&mut cfg);
+        cfg
     }
 }
 
@@ -311,8 +392,43 @@ impl DetectConfig {
     /// Intended for internal CLI compatibility paths.
     #[cfg(feature = "cli-internal")]
     pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
-        Self::from_target_and_marker_diameter(BoardLayout::default(), diameter_px)
+        Self::from_target_and_scale_prior(
+            BoardLayout::default(),
+            MarkerScalePrior::from_nominal_diameter_px(diameter_px),
+        )
     }
+}
+
+fn apply_marker_scale_prior(config: &mut DetectConfig) {
+    config.marker_scale = config.marker_scale.normalized();
+    let [d_min, d_max] = config.marker_scale.diameter_range_px();
+    let d_nom = config.marker_scale.nominal_diameter_px();
+    let r_min = d_min * 0.5;
+    let r_max = d_max * 0.5;
+    let r_nom = d_nom * 0.5;
+
+    // Proposal search radii
+    config.proposal.r_min = (r_min * 0.4).max(2.0);
+    config.proposal.r_max = r_max * 1.7;
+    config.proposal.nms_radius = (r_min * 0.8).max(2.0);
+
+    // Edge sampling range
+    config.edge_sample.r_max = r_max * 2.0;
+    config.edge_sample.r_min = 1.5;
+    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
+    let desired_halfwidth = ((r_max - r_min) * 0.5).max(2.0);
+    let base_halfwidth = OuterEstimationConfig::default().search_halfwidth_px;
+    config.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);
+
+    // Ellipse validation bounds
+    config.min_semi_axis = (r_min as f64 * 0.3).max(2.0);
+    config.max_semi_axis = (r_max as f64 * 2.5).max(config.min_semi_axis);
+
+    // Completion ROI
+    config.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
+
+    // Projective center max shift
+    config.projective_center.max_center_shift_px = Some((2.0 * r_nom) as f64);
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
@@ -326,21 +442,9 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
     let inner_edge = (inner - edge_pad).max(outer * 0.05);
     let outer_edge = outer + edge_pad;
     if inner_edge > 0.0 && inner_edge < outer_edge {
-        config.marker_spec.r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
-    }
-
-    if let (Some(code_outer), Some(code_inner)) = (
-        config.board.marker_code_band_outer_radius_mm(),
-        config.board.marker_code_band_inner_radius_mm(),
-    ) {
-        if code_outer.is_finite()
-            && code_inner.is_finite()
-            && code_outer > code_inner
-            && code_outer < outer
-        {
-            let code_center = 0.5 * (code_outer + code_inner);
-            config.decode.code_band_ratio = (code_center / outer_edge).clamp(0.2, 0.98);
-        }
+        let r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
+        config.marker_spec.r_inner_expected = r_inner_expected;
+        config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
     }
 }
 
@@ -517,20 +621,18 @@ pub fn detect_rings_with_mapper(
     }
 }
 
-/// Run two-pass detection:
-/// - pass-1 in raw image space,
-/// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+/// Run pass-2 of two-pass detection using existing pass-1 results as seeds.
 ///
-/// Returned detections stay in pass-2 mapper working coordinates. Any retained
-/// pass-1 fallback markers are remapped to the same working frame.
-pub fn detect_rings_two_pass_with_mapper(
+/// This avoids re-running pass-1 when the caller already has pass-1 detections
+/// (e.g. from a prior `detect_rings` call).
+pub(crate) fn detect_rings_pass2_with_seeds(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
+    pass1: &DetectionResult,
     params: &TwoPassParams,
 ) -> DetectionResult {
-    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
-    let seed_centers_image = collect_seed_centers_image(&pass1, &params.seed);
+    let seed_centers_image = collect_seed_centers_image(pass1, &params.seed);
 
     let mut pass2 = detect_rings_with_mapper_and_seeds(
         gray,
@@ -551,6 +653,22 @@ pub fn detect_rings_two_pass_with_mapper(
         Some(mapper),
     );
     pass2
+}
+
+/// Run two-pass detection:
+/// - pass-1 in raw image space,
+/// - pass-2 with mapper and pass-1 centers injected as proposal seeds.
+///
+/// Returned detections stay in pass-2 mapper working coordinates. Any retained
+/// pass-1 fallback markers are remapped to the same working frame.
+pub fn detect_rings_two_pass_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: &dyn PixelMapper,
+    params: &TwoPassParams,
+) -> DetectionResult {
+    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
+    detect_rings_pass2_with_seeds(gray, config, mapper, &pass1, params)
 }
 
 /// Run the full ring detection pipeline and collect a versioned debug dump.
@@ -829,6 +947,18 @@ mod tests {
     use nalgebra::Vector3;
 
     #[test]
+    fn marker_scale_prior_rederives_scale_coupled_params() {
+        let mut cfg = DetectConfig::default();
+        cfg.set_marker_scale_prior(MarkerScalePrior::new(24.0, 40.0));
+
+        assert_eq!(cfg.marker_scale.diameter_range_px(), [24.0, 40.0]);
+        assert!((cfg.proposal.r_min - 4.8).abs() < 1e-6);
+        assert!((cfg.proposal.r_max - 34.0).abs() < 1e-6);
+        assert!((cfg.edge_sample.r_max - 40.0).abs() < 1e-6);
+        assert_eq!(cfg.projective_center.max_center_shift_px, Some(32.0));
+    }
+
+    #[test]
     fn debug_dump_does_not_panic_when_stages_skipped() {
         let img = GrayImage::new(64, 64);
         let cfg = DetectConfig {
@@ -846,7 +976,7 @@ mod tests {
 
         let (res, dump) = detect_rings_with_debug(&img, &cfg, &dbg_cfg);
         assert_eq!(res.image_size, [64, 64]);
-        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V2);
+        assert_eq!(dump.schema_version, crate::debug_dump::DEBUG_SCHEMA_V6);
         assert_eq!(dump.stages.stage0_proposals.n_total, 0);
         assert!(!dump.stages.stage3_ransac.enabled);
     }

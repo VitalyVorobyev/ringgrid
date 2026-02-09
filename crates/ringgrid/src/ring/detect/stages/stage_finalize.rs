@@ -5,7 +5,6 @@ use crate::debug_dump as dbg;
 #[derive(Clone, Copy)]
 struct FinalizeFlags {
     use_projective_center: bool,
-    use_nl_refine: bool,
     collect_debug: bool,
     store_points: bool,
 }
@@ -29,7 +28,6 @@ fn finalize_flags(config: &DetectConfig, debug_cfg: Option<&DebugCollectConfig>)
     FinalizeFlags {
         use_projective_center: config.circle_refinement.uses_projective_center()
             && config.projective_center.enable,
-        use_nl_refine: config.circle_refinement.uses_nl_refine() && config.nl_refine.enabled,
         collect_debug: debug_cfg.is_some(),
         store_points: debug_cfg.map(|cfg| cfg.store_points).unwrap_or(false),
     }
@@ -196,126 +194,6 @@ fn phase_completion(
     }
 }
 
-fn init_nl_refine_debug(
-    flags: FinalizeFlags,
-    config: &DetectConfig,
-    h_current: Option<&nalgebra::Matrix3<f64>>,
-) -> Option<dbg::NlRefineDebug> {
-    if !flags.collect_debug {
-        return None;
-    }
-
-    Some(dbg::NlRefineDebug {
-        enabled: flags.use_nl_refine && h_current.is_some(),
-        params: config.nl_refine.clone(),
-        h_used: h_current.map(matrix3_to_array),
-        h_refit: None,
-        stats: refine::RefineStats::default(),
-        refined_markers: Vec::new(),
-        notes: Vec::new(),
-    })
-}
-
-fn phase_nl_refine(
-    gray: &GrayImage,
-    final_markers: &mut [DetectedMarker],
-    h_current: &mut Option<nalgebra::Matrix3<f64>>,
-    config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
-    flags: FinalizeFlags,
-    nl_refine_debug: &mut Option<dbg::NlRefineDebug>,
-) {
-    if !flags.use_nl_refine {
-        if let Some(nld) = nl_refine_debug.as_mut() {
-            nld.notes
-                .push("disabled_by_circle_refinement_method".to_string());
-        }
-        return;
-    }
-
-    let Some(h0) = *h_current else {
-        tracing::warn!(
-            "nl_board center correction selected but homography is unavailable; \
-             keeping uncorrected centers"
-        );
-        if let Some(nld) = nl_refine_debug.as_mut() {
-            nld.notes.push("skipped_no_homography".to_string());
-        }
-        return;
-    };
-
-    let (stats0, records0) = refine::refine_markers_circle_board_with_mapper(
-        gray,
-        &h0,
-        final_markers,
-        &config.nl_refine,
-        &config.board,
-        mapper,
-        flags.store_points,
-    );
-
-    if let Some(nld) = nl_refine_debug.as_mut() {
-        nld.stats = stats0.clone();
-        nld.refined_markers = records0;
-    }
-
-    if !config.nl_refine.enable_h_refit || final_markers.len() < 10 {
-        return;
-    }
-
-    let max_iters = config.nl_refine.h_refit_iters.clamp(1, 3);
-    let mut h_prev = h0;
-    let mut best_mean = mean_reproj_error_px(&h_prev, final_markers, &config.board);
-
-    for iter in 0..max_iters {
-        let Some((h_next, _)) =
-            refit_homography_matrix(final_markers, &config.ransac_homography, &config.board)
-        else {
-            if let Some(nld) = nl_refine_debug.as_mut() {
-                nld.notes.push(format!("h_refit_iter{}:refit_failed", iter));
-            }
-            break;
-        };
-
-        let mean_next = mean_reproj_error_px(&h_next, final_markers, &config.board);
-        if mean_next.is_finite() && (mean_next < best_mean || !best_mean.is_finite()) {
-            if let Some(nld) = nl_refine_debug.as_mut() {
-                nld.h_refit = Some(matrix3_to_array(&h_next));
-                nld.notes.push(format!(
-                    "h_refit_iter{}:accepted mean_err_px {:.3} -> {:.3}",
-                    iter, best_mean, mean_next
-                ));
-            }
-
-            *h_current = Some(h_next);
-            h_prev = h_next;
-            best_mean = mean_next;
-
-            let (stats_i, records_i) = refine::refine_markers_circle_board_with_mapper(
-                gray,
-                &h_prev,
-                final_markers,
-                &config.nl_refine,
-                &config.board,
-                mapper,
-                flags.store_points,
-            );
-            if let Some(nld) = nl_refine_debug.as_mut() {
-                nld.stats = stats_i;
-                nld.refined_markers = records_i;
-            }
-        } else {
-            if let Some(nld) = nl_refine_debug.as_mut() {
-                nld.notes.push(format!(
-                    "h_refit_iter{}:rejected mean_err_px {:.3} -> {:.3}",
-                    iter, best_mean, mean_next
-                ));
-            }
-            break;
-        }
-    }
-}
-
 fn phase_center_correction(
     final_markers: &mut [DetectedMarker],
     config: &DetectConfig,
@@ -405,7 +283,6 @@ struct DumpBuildInput<'a> {
     ransac_debug: dbg::RansacDebug,
     refine_debug: Option<dbg::RefineDebug>,
     completion: CompletionPhaseOutput,
-    nl_refine_debug: Option<dbg::NlRefineDebug>,
     result: &'a DetectionResult,
 }
 
@@ -420,7 +297,6 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
         ransac_debug,
         refine_debug,
         completion,
-        nl_refine_debug,
         result,
     } = input;
     let completion_added = completion.stats.n_added;
@@ -433,7 +309,7 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
     };
 
     dbg::DebugDump {
-        schema_version: dbg::DEBUG_SCHEMA_V2.to_string(),
+        schema_version: dbg::DEBUG_SCHEMA_V6.to_string(),
         image: dbg::ImageDebug {
             path: debug_cfg.image_path.clone(),
             width: image_size[0],
@@ -447,7 +323,6 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
             stage3_ransac: ransac_debug,
             stage4_refine: refine_debug,
             stage5_completion: Some(completion_debug),
-            stage6_nl_refine: nl_refine_debug,
             final_: dbg::FinalDebug {
                 h_final: result.homography,
                 detections: result.detected_markers.clone(),
@@ -490,7 +365,7 @@ pub(super) fn run(
     }
 
     let mut final_markers = filter_phase.markers;
-    let mut h_current = filter_phase.h_current;
+    let h_current = filter_phase.h_current;
     let mut refine_debug = filter_phase.refine_debug;
 
     let completion = phase_completion(
@@ -500,17 +375,6 @@ pub(super) fn run(
         config,
         mapper,
         flags,
-    );
-
-    let mut nl_refine_debug = init_nl_refine_debug(flags, config, h_current.as_ref());
-    phase_nl_refine(
-        gray,
-        &mut final_markers,
-        &mut h_current,
-        config,
-        mapper,
-        flags,
-        &mut nl_refine_debug,
     );
 
     phase_center_correction(&mut final_markers, config, flags);
@@ -548,7 +412,6 @@ pub(super) fn run(
                 .expect("ransac debug should be present when debug is enabled"),
             refine_debug,
             completion,
-            nl_refine_debug,
             result: &result,
         }))
     } else {

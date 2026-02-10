@@ -1,7 +1,7 @@
 use crate::conic::{self, Ellipse};
-use crate::ring::decode::DecodeResult;
+use crate::marker::decode::DecodeResult;
 use crate::ring::edge_sample::EdgeSampleResult;
-use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics};
+use crate::{DecodeMetrics, DetectedMarker, FitMetrics};
 
 use super::inner_fit::InnerFitResult;
 
@@ -45,8 +45,8 @@ pub(crate) fn fit_metrics_with_inner(
 }
 
 /// Extract inner ellipse params from an inner fit result.
-pub(crate) fn inner_ellipse_params(inner: &InnerFitResult) -> Option<EllipseParams> {
-    inner.ellipse_inner.as_ref().map(EllipseParams::from)
+pub(crate) fn inner_ellipse_params(inner: &InnerFitResult) -> Option<Ellipse> {
+    inner.ellipse_inner
 }
 
 pub(crate) fn decode_metrics_from_result(
@@ -67,8 +67,8 @@ pub(crate) fn marker_with_defaults(
     id: Option<usize>,
     confidence: f32,
     center: [f64; 2],
-    ellipse_outer: Option<EllipseParams>,
-    ellipse_inner: Option<EllipseParams>,
+    ellipse_outer: Option<Ellipse>,
+    ellipse_inner: Option<Ellipse>,
     edge_points_outer: Option<Vec<[f64; 2]>>,
     edge_points_inner: Option<Vec<[f64; 2]>>,
     fit: FitMetrics,

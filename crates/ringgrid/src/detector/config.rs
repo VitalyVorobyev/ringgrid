@@ -1,12 +1,10 @@
 use crate::board_layout::BoardLayout;
-use crate::camera::PixelMapper;
 use crate::homography::RansacHomographyConfig;
-use crate::marker_spec::MarkerSpec;
+use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::pixelmap::{PixelMapper, SelfUndistortConfig};
+use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
-use super::super::decode::DecodeConfig;
-use super::super::edge_sample::EdgeSampleConfig;
-use super::super::outer_estimate::OuterEstimationConfig;
-use super::super::proposal::ProposalConfig;
+use super::proposal::ProposalConfig;
 
 /// Debug collection options for `detect_rings_with_debug`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -253,7 +251,7 @@ pub struct DetectConfig {
     ///
     /// When set, local fitting/sampling runs in the undistorted pixel frame
     /// and all reported marker geometry/centers use that working frame.
-    pub camera: Option<crate::camera::CameraModel>,
+    pub camera: Option<crate::pixelmap::CameraModel>,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -277,7 +275,7 @@ pub struct DetectConfig {
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
-    pub self_undistort: crate::self_undistort::SelfUndistortConfig,
+    pub self_undistort: SelfUndistortConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -345,7 +343,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
             board: BoardLayout::default(),
-            self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
+            self_undistort: SelfUndistortConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -415,6 +413,6 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
     }
 }
 
-pub(super) fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
+pub(crate) fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
     config.camera.as_ref().map(|c| c as &dyn PixelMapper)
 }

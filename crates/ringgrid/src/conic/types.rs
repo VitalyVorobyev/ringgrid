@@ -50,6 +50,8 @@ pub struct ConicCoeffs(pub [f64; 6]);
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Ellipse {
     /// Center x.
+    /// This is the undistorted pixel frame when camera intrinsics are provided,
+    /// otherwise it is the raw image pixel frame.
     pub cx: f64,
     /// Center y.
     pub cy: f64,
@@ -96,11 +98,6 @@ impl Conic2D {
     /// Build from fitted geometric ellipse representation.
     pub fn from_ellipse(e: &Ellipse) -> Self {
         Self::from_coeffs(&ellipse_to_conic(e))
-    }
-
-    /// Build from serialized ellipse parameters.
-    pub fn from_ellipse_params(e: &crate::EllipseParams) -> Self {
-        Self::from_ellipse(&Ellipse::from(e))
     }
 
     /// Normalize conic scale to unit Frobenius norm.

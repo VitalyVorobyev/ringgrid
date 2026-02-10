@@ -7,22 +7,22 @@
 use serde::{Deserialize, Serialize};
 
 use crate::board_layout::BoardLayout;
-use crate::camera::CameraModel;
-use crate::homography::RansacHomographyConfig;
-use crate::marker_spec::MarkerSpec;
-use crate::ring::decode::{DecodeConfig, DecodeDiagnostics, DecodeResult};
-use crate::ring::detect::{
-    CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams,
+use crate::conic::Ellipse;
+use crate::detector::proposal::{Proposal, ProposalConfig};
+use crate::detector::{
+    CircleRefinementMethod, CompletionAttemptRecord, CompletionParams, CompletionStats,
+    DebugCollectConfig, DetectConfig, MarkerScalePrior, ProjectiveCenterParams,
 };
+use crate::homography::RansacHomographyConfig;
+use crate::marker::decode::{DecodeDiagnostics, DecodeResult};
+use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::pixelmap::{CameraModel, SelfUndistortConfig};
 use crate::ring::edge_sample::{EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::InnerEstimate;
 use crate::ring::outer_estimate::{OuterEstimate, OuterEstimationConfig};
-use crate::ring::proposal::{Proposal, ProposalConfig};
-use crate::self_undistort::SelfUndistortConfig;
-use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics, RansacStats};
+use crate::{DecodeMetrics, DetectedMarker, FitMetrics, RansacStats};
 
-pub const DEBUG_SCHEMA_V6: &str = "ringgrid.debug.v6";
+pub const DEBUG_SCHEMA_V7: &str = "ringgrid.debug.v7";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDump {
@@ -187,9 +187,9 @@ pub struct RingFitDebug {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_outer_hypothesis: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ellipse_outer: Option<EllipseParams>,
+    pub ellipse_outer: Option<Ellipse>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ellipse_inner: Option<EllipseParams>,
+    pub ellipse_inner: Option<Ellipse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner_estimation: Option<InnerEstimate>,
     pub fit: FitMetrics,
@@ -280,8 +280,8 @@ pub struct RefinedMarkerDebug {
 pub struct CompletionDebug {
     pub enabled: bool,
     pub params: CompletionParams,
-    pub attempted: Vec<crate::ring::detect::CompletionAttemptRecord>,
-    pub stats: crate::ring::detect::CompletionStats,
+    pub attempted: Vec<CompletionAttemptRecord>,
+    pub stats: CompletionStats,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
@@ -310,7 +310,7 @@ mod tests {
             store_points: false,
         };
         let dd = DebugDump {
-            schema_version: DEBUG_SCHEMA_V6.to_string(),
+            schema_version: DEBUG_SCHEMA_V7.to_string(),
             image: ImageDebug {
                 path: None,
                 width: 640,
@@ -357,7 +357,7 @@ mod tests {
 
         let s = serde_json::to_string_pretty(&dd).unwrap();
         let dd2: DebugDump = serde_json::from_str(&s).unwrap();
-        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V6);
+        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V7);
         assert_eq!(dd2.image.width, 640);
     }
 }

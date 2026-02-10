@@ -1,13 +1,13 @@
 use image::GrayImage;
 use std::collections::HashSet;
 
-use crate::camera::PixelMapper;
+use crate::pixelmap::PixelMapper;
 use crate::{DetectedMarker, DetectionResult};
 
-use super::config::config_mapper;
+use super::config_mapper;
 use super::stages;
 use super::{dedup_by_id, dedup_markers, DetectConfig, SeedProposalParams, TwoPassParams};
-use crate::ring::proposal::{find_proposals, Proposal, ProposalConfig};
+use crate::detector::proposal::{find_proposals, Proposal, ProposalConfig};
 
 fn capped_len<T>(slice: &[T], max_len: Option<usize>) -> usize {
     max_len.unwrap_or(slice.len()).min(slice.len())
@@ -236,7 +236,7 @@ pub fn detect_rings_with_self_undistort(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> DetectionResult {
-    use crate::self_undistort::estimate_self_undistort;
+    use crate::pixelmap::estimate_self_undistort;
 
     let mut result = detect_rings(gray, config);
     let su_cfg = &config.self_undistort;

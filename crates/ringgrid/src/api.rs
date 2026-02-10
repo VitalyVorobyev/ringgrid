@@ -8,12 +8,13 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::BoardLayout;
-use crate::camera::{CameraModel, PixelMapper};
 #[cfg(feature = "cli-internal")]
 use crate::debug_dump::DebugDump;
 #[cfg(feature = "cli-internal")]
-use crate::ring::detect::DebugCollectConfig;
-use crate::ring::detect::{DetectConfig, MarkerScalePrior};
+use crate::detector::DebugCollectConfig;
+use crate::detector::{DetectConfig, MarkerScalePrior};
+use crate::pipeline;
+use crate::pixelmap::{CameraModel, PixelMapper};
 use crate::DetectionResult;
 
 /// Target specification describing the board to detect.
@@ -129,14 +130,14 @@ impl Detector {
 
     /// Detect markers in a grayscale image.
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        crate::ring::detect::detect_rings(image, &self.config)
+        pipeline::detect_rings(image, &self.config)
     }
 
     /// Detect with a camera model (sets camera in config, runs standard pipeline).
     pub fn detect_with_camera(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
         let mut cfg = self.config.clone();
         cfg.camera = Some(*camera);
-        crate::ring::detect::detect_rings(image, &cfg)
+        pipeline::detect_rings(image, &cfg)
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
@@ -145,7 +146,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
-        crate::ring::detect::detect_rings_with_mapper(image, &self.config, Some(mapper))
+        pipeline::detect_rings_with_mapper(image, &self.config, Some(mapper))
     }
 
     /// Detect with debug dump collection.
@@ -155,7 +156,7 @@ impl Detector {
         image: &GrayImage,
         debug_cfg: &DebugCollectConfig,
     ) -> (DetectionResult, DebugDump) {
-        crate::ring::detect::detect_rings_with_debug(image, &self.config, debug_cfg)
+        pipeline::detect_rings_with_debug(image, &self.config, debug_cfg)
     }
 
     /// Detect with known camera intrinsics for precision mode.

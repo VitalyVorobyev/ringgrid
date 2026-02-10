@@ -1,6 +1,6 @@
 //! Shared radial-profile aggregation and peak helpers.
 
-use crate::marker_spec::AngularAggregator;
+use crate::marker::AngularAggregator;
 
 /// Sign convention for radial derivative peaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

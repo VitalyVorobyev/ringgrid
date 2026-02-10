@@ -6,9 +6,9 @@
 
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
 use crate::conic::Ellipse;
-use crate::marker_spec::{GradPolarity, MarkerSpec};
+use crate::marker::{GradPolarity, MarkerSpec};
+use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;

@@ -9,11 +9,11 @@
 
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
-use crate::codec::Codebook;
 use crate::conic::Ellipse;
+use crate::pixelmap::PixelMapper;
+use crate::ring::edge_sample::DistortionAwareSampler;
 
-use super::edge_sample::DistortionAwareSampler;
+use super::codec::Codebook;
 
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -298,8 +298,8 @@ fn decode_marker_impl(
 
 #[cfg(test)]
 mod tests {
+    use super::super::codebook::CODEBOOK;
     use super::*;
-    use crate::codebook::CODEBOOK;
 
     /// Paint a synthetic ring marker with known code on a small image.
     fn make_coded_ring_image(

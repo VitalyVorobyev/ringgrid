@@ -12,10 +12,10 @@ use super::super::{
     dedup_by_id, dedup_markers, dedup_with_debug, find_proposals_with_seeds, DebugCollectConfig,
     DetectConfig, SeedProposalParams,
 };
-use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
+use crate::detector::proposal::Proposal;
+use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
-use crate::ring::proposal::Proposal;
 use crate::DetectedMarker;
 
 pub(super) struct FitDecodeCoreOutput {
@@ -255,8 +255,8 @@ fn process_candidate(
         decode_result.as_ref().map(|d| d.id),
         confidence,
         center,
-        Some(crate::EllipseParams::from(outer)),
-        inner_params.clone(),
+        Some(outer),
+        inner_params,
         Some(edge.outer_points.clone()),
         Some(inner_fit.points_inner.clone()),
         fit_metrics.clone(),
@@ -269,8 +269,8 @@ fn process_candidate(
             edge: edge_for_debug(&edge, ctx.store_points),
             outer_estimation: Some(outer_estimate),
             chosen_outer_hypothesis: Some(chosen_hypothesis),
-            ellipse_outer: Some(crate::EllipseParams::from(outer)),
-            ellipse_inner: inner_params.clone(),
+            ellipse_outer: Some(outer),
+            ellipse_inner: inner_params,
             inner_estimation: Some(inner_fit.estimate.clone()),
             fit: fit_metrics,
             inner_points_fit: if ctx.store_points {

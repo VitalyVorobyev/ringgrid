@@ -1,20 +1,20 @@
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
 use crate::conic::{
     fit_ellipse_direct, rms_sampson_distance, try_fit_ellipse_ransac, Ellipse, RansacConfig,
 };
-use crate::ring::decode::decode_marker_with_diagnostics_and_mapper;
+use crate::marker::decode::decode_marker_with_diagnostics_and_mapper;
+use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
     estimate_outer_from_prior_with_mapper, OuterEstimate, OuterStatus,
 };
-use crate::{DetectedMarker, EllipseParams};
+use crate::DetectedMarker;
 
 use super::DetectConfig;
 
-pub(super) fn fit_outer_ellipse_with_reason(
+pub(crate) fn fit_outer_ellipse_with_reason(
     edge: &EdgeSampleResult,
     config: &DetectConfig,
 ) -> Result<(Ellipse, Option<crate::conic::RansacResult>), String> {
@@ -65,23 +65,23 @@ pub(super) fn fit_outer_ellipse_with_reason(
 /// We use the outer ellipse center as the base estimate. Inner edge estimation
 /// is constrained to be concentric with the outer ellipse and is not allowed
 /// to bias the center when unreliable.
-pub(super) fn compute_center(outer: &Ellipse) -> [f64; 2] {
+pub(crate) fn compute_center(outer: &Ellipse) -> [f64; 2] {
     [outer.cx, outer.cy]
 }
 
-pub(super) fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
+pub(crate) fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
     config.marker_scale.nominal_outer_radius_px().max(2.0)
 }
 
-fn mean_axis_px_from_params(params: &EllipseParams) -> f32 {
-    ((params.semi_axes[0] + params.semi_axes[1]) * 0.5) as f32
+fn mean_axis_px_from_params(params: &Ellipse) -> f32 {
+    ((params.a + params.b) * 0.5) as f32
 }
 
-pub(super) fn mean_axis_px_from_marker(marker: &DetectedMarker) -> Option<f32> {
+pub(crate) fn mean_axis_px_from_marker(marker: &DetectedMarker) -> Option<f32> {
     marker.ellipse_outer.as_ref().map(mean_axis_px_from_params)
 }
 
-pub(super) fn median_outer_radius_from_neighbors_px(
+pub(crate) fn median_outer_radius_from_neighbors_px(
     projected_center: [f64; 2],
     markers: &[DetectedMarker],
     k: usize,
@@ -220,18 +220,18 @@ fn median_f32(values: &[f32]) -> f32 {
     sorted[sorted.len() / 2]
 }
 
-pub(super) struct OuterFitCandidate {
-    pub(super) edge: EdgeSampleResult,
-    pub(super) outer: Ellipse,
-    pub(super) outer_ransac: Option<crate::conic::RansacResult>,
-    pub(super) outer_estimate: OuterEstimate,
-    pub(super) chosen_hypothesis: usize,
-    pub(super) decode_result: Option<crate::ring::decode::DecodeResult>,
-    pub(super) decode_diag: crate::ring::decode::DecodeDiagnostics,
-    pub(super) score: f32,
+pub(crate) struct OuterFitCandidate {
+    pub(crate) edge: EdgeSampleResult,
+    pub(crate) outer: Ellipse,
+    pub(crate) outer_ransac: Option<crate::conic::RansacResult>,
+    pub(crate) outer_estimate: OuterEstimate,
+    pub(crate) chosen_hypothesis: usize,
+    pub(crate) decode_result: Option<crate::marker::decode::DecodeResult>,
+    pub(crate) decode_diag: crate::marker::decode::DecodeDiagnostics,
+    pub(crate) score: f32,
 }
 
-pub(super) fn fit_outer_ellipse_robust_with_reason(
+pub(crate) fn fit_outer_ellipse_robust_with_reason(
     gray: &GrayImage,
     center_prior: [f32; 2],
     r_outer_expected_px: f32,

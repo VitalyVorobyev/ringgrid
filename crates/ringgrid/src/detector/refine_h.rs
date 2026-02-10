@@ -2,20 +2,21 @@ use image::GrayImage;
 
 use crate::board_layout::BoardLayout;
 use crate::debug_dump as dbg;
-use crate::homography::project;
+use crate::homography::homography_project as project;
+use crate::pixelmap::PixelMapper;
 use crate::DetectedMarker;
 
 use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
 
-pub(super) fn refine_with_homography_with_debug(
+pub(crate) fn refine_with_homography_with_debug(
     gray: &GrayImage,
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
     config: &super::DetectConfig,
     board: &BoardLayout,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebug) {
     let mut refined = Vec::with_capacity(markers.len());
     let mut refined_dbg = Vec::with_capacity(markers.len());
@@ -102,8 +103,8 @@ pub(super) fn refine_with_homography_with_debug(
             Some(id),
             confidence,
             center,
-            Some(crate::EllipseParams::from(&outer)),
-            inner_params.clone(),
+            Some(outer),
+            inner_params,
             Some(edge.outer_points.clone()),
             Some(inner_fit.points_inner.clone()),
             fit.clone(),

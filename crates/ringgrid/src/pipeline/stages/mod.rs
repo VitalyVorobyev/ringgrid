@@ -6,7 +6,7 @@ mod stage_fit_decode;
 pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     seed_centers_image: &[[f32; 2]],
     seed_cfg: &SeedProposalParams,
     debug_cfg: Option<&DebugCollectConfig>,

@@ -73,7 +73,7 @@ Stable surface (library users):
 - `DetectConfig` and related config types
 - Detection functions: `detect_rings(...)`, `detect_rings_with_mapper(...)`, `detect_rings_with_self_undistort(...)`
 - `BoardLayout`, `CameraModel`, `PixelMapper`
-- Result types: `DetectionResult`, `DetectedMarker`, `EllipseParams`
+- Result types: `DetectionResult`, `DetectedMarker`, `Ellipse`
 
 Design constraints in v1:
 - Target JSON is mandatory for high-level detector construction:
@@ -99,7 +99,14 @@ let detector = Detector::new(target);
 ```text
 crates/
   ringgrid/
-    src/           # library code (curated public API in lib.rs)
+    src/
+      api.rs       # public Detector / TargetSpec facade
+      pipeline/    # high-level stage orchestration (internal)
+      detector/    # detection primitives independent of orchestration
+      marker/      # marker geometry + decode/codebook primitives
+      ring/        # edge/radius estimation primitives
+      pixelmap/    # camera and undistortion mappers
+      ...          # conic/homography/math helpers
     examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
@@ -109,7 +116,10 @@ tools/
   viz_detect_debug.py  # debug overlay rendering
 docs/
   assets/
+  module_structure.md
 ```
+
+Module ownership and dependency direction are documented in `docs/module_structure.md`.
 
 ## Examples
 

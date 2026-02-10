@@ -2,7 +2,7 @@
 
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
+use crate::pixelmap::PixelMapper;
 
 /// Configuration for radial edge sampling.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -149,7 +149,7 @@ pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::{CameraIntrinsics, CameraModel, PixelMapper, RadialTangentialDistortion};
+    use crate::pixelmap::{CameraIntrinsics, CameraModel, PixelMapper, RadialTangentialDistortion};
 
     #[test]
     fn test_bilinear_sample() {

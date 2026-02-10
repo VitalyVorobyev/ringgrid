@@ -1,15 +1,14 @@
 use image::GrayImage;
 
-use super::super::completion::CompletionDebugOptions;
 use super::super::{
     apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
     global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, refine_with_homography,
     refine_with_homography_with_debug, refit_homography_matrix,
-    warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionStats,
-    DebugCollectConfig, DetectConfig,
+    warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionDebugOptions,
+    CompletionStats, DebugCollectConfig, DetectConfig,
 };
-use crate::camera::PixelMapper;
 use crate::debug_dump as dbg;
+use crate::pixelmap::PixelMapper;
 use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 #[derive(Clone, Copy)]
@@ -319,7 +318,7 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
     };
 
     dbg::DebugDump {
-        schema_version: dbg::DEBUG_SCHEMA_V6.to_string(),
+        schema_version: dbg::DEBUG_SCHEMA_V7.to_string(),
         image: dbg::ImageDebug {
             path: debug_cfg.image_path.clone(),
             width: image_size[0],

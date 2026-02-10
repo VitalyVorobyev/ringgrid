@@ -7,8 +7,8 @@
 
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
-use crate::marker_spec::{AngularAggregator, GradPolarity};
+use crate::marker::{AngularAggregator, GradPolarity};
+use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
 use super::radial_profile;

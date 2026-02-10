@@ -1,5 +1,7 @@
 use crate::board_layout::BoardLayout;
-use crate::homography::{self, RansacHomographyConfig};
+use crate::homography::{
+    fit_homography_ransac, homography_reprojection_error, RansacHomographyConfig,
+};
 use crate::{DetectedMarker, RansacStats};
 
 pub(super) fn refit_homography(
@@ -31,7 +33,7 @@ pub(super) fn refit_homography(
         seed: config.seed + 1,
     };
 
-    match homography::fit_homography_ransac(&src, &dst, &light_config) {
+    match fit_homography_ransac(&src, &dst, &light_config) {
         Ok(result) => {
             let mut errors: Vec<f64> = result
                 .inlier_mask
@@ -68,7 +70,7 @@ pub(super) fn refit_homography(
     }
 }
 
-pub(super) fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
+pub fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
     [
         [m[(0, 0)], m[(0, 1)], m[(0, 2)]],
         [m[(1, 0)], m[(1, 1)], m[(1, 2)]],
@@ -76,13 +78,13 @@ pub(super) fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
     ]
 }
 
-pub(super) fn array_to_matrix3(m: &[[f64; 3]; 3]) -> nalgebra::Matrix3<f64> {
+pub fn array_to_matrix3(m: &[[f64; 3]; 3]) -> nalgebra::Matrix3<f64> {
     nalgebra::Matrix3::new(
         m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
     )
 }
 
-pub(super) fn mean_reproj_error_px(
+pub fn mean_reproj_error_px(
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     board: &BoardLayout,
@@ -96,7 +98,7 @@ pub(super) fn mean_reproj_error_px(
         let Some(xy) = board.xy_mm(id) else {
             continue;
         };
-        let err = homography::reprojection_error(
+        let err = homography_reprojection_error(
             h,
             &[xy[0] as f64, xy[1] as f64],
             &[m.center[0], m.center[1]],
@@ -113,7 +115,7 @@ pub(super) fn mean_reproj_error_px(
     }
 }
 
-pub(super) fn compute_h_stats(
+pub(crate) fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     thresh_px: f64,
@@ -127,7 +129,7 @@ pub(super) fn compute_h_stats(
         let Some(xy) = board.xy_mm(id) else {
             continue;
         };
-        let err = homography::reprojection_error(
+        let err = homography_reprojection_error(
             h,
             &[xy[0] as f64, xy[1] as f64],
             &[m.center[0], m.center[1]],
@@ -164,7 +166,7 @@ pub(super) fn compute_h_stats(
     })
 }
 
-pub(super) fn refit_homography_matrix(
+pub(crate) fn refit_homography_matrix(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
     board: &BoardLayout,

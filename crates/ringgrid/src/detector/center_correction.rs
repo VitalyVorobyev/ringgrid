@@ -3,7 +3,7 @@ use crate::DetectedMarker;
 
 use super::{CircleRefinementMethod, DetectConfig};
 
-pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
+pub(crate) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
     if config.circle_refinement == CircleRefinementMethod::None || has_mapper {
         return;
     }
@@ -14,8 +14,8 @@ pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
     );
 }
 
-pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
-    use crate::projective_center::{
+pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+    use crate::ring::projective_center::{
         ring_center_projective_with_debug, RingCenterProjectiveOptions,
     };
 
@@ -54,8 +54,8 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         };
 
         let center_before = m.center;
-        let q_inner = Conic2D::from_ellipse_params(inner).mat;
-        let q_outer = Conic2D::from_ellipse_params(outer).mat;
+        let q_inner = Conic2D::from_ellipse(inner).mat;
+        let q_outer = Conic2D::from_ellipse(outer).mat;
         let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) else {
             n_solver_failed += 1;
             continue;

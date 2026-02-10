@@ -49,7 +49,7 @@ impl std::error::Error for HomographyError {}
 // ── Projection ───────────────────────────────────────────────────────────
 
 /// Project a 2D point through a 3×3 homography: H * [x, y, 1]^T → [u, v].
-pub fn project(h: &Matrix3<f64>, x: f64, y: f64) -> [f64; 2] {
+pub fn homography_project(h: &Matrix3<f64>, x: f64, y: f64) -> [f64; 2] {
     let p = h * Vector3::new(x, y, 1.0);
     if p[2].abs() < 1e-15 {
         return [f64::NAN, f64::NAN];
@@ -58,8 +58,8 @@ pub fn project(h: &Matrix3<f64>, x: f64, y: f64) -> [f64; 2] {
 }
 
 /// Reprojection error: ||project(H, src) - dst||.
-pub fn reprojection_error(h: &Matrix3<f64>, src: &[f64; 2], dst: &[f64; 2]) -> f64 {
-    let p = project(h, src[0], src[1]);
+pub fn homography_reprojection_error(h: &Matrix3<f64>, src: &[f64; 2], dst: &[f64; 2]) -> f64 {
+    let p = homography_project(h, src[0], src[1]);
     let dx = p[0] - dst[0];
     let dy = p[1] - dst[1];
     (dx * dx + dy * dy).sqrt()
@@ -281,7 +281,7 @@ pub fn fit_homography_ransac(
         let mut count = 0usize;
         let mut mask = vec![false; n];
         for i in 0..n {
-            let err = reprojection_error(&h, &src[i], &dst[i]);
+            let err = homography_reprojection_error(&h, &src[i], &dst[i]);
             if err < config.inlier_threshold {
                 mask[i] = true;
                 count += 1;
@@ -318,7 +318,7 @@ pub fn fit_homography_ransac(
     let mut errors = vec![0.0f64; n];
     let mut final_inliers = 0usize;
     for i in 0..n {
-        let err = reprojection_error(&h_refit, &src[i], &dst[i]);
+        let err = homography_reprojection_error(&h_refit, &src[i], &dst[i]);
         errors[i] = err;
         if err < config.inlier_threshold {
             final_mask[i] = true;
@@ -351,13 +351,16 @@ mod tests {
     fn test_dlt_exact_4points() {
         let h_true = make_test_homography();
         let src = [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]];
-        let dst: Vec<[f64; 2]> = src.iter().map(|s| project(&h_true, s[0], s[1])).collect();
+        let dst: Vec<[f64; 2]> = src
+            .iter()
+            .map(|s| homography_project(&h_true, s[0], s[1]))
+            .collect();
 
         let h_est = estimate_homography_dlt(&src, &dst).unwrap();
 
         // Check reprojection of all 4 points
         for (s, d) in src.iter().zip(&dst) {
-            let err = reprojection_error(&h_est, s, d);
+            let err = homography_reprojection_error(&h_est, s, d);
             assert!(err < 1e-6, "reprojection error too large: {}", err);
         }
     }
@@ -371,7 +374,7 @@ mod tests {
         for i in 0..5 {
             for j in 0..5 {
                 let s = [i as f64 * 20.0, j as f64 * 20.0];
-                let d = project(&h_true, s[0], s[1]);
+                let d = homography_project(&h_true, s[0], s[1]);
                 src.push(s);
                 dst.push(d);
             }
@@ -380,7 +383,7 @@ mod tests {
         let h_est = estimate_homography_dlt(&src, &dst).unwrap();
 
         for (s, d) in src.iter().zip(&dst) {
-            let err = reprojection_error(&h_est, s, d);
+            let err = homography_reprojection_error(&h_est, s, d);
             assert!(err < 1e-6, "reprojection error: {}", err);
         }
     }
@@ -395,7 +398,7 @@ mod tests {
         let mut dst = Vec::new();
         for i in 0..20 {
             let s = [(i % 5) as f64 * 30.0, (i / 5) as f64 * 30.0];
-            let d = project(&h_true, s[0], s[1]);
+            let d = homography_project(&h_true, s[0], s[1]);
             // Add small noise
             let d = [
                 d[0] + rng.gen_range(-0.5..0.5),
@@ -427,7 +430,7 @@ mod tests {
 
         // Check that reprojection errors for true inliers are small
         for i in 0..20 {
-            let err = reprojection_error(&result.h, &src[i], &dst[i]);
+            let err = homography_reprojection_error(&result.h, &src[i], &dst[i]);
             assert!(err < 5.0, "inlier {} has error {}", i, err);
         }
     }
@@ -438,8 +441,8 @@ mod tests {
         let h_inv = h.try_inverse().unwrap();
 
         let p = [50.0, 75.0];
-        let q = project(&h, p[0], p[1]);
-        let p_back = project(&h_inv, q[0], q[1]);
+        let q = homography_project(&h, p[0], p[1]);
+        let p_back = homography_project(&h_inv, q[0], q[1]);
 
         assert_relative_eq!(p[0], p_back[0], epsilon = 1e-8);
         assert_relative_eq!(p[1], p_back[1], epsilon = 1e-8);

@@ -1,22 +1,22 @@
 use image::GrayImage;
 
-use super::super::inner_fit;
-use super::super::marker_build::{
+use super::inner_fit;
+use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
-use super::super::outer_fit::{
+use super::outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     OuterFitCandidate,
 };
-use super::super::{
+use super::{
     dedup_by_id, dedup_markers, dedup_with_debug, find_proposals_with_seeds, DebugCollectConfig,
     DetectConfig, SeedProposalParams,
 };
 use crate::debug_dump as dbg;
 use crate::detector::proposal::Proposal;
+use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
-use crate::DetectedMarker;
 
 pub(super) struct FitDecodeCoreOutput {
     pub(super) markers: Vec<DetectedMarker>,

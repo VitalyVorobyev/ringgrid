@@ -1,6 +1,6 @@
 use image::GrayImage;
 
-use super::super::{
+use super::{
     apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
     global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, refine_with_homography,
     refine_with_homography_with_debug, refit_homography_matrix,
@@ -8,8 +8,10 @@ use super::super::{
     CompletionStats, DebugCollectConfig, DetectConfig,
 };
 use crate::debug_dump as dbg;
+use crate::detector::DetectedMarker;
+use crate::homography::RansacStats;
+use crate::pipeline::DetectionResult;
 use crate::pixelmap::PixelMapper;
-use crate::{DetectedMarker, DetectionResult, RansacStats};
 
 #[derive(Clone, Copy)]
 struct FinalizeFlags {
@@ -347,7 +349,7 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
 
 pub(super) fn run(
     gray: &GrayImage,
-    fit_out: super::stage_fit_decode::FitDecodeCoreOutput,
+    fit_out: super::fit_decode::FitDecodeCoreOutput,
     image_size: [u32; 2],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
@@ -356,7 +358,7 @@ pub(super) fn run(
     warn_center_correction_without_intrinsics(config, mapper.is_some());
     let flags = finalize_flags(config, debug_cfg);
 
-    let super::stage_fit_decode::FitDecodeCoreOutput {
+    let super::fit_decode::FitDecodeCoreOutput {
         markers: fit_markers,
         marker_cand_idx,
         stage0,

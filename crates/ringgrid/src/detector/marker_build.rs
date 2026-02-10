@@ -1,9 +1,72 @@
 use crate::conic::{self, Ellipse};
 use crate::marker::decode::DecodeResult;
+use crate::marker::DecodeMetrics;
 use crate::ring::edge_sample::EdgeSampleResult;
-use crate::{DecodeMetrics, DetectedMarker, FitMetrics};
 
 use super::inner_fit::InnerFitResult;
+
+/// Fit quality metrics for a detected marker.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct FitMetrics {
+    /// Total number of radial rays cast.
+    pub n_angles_total: usize,
+    /// Number of rays where both inner and outer ring edges were found.
+    pub n_angles_with_both_edges: usize,
+    /// Number of outer edge points used for ellipse fit.
+    pub n_points_outer: usize,
+    /// Number of inner edge points used for ellipse fit.
+    pub n_points_inner: usize,
+    /// RANSAC inlier ratio for outer ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ransac_inlier_ratio_outer: Option<f32>,
+    /// RANSAC inlier ratio for inner ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ransac_inlier_ratio_inner: Option<f32>,
+    /// RMS Sampson residual for outer ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rms_residual_outer: Option<f64>,
+    /// RMS Sampson residual for inner ellipse fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rms_residual_inner: Option<f64>,
+}
+
+/// A detected marker with its refined center and optional ID.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DetectedMarker {
+    /// Decoded marker ID (codebook index), or None if decoding was rejected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<usize>,
+    /// Combined detection + decode confidence in [0, 1].
+    pub confidence: f32,
+    /// Marker center in detector working pixel coordinates.
+    ///
+    /// This is the undistorted pixel frame when camera intrinsics are provided,
+    /// otherwise it is the raw image pixel frame.
+    pub center: [f64; 2],
+    /// Projective unbiased center estimated from inner+outer ring conics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective: Option<[f64; 2]>,
+    /// Selection residual used by the projective-center eigenpair chooser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_projective_residual: Option<f64>,
+    /// Outer ellipse parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ellipse_outer: Option<Ellipse>,
+    /// Inner ellipse parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ellipse_inner: Option<Ellipse>,
+    /// Raw sub-pixel outer edge inlier points used for ellipse fitting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_outer: Option<Vec<[f64; 2]>>,
+    /// Raw sub-pixel inner edge inlier points used for ellipse fitting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_points_inner: Option<Vec<[f64; 2]>>,
+    /// Fit quality metrics.
+    pub fit: FitMetrics,
+    /// Decode metrics (present if decoding was attempted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decode: Option<DecodeMetrics>,
+}
 
 fn fit_metrics_from_outer(
     edge: &EdgeSampleResult,

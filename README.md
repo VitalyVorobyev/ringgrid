@@ -68,12 +68,15 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 
 ## Public API (v1)
 
+All detection goes through `Detector` methods. No public free functions.
+
 Stable surface (library users):
-- `Detector`, `TargetSpec`
-- `DetectConfig` and related config types
-- Detection functions: `detect_rings(...)`, `detect_rings_with_mapper(...)`, `detect_rings_with_self_undistort(...)`
-- `BoardLayout`, `CameraModel`, `PixelMapper`
-- Result types: `DetectionResult`, `DetectedMarker`, `Ellipse`
+- `Detector`, `TargetSpec` — entry point
+- `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
+- `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
+- `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
+- `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
+- `Ellipse` — conic geometry
 
 Design constraints in v1:
 - Target JSON is mandatory for high-level detector construction:
@@ -100,13 +103,16 @@ let detector = Detector::new(target);
 crates/
   ringgrid/
     src/
-      api.rs       # public Detector / TargetSpec facade
-      pipeline/    # high-level stage orchestration (internal)
-      detector/    # detection primitives independent of orchestration
-      marker/      # marker geometry + decode/codebook primitives
-      ring/        # edge/radius estimation primitives
-      pixelmap/    # camera and undistortion mappers
-      ...          # conic/homography/math helpers
+      lib.rs       # re-exports only (public API surface)
+      api.rs       # Detector / TargetSpec facade
+      pipeline/    # stage orchestration: run, fit_decode, finalize, two_pass
+      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
+      ring/        # ring-level sampling: edge, radius, projective center
+      marker/      # codebook, decode, marker spec
+      homography/  # DLT + RANSAC, refit utilities
+      conic/       # ellipse types, fitting, RANSAC, eigenvalue solver
+      pixelmap/    # camera models, PixelMapper trait, self-undistort
+      debug_dump.rs # debug JSON schema (feature-gated)
     examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
@@ -117,9 +123,11 @@ tools/
 docs/
   assets/
   module_structure.md
+  pipeline_analysis.md  # detailed pipeline architecture analysis
 ```
 
 Module ownership and dependency direction are documented in `docs/module_structure.md`.
+Detailed pipeline architecture is in `docs/pipeline_analysis.md`.
 
 ## Examples
 

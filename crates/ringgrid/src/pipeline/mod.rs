@@ -5,11 +5,45 @@
 
 use image::GrayImage;
 
-use crate::board_layout::BoardLayout;
 use crate::debug_dump as dbg;
 use crate::detector;
+use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
-use crate::{DetectedMarker, DetectionResult};
+
+/// Full detection result for a single image.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DetectionResult {
+    /// Detected markers in detector working pixel coordinates.
+    pub detected_markers: Vec<DetectedMarker>,
+    /// Image dimensions [width, height].
+    pub image_size: [u32; 2],
+    /// Fitted board-to-working-frame homography (3x3, row-major), if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homography: Option<[[f64; 3]; 3]>,
+    /// RANSAC statistics, if homography was fitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ransac: Option<crate::homography::RansacStats>,
+    /// Camera model used for distortion-aware processing, if configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<crate::pixelmap::CameraModel>,
+    /// Estimated self-undistort division model, if self-undistort was run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
+}
+
+impl DetectionResult {
+    /// Construct an empty result for an image with the provided dimensions.
+    pub fn empty(width: u32, height: u32) -> Self {
+        Self {
+            detected_markers: Vec::new(),
+            image_size: [width, height],
+            homography: None,
+            ransac: None,
+            camera: None,
+            self_undistort: None,
+        }
+    }
+}
 
 pub(crate) use crate::detector::config_mapper;
 pub(crate) use crate::detector::inner_fit;
@@ -22,19 +56,22 @@ pub(crate) use crate::detector::{
     DebugCollectConfig, DetectConfig, SeedProposalParams, TwoPassParams,
 };
 
+pub(crate) use crate::homography::{
+    compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
+};
 pub(crate) use detector::{
-    apply_projective_centers, complete_with_h, compute_h_stats, dedup_by_id, dedup_markers,
-    dedup_with_debug, global_filter, global_filter_with_debug, matrix3_to_array,
-    mean_reproj_error_px, refine_with_homography_with_debug, refit_homography_matrix,
-    warn_center_correction_without_intrinsics,
+    apply_projective_centers, complete_with_h, dedup_by_id, dedup_markers, dedup_with_debug,
+    global_filter, global_filter_with_debug, refine_with_homography,
+    refine_with_homography_with_debug, warn_center_correction_without_intrinsics,
 };
 
-mod stages;
+mod finalize;
+mod fit_decode;
+mod run;
 mod two_pass;
 
-pub use two_pass::{
-    detect_rings, detect_rings_two_pass_with_mapper, detect_rings_with_mapper,
-    detect_rings_with_self_undistort,
+pub(crate) use two_pass::{
+    detect_rings, detect_rings_with_mapper, detect_rings_with_self_undistort,
 };
 
 pub(super) fn find_proposals_with_seeds(
@@ -66,7 +103,7 @@ pub fn detect_rings_with_debug_and_mapper(
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDump) {
-    let (result, dump) = stages::run(
+    let (result, dump) = run::run(
         gray,
         config,
         mapper,
@@ -78,19 +115,4 @@ pub fn detect_rings_with_debug_and_mapper(
         result,
         dump.expect("debug dump present when debug_cfg is provided"),
     )
-}
-
-/// Refine marker centers using H: project board coords through H as priors,
-/// then re-run local ring fit around those priors.
-fn refine_with_homography(
-    gray: &GrayImage,
-    markers: &[DetectedMarker],
-    h: &nalgebra::Matrix3<f64>,
-    config: &DetectConfig,
-    board: &BoardLayout,
-    mapper: Option<&dyn PixelMapper>,
-) -> Vec<DetectedMarker> {
-    let (refined, _debug) =
-        refine_with_homography_with_debug(gray, markers, h, config, board, mapper);
-    refined
 }

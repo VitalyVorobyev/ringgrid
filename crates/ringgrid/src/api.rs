@@ -149,6 +149,17 @@ impl Detector {
         pipeline::detect_rings_with_mapper(image, &self.config, Some(mapper))
     }
 
+    /// Detect with automatic self-undistortion estimation.
+    ///
+    /// Runs a baseline detection, then estimates a division-model distortion
+    /// correction from ellipse edge points. If the model improves reprojection,
+    /// re-runs detection with the estimated mapper.
+    ///
+    /// Requires `config.self_undistort.enable = true` (set via config_mut).
+    pub fn detect_with_self_undistort(&self, image: &GrayImage) -> DetectionResult {
+        pipeline::detect_rings_with_self_undistort(image, &self.config)
+    }
+
     /// Detect with debug dump collection.
     #[cfg(feature = "cli-internal")]
     pub fn detect_with_debug(
@@ -157,13 +168,6 @@ impl Detector {
         debug_cfg: &DebugCollectConfig,
     ) -> (DetectionResult, DebugDump) {
         pipeline::detect_rings_with_debug(image, &self.config, debug_cfg)
-    }
-
-    /// Detect with known camera intrinsics for precision mode.
-    ///
-    /// Thin wrapper around [`detect_with_camera`](Self::detect_with_camera).
-    pub fn detect_precision(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
-        self.detect_with_camera(image, camera)
     }
 }
 

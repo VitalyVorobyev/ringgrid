@@ -7,7 +7,6 @@ pub(crate) mod center_correction;
 pub(crate) mod completion;
 pub(crate) mod dedup;
 pub(crate) mod global_filter;
-pub(crate) mod homography_utils;
 pub(crate) mod inner_fit;
 pub(crate) mod marker_build;
 pub(crate) mod outer_fit;
@@ -30,12 +29,9 @@ pub use config::{
 pub(crate) use dedup::dedup_with_debug;
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::{global_filter, global_filter_with_debug};
-pub(crate) use homography_utils::{
-    compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
-};
+pub use marker_build::{DetectedMarker, FitMetrics};
 pub(crate) use outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     mean_axis_px_from_marker, median_outer_radius_from_neighbors_px, OuterFitCandidate,
 };
-pub use proposal::ProposalConfig;
-pub(crate) use refine_h::refine_with_homography_with_debug;
+pub(crate) use refine_h::{refine_with_homography, refine_with_homography_with_debug};

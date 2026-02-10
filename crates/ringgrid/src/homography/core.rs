@@ -46,6 +46,23 @@ impl std::fmt::Display for HomographyError {
 
 impl std::error::Error for HomographyError {}
 
+// ── Output statistics ────────────────────────────────────────────────────
+
+/// RANSAC statistics for homography fitting.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RansacStats {
+    /// Number of decoded candidates fed to RANSAC.
+    pub n_candidates: usize,
+    /// Number of inliers after RANSAC.
+    pub n_inliers: usize,
+    /// Inlier threshold in working-frame pixels.
+    pub threshold_px: f64,
+    /// Mean reprojection error of inliers (working-frame pixels).
+    pub mean_err_px: f64,
+    /// 95th percentile reprojection error (working-frame pixels).
+    pub p95_err_px: f64,
+}
+
 // ── Projection ───────────────────────────────────────────────────────────
 
 /// Project a 2D point through a 3×3 homography: H * [x, y, 1]^T → [u, v].

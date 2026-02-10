@@ -1,7 +1,6 @@
-use super::*;
+//! Top-level pipeline orchestrator: fit_decode → finalize.
 
-mod stage_finalize;
-mod stage_fit_decode;
+use super::*;
 
 pub(super) fn run(
     gray: &GrayImage,
@@ -12,7 +11,7 @@ pub(super) fn run(
     debug_cfg: Option<&DebugCollectConfig>,
 ) -> (DetectionResult, Option<crate::debug_dump::DebugDump>) {
     let (w, h) = gray.dimensions();
-    let fit_out = stage_fit_decode::run(
+    let fit_out = super::fit_decode::run(
         gray,
         config,
         mapper,
@@ -20,5 +19,5 @@ pub(super) fn run(
         seed_cfg,
         debug_cfg,
     );
-    stage_finalize::run(gray, fit_out, [w, h], config, mapper, debug_cfg)
+    super::finalize::run(gray, fit_out, [w, h], config, mapper, debug_cfg)
 }

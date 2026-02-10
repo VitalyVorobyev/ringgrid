@@ -1,11 +1,12 @@
 use image::GrayImage;
 use std::collections::HashSet;
 
+use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
-use crate::{DetectedMarker, DetectionResult};
 
 use super::config_mapper;
-use super::stages;
+use super::run as stages;
+use super::DetectionResult;
 use super::{dedup_by_id, dedup_markers, DetectConfig, SeedProposalParams, TwoPassParams};
 use crate::detector::proposal::{find_proposals, Proposal, ProposalConfig};
 
@@ -150,7 +151,7 @@ fn detect_rings_with_mapper_and_seeds(
 }
 
 /// Run the full ring detection pipeline.
-pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+pub(crate) fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     detect_rings_with_mapper_and_seeds(
         gray,
         config,
@@ -165,7 +166,7 @@ pub fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult 
 /// This allows users to plug in camera/distortion models via a lightweight trait adapter.
 /// When a mapper is provided, detection runs in two passes:
 /// raw pass-1, then mapper-aware pass-2 with pass-1 seed injection.
-pub fn detect_rings_with_mapper(
+pub(crate) fn detect_rings_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
@@ -217,7 +218,7 @@ fn detect_rings_pass2_with_seeds(
 ///
 /// Returned detections stay in pass-2 mapper working coordinates. Any retained
 /// pass-1 fallback markers are remapped to the same working frame.
-pub fn detect_rings_two_pass_with_mapper(
+pub(crate) fn detect_rings_two_pass_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
@@ -232,7 +233,7 @@ pub fn detect_rings_two_pass_with_mapper(
 /// Runs a baseline pass first. If `config.self_undistort.enable` is true and
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
-pub fn detect_rings_with_self_undistort(
+pub(crate) fn detect_rings_with_self_undistort(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> DetectionResult {

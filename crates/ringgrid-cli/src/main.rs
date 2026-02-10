@@ -509,10 +509,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg);
         (r, Some(d))
     } else if config.self_undistort.enable {
-        (
-            ringgrid::detect_rings_with_self_undistort(&gray, &config),
-            None,
-        )
+        (detector.detect_with_self_undistort(&gray), None)
     } else {
         (detector.detect(&gray), None)
     };

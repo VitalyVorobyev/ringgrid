@@ -18,8 +18,44 @@ pub(crate) fn refine_with_homography_with_debug(
     board: &BoardLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> (Vec<DetectedMarker>, dbg::RefineDebug) {
+    let (refined, refined_dbg) = refine_impl(gray, markers, h, config, board, mapper, true);
+    (
+        refined,
+        dbg::RefineDebug {
+            h_prior: crate::homography::matrix3_to_array(h),
+            refined_markers: refined_dbg.unwrap_or_default(),
+            h_refit: None,
+            notes: Vec::new(),
+        },
+    )
+}
+
+pub(crate) fn refine_with_homography(
+    gray: &GrayImage,
+    markers: &[DetectedMarker],
+    h: &nalgebra::Matrix3<f64>,
+    config: &super::DetectConfig,
+    board: &BoardLayout,
+    mapper: Option<&dyn PixelMapper>,
+) -> Vec<DetectedMarker> {
+    refine_impl(gray, markers, h, config, board, mapper, false).0
+}
+
+fn refine_impl(
+    gray: &GrayImage,
+    markers: &[DetectedMarker],
+    h: &nalgebra::Matrix3<f64>,
+    config: &super::DetectConfig,
+    board: &BoardLayout,
+    mapper: Option<&dyn PixelMapper>,
+    collect_debug: bool,
+) -> (Vec<DetectedMarker>, Option<Vec<dbg::RefinedMarkerDebug>>) {
     let mut refined = Vec::with_capacity(markers.len());
-    let mut refined_dbg = Vec::with_capacity(markers.len());
+    let mut refined_dbg = if collect_debug {
+        Some(Vec::with_capacity(markers.len()))
+    } else {
+        None
+    };
     let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
 
     for m in markers {
@@ -73,13 +109,14 @@ pub(crate) fn refine_with_homography_with_debug(
             && mean_axis_new >= (r_expected * 0.75)
             && mean_axis_new <= (r_expected * 1.33);
         if decode_result.is_none() || !scale_ok {
-            // Refinement is best-effort and must not degrade decoded detections.
+            if let Some(dbg_vec) = refined_dbg.as_mut() {
+                dbg_vec.push(dbg::RefinedMarkerDebug {
+                    id,
+                    prior_center_xy: [prior[0], prior[1]],
+                    refined_marker: m.clone(),
+                });
+            }
             refined.push(m.clone());
-            refined_dbg.push(dbg::RefinedMarkerDebug {
-                id,
-                prior_center_xy: [prior[0], prior[1]],
-                refined_marker: m.clone(),
-            });
             continue;
         }
 
@@ -107,26 +144,20 @@ pub(crate) fn refine_with_homography_with_debug(
             inner_params,
             Some(edge.outer_points.clone()),
             Some(inner_fit.points_inner.clone()),
-            fit.clone(),
+            fit,
             decode_metrics,
         );
 
-        refined_dbg.push(dbg::RefinedMarkerDebug {
-            id,
-            prior_center_xy: [prior[0], prior[1]],
-            refined_marker: updated.clone(),
-        });
+        if let Some(dbg_vec) = refined_dbg.as_mut() {
+            dbg_vec.push(dbg::RefinedMarkerDebug {
+                id,
+                prior_center_xy: [prior[0], prior[1]],
+                refined_marker: updated.clone(),
+            });
+        }
 
         refined.push(updated);
     }
 
-    (
-        refined,
-        dbg::RefineDebug {
-            h_prior: super::matrix3_to_array(h),
-            refined_markers: refined_dbg,
-            h_refit: None,
-            notes: Vec::new(),
-        },
-    )
+    (refined, refined_dbg)
 }

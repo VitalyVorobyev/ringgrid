@@ -1188,6 +1188,12 @@ def generate_one_sample(
     rng = np.random.RandomState(seed + idx)
 
     markers = generate_hex_lattice(board_mm, pitch_mm, n_markers)
+    if markers:
+        anchor_x = float(markers[0][2])
+        anchor_y = float(markers[0][3])
+    else:
+        anchor_x = 0.0
+        anchor_y = 0.0
 
     # Marker geometry (in mm)
     outer_radius = pitch_mm * 0.6
@@ -1197,6 +1203,13 @@ def generate_one_sample(
 
     tilt = float(tilt_strength) if projective else 0.0
     H = make_random_homography(rng, img_w, img_h, board_mm, tilt_strength=tilt)
+    # Runtime BoardLayout normalizes marker coordinates so marker id=0 is at (0, 0).
+    # Store GT homography in that same board frame for consistent scoring.
+    h_shift = np.array(
+        [[1.0, 0.0, anchor_x], [0.0, 1.0, anchor_y], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    H_gt = H @ h_shift
 
     # Render
     img = render_board(
@@ -1270,7 +1283,7 @@ def generate_one_sample(
             "id": code_id,
             "q": q,
             "r": r,
-            "board_xy_mm": [float(mx), float(my)],
+            "board_xy_mm": [float(mx - anchor_x), float(my - anchor_y)],
             "true_working_center": [float(wx), float(wy)],
             "true_image_center": [float(ix), float(iy)],
             "outer_ellipse": outer_ell_img,
@@ -1287,7 +1300,7 @@ def generate_one_sample(
         "pitch_mm": pitch_mm,
         "outer_radius_mm": outer_radius,
         "inner_radius_mm": inner_radius,
-        "homography": H.tolist(),
+        "homography": H_gt.tolist(),
         "blur_px": blur_px,
         "illum_strength": illum_strength,
         "noise_sigma": noise_sigma,

@@ -11,7 +11,7 @@
 //! (typically image center).
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::board_layout::BoardLayout;
 use crate::camera::PixelMapper;
@@ -309,7 +309,7 @@ fn homography_self_error_px(
     board: &BoardLayout,
     mapper: &dyn PixelMapper,
 ) -> Option<(f64, usize)> {
-    let mut by_id: HashMap<usize, (f32, [f64; 2])> = HashMap::new();
+    let mut by_id: BTreeMap<usize, (f32, [f64; 2])> = BTreeMap::new();
     for m in markers {
         let Some(id) = m.id else {
             continue;
@@ -591,7 +591,6 @@ mod tests {
             confidence: 1.0,
             center,
             center_projective: None,
-            vanishing_line: None,
             center_projective_residual: None,
             ellipse_outer: outer_ellipse.as_ref().map(crate::EllipseParams::from),
             ellipse_inner: inner_ellipse.as_ref().map(crate::EllipseParams::from),

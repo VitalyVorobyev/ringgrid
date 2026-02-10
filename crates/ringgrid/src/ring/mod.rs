@@ -12,6 +12,5 @@ pub(crate) mod detect;
 pub(crate) mod edge_sample;
 pub(crate) mod inner_estimate;
 pub(crate) mod outer_estimate;
-mod pipeline;
 pub(crate) mod proposal;
 pub(crate) mod radial_profile;

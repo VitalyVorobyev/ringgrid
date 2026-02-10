@@ -71,6 +71,7 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 Stable surface (library users):
 - `Detector`, `TargetSpec`
 - `DetectConfig` and related config types
+- Detection functions: `detect_rings(...)`, `detect_rings_with_mapper(...)`, `detect_rings_with_self_undistort(...)`
 - `BoardLayout`, `CameraModel`, `PixelMapper`
 - Result types: `DetectionResult`, `DetectedMarker`, `EllipseParams`
 
@@ -197,7 +198,7 @@ Self-undistort implementation notes:
 ### Distortion Benchmark (Projective-Center, 3 Images)
 
 Source:
-- `tools/out/r4_benchmark_distorted_threeway_v4/summary.json`
+- `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json`
 
 Example distorted sample used in this benchmark:
 
@@ -207,7 +208,7 @@ Run command:
 
 ```bash
 ./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/r4_benchmark_distorted_threeway_v4 \
+  --out_dir tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline \
   --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
   --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
   --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
@@ -215,13 +216,16 @@ Run command:
   --modes projective_center
 ```
 
+Benchmark script defaults to `cargo run` (source-of-truth build). Use
+`--use-prebuilt-binary` only when you intentionally want to benchmark an existing binary artifact.
+
 Image-space metric snapshot:
 
 | Correction | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|---:|---:|
-| `none` | 1.000 | 0.974 | 0.231 | 1.030 / 2.961 | 1.345 / 3.611 |
-| `external` | 1.000 | 1.000 | 0.077 | 0.075 / 0.146 | 0.020 / 0.029 |
-| `self_undistort` | 1.000 | 1.000 | 0.079 | 0.210 / 0.423 | 0.193 / 0.407 |
+| `none` | 1.000 | 0.974 | 0.232 | 1.030 / 2.961 | 1.345 / 3.611 |
+| `external` | 1.000 | 1.000 | 0.078 | 0.075 / 0.146 | 0.020 / 0.029 |
+| `self_undistort` | 1.000 | 1.000 | 0.078 | 0.210 / 0.426 | 0.193 / 0.408 |
 
 Notes:
 - Scripts now score in distorted image space for all three correction variants.
@@ -230,13 +234,13 @@ Notes:
 
 ### Reference Benchmark (Clean, 3 Images)
 
-Source: `tools/out/reference_benchmark/summary.json`
+Source: `tools/out/reference_benchmark_post_pipeline/summary.json`
 
 Run command:
 
 ```bash
 ./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/reference_benchmark \
+  --out_dir tools/out/reference_benchmark_post_pipeline \
   --n_images 3 \
   --blur_px 0.8 \
   --noise_sigma 0.0 \
@@ -246,7 +250,7 @@ Run command:
 
 | Mode | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
 |---|---:|---:|---:|
-| `none` | 0.072 | 0.065 / 0.131 | 0.033 / 0.049 |
+| `none` | 0.072 | 0.065 / 0.132 | 0.033 / 0.049 |
 | `projective-center` | 0.054 | 0.051 / 0.098 | 0.019 / 0.030 |
 
 ### Regression Batch (10 images)

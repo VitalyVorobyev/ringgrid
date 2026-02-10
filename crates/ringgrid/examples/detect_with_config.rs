@@ -1,5 +1,8 @@
 use image::ImageReader;
-use ringgrid::{CircleRefinementMethod, DetectConfig, Detector, MarkerScalePrior, TargetSpec};
+use ringgrid::{
+    detect_rings_with_self_undistort, CircleRefinementMethod, DetectConfig, MarkerScalePrior,
+    TargetSpec,
+};
 use std::error::Error;
 use std::path::Path;
 
@@ -20,8 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     cfg.self_undistort.enable = true;
     cfg.self_undistort.min_markers = 12;
 
-    let detector = Detector::with_config(cfg);
-    let result = detector.detect_with_self_undistort(&image);
+    let result = detect_rings_with_self_undistort(&image, &cfg);
     if let Some(su) = result.self_undistort.as_ref() {
         println!(
             "Self-undistort: lambda={:.3e}, applied={}, objective {:.4} -> {:.4}",

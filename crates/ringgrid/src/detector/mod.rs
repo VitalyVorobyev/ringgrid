@@ -16,8 +16,7 @@ pub(crate) mod refine_h;
 mod config;
 
 pub(crate) use center_correction::{
-    apply_projective_centers, reapply_projective_centers,
-    warn_center_correction_without_intrinsics,
+    apply_projective_centers, reapply_projective_centers, warn_center_correction_without_intrinsics,
 };
 pub(crate) use completion::{
     complete_with_h, CompletionAttemptRecord, CompletionDebugOptions, CompletionStats,

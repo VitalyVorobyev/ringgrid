@@ -497,8 +497,10 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     let detector = ringgrid::Detector::with_config(config.clone());
-    let camera_mapper: Option<&dyn ringgrid::PixelMapper> =
-        overrides.camera.as_ref().map(|c| c as &dyn ringgrid::PixelMapper);
+    let camera_mapper: Option<&dyn ringgrid::PixelMapper> = overrides
+        .camera
+        .as_ref()
+        .map(|c| c as &dyn ringgrid::PixelMapper);
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),

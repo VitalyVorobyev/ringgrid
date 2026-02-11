@@ -406,4 +406,3 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
         config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
     }
 }
-

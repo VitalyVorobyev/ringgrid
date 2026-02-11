@@ -16,7 +16,7 @@ use crate::detector::{
 use crate::homography::RansacHomographyConfig;
 use crate::marker::decode::{DecodeDiagnostics, DecodeResult};
 use crate::marker::{DecodeConfig, MarkerSpec};
-use crate::pixelmap::{CameraModel, SelfUndistortConfig};
+use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::edge_sample::{EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::InnerEstimate;
 use crate::ring::outer_estimate::{OuterEstimate, OuterEstimationConfig};
@@ -76,8 +76,6 @@ pub struct DetectConfigSnapshot {
     pub outer_estimation: OuterEstimationConfig,
     pub decode: DecodeConfig,
     pub marker_spec: MarkerSpec,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub camera: Option<CameraModel>,
     pub circle_refinement: CircleRefinementMethod,
     pub projective_center: ProjectiveCenterParams,
     pub completion: CompletionParams,
@@ -102,7 +100,6 @@ impl DetectConfigSnapshot {
             outer_estimation: config.outer_estimation.clone(),
             decode: config.decode.clone(),
             marker_spec: config.marker_spec.clone(),
-            camera: config.camera,
             circle_refinement: config.circle_refinement,
             projective_center: config.projective_center.clone(),
             completion: config.completion.clone(),

@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
 
-use super::config_mapper;
 use super::run as stages;
 use super::DetectionResult;
 use super::{dedup_by_id, dedup_markers, DetectConfig, SeedProposalParams, TwoPassParams};
@@ -150,15 +149,13 @@ fn detect_rings_with_mapper_and_seeds(
     stages::run(gray, config, mapper, seed_centers_image, seed_cfg, None).0
 }
 
-/// Run the full ring detection pipeline.
-pub(crate) fn detect_rings(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    detect_rings_with_mapper_and_seeds(
-        gray,
-        config,
-        config_mapper(config),
-        &[],
-        &SeedProposalParams::default(),
-    )
+/// Run the full ring detection pipeline with an optional mapper.
+pub(crate) fn detect_rings(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    detect_rings_with_mapper_and_seeds(gray, config, mapper, &[], &SeedProposalParams::default())
 }
 
 /// Run the full ring detection pipeline with an optional custom pixel mapper.
@@ -224,7 +221,7 @@ pub(crate) fn detect_rings_two_pass_with_mapper(
     mapper: &dyn PixelMapper,
     params: &TwoPassParams,
 ) -> DetectionResult {
-    let pass1 = detect_rings_with_mapper_and_seeds(gray, config, None, &[], &params.seed);
+    let pass1 = detect_rings(gray, config, None);
     detect_rings_pass2_with_seeds(gray, config, mapper, &pass1, params)
 }
 
@@ -239,7 +236,7 @@ pub(crate) fn detect_rings_with_self_undistort(
 ) -> DetectionResult {
     use crate::pixelmap::estimate_self_undistort;
 
-    let mut result = detect_rings(gray, config);
+    let mut result = detect_rings(gray, config, None);
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
         return result;

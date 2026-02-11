@@ -128,19 +128,24 @@ impl Detector {
         &mut self.config
     }
 
-    /// Detect markers in a grayscale image.
+    /// Detect markers in a grayscale image (single-pass, no distortion mapping).
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_rings(image, &self.config)
+        pipeline::detect_rings(image, &self.config, None)
     }
 
-    /// Detect with a camera model (sets camera in config, runs standard pipeline).
+    /// Detect with a camera model (single-pass with distortion-aware sampling).
+    ///
+    /// The camera model is used as a `PixelMapper` for coordinate transforms
+    /// during edge sampling and fitting. All results are in the undistorted
+    /// working frame.
     pub fn detect_with_camera(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
-        let mut cfg = self.config.clone();
-        cfg.camera = Some(*camera);
-        pipeline::detect_rings(image, &cfg)
+        pipeline::detect_rings(image, &self.config, Some(camera as &dyn PixelMapper))
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
+    ///
+    /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
+    /// Results are in mapper working frame.
     pub fn detect_with_mapper(
         &self,
         image: &GrayImage,
@@ -160,14 +165,15 @@ impl Detector {
         pipeline::detect_rings_with_self_undistort(image, &self.config)
     }
 
-    /// Detect with debug dump collection.
+    /// Detect with debug dump collection (single-pass).
     #[cfg(feature = "cli-internal")]
     pub fn detect_with_debug(
         &self,
         image: &GrayImage,
         debug_cfg: &DebugCollectConfig,
+        mapper: Option<&dyn PixelMapper>,
     ) -> (DetectionResult, DebugDump) {
-        pipeline::detect_rings_with_debug(image, &self.config, debug_cfg)
+        pipeline::detect_rings_with_debug(image, &self.config, debug_cfg, mapper)
     }
 }
 

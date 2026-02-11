@@ -2,8 +2,8 @@ use image::GrayImage;
 
 use super::{
     apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
-    global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, refine_with_homography,
-    refine_with_homography_with_debug, refit_homography_matrix,
+    global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, reapply_projective_centers,
+    refine_with_homography, refine_with_homography_with_debug, refit_homography_matrix,
     warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionDebugOptions,
     CompletionStats, DebugCollectConfig, DetectConfig,
 };
@@ -46,12 +46,17 @@ fn finalize_flags(config: &DetectConfig, debug_cfg: Option<&DebugCollectConfig>)
 
 fn phase_filter_and_refine_h(
     gray: &GrayImage,
-    fit_markers: Vec<DetectedMarker>,
+    mut fit_markers: Vec<DetectedMarker>,
     marker_cand_idx: &[usize],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     flags: FinalizeFlags,
 ) -> FilterPhaseOutput {
+    // 1st PC pass: correct fit-decode markers before global filter
+    if flags.use_projective_center {
+        apply_projective_centers(&mut fit_markers, config);
+    }
+
     if !config.use_global_filter {
         let ransac_debug = if flags.collect_debug {
             Some(dbg::RansacDebug {
@@ -88,7 +93,7 @@ fn phase_filter_and_refine_h(
         let mut h_current = h_result.as_ref().map(|r| r.h);
         let h_matrix = h_result.as_ref().map(|r| &r.h);
 
-        let (markers, refine_debug) = if config.refine_with_h {
+        let (mut markers, refine_debug) = if config.refine_with_h {
             if let Some(h) = h_matrix {
                 if filtered.len() >= 10 {
                     let (refined, refine_dbg) = refine_with_homography_with_debug(
@@ -110,6 +115,11 @@ fn phase_filter_and_refine_h(
             (filtered, None)
         };
 
+        // 2nd PC pass: reapply after refine-H (new ellipses)
+        if flags.use_projective_center && refine_debug.is_some() {
+            reapply_projective_centers(&mut markers, config);
+        }
+
         if h_current.is_none() {
             h_current = h_result.map(|r| r.h);
         }
@@ -129,19 +139,26 @@ fn phase_filter_and_refine_h(
     let h_current = h_result.as_ref().map(|r| r.h);
     let h_matrix = h_result.as_ref().map(|r| &r.h);
 
-    let markers = if config.refine_with_h {
+    let (mut markers, did_refine) = if config.refine_with_h {
         if let Some(h) = h_matrix {
             if filtered.len() >= 10 {
-                refine_with_homography(gray, &filtered, h, config, &config.board, mapper)
+                let refined =
+                    refine_with_homography(gray, &filtered, h, config, &config.board, mapper);
+                (refined, true)
             } else {
-                filtered
+                (filtered, false)
             }
         } else {
-            filtered
+            (filtered, false)
         }
     } else {
-        filtered
+        (filtered, false)
     };
+
+    // 2nd PC pass: reapply after refine-H (new ellipses)
+    if flags.use_projective_center && did_refine {
+        reapply_projective_centers(&mut markers, config);
+    }
 
     FilterPhaseOutput {
         markers,
@@ -205,16 +222,6 @@ fn phase_completion(
     }
 }
 
-fn phase_center_correction(
-    final_markers: &mut [DetectedMarker],
-    config: &DetectConfig,
-    flags: FinalizeFlags,
-) {
-    if flags.use_projective_center {
-        apply_projective_centers(final_markers, config);
-    }
-}
-
 fn phase_final_h(
     final_markers: &[DetectedMarker],
     h_current: Option<nalgebra::Matrix3<f64>>,
@@ -272,14 +279,12 @@ fn build_result(
     image_size: [u32; 2],
     final_h: Option<[[f64; 3]; 3]>,
     final_ransac: Option<RansacStats>,
-    config: &DetectConfig,
 ) -> DetectionResult {
     DetectionResult {
         detected_markers: final_markers,
         image_size,
         homography: final_h,
         ransac: final_ransac,
-        camera: config.camera,
         self_undistort: None,
     }
 }
@@ -370,8 +375,8 @@ pub(super) fn run(
         phase_filter_and_refine_h(gray, fit_markers, &marker_cand_idx, config, mapper, flags);
 
     if filter_phase.short_circuit_no_h_no_debug {
-        phase_center_correction(&mut filter_phase.markers, config, flags);
-        let result = build_result(filter_phase.markers, image_size, None, None, config);
+        // PC was already applied in phase_filter_and_refine_h (1st pass)
+        let result = build_result(filter_phase.markers, image_size, None, None);
         return (result, None);
     }
 
@@ -388,7 +393,10 @@ pub(super) fn run(
         flags,
     );
 
-    phase_center_correction(&mut final_markers, config, flags);
+    // 3rd PC pass: correct completion-only markers (skips already-corrected ones)
+    if flags.use_projective_center {
+        apply_projective_centers(&mut final_markers, config);
+    }
 
     let (final_h, final_ransac) = phase_final_h(
         &final_markers,
@@ -408,7 +416,7 @@ pub(super) fn run(
         }
     );
 
-    let result = build_result(final_markers, image_size, final_h, final_ransac, config);
+    let result = build_result(final_markers, image_size, final_h, final_ransac);
 
     let dump = if let Some(debug_cfg) = debug_cfg {
         Some(build_debug_dump(DumpBuildInput {

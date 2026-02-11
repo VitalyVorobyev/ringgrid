@@ -325,8 +325,6 @@ fn build_detect_config(
     if let Some(roi) = overrides.completion_roi_radius_px {
         config.completion.roi_radius_px = roi;
     }
-    config.camera = overrides.camera;
-
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
@@ -499,6 +497,8 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     let detector = ringgrid::Detector::with_config(config.clone());
+    let camera_mapper: Option<&dyn ringgrid::PixelMapper> =
+        overrides.camera.as_ref().map(|c| c as &dyn ringgrid::PixelMapper);
     let (result, debug_dump) = if debug_out_path.is_some() {
         let dbg_cfg = ringgrid::DebugCollectConfig {
             image_path: Some(args.image.display().to_string()),
@@ -506,10 +506,12 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
             max_candidates: args.debug_max_candidates,
             store_points: args.debug_store_points,
         };
-        let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg);
+        let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg, camera_mapper);
         (r, Some(d))
     } else if config.self_undistort.enable {
         (detector.detect_with_self_undistort(&gray), None)
+    } else if let Some(camera) = &overrides.camera {
+        (detector.detect_with_camera(&gray, camera), None)
     } else {
         (detector.detect(&gray), None)
     };

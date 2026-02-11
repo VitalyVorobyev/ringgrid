@@ -17,7 +17,7 @@ Detector (api.rs)                -- public API, owns DetectConfig
 pipeline/run.rs::run()           -- glue: fit_decode -> finalize
   |
   +-- fit_decode::run()          -- proposals -> fit -> decode -> dedup
-  +-- finalize::run()            -- global_filter -> refine_h -> completion -> projective_center -> final_h
+  +-- finalize::run()            -- PC -> global_filter -> refine_h -> PC(reapply) -> completion -> PC -> final_h
 ```
 
 Two-pass and self-undistort orchestration lives in `pipeline/two_pass.rs`.
@@ -28,11 +28,13 @@ All detection goes through `Detector` methods. No public free functions.
 
 | Method | Mapper | Seeds | Debug | Two-Pass |
 |--------|--------|-------|-------|----------|
-| `detect` | from config.camera | none | no | no |
-| `detect_with_camera` | override camera | none | no | no |
-| `detect_with_mapper` | explicit | none | no | yes |
+| `detect` | none | none | no | no |
+| `detect_with_camera` | explicit CameraModel | none | no | no |
+| `detect_with_mapper` | explicit PixelMapper | none | no | yes |
 | `detect_with_self_undistort` | estimated | pass-1 centers | no | yes |
-| `detect_with_debug` | from config.camera | none | yes | no |
+| `detect_with_debug` | explicit (optional) | none | yes | no |
+
+The mapper is always passed explicitly — `DetectConfig` does not store a camera model.
 
 Internal `pub(crate)` pipeline functions: `detect_rings`, `detect_rings_with_mapper`, `detect_rings_with_self_undistort`.
 
@@ -100,10 +102,18 @@ Two-phase dedup:
 - Decode mismatch is recorded as a note but doesn't block acceptance
 - Adds marker with the board ID (even if decode disagrees or fails)
 
-### Center Correction (single application)
-**File**: `pipeline/finalize.rs::phase_center_correction` → `detector/center_correction.rs`
+### Center Correction (three-pass application)
+**File**: `detector/center_correction.rs`, called from `pipeline/finalize.rs`
 
-`apply_projective_centers` runs **once**, after completion. All markers (including completion markers) receive projective center correction.
+Projective center correction runs in **three passes** throughout finalization:
+
+1. **1st pass** (before global filter): `apply_projective_centers` on fit-decode markers. Skips markers already corrected. This ensures the initial RANSAC homography uses corrected centers for better precision.
+2. **2nd pass** (after refine-H): `reapply_projective_centers` on refined markers. Clears and recomputes all corrections because refinement produces new ellipses.
+3. **3rd pass** (after completion): `apply_projective_centers` on the full marker set. Only affects newly added completion markers (existing markers are skipped via the `center_projective.is_some()` guard).
+
+Two functions implement this:
+- `apply_projective_centers` — skips markers where `center_projective.is_some()`
+- `reapply_projective_centers` — clears then recomputes all markers
 
 ### Final H Refit
 **File**: `pipeline/finalize.rs::phase_final_h`
@@ -115,15 +125,15 @@ Two-phase dedup:
 ### Short Circuit
 **File**: `pipeline/finalize.rs`
 
-When `use_global_filter == false` AND debug is off, the pipeline short-circuits: skips completion and final H refit. Only applies projective center correction.
+When `use_global_filter == false` AND debug is off, the pipeline short-circuits: skips completion and final H refit. Projective center correction (1st pass) is still applied inside `phase_filter_and_refine_h`.
 
 ---
 
 ## 3. Design Notes and Known Limitations
 
-### 3.1 ~~RESOLVED~~ Double Projective Center Application
+### 3.1 ~~RESOLVED~~ Projective Center Ordering
 
-Previously `apply_projective_centers` was called twice: before dedup and after completion. Now applied **once**, post-completion. The dedup stage uses marker centers directly without projective correction.
+Previously applied once after completion. Now applied in **three passes**: before global filter (for better H), after refine-H (reapply with new ellipses), and after completion (new markers only). Uses skip-if-corrected semantics (`apply_projective_centers`) and force-reapply semantics (`reapply_projective_centers`).
 
 ### 3.2 DESIGN: Global Filter Drops Markers Silently
 
@@ -165,7 +175,8 @@ Previously `refine_with_homography` always allocated debug records. Now has sepa
 
 The homography matrix flows through multiple stages that can mutate it:
 ```
-global_filter -> h_current (initial)
+PC(1st pass) -> global_filter -> h_current (initial, from corrected centers)
+refine_h -> PC(2nd pass, reapply) -> completion -> PC(3rd pass)
 phase_final_h -> final refit (optionally updated)
 ```
 
@@ -190,6 +201,10 @@ markers: Vec<DetectedMarker>   [all valid fits, decoded or not]
     v
 markers: Vec<DetectedMarker>   [deduped]
     |
+    | (projective center correction, 1st pass — skip already-corrected)
+    v
+markers: Vec<DetectedMarker>   [center-corrected for better H]
+    |
     | (global_filter: keeps only decoded inliers)
     v
 markers: Vec<DetectedMarker>   [decoded inliers only]
@@ -198,13 +213,17 @@ markers: Vec<DetectedMarker>   [decoded inliers only]
     v
 markers: Vec<DetectedMarker>   [refined or original]
     |
+    | (projective center correction, 2nd pass — reapply all, new ellipses)
+    v
+markers: Vec<DetectedMarker>   [re-corrected after refinement]
+    |
     | (completion: add missing IDs)
     v
 markers: Vec<DetectedMarker>   [+ completion markers]
     |
-    | (projective center correction, single application)
+    | (projective center correction, 3rd pass — only new completion markers)
     v
-markers: Vec<DetectedMarker>   [center-corrected]
+markers: Vec<DetectedMarker>   [all center-corrected]
     |
     | (final H refit)
     v
@@ -233,22 +252,17 @@ The `collect_debug` flag creates significant code branching throughout `pipeline
 
 | Method | When to use |
 |--------|------------|
-| `detect` | Standard single-pass, possibly with camera in config |
-| `detect_with_camera` | Override camera model per-image |
-| `detect_with_mapper` | Custom distortion adapter (triggers two-pass) |
+| `detect` | Standard single-pass, no distortion correction |
+| `detect_with_camera` | Single-pass with CameraModel (distortion-aware sampling) |
+| `detect_with_mapper` | Custom distortion adapter via PixelMapper trait (triggers two-pass) |
 | `detect_with_self_undistort` | Estimate + apply lens distortion (triggers two-pass) |
-| `detect_with_debug` | CLI/internal use (behind `cli-internal` feature gate) |
+| `detect_with_debug` | CLI/internal use (behind `cli-internal` feature gate), accepts optional mapper |
 
 **Notes**:
-- `detect_with_camera` clones the entire config to set one field. Could use `config.camera` directly.
+- The mapper is always passed explicitly to the method — `DetectConfig` does not store a camera model.
+- `detect_with_camera` accepts a `&CameraModel` reference and uses it as a single-pass mapper.
 - `detect_with_self_undistort` has unique orchestration (run once, estimate, optionally re-run). This is the only place where `DetectionResult.self_undistort` is populated.
-- When `config.camera` is set, `detect()` uses the camera as a mapper within a single pass (NOT two-pass).
-
-### 6.1 `detect()` Implicit Mapper Behavior
-
-`detect()` calls `config_mapper(config)` which returns `Some(&CameraModel)` when `config.camera` is set. This passes the mapper to `pipeline/run.rs::run`, which uses it for coordinate transforms during edge sampling. But this is **NOT** the two-pass path — it's single-pass with a mapper.
-
-Two-pass is only triggered by `detect_with_mapper()` and `detect_with_self_undistort()`.
+- Two-pass is only triggered by `detect_with_mapper()` and `detect_with_self_undistort()`.
 
 ---
 
@@ -316,4 +330,3 @@ The initial detection result is reused as the internal pass-1 (optimized from th
 | Medium | Undecoded markers silently dropped by global filter | Document or add option to retain |
 | Medium | Two-pass + debug incompatibility | Document limitation or implement two-pass debug |
 | Medium | Inconsistent acceptance criteria | Unify with shared gate struct |
-| Low | `detect_with_camera` clones full config | Consider using config.camera directly |

@@ -55,4 +55,4 @@ pub use marker::codebook;
 #[cfg(feature = "cli-internal")]
 pub use marker::codec;
 #[cfg(feature = "cli-internal")]
-pub use pipeline::{detect_rings_with_debug, detect_rings_with_debug_and_mapper};
+pub use pipeline::detect_rings_with_debug;

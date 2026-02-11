@@ -1,7 +1,7 @@
 use crate::board_layout::BoardLayout;
 use crate::homography::RansacHomographyConfig;
 use crate::marker::{DecodeConfig, MarkerSpec};
-use crate::pixelmap::{PixelMapper, SelfUndistortConfig};
+use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 use super::proposal::ProposalConfig;
@@ -247,11 +247,6 @@ pub struct DetectConfig {
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
-    /// Optional camera model for distortion-aware processing.
-    ///
-    /// When set, local fitting/sampling runs in the undistorted pixel frame
-    /// and all reported marker geometry/centers use that working frame.
-    pub camera: Option<crate::pixelmap::CameraModel>,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -331,7 +326,6 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
-            camera: None,
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -413,6 +407,3 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
     }
 }
 
-pub(crate) fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
-    config.camera.as_ref().map(|c| c as &dyn PixelMapper)
-}

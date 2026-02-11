@@ -73,12 +73,15 @@ The core pipeline flows through these stages in order:
 4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (893 codewords)
 5. **Inner Estimate** (`ring/inner_estimate.rs`) — inner ring ellipse
 6. **Dedup** (`detector/dedup.rs`) — spatial + ID-based deduplication
-7. **Global Filter** (`detector/global_filter.rs`) — RANSAC homography if ≥4 decoded markers
-8. **H-guided Refinement** (`detector/refine_h.rs`) — local refit at H-projected priors
-9. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs
-10. **Projective Center** (`detector/center_correction.rs`) — unbiased center recovery (single application, post-completion)
+7. **Projective Center** (`detector/center_correction.rs`) — 1st pass: correct fit-decode marker centers
+8. **Global Filter** (`detector/global_filter.rs`) — RANSAC homography if ≥4 decoded markers (uses corrected centers)
+9. **H-guided Refinement** (`detector/refine_h.rs`) — local refit at H-projected priors
+10. **Projective Center** — 2nd pass: reapply after refinement (new ellipses)
+11. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs
+12. **Projective Center** — 3rd pass: correct completion-only markers
+13. **Final H Refit** — refit homography from all corrected centers
 
-Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–10 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`. Two-pass and self-undistort logic in `pipeline/two_pass.rs`.
+Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–13 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`. Two-pass and self-undistort logic in `pipeline/two_pass.rs`.
 
 ## Public API
 
@@ -132,7 +135,7 @@ Single-choice selector: `none` | `projective_center`
 
 CLI: `--circle-refine-method {none,projective-center}`
 
-Center correction is applied once, after completion (in `pipeline/finalize.rs`).
+Center correction is applied in three passes: before global filter (fit-decode markers), after H-guided refinement (recompute with new ellipses), and after completion (new markers only). All passes are in `pipeline/finalize.rs`.
 
 ## Camera / Distortion Support
 

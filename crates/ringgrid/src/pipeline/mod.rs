@@ -23,9 +23,6 @@ pub struct DetectionResult {
     /// RANSAC statistics, if homography was fitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ransac: Option<crate::homography::RansacStats>,
-    /// Camera model used for distortion-aware processing, if configured.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub camera: Option<crate::pixelmap::CameraModel>,
     /// Estimated self-undistort division model, if self-undistort was run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
@@ -39,13 +36,11 @@ impl DetectionResult {
             image_size: [width, height],
             homography: None,
             ransac: None,
-            camera: None,
             self_undistort: None,
         }
     }
 }
 
-pub(crate) use crate::detector::config_mapper;
 pub(crate) use crate::detector::inner_fit;
 pub(crate) use crate::detector::marker_build;
 pub(crate) use crate::detector::outer_fit;
@@ -61,7 +56,7 @@ pub(crate) use crate::homography::{
 };
 pub(crate) use detector::{
     apply_projective_centers, complete_with_h, dedup_by_id, dedup_markers, dedup_with_debug,
-    global_filter, global_filter_with_debug, refine_with_homography,
+    global_filter, global_filter_with_debug, reapply_projective_centers, refine_with_homography,
     refine_with_homography_with_debug, warn_center_correction_without_intrinsics,
 };
 
@@ -87,17 +82,6 @@ pub(super) fn find_proposals_with_seeds(
 ///
 /// Debug collection currently uses single-pass execution.
 pub fn detect_rings_with_debug(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    debug_cfg: &DebugCollectConfig,
-) -> (DetectionResult, dbg::DebugDump) {
-    detect_rings_with_debug_and_mapper(gray, config, debug_cfg, config_mapper(config))
-}
-
-/// Run the full ring detection pipeline with debug collection and optional custom mapper.
-///
-/// Debug collection currently uses single-pass execution.
-pub fn detect_rings_with_debug_and_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,

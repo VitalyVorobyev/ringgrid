@@ -43,7 +43,7 @@ pub struct BoardLayout {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TargetSpecV3 {
+struct BoardLayoutSpecV3 {
     schema: String,
     name: String,
     pitch_mm: f32,
@@ -124,11 +124,11 @@ impl BoardLayout {
     /// Load a board layout from a JSON file.
     pub fn from_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
-        let spec: TargetSpecV3 = serde_json::from_str(&data)?;
-        Self::from_target_spec(spec).map_err(Into::into)
+        let spec: BoardLayoutSpecV3 = serde_json::from_str(&data)?;
+        Self::from_layout_spec(spec).map_err(Into::into)
     }
 
-    fn from_target_spec(spec: TargetSpecV3) -> Result<Self, String> {
+    fn from_layout_spec(spec: BoardLayoutSpecV3) -> Result<Self, String> {
         if spec.schema != TARGET_SCHEMA_V3 {
             return Err(format!(
                 "unsupported target schema '{}' (expected '{}')",
@@ -136,7 +136,7 @@ impl BoardLayout {
             ));
         }
 
-        validate_target_spec(&spec)?;
+        validate_layout_spec(&spec)?;
         let markers = generate_markers(spec.rows, spec.long_row_cols, spec.pitch_mm)?;
         let id_to_idx = markers.iter().enumerate().map(|(i, m)| (m.id, i)).collect();
 
@@ -155,7 +155,7 @@ impl BoardLayout {
 
 impl Default for BoardLayout {
     fn default() -> Self {
-        let spec = TargetSpecV3 {
+        let spec = BoardLayoutSpecV3 {
             schema: TARGET_SCHEMA_V3.to_string(),
             name: DEFAULT_NAME.to_string(),
             pitch_mm: DEFAULT_PITCH_MM,
@@ -165,11 +165,11 @@ impl Default for BoardLayout {
             marker_inner_radius_mm: DEFAULT_INNER_RADIUS_MM,
         };
 
-        Self::from_target_spec(spec).expect("default board spec must be valid")
+        Self::from_layout_spec(spec).expect("default board spec must be valid")
     }
 }
 
-fn validate_target_spec(spec: &TargetSpecV3) -> Result<(), String> {
+fn validate_layout_spec(spec: &BoardLayoutSpecV3) -> Result<(), String> {
     if spec.name.trim().is_empty() {
         return Err("target name must not be empty".to_string());
     }
@@ -332,8 +332,8 @@ mod tests {
             "marker_outer_radius_mm":4.8,
             "marker_inner_radius_mm":3.2
         }"#;
-        let spec: TargetSpecV3 = serde_json::from_str(raw).expect("valid json");
-        let err = BoardLayout::from_target_spec(spec).expect_err("expected error");
+        let spec: BoardLayoutSpecV3 = serde_json::from_str(raw).expect("valid json");
+        let err = BoardLayout::from_layout_spec(spec).expect_err("expected error");
         assert!(err.contains("unsupported target schema"));
     }
 
@@ -349,7 +349,7 @@ mod tests {
             "marker_inner_radius_mm":3.2,
             "markers":[{"id":0,"xy_mm":[0.0,0.0]}]
         }"#;
-        let parsed: Result<TargetSpecV3, _> = serde_json::from_str(raw);
+        let parsed: Result<BoardLayoutSpecV3, _> = serde_json::from_str(raw);
         assert!(parsed.is_err());
     }
 
@@ -368,7 +368,7 @@ mod tests {
             "marker_outer_radius_mm":4.8,
             "marker_inner_radius_mm":3.2
         }"#;
-        let parsed: Result<TargetSpecV3, _> = serde_json::from_str(raw);
+        let parsed: Result<BoardLayoutSpecV3, _> = serde_json::from_str(raw);
         assert!(parsed.is_err());
     }
 

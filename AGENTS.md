@@ -113,10 +113,10 @@ python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --ou
 `ringgrid` exposes a `Detector` struct as the primary entry point:
 
 ```rust
-use ringgrid::detector::{Detector, TargetSpec};
+use ringgrid::{BoardLayout, Detector};
 
-let detector = Detector::new(32.0);               // default board, marker diameter
-let detector = Detector::with_target(target, 32.0); // custom board
+let board = BoardLayout::default();
+let detector = Detector::new(board);                // default board
 let detector = Detector::with_config(config);       // full control
 
 let result = detector.detect(&image);

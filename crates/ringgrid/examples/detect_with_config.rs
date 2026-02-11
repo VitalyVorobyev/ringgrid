@@ -1,5 +1,5 @@
 use image::ImageReader;
-use ringgrid::{CircleRefinementMethod, DetectConfig, Detector, MarkerScalePrior, TargetSpec};
+use ringgrid::{BoardLayout, CircleRefinementMethod, DetectConfig, Detector, MarkerScalePrior};
 use std::error::Error;
 use std::path::Path;
 
@@ -10,10 +10,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(2);
     }
 
-    let target = TargetSpec::from_json_file(Path::new(&args[1]))?;
+    let board = BoardLayout::from_json_file(Path::new(&args[1]))?;
     let image = ImageReader::open(&args[2])?.decode()?.to_luma8();
 
-    let mut cfg = DetectConfig::from_target(target.board().clone());
+    let mut cfg = DetectConfig::from_target(board);
     // Optional explicit scale-search prior override.
     cfg.set_marker_scale_prior(MarkerScalePrior::new(20.0, 56.0));
     cfg.circle_refinement = CircleRefinementMethod::ProjectiveCenter;

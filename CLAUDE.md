@@ -18,7 +18,7 @@ Cargo workspace with two crates:
 ```
 crates/ringgrid/src/
 ├── lib.rs              # Re-exports only (public API surface)
-├── api.rs              # Detector + TargetSpec (primary entry point)
+├── api.rs              # Detector (primary entry point)
 ├── board_layout.rs     # Board geometry (hex lattice layout, JSON loader)
 ├── detector/           # Per-marker detection primitives
 │   ├── config.rs       # DetectConfig and sub-configs
@@ -88,7 +88,7 @@ Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–13 
 All detection goes through the `Detector` struct (`api.rs`). No public free functions.
 
 Key public types:
-- `Detector`, `TargetSpec` — entry point
+- `Detector` — entry point
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
 - `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry

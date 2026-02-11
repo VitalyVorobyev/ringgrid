@@ -17,42 +17,20 @@ use crate::pipeline;
 use crate::pixelmap::{CameraModel, PixelMapper};
 use crate::DetectionResult;
 
-/// Target specification describing the board to detect.
-///
-/// Public API v1 requires runtime target loading from JSON.
-#[derive(Debug, Clone)]
-pub struct TargetSpec {
-    board: BoardLayout,
-}
-
-impl TargetSpec {
-    /// Load from a board JSON file.
-    pub fn from_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
-            board: BoardLayout::from_json_file(path)?,
-        })
-    }
-
-    /// Access board layout metadata.
-    pub fn board(&self) -> &BoardLayout {
-        &self.board
-    }
-}
-
 /// Primary detection interface.
 ///
-/// Encapsulates target specification and detection configuration.
+/// Encapsulates board layout and detection configuration.
 /// Create once, detect on many images.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// use ringgrid::{Detector, TargetSpec};
+/// use ringgrid::{BoardLayout, Detector};
 /// use image::GrayImage;
 /// use std::path::Path;
 ///
-/// let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
-/// let detector = Detector::new(target);
+/// let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
+/// let detector = Detector::new(board);
 /// let image = GrayImage::new(640, 480);
 /// let result = detector.detect(&image);
 /// println!("Found {} markers", result.detected_markers.len());
@@ -62,25 +40,25 @@ pub struct Detector {
 }
 
 impl Detector {
-    /// Create a detector with a runtime target specification and default
+    /// Create a detector with a board layout and default
     /// marker-scale search prior.
-    pub fn new(target: TargetSpec) -> Self {
+    pub fn new(board: BoardLayout) -> Self {
         Self {
-            config: DetectConfig::from_target(target.board),
+            config: DetectConfig::from_target(board),
         }
     }
 
     /// Create a detector with an explicit marker-scale prior.
-    pub fn with_marker_scale(target: TargetSpec, marker_scale: MarkerScalePrior) -> Self {
+    pub fn with_marker_scale(board: BoardLayout, marker_scale: MarkerScalePrior) -> Self {
         Self {
-            config: DetectConfig::from_target_and_scale_prior(target.board, marker_scale),
+            config: DetectConfig::from_target_and_scale_prior(board, marker_scale),
         }
     }
 
     /// Create a detector with a fixed marker-diameter hint.
-    pub fn with_marker_diameter_hint(target: TargetSpec, marker_diameter_px: f32) -> Self {
+    pub fn with_marker_diameter_hint(board: BoardLayout, marker_diameter_px: f32) -> Self {
         Self::with_marker_scale(
-            target,
+            board,
             MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
         )
     }
@@ -88,7 +66,7 @@ impl Detector {
     /// Load target JSON and create a detector in one step using default
     /// marker-scale search prior.
     pub fn from_target_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self::new(TargetSpec::from_json_file(path)?))
+        Ok(Self::new(BoardLayout::from_json_file(path)?))
     }
 
     /// Load target JSON and create a detector with explicit marker-scale prior.
@@ -97,7 +75,7 @@ impl Detector {
         marker_scale: MarkerScalePrior,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self::with_marker_scale(
-            TargetSpec::from_json_file(path)?,
+            BoardLayout::from_json_file(path)?,
             marker_scale,
         ))
     }
@@ -108,7 +86,7 @@ impl Detector {
         marker_diameter_px: f32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self::with_marker_diameter_hint(
-            TargetSpec::from_json_file(path)?,
+            BoardLayout::from_json_file(path)?,
             marker_diameter_px,
         ))
     }

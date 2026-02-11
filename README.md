@@ -71,7 +71,7 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 All detection goes through `Detector` methods. No public free functions.
 
 Stable surface (library users):
-- `Detector`, `TargetSpec` — entry point
+- `Detector` — entry point
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
 - `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
@@ -80,7 +80,7 @@ Stable surface (library users):
 
 Design constraints in v1:
 - Target JSON is mandatory for high-level detector construction:
-  `TargetSpec::from_json_file(...)` + `Detector::new(...)`.
+  `BoardLayout::from_json_file(...)` + `Detector::new(...)`.
 - Low-level math/pipeline modules are internal.
 - Debug dump API is internal/CLI-only (`cli-internal` feature).
 - Example target JSON: `crates/ringgrid/examples/target.json`.
@@ -88,11 +88,11 @@ Design constraints in v1:
 Minimal usage:
 
 ```rust
-use ringgrid::{Detector, TargetSpec};
+use ringgrid::{BoardLayout, Detector};
 use std::path::Path;
 
-let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
-let detector = Detector::new(target);
+let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
+let detector = Detector::new(board);
 // let result = detector.detect(&gray_image);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -104,7 +104,7 @@ crates/
   ringgrid/
     src/
       lib.rs       # re-exports only (public API surface)
-      api.rs       # Detector / TargetSpec facade
+      api.rs       # Detector facade
       pipeline/    # stage orchestration: run, fit_decode, finalize, two_pass
       detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
       ring/        # ring-level sampling: edge, radius, projective center

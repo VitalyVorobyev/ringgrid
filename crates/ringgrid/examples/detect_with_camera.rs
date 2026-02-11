@@ -1,5 +1,5 @@
 use image::ImageReader;
-use ringgrid::{CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion, TargetSpec};
+use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
 use std::error::Error;
 use std::path::Path;
 
@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(2);
     }
 
-    let target = TargetSpec::from_json_file(Path::new(&args[1]))?;
+    let board = BoardLayout::from_json_file(Path::new(&args[1]))?;
     let image = ImageReader::open(&args[2])?.decode()?.to_luma8();
     let (w, h) = image.dimensions();
 
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     };
 
-    let detector = Detector::new(target);
+    let detector = Detector::new(board);
     let result = detector.detect_with_camera(&image, &camera);
     println!("Detected {} markers.", result.detected_markers.len());
     Ok(())

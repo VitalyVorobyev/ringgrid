@@ -39,7 +39,7 @@ Public detection entrypoints (`detect_rings*`) are implemented in this module an
 
 ### `api.rs` (public facade)
 
-`Detector` and `TargetSpec` live in `api.rs` to avoid naming ambiguity with the `detector` primitive module.
+`Detector` lives in `api.rs` to avoid naming ambiguity with the `detector` primitive module.
 
 ### `marker/`
 

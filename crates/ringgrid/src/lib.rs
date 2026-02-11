@@ -18,7 +18,7 @@ mod ring;
 // ── Public API ──────────────────────────────────────────────────────────
 
 // High-level detector facade
-pub use api::{Detector, TargetSpec};
+pub use api::Detector;
 
 // Result types
 pub use detector::{DetectedMarker, FitMetrics};

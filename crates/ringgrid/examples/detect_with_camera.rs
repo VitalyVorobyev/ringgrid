@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let detector = Detector::new(board);
-    let result = detector.detect_with_camera(&image, &camera);
+    let result = detector.detect_with_mapper(&image, &camera);
     println!("Detected {} markers.", result.detected_markers.len());
     Ok(())
 }

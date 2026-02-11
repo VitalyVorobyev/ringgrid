@@ -8,7 +8,6 @@ The detection pipeline has **two layers of orchestration**:
 Detector (api.rs)                -- public API, owns DetectConfig
   |
   +-- detect()                   -- single-pass entry point
-  +-- detect_with_camera()       -- single-pass with camera override
   +-- detect_with_mapper()       -- two-pass with custom mapper
   +-- detect_with_self_undistort() -- self-undistort + re-run
   +-- detect_with_debug()        -- debug dump (feature-gated)
@@ -29,7 +28,6 @@ All detection goes through `Detector` methods. No public free functions.
 | Method | Mapper | Seeds | Debug | Two-Pass |
 |--------|--------|-------|-------|----------|
 | `detect` | none | none | no | no |
-| `detect_with_camera` | explicit CameraModel | none | no | no |
 | `detect_with_mapper` | explicit PixelMapper | none | no | yes |
 | `detect_with_self_undistort` | estimated | pass-1 centers | no | yes |
 | `detect_with_debug` | explicit (optional) | none | yes | no |
@@ -253,14 +251,12 @@ The `collect_debug` flag creates significant code branching throughout `pipeline
 | Method | When to use |
 |--------|------------|
 | `detect` | Standard single-pass, no distortion correction |
-| `detect_with_camera` | Single-pass with CameraModel (distortion-aware sampling) |
 | `detect_with_mapper` | Custom distortion adapter via PixelMapper trait (triggers two-pass) |
 | `detect_with_self_undistort` | Estimate + apply lens distortion (triggers two-pass) |
 | `detect_with_debug` | CLI/internal use (behind `cli-internal` feature gate), accepts optional mapper |
 
 **Notes**:
 - The mapper is always passed explicitly to the method — `DetectConfig` does not store a camera model.
-- `detect_with_camera` accepts a `&CameraModel` reference and uses it as a single-pass mapper.
 - `detect_with_self_undistort` has unique orchestration (run once, estimate, optionally re-run). This is the only place where `DetectionResult.self_undistort` is populated.
 - Two-pass is only triggered by `detect_with_mapper()` and `detect_with_self_undistort()`.
 

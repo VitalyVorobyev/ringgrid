@@ -513,7 +513,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     } else if config.self_undistort.enable {
         (detector.detect_with_self_undistort(&gray), None)
     } else if let Some(camera) = &overrides.camera {
-        (detector.detect_with_camera(&gray, camera), None)
+        (detector.detect_with_mapper(&gray, camera), None)
     } else {
         (detector.detect(&gray), None)
     };

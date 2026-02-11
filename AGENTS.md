@@ -120,7 +120,6 @@ let detector = Detector::new(board);                // default board
 let detector = Detector::with_config(config);       // full control
 
 let result = detector.detect(&image);
-let result = detector.detect_with_camera(&image, &camera);
 let result = detector.detect_with_mapper(&image, &mapper);
 let (result, debug) = detector.detect_with_debug(&image, &debug_cfg);
 

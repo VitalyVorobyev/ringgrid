@@ -14,7 +14,7 @@ use crate::debug_dump::DebugDump;
 use crate::detector::DebugCollectConfig;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
-use crate::pixelmap::{CameraModel, PixelMapper};
+use crate::pixelmap::PixelMapper;
 use crate::DetectionResult;
 
 /// Primary detection interface.
@@ -109,15 +109,6 @@ impl Detector {
     /// Detect markers in a grayscale image (single-pass, no distortion mapping).
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
         pipeline::detect_rings(image, &self.config, None)
-    }
-
-    /// Detect with a camera model (single-pass with distortion-aware sampling).
-    ///
-    /// The camera model is used as a `PixelMapper` for coordinate transforms
-    /// during edge sampling and fitting. All results are in the undistorted
-    /// working frame.
-    pub fn detect_with_camera(&self, image: &GrayImage, camera: &CameraModel) -> DetectionResult {
-        pipeline::detect_rings(image, &self.config, Some(camera as &dyn PixelMapper))
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).

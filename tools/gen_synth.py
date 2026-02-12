@@ -818,6 +818,166 @@ def _append_scale_bar_svg(
     lines.append("</g>")
 
 
+def _dxf_annular_sector_vertices(
+    cx: float,
+    cy: float,
+    r_outer: float,
+    r_inner: float,
+    angle0_rad: float,
+    angle1_rad: float,
+    arc_segments: int = 8,
+) -> list[tuple[float, float]]:
+    """Approximate an annular sector with a closed polygon for DXF hatch paths."""
+    n = max(1, int(arc_segments))
+    outer: list[tuple[float, float]] = []
+    inner: list[tuple[float, float]] = []
+
+    for i in range(n + 1):
+        t = i / n
+        a = angle0_rad + (angle1_rad - angle0_rad) * t
+        outer.append((cx + r_outer * math.cos(a), cy + r_outer * math.sin(a)))
+
+    for i in range(n + 1):
+        t = i / n
+        a = angle1_rad + (angle0_rad - angle1_rad) * t
+        inner.append((cx + r_inner * math.cos(a), cy + r_inner * math.sin(a)))
+
+    return outer + inner
+
+
+def write_print_target_dxf(
+    out_path: Path,
+    board_mm: float,
+    pitch_mm: float,
+    n_markers: Optional[int],
+    codebook: list[int],
+) -> None:
+    """Write a DXF calibration target in mm with filled code-band sectors.
+
+    Emits:
+    - white board background hatch,
+    - per-marker black/white filled code sectors (from codebook bits),
+    - marker outlines (ring edges, code-band boundaries, sector divider lines).
+    """
+    try:
+        import ezdxf
+    except ImportError:
+        raise ImportError(
+            "ezdxf is required for DXF export. Install it with: pip install ezdxf"
+        )
+
+    if board_mm <= 0:
+        raise ValueError("--board_mm must be > 0")
+    if pitch_mm <= 0:
+        raise ValueError("--pitch_mm must be > 0")
+    if not codebook:
+        raise ValueError("codebook is empty")
+
+    markers = generate_hex_lattice(board_mm, pitch_mm, n_markers)
+
+    outer_radius = pitch_mm * 0.6
+    inner_radius = pitch_mm * 0.4
+    code_band_outer = pitch_mm * 0.58
+    code_band_inner = pitch_mm * 0.42
+    ring_half_thickness = outer_radius * 0.12
+
+    half = board_mm / 2.0
+    dtheta = 2.0 * math.pi / 16.0
+
+    doc = ezdxf.new(dxfversion="R2010")
+    doc.units = ezdxf.units.MM
+    msp = doc.modelspace()
+
+    def _set_solid_hatch_rgb(hatch, rgb: tuple[int, int, int]) -> None:
+        # Support both older/newer ezdxf variants.
+        try:
+            hatch.set_solid_fill(color=7, rgb=rgb)
+        except TypeError:
+            hatch.set_solid_fill(color=7)
+            hatch.dxf.true_color = (int(rgb[0]) << 16) | (int(rgb[1]) << 8) | int(rgb[2])
+
+    # Explicit white board background improves readability in CAD viewers with dark canvases.
+    bg = msp.add_hatch(color=7)
+    _set_solid_hatch_rgb(bg, (255, 255, 255))
+    bg.paths.add_polyline_path(
+        [(0.0, 0.0), (board_mm, 0.0), (board_mm, board_mm), (0.0, board_mm)],
+        is_closed=True,
+    )
+
+    for idx, (_q, _r, mx, my) in enumerate(markers):
+        code_id = idx % len(codebook)
+        cw = int(codebook[code_id])
+
+        cx = mx + half
+        cy = my + half
+
+        # Filled code sectors: bit==0 => black, bit==1 => white.
+        for s in range(16):
+            angle0 = -math.pi + s * dtheta
+            angle1 = angle0 + dtheta
+            verts = _dxf_annular_sector_vertices(
+                cx=cx,
+                cy=cy,
+                r_outer=code_band_outer,
+                r_inner=code_band_inner,
+                angle0_rad=angle0,
+                angle1_rad=angle1,
+                arc_segments=8,
+            )
+            rgb = (255, 255, 255) if ((cw >> s) & 1) == 1 else (0, 0, 0)
+            hatch = msp.add_hatch(color=7)
+            _set_solid_hatch_rgb(hatch, rgb)
+            hatch.paths.add_polyline_path(verts, is_closed=True)
+
+        # Outer ring edges
+        msp.add_circle(
+            (cx, cy),
+            outer_radius + ring_half_thickness,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+        msp.add_circle(
+            (cx, cy),
+            outer_radius - ring_half_thickness,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+        # Inner ring edges
+        msp.add_circle(
+            (cx, cy),
+            inner_radius + ring_half_thickness,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+        msp.add_circle(
+            (cx, cy),
+            inner_radius - ring_half_thickness,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+        # Code band boundaries
+        msp.add_circle(
+            (cx, cy),
+            code_band_outer,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+        msp.add_circle(
+            (cx, cy),
+            code_band_inner,
+            dxfattribs={"color": 7, "true_color": 0},
+        )
+
+        # Sector dividers
+        for s in range(16):
+            angle = -math.pi + s * dtheta
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            msp.add_line(
+                (cx + code_band_inner * cos_a, cy + code_band_inner * sin_a),
+                (cx + code_band_outer * cos_a, cy + code_band_outer * sin_a),
+                dxfattribs={"color": 7, "true_color": 0},
+            )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(str(out_path))
+
+
 def write_print_target_svg(
     out_path: Path,
     board_mm: float,
@@ -1389,6 +1549,11 @@ def main() -> None:
     parser.add_argument("--print_png", action="store_true", help="Write ready-to-print calibration target PNG into out_dir")
     parser.add_argument("--print_svg", action="store_true", help="Write ready-to-print calibration target SVG into out_dir")
     parser.add_argument(
+        "--print_dxf",
+        action="store_true",
+        help="Write DXF calibration target with filled black/white code sectors into out_dir",
+    )
+    parser.add_argument(
         "--print_dpi",
         type=float,
         default=600.0,
@@ -1449,6 +1614,17 @@ def main() -> None:
     with open(board_spec_path, "w") as f:
         json.dump(board_spec, f, indent=2)
     print(f"Board spec written to {board_spec_path}")
+
+    if args.print_dxf:
+        dxf_path = out_dir / f"{args.print_basename}.dxf"
+        write_print_target_dxf(
+            dxf_path,
+            board_mm=args.board_mm,
+            pitch_mm=args.pitch_mm,
+            n_markers=args.n_markers,
+            codebook=codebook,
+        )
+        print(f"Print DXF written to {dxf_path}")
 
     if args.print_svg:
         svg_path = out_dir / f"{args.print_basename}.svg"

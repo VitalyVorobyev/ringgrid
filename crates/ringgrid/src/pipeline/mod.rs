@@ -26,7 +26,7 @@ pub use result::DetectionResult;
 
 pub(crate) use prelude::*;
 
-pub(crate) use multi_pass::{detect_two_pass, detect_with_self_undistort};
+pub(crate) use multi_pass::{detect_with_mapper, detect_with_self_undistort};
 pub(crate) use single_pass::detect_single_pass;
 #[cfg(feature = "cli-internal")]
 pub use single_pass::detect_single_pass_with_debug;

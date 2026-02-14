@@ -1,3 +1,4 @@
+use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 
 /// Full detection result for a single image.
@@ -30,7 +31,7 @@ impl DetectionResult {
         }
     }
 
-    pub fn seed_centers(&self, max_seeds: Option<usize>) -> Vec<[f32; 2]> {
+    pub fn seed_proposals(&self, max_seeds: Option<usize>) -> Vec<Proposal> {
         let max = max_seeds.unwrap_or(self.detected_markers.len());
         self.detected_markers
             .iter()
@@ -39,7 +40,11 @@ impl DetectionResult {
                 let x = m.center[0] as f32;
                 let y = m.center[1] as f32;
                 if x.is_finite() && y.is_finite() {
-                    Some([x, y])
+                    Some(Proposal {
+                        x,
+                        y,
+                        score: m.confidence,
+                    })
                 } else {
                     None
                 }

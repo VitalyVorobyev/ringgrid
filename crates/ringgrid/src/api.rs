@@ -134,7 +134,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
-        pipeline::detect_two_pass(image, &self.config, mapper)
+        pipeline::detect_with_mapper(image, &self.config, mapper)
     }
 
     /// Detect with debug dump collection (single-pass).

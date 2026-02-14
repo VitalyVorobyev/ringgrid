@@ -4,138 +4,20 @@
 //! pass-2 runs with mapper and pass-1 centers injected as proposal seeds.
 
 use image::GrayImage;
-use std::collections::HashSet;
 
-use crate::detector::config::SeedProposalParams;
-use crate::detector::proposal::{find_proposals, Proposal, ProposalConfig};
-use crate::detector::DetectedMarker;
+use crate::detector::proposal::find_proposals;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
 
 use super::run as stages;
-use super::{dedup_by_id, dedup_markers, DetectConfig, DetectionResult};
-
-// ---------------------------------------------------------------------------
-// Seed-related helpers
-// ---------------------------------------------------------------------------
-
-fn find_proposals_with_seeds(
-    gray: &GrayImage,
-    proposal_cfg: &ProposalConfig,
-    seed_centers_image: &[[f32; 2]],
-    params: &SeedProposalParams,
-) -> Vec<Proposal> {
-    let mut proposals = find_proposals(gray, proposal_cfg);
-    if seed_centers_image.is_empty() {
-        return proposals;
-    }
-
-    let merge_r2 = params.merge_radius_px.max(0.0).powi(2);
-    let max_seeds = params
-        .max_seeds
-        .unwrap_or(seed_centers_image.len())
-        .min(seed_centers_image.len());
-
-    for seed in seed_centers_image.iter().take(max_seeds) {
-        if !seed[0].is_finite() || !seed[1].is_finite() {
-            continue;
-        }
-
-        let mut merged = false;
-        for p in &mut proposals {
-            let dx = p.x - seed[0];
-            let dy = p.y - seed[1];
-            if dx * dx + dy * dy <= merge_r2 {
-                p.score = p.score.max(params.seed_score);
-                merged = true;
-                break;
-            }
-        }
-        if !merged {
-            proposals.push(Proposal {
-                x: seed[0],
-                y: seed[1],
-                score: params.seed_score,
-            });
-        }
-    }
-
-    proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    proposals
-}
-
-// ---------------------------------------------------------------------------
-// Marker remapping and merging
-// ---------------------------------------------------------------------------
-
-fn map_marker_image_to_working(
-    marker: &DetectedMarker,
-    mapper: &dyn PixelMapper,
-) -> Option<DetectedMarker> {
-    let mut out = marker.clone();
-    out.center = mapper.image_to_working_pixel(marker.center)?;
-
-    out.center_projective = marker
-        .center_projective
-        .and_then(|c| mapper.image_to_working_pixel(c));
-    if marker.center_projective.is_some() && out.center_projective.is_none() {
-        out.center_projective_residual = None;
-    }
-
-    // A non-linear mapper does not preserve ellipse structure exactly.
-    // Avoid mixed-frame output by dropping these fields for pass-1 fallback markers.
-    out.ellipse_outer = None;
-    out.ellipse_inner = None;
-    out.edge_points_outer = None;
-    out.edge_points_inner = None;
-    Some(out)
-}
-
-fn merge_two_pass_markers(
-    pass1: &[DetectedMarker],
-    mut pass2: Vec<DetectedMarker>,
-    dedup_radius: f64,
-    mapper: &dyn PixelMapper,
-) -> Vec<DetectedMarker> {
-    // Always keep pass-1 markers not present in pass-2 (remapped to working frame).
-    let ids_pass2: HashSet<usize> = pass2.iter().filter_map(|m| m.id).collect();
-    let mut failed_pass1_reproject = 0usize;
-
-    for m in pass1 {
-        if let Some(id) = m.id {
-            if ids_pass2.contains(&id) {
-                continue;
-            }
-        }
-        if let Some(mm) = map_marker_image_to_working(m, mapper) {
-            pass2.push(mm);
-        } else {
-            failed_pass1_reproject += 1;
-        }
-    }
-
-    if failed_pass1_reproject > 0 {
-        tracing::warn!(
-            failed_pass1_reproject,
-            "failed to map some pass-1 markers into mapper working frame; dropping them"
-        );
-    }
-
-    let mut merged = dedup_markers(pass2, dedup_radius);
-    dedup_by_id(&mut merged);
-    merged
-}
+use super::{DetectConfig, DetectionResult};
 
 // ---------------------------------------------------------------------------
 // Single-pass helper (used internally by two-pass for pass-1)
 // ---------------------------------------------------------------------------
 
-fn run_single_pass(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> DetectionResult {
+fn run_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let proposals = find_proposals(gray, &config.proposal);
-    stages::run(gray, config, mapper, proposals, None).0
+    stages::run(gray, config, None, proposals, None).0
 }
 
 // ---------------------------------------------------------------------------
@@ -150,23 +32,8 @@ fn run_pass2(
 ) -> DetectionResult {
     let seed_params = &config.seed_proposals;
     // TODO: use pass1 markers as proposals without find_proposals_with_seeds
-    let seeds = pass1.seed_centers(seed_params.max_seeds);
-    let proposals = find_proposals_with_seeds(gray, &config.proposal, &seeds, seed_params);
-    let mut pass2 = stages::run(gray, config, Some(mapper), proposals, None).0;
-
-    if pass2.detected_markers.is_empty() && !seeds.is_empty() {
-        tracing::info!("seeded pass-2 returned no detections; retrying pass-2 without seeds");
-        let proposals = find_proposals(gray, &config.proposal);
-        pass2 = stages::run(gray, config, Some(mapper), proposals, None).0;
-    }
-
-    // TODO: make this merge optional
-    pass2.detected_markers = merge_two_pass_markers(
-        &pass1.detected_markers,
-        pass2.detected_markers,
-        config.dedup_radius,
-        mapper,
-    );
+    let proposals = pass1.seed_proposals(seed_params.max_seeds);
+    let pass2 = stages::run(gray, config, Some(mapper), proposals, None).0;
     pass2
 }
 
@@ -178,12 +45,12 @@ fn run_pass2(
 ///
 /// Returned detections are in mapper working-frame coordinates. Any retained
 /// pass-1 fallback markers are remapped to the same working frame.
-pub(crate) fn detect_two_pass(
+pub(crate) fn detect_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
 ) -> DetectionResult {
-    let pass1 = run_single_pass(gray, config, None);
+    let pass1 = run_single_pass(gray, config);
     run_pass2(gray, config, mapper, &pass1)
 }
 
@@ -196,7 +63,7 @@ pub(crate) fn detect_with_self_undistort(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> DetectionResult {
-    let mut result = run_single_pass(gray, config, None);
+    let mut result = run_single_pass(gray, config);
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
         return result;

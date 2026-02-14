@@ -376,6 +376,21 @@ fn should_warn_debug_skips_self_undistort(
     debug_requested && self_undistort_enabled
 }
 
+#[derive(serde::Serialize)]
+struct DetectionJsonOutput<'a> {
+    #[serde(flatten)]
+    result: &'a ringgrid::DetectionResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    camera: Option<ringgrid::CameraModel>,
+}
+
+fn serialize_detection_output(
+    result: &ringgrid::DetectionResult,
+    camera: Option<ringgrid::CameraModel>,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&DetectionJsonOutput { result, camera })
+}
+
 fn main() -> CliResult<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -600,7 +615,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     // Write results
-    let json = serde_json::to_string_pretty(&result)?;
+    let json = serialize_detection_output(&result, overrides.camera)?;
     std::fs::write(&args.out, &json)?;
     tracing::info!("Results written to {}", args.out.display());
 
@@ -703,5 +718,21 @@ mod tests {
         assert!(!should_warn_debug_skips_self_undistort(true, false));
         assert!(!should_warn_debug_skips_self_undistort(false, true));
         assert!(!should_warn_debug_skips_self_undistort(false, false));
+    }
+
+    #[test]
+    fn serialize_detection_output_includes_camera_when_present() {
+        let result = ringgrid::DetectionResult::empty(1280, 960);
+        let json = serialize_detection_output(&result, Some(sample_camera())).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert!(value.get("camera").is_some());
+    }
+
+    #[test]
+    fn serialize_detection_output_omits_camera_when_absent() {
+        let result = ringgrid::DetectionResult::empty(1280, 960);
+        let json = serialize_detection_output(&result, None).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert!(value.get("camera").is_none());
     }
 }

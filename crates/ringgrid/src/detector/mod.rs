@@ -13,7 +13,7 @@ pub(crate) mod outer_fit;
 pub(crate) mod proposal;
 pub(crate) mod refine_h;
 
-mod config;
+pub(crate) mod config;
 
 pub(crate) use center_correction::{
     apply_projective_centers, reapply_projective_centers, warn_center_correction_without_intrinsics,
@@ -23,7 +23,7 @@ pub(crate) use completion::{
 };
 pub use config::{
     CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams, SeedProposalParams, TwoPassParams,
+    ProjectiveCenterParams,
 };
 pub(crate) use dedup::dedup_with_debug;
 pub use dedup::{dedup_by_id, dedup_markers};

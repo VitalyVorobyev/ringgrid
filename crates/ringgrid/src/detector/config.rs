@@ -21,7 +21,7 @@ pub struct DebugCollectConfig {
 
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SeedProposalParams {
+pub(crate) struct SeedProposalParams {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
     /// Score assigned to injected seed proposals.
@@ -36,24 +36,6 @@ impl Default for SeedProposalParams {
             merge_radius_px: 3.0,
             seed_score: 1.0e12,
             max_seeds: Some(512),
-        }
-    }
-}
-
-/// Two-pass orchestration parameters.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TwoPassParams {
-    /// Seed-injection controls for the second pass.
-    pub seed: SeedProposalParams,
-    /// Keep pass-1 detections that are not present in pass-2 output.
-    pub keep_pass1_markers: bool,
-}
-
-impl Default for TwoPassParams {
-    fn default() -> Self {
-        Self {
-            seed: SeedProposalParams::default(),
-            keep_pass1_markers: true,
         }
     }
 }

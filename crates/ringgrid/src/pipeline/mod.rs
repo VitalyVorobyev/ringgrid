@@ -7,6 +7,7 @@ use image::GrayImage;
 
 use crate::debug_dump as dbg;
 use crate::detector;
+use crate::detector::proposal::find_proposals;
 use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
 
@@ -47,9 +48,7 @@ pub(crate) use crate::detector::outer_fit;
 pub(crate) use crate::detector::{
     CompletionAttemptRecord, CompletionDebugOptions, CompletionStats,
 };
-pub(crate) use crate::detector::{
-    DebugCollectConfig, DetectConfig, SeedProposalParams, TwoPassParams,
-};
+pub(crate) use crate::detector::{DebugCollectConfig, DetectConfig};
 
 pub(crate) use crate::homography::{
     compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
@@ -65,38 +64,53 @@ mod fit_decode;
 mod run;
 mod two_pass;
 
-pub(crate) use two_pass::{
-    detect_rings, detect_rings_with_mapper, detect_rings_with_self_undistort,
-};
+// ---------------------------------------------------------------------------
+// Single-pass entry points
+// ---------------------------------------------------------------------------
 
-pub(super) fn find_proposals_with_seeds(
+/// Single-pass detection. Mapper (if provided) is used for distortion-aware
+/// sampling within the single pass — it does NOT trigger two-pass detection.
+pub(crate) fn detect_single_pass(
     gray: &GrayImage,
-    proposal_cfg: &crate::detector::proposal::ProposalConfig,
-    seed_centers_image: &[[f32; 2]],
-    seed_cfg: &SeedProposalParams,
-) -> Vec<crate::detector::proposal::Proposal> {
-    two_pass::find_proposals_with_seeds(gray, proposal_cfg, seed_centers_image, seed_cfg)
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    let proposals = find_proposals(gray, &config.proposal);
+    run::run(gray, config, mapper, proposals, None).0
 }
 
-/// Run the full ring detection pipeline and collect a versioned debug dump.
-///
-/// Debug collection currently uses single-pass execution.
-pub fn detect_rings_with_debug(
+/// Single-pass detection with debug dump collection.
+pub fn detect_single_pass_with_debug(
     gray: &GrayImage,
     config: &DetectConfig,
     debug_cfg: &DebugCollectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (DetectionResult, dbg::DebugDump) {
-    let (result, dump) = run::run(
-        gray,
-        config,
-        mapper,
-        &[],
-        &SeedProposalParams::default(),
-        Some(debug_cfg),
-    );
+    let proposals = find_proposals(gray, &config.proposal);
+    let (result, dump) = run::run(gray, config, mapper, proposals, Some(debug_cfg));
     (
         result,
         dump.expect("debug dump present when debug_cfg is provided"),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Two-pass entry points (delegated to two_pass module)
+// ---------------------------------------------------------------------------
+
+/// Two-pass detection (pass-1 raw, pass-2 with mapper + seeds).
+pub(crate) fn detect_two_pass(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: &dyn PixelMapper,
+) -> DetectionResult {
+    two_pass::detect_two_pass(gray, config, mapper)
+}
+
+/// Single-pass + optional self-undistort second pass.
+pub(crate) fn detect_with_self_undistort(
+    gray: &GrayImage,
+    config: &DetectConfig,
+) -> DetectionResult {
+    two_pass::detect_with_self_undistort(gray, config)
 }

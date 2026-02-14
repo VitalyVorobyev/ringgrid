@@ -8,10 +8,7 @@ use super::outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     OuterFitCandidate,
 };
-use super::{
-    dedup_by_id, dedup_markers, dedup_with_debug, find_proposals_with_seeds, DebugCollectConfig,
-    DetectConfig, SeedProposalParams,
-};
+use super::{dedup_by_id, dedup_markers, dedup_with_debug, DebugCollectConfig, DetectConfig};
 use crate::debug_dump as dbg;
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
@@ -328,11 +325,9 @@ pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    seed_centers_image: &[[f32; 2]],
-    seed_cfg: &SeedProposalParams,
+    proposals: Vec<Proposal>,
     debug_cfg: Option<&DebugCollectConfig>,
 ) -> FitDecodeCoreOutput {
-    let proposals = find_proposals_with_seeds(gray, &config.proposal, seed_centers_image, seed_cfg);
     tracing::info!("{} proposals found", proposals.len());
 
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();

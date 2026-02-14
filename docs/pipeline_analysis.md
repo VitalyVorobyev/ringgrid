@@ -5,21 +5,26 @@
 The detection pipeline has **two layers of orchestration**:
 
 ```
-Detector (api.rs)                -- public API, owns DetectConfig
+Detector (api.rs)                  -- public API, owns DetectConfig
   |
-  +-- detect()                   -- single-pass entry point
-  +-- detect_with_mapper()       -- two-pass with custom mapper
+  +-- detect()                     -- single-pass (no mapper)
+  +-- detect_with_mapper()         -- two-pass with custom PixelMapper
   +-- detect_with_self_undistort() -- self-undistort + re-run
-  +-- detect_with_debug()        -- debug dump (feature-gated)
+  +-- detect_with_debug()          -- single-pass with debug dump (feature-gated)
   |
   v
-pipeline/run.rs::run()           -- glue: fit_decode -> finalize
+pipeline/mod.rs                    -- entry points: detect_single_pass, detect_two_pass, etc.
   |
-  +-- fit_decode::run()          -- proposals -> fit -> decode -> dedup
-  +-- finalize::run()            -- PC -> global_filter -> refine_h -> PC(reapply) -> completion -> PC -> final_h
+  +-- run::run(proposals)          -- glue: fit_decode -> finalize
+  |     +-- fit_decode::run()      -- proposals -> fit -> decode -> dedup
+  |     +-- finalize::run()        -- PC -> global_filter -> refine_h -> PC(reapply) -> completion -> PC -> final_h
+  |
+  +-- two_pass.rs                  -- two-pass + self-undistort orchestration
+        +-- detect_two_pass()      -- pass-1 (raw) -> pass-2 (mapper + seeds) -> merge
+        +-- detect_with_self_undistort() -- baseline -> estimate model -> pass-2
 ```
 
-Two-pass and self-undistort orchestration lives in `pipeline/two_pass.rs`.
+Single-pass entry points build proposals and call `run::run()` directly from `mod.rs`. Two-pass and self-undistort orchestration lives in `pipeline/two_pass.rs`. Proposal building (including seed injection) happens before `run::run()` — the core pipeline accepts pre-built `Vec<Proposal>`.
 
 ### 1.1 Entry Points
 
@@ -28,13 +33,13 @@ All detection goes through `Detector` methods. No public free functions.
 | Method | Mapper | Seeds | Debug | Two-Pass |
 |--------|--------|-------|-------|----------|
 | `detect` | none | none | no | no |
-| `detect_with_mapper` | explicit PixelMapper | none | no | yes |
-| `detect_with_self_undistort` | estimated | pass-1 centers | no | yes |
-| `detect_with_debug` | explicit (optional) | none | yes | no |
+| `detect_with_mapper` | explicit `&dyn PixelMapper` | auto | no | yes |
+| `detect_with_self_undistort` | estimated | auto | no | yes |
+| `detect_with_debug` | optional | none | yes | no |
 
-The mapper is always passed explicitly — `DetectConfig` does not store a camera model.
+The mapper is always passed explicitly — `DetectConfig` does not store a camera model. Seed injection is an internal detail of two-pass orchestration (hardcoded `SeedProposalParams::default()`).
 
-Internal `pub(crate)` pipeline functions: `detect_rings`, `detect_rings_with_mapper`, `detect_rings_with_self_undistort`.
+Internal `pub(crate)` pipeline functions: `detect_single_pass`, `detect_two_pass`, `detect_with_self_undistort`, `detect_single_pass_with_debug`.
 
 ---
 
@@ -295,14 +300,14 @@ When `pipeline/run.rs::run` receives a mapper:
 ```
 detect_with_self_undistort:
   |
-  +-- detect_rings(no mapper)          → pass-1 result in IMAGE frame
+  +-- run_single_pass(no mapper)       → pass-1 result in IMAGE frame
   |     edge_points_outer/inner are in image frame
   |
   +-- estimate_self_undistort()         → DivisionModel {lambda, cx, cy}
   |     uses pass-1 edge points to estimate lambda
   |
-  +-- detect_rings_pass2_with_seeds(model):   → pass-2 in WORKING frame
-        |     proposals: image frame (Scharr on raw)
+  +-- run_pass2(model):                → pass-2 in WORKING frame
+        |     proposals + seeds from pass-1
         |     → mapped to working frame
         |     → edge sampling in working frame (pixels via mapper)
         |     → all results in working frame
@@ -312,7 +317,7 @@ detect_with_self_undistort:
 ```
 
 The self-undistort path runs the image **twice** total:
-1. Initial `detect_rings` (for lambda estimation + pass-1 seeds)
+1. Initial single-pass detection (for lambda estimation + pass-1 seeds)
 2. Pass-2 with estimated `DivisionModel` (final result)
 
 The initial detection result is reused as the internal pass-1 (optimized from the original 3x approach).

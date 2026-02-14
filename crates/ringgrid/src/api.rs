@@ -108,7 +108,7 @@ impl Detector {
 
     /// Detect markers in a grayscale image (single-pass, no distortion mapping).
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_rings(image, &self.config, None)
+        pipeline::detect_single_pass(image, &self.config, None)
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
@@ -120,7 +120,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
-        pipeline::detect_rings_with_mapper(image, &self.config, Some(mapper))
+        pipeline::detect_two_pass(image, &self.config, mapper)
     }
 
     /// Detect with automatic self-undistortion estimation.
@@ -131,7 +131,7 @@ impl Detector {
     ///
     /// Requires `config.self_undistort.enable = true` (set via config_mut).
     pub fn detect_with_self_undistort(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_rings_with_self_undistort(image, &self.config)
+        pipeline::detect_with_self_undistort(image, &self.config)
     }
 
     /// Detect with debug dump collection (single-pass).
@@ -142,7 +142,7 @@ impl Detector {
         debug_cfg: &DebugCollectConfig,
         mapper: Option<&dyn PixelMapper>,
     ) -> (DetectionResult, DebugDump) {
-        pipeline::detect_rings_with_debug(image, &self.config, debug_cfg, mapper)
+        pipeline::detect_single_pass_with_debug(image, &self.config, debug_cfg, mapper)
     }
 }
 

@@ -1,12 +1,10 @@
 use crate::board_layout::BoardLayout;
-use crate::camera::PixelMapper;
 use crate::homography::RansacHomographyConfig;
-use crate::marker_spec::MarkerSpec;
+use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::pixelmap::SelfUndistortConfig;
+use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
-use super::super::decode::DecodeConfig;
-use super::super::edge_sample::EdgeSampleConfig;
-use super::super::outer_estimate::OuterEstimationConfig;
-use super::super::proposal::ProposalConfig;
+use super::proposal::ProposalConfig;
 
 /// Debug collection options for `detect_rings_with_debug`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -38,24 +36,6 @@ impl Default for SeedProposalParams {
             merge_radius_px: 3.0,
             seed_score: 1.0e12,
             max_seeds: Some(512),
-        }
-    }
-}
-
-/// Two-pass orchestration parameters.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TwoPassParams {
-    /// Seed-injection controls for the second pass.
-    pub seed: SeedProposalParams,
-    /// Keep pass-1 detections that are not present in pass-2 output.
-    pub keep_pass1_markers: bool,
-}
-
-impl Default for TwoPassParams {
-    fn default() -> Self {
-        Self {
-            seed: SeedProposalParams::default(),
-            keep_pass1_markers: true,
         }
     }
 }
@@ -243,17 +223,14 @@ pub struct DetectConfig {
     pub outer_estimation: OuterEstimationConfig,
     /// Proposal generation configuration.
     pub proposal: ProposalConfig,
+    /// Seed-injection controls for multi-pass proposal generation.
+    pub seed_proposals: SeedProposalParams,
     /// Radial edge sampling configuration.
     pub edge_sample: EdgeSampleConfig,
     /// Marker decode configuration.
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
-    /// Optional camera model for distortion-aware processing.
-    ///
-    /// When set, local fitting/sampling runs in the undistorted pixel frame
-    /// and all reported marker geometry/centers use that working frame.
-    pub camera: Option<crate::camera::CameraModel>,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -277,7 +254,7 @@ pub struct DetectConfig {
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
-    pub self_undistort: crate::self_undistort::SelfUndistortConfig,
+    pub self_undistort: SelfUndistortConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -330,10 +307,10 @@ impl Default for DetectConfig {
             marker_scale: MarkerScalePrior::default(),
             outer_estimation: OuterEstimationConfig::default(),
             proposal: ProposalConfig::default(),
+            seed_proposals: SeedProposalParams::default(),
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
-            camera: None,
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -345,7 +322,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             refine_with_h: true,
             board: BoardLayout::default(),
-            self_undistort: crate::self_undistort::SelfUndistortConfig::default(),
+            self_undistort: SelfUndistortConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -413,8 +390,4 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
         config.marker_spec.r_inner_expected = r_inner_expected;
         config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
     }
-}
-
-pub(super) fn config_mapper(config: &DetectConfig) -> Option<&dyn PixelMapper> {
-    config.camera.as_ref().map(|c| c as &dyn PixelMapper)
 }

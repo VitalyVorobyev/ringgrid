@@ -3,7 +3,7 @@ use crate::DetectedMarker;
 
 use super::{CircleRefinementMethod, DetectConfig};
 
-pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
+pub(crate) fn warn_center_correction_without_intrinsics(config: &DetectConfig, has_mapper: bool) {
     if config.circle_refinement == CircleRefinementMethod::None || has_mapper {
         return;
     }
@@ -14,14 +14,36 @@ pub(super) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
     );
 }
 
-pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
-    use crate::projective_center::{
+/// Apply projective center correction, skipping markers that already have it.
+///
+/// Use this for the initial pass and for completion markers that need correction
+/// without disturbing markers that were already corrected.
+pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+    apply_projective_centers_impl(markers, config, false);
+}
+
+/// Reapply projective center correction to all markers, clearing previous results.
+///
+/// Use this after refine-H, which produces new ellipses that invalidate the
+/// previous projective center estimate.
+pub(crate) fn reapply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+    apply_projective_centers_impl(markers, config, true);
+}
+
+fn apply_projective_centers_impl(
+    markers: &mut [DetectedMarker],
+    config: &DetectConfig,
+    force: bool,
+) {
+    use crate::ring::projective_center::{
         ring_center_projective_with_debug, RingCenterProjectiveOptions,
     };
 
-    for m in markers.iter_mut() {
-        m.center_projective = None;
-        m.center_projective_residual = None;
+    if force {
+        for m in markers.iter_mut() {
+            m.center_projective = None;
+            m.center_projective_residual = None;
+        }
     }
 
     if !config.projective_center.enable {
@@ -39,6 +61,7 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         ..Default::default()
     };
 
+    let mut n_skipped = 0usize;
     let mut n_missing_conics = 0usize;
     let mut n_solver_failed = 0usize;
     let mut n_rejected_shift = 0usize;
@@ -47,6 +70,11 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
     let mut n_applied = 0usize;
 
     for m in markers.iter_mut() {
+        if !force && m.center_projective.is_some() {
+            n_skipped += 1;
+            continue;
+        }
+
         let (Some(inner), Some(outer)) = (m.ellipse_inner.as_ref(), m.ellipse_outer.as_ref())
         else {
             n_missing_conics += 1;
@@ -54,8 +82,8 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         };
 
         let center_before = m.center;
-        let q_inner = Conic2D::from_ellipse_params(inner).mat;
-        let q_outer = Conic2D::from_ellipse_params(outer).mat;
+        let q_inner = Conic2D::from_ellipse(inner).mat;
+        let q_outer = Conic2D::from_ellipse(outer).mat;
         let Ok(res) = ring_center_projective_with_debug(&q_inner, &q_outer, opts) else {
             n_solver_failed += 1;
             continue;
@@ -98,11 +126,13 @@ pub(super) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
 
     tracing::debug!(
         applied = n_applied,
+        skipped = n_skipped,
         missing_conics = n_missing_conics,
         solver_failed = n_solver_failed,
         rejected_shift = n_rejected_shift,
         rejected_residual = n_rejected_residual,
         rejected_eig_sep = n_rejected_eig_sep,
-        "projective-center application summary"
+        "projective-center application summary (force={})",
+        force,
     );
 }

@@ -9,11 +9,28 @@
 
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
-use crate::codec::Codebook;
 use crate::conic::Ellipse;
+use crate::pixelmap::PixelMapper;
+use crate::ring::edge_sample::DistortionAwareSampler;
 
-use super::edge_sample::DistortionAwareSampler;
+use super::codec::Codebook;
+
+/// Decode quality metrics for a detected marker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DecodeMetrics {
+    /// Raw 16-bit word sampled from the code band.
+    pub observed_word: u16,
+    /// Best-matching codebook entry index.
+    pub best_id: usize,
+    /// Cyclic rotation that produced the best match.
+    pub best_rotation: u8,
+    /// Hamming distance to the best-matching codeword.
+    pub best_dist: u8,
+    /// Margin: second_best_dist - best_dist.
+    pub margin: u8,
+    /// Confidence heuristic in [0, 1].
+    pub decode_confidence: f32,
+}
 
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -298,8 +315,8 @@ fn decode_marker_impl(
 
 #[cfg(test)]
 mod tests {
+    use super::super::codebook::CODEBOOK;
     use super::*;
-    use crate::codebook::CODEBOOK;
 
     /// Paint a synthetic ring marker with known code on a small image.
     fn make_coded_ring_image(

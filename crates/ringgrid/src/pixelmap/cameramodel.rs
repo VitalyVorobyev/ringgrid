@@ -1,20 +1,5 @@
-//! Camera intrinsics and radial-tangential distortion model.
-//!
-//! This module provides small, reusable primitives for distortion-aware sampling.
-//! The current integration keeps camera usage optional and non-breaking.
-
+use super::{PixelMapper, RadialTangentialDistortion, UndistortConfig};
 use serde::{Deserialize, Serialize};
-
-/// Mapping between raw image pixels and detector working-frame pixels.
-///
-/// The working frame is the coordinate system used by sampling/fitting stages.
-/// For distortion-aware processing this is typically an undistorted pixel frame.
-pub trait PixelMapper {
-    /// Map from image (distorted) pixel coordinates to working coordinates.
-    fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]>;
-    /// Map from working coordinates back to image (distorted) pixel coordinates.
-    fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]>;
-}
 
 /// Pinhole camera intrinsics.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -60,66 +45,6 @@ impl CameraIntrinsics {
             self.fx * normalized_xy[0] + self.cx,
             self.fy * normalized_xy[1] + self.cy,
         ]
-    }
-}
-
-/// Brown-Conrady radial-tangential distortion coefficients.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct RadialTangentialDistortion {
-    /// Radial coefficient k1.
-    pub k1: f64,
-    /// Radial coefficient k2.
-    pub k2: f64,
-    /// Tangential coefficient p1.
-    pub p1: f64,
-    /// Tangential coefficient p2.
-    pub p2: f64,
-    /// Radial coefficient k3.
-    pub k3: f64,
-}
-
-impl Default for RadialTangentialDistortion {
-    fn default() -> Self {
-        Self {
-            k1: 0.0,
-            k2: 0.0,
-            p1: 0.0,
-            p2: 0.0,
-            k3: 0.0,
-        }
-    }
-}
-
-impl RadialTangentialDistortion {
-    /// Apply distortion to normalized coordinates.
-    pub fn distort_normalized(self, normalized_xy: [f64; 2]) -> [f64; 2] {
-        let x = normalized_xy[0];
-        let y = normalized_xy[1];
-        let r2 = x * x + y * y;
-        let r4 = r2 * r2;
-        let r6 = r4 * r2;
-        let radial = 1.0 + self.k1 * r2 + self.k2 * r4 + self.k3 * r6;
-        let x_tan = 2.0 * self.p1 * x * y + self.p2 * (r2 + 2.0 * x * x);
-        let y_tan = self.p1 * (r2 + 2.0 * y * y) + 2.0 * self.p2 * x * y;
-        [x * radial + x_tan, y * radial + y_tan]
-    }
-}
-
-/// Distortion inversion settings used by iterative undistortion.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct UndistortConfig {
-    /// Maximum fixed-point iterations.
-    pub max_iters: usize,
-    /// Stop when coordinate update norm is below this threshold.
-    pub eps: f64,
-}
-
-impl Default for UndistortConfig {
-    fn default() -> Self {
-        Self {
-            max_iters: 15,
-            eps: 1e-12,
-        }
     }
 }
 

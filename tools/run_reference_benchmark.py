@@ -14,6 +14,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 ALL_MODES = {
     "none": ["--circle-refine-method", "none"],
@@ -23,6 +27,61 @@ ALL_MODES = {
 }
 
 ALL_CORRECTIONS = ("none", "external", "self_undistort")
+CONSOLE = Console()
+
+
+def fmt_float(value: float | None, digits: int = 3) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.{digits}f}"
+
+
+def fmt_pair(a: float | None, b: float | None, digits: int = 3) -> str:
+    return f"{fmt_float(a, digits)}/{fmt_float(b, digits)}"
+
+
+def ui_print(message: str) -> None:
+    CONSOLE.print(message)
+
+
+def ui_note(message: str) -> None:
+    CONSOLE.print(f"[yellow]NOTE:[/yellow] {message}")
+
+
+def render_summary(summary_modes: dict[str, dict], summary_path: Path) -> None:
+    rows = sorted(
+        summary_modes.values(),
+        key=lambda vals: (str(vals.get("correction", "")), str(vals.get("mode", ""))),
+    )
+
+    table = Table(
+        title="Reference Benchmark Summary",
+        box=box.ROUNDED,
+        header_style="bold cyan",
+        show_lines=False,
+    )
+    table.add_column("Correction", style="cyan")
+    table.add_column("Mode", style="magenta")
+    table.add_column("Precision", justify="right")
+    table.add_column("Recall", justify="right")
+    table.add_column("Center Mean (px)", justify="right")
+    table.add_column("H Self Mean/P95 (px)", justify="right")
+    table.add_column("H vs GT Mean/P95 (px)", justify="right")
+
+    for vals in rows:
+        table.add_row(
+            str(vals.get("correction", "n/a")),
+            str(vals.get("mode", "n/a")),
+            fmt_float(vals.get("avg_precision")),
+            fmt_float(vals.get("avg_recall")),
+            fmt_float(vals.get("avg_center_mean_px")),
+            fmt_pair(vals.get("avg_h_self_mean_px"), vals.get("avg_h_self_p95_px")),
+            fmt_pair(vals.get("avg_h_vs_gt_mean_px"), vals.get("avg_h_vs_gt_p95_px")),
+        )
+
+    CONSOLE.print(Panel.fit("[bold]run_reference_benchmark.py[/bold]", border_style="cyan"))
+    CONSOLE.print(table)
+    CONSOLE.print(f"[dim]Wrote {summary_path}[/dim]")
 
 
 def find_ringgrid_binary() -> str | None:
@@ -199,6 +258,9 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if CONSOLE is None:
+        print("NOTE: rich is not installed; using plain text output.")
+        print("      Install rich for nicer benchmark output: pip install rich")
 
     intr_values = [args.cam_fx, args.cam_fy, args.cam_cx, args.cam_cy]
     has_any_intr = any(v is not None for v in intr_values)
@@ -222,7 +284,7 @@ def main() -> None:
     synth_dir.mkdir(parents=True, exist_ok=True)
 
     if not args.skip_gen:
-        print(
+        ui_print(
             f"[1/3] Generate synth set n={args.n_images}, blur={args.blur_px}, "
             f"noise_sigma={args.noise_sigma}"
         )
@@ -271,7 +333,7 @@ def main() -> None:
             ]
         )
     else:
-        print(f"[1/3] Reuse existing synth set at {synth_dir}")
+        ui_print(f"[1/3] Reuse existing synth set at {synth_dir}")
 
     ringgrid_bin = None
     use_cargo_run = True
@@ -283,8 +345,8 @@ def main() -> None:
             and "external" in correction_names
             and not binary_supports_camera_cli(ringgrid_bin)
         ):
-            print(
-                "  NOTE: selected ringgrid binary does not support camera CLI flags; "
+            ui_note(
+                "selected ringgrid binary does not support camera CLI flags; "
                 "falling back to cargo run"
             )
             use_cargo_run = True
@@ -293,17 +355,17 @@ def main() -> None:
             and "self_undistort" in correction_names
             and not binary_supports_self_undistort_cli(ringgrid_bin)
         ):
-            print(
-                "  NOTE: selected ringgrid binary does not support self-undistort CLI flags; "
+            ui_note(
+                "selected ringgrid binary does not support self-undistort CLI flags; "
                 "falling back to cargo run"
             )
             use_cargo_run = True
     if use_cargo_run:
-        print("  Runner: cargo run")
+        ui_print("  Runner: cargo run")
     else:
-        print(f"  Runner: prebuilt binary ({ringgrid_bin})")
+        ui_print(f"  Runner: prebuilt binary ({ringgrid_bin})")
 
-    print("[2/3] Run detection variants")
+    ui_print("[2/3] Run detection variants")
     summary: dict[str, dict] = {
         "config": {
             "n_images": args.n_images,
@@ -441,17 +503,7 @@ def main() -> None:
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
-    print("[3/3] Summary")
-    print("correction | mode | precision | recall | center_mean | H_self_mean/p95 | H_vs_GT_mean/p95")
-    for _, vals in summary["modes"].items():
-        print(
-            f"{vals['correction']} | {vals['mode']} | "
-            f"{vals['avg_precision']:.3f} | {vals['avg_recall']:.3f} | "
-            f"{vals['avg_center_mean_px']:.3f} | "
-            f"{vals['avg_h_self_mean_px']:.3f}/{vals['avg_h_self_p95_px']:.3f} | "
-            f"{vals['avg_h_vs_gt_mean_px']:.3f}/{vals['avg_h_vs_gt_p95_px']:.3f}"
-        )
-    print(f"\nWrote {summary_path}")
+    render_summary(summary["modes"], summary_path)
 
 
 if __name__ == "__main__":

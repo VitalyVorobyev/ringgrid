@@ -47,12 +47,22 @@ def dist2(a: list, b: list) -> float:
 
 
 def pred_inner_outer_ratio(pred_marker: dict[str, Any]) -> Optional[float]:
+    def axes(ell: dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+        if not isinstance(ell, dict):
+            return (None, None)
+        if "semi_axes" in ell:
+            vals = ell.get("semi_axes") or [None, None]
+            if not isinstance(vals, list) or len(vals) < 2:
+                return (None, None)
+            return (vals[0], vals[1])
+        return (ell.get("a"), ell.get("b"))
+
     eo = pred_marker.get("ellipse_outer")
     ei = pred_marker.get("ellipse_inner")
     if not eo or not ei:
         return None
-    oa, ob = (eo.get("semi_axes") or [None, None])[:2]
-    ia, ib = (ei.get("semi_axes") or [None, None])[:2]
+    oa, ob = axes(eo)
+    ia, ib = axes(ei)
     if oa is None or ob is None or ia is None or ib is None:
         return None
     oa = float(oa)

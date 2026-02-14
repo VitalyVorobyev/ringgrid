@@ -13,114 +13,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use super::{DivisionModel, PixelMapper};
 use crate::board_layout::BoardLayout;
-use crate::camera::PixelMapper;
 use crate::homography;
 
 /// Edge point data for a single marker: (outer_points, inner_points).
 type MarkerEdgeData = (Vec<[f64; 2]>, Vec<[f64; 2]>);
 use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
 use crate::DetectedMarker;
-
-/// Single-parameter division distortion model.
-///
-/// Negative lambda corresponds to barrel distortion (most common),
-/// positive to pincushion distortion.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct DivisionModel {
-    /// Distortion parameter.
-    pub lambda: f64,
-    /// Distortion center x (pixels).
-    pub cx: f64,
-    /// Distortion center y (pixels).
-    pub cy: f64,
-}
-
-impl DivisionModel {
-    /// Create a division model with explicit parameters.
-    pub fn new(lambda: f64, cx: f64, cy: f64) -> Self {
-        Self { lambda, cx, cy }
-    }
-
-    /// Create a division model centered on the image.
-    pub fn centered(lambda: f64, width: u32, height: u32) -> Self {
-        Self {
-            lambda,
-            cx: width as f64 / 2.0,
-            cy: height as f64 / 2.0,
-        }
-    }
-
-    /// Identity model (zero distortion) centered on the image.
-    pub fn identity(width: u32, height: u32) -> Self {
-        Self::centered(0.0, width, height)
-    }
-
-    /// Undistort a single point.
-    pub fn undistort_point(&self, distorted_xy: [f64; 2]) -> [f64; 2] {
-        let dx = distorted_xy[0] - self.cx;
-        let dy = distorted_xy[1] - self.cy;
-        let r2 = dx * dx + dy * dy;
-        let denom = 1.0 + self.lambda * r2;
-        if denom.abs() < 1e-12 || !denom.is_finite() {
-            return distorted_xy;
-        }
-        let scale = 1.0 / denom;
-        [self.cx + dx * scale, self.cy + dy * scale]
-    }
-
-    /// Distort a point (inverse mapping: undistorted → distorted).
-    ///
-    /// Uses iterative fixed-point method since the inverse is not closed-form.
-    pub fn distort_point(&self, undistorted_xy: [f64; 2]) -> Option<[f64; 2]> {
-        if self.lambda.abs() < 1e-18 {
-            return Some(undistorted_xy);
-        }
-        let ux = undistorted_xy[0] - self.cx;
-        let uy = undistorted_xy[1] - self.cy;
-        let mut dx = ux;
-        let mut dy = uy;
-        for _ in 0..20 {
-            let r2 = dx * dx + dy * dy;
-            let factor = 1.0 + self.lambda * r2;
-            if factor.abs() < 1e-12 || !factor.is_finite() {
-                return None;
-            }
-            let dx_next = ux * factor;
-            let dy_next = uy * factor;
-            if !dx_next.is_finite() || !dy_next.is_finite() {
-                return None;
-            }
-            let delta = (dx_next - dx).powi(2) + (dy_next - dy).powi(2);
-            dx = dx_next;
-            dy = dy_next;
-            if delta.sqrt() < 1e-12 {
-                break;
-            }
-        }
-        let out = [self.cx + dx, self.cy + dy];
-        if out[0].is_finite() && out[1].is_finite() {
-            Some(out)
-        } else {
-            None
-        }
-    }
-
-    /// Undistort a batch of points.
-    pub fn undistort_points(&self, points: &[[f64; 2]]) -> Vec<[f64; 2]> {
-        points.iter().map(|p| self.undistort_point(*p)).collect()
-    }
-}
-
-impl PixelMapper for DivisionModel {
-    fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
-        Some(self.undistort_point(image_xy))
-    }
-
-    fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
-        self.distort_point(working_xy)
-    }
-}
 
 /// Configuration for self-undistort estimation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -592,8 +492,8 @@ mod tests {
             center,
             center_projective: None,
             center_projective_residual: None,
-            ellipse_outer: outer_ellipse.as_ref().map(crate::EllipseParams::from),
-            ellipse_inner: inner_ellipse.as_ref().map(crate::EllipseParams::from),
+            ellipse_outer: outer_ellipse,
+            ellipse_inner: inner_ellipse,
             edge_points_outer: Some(outer_pts),
             edge_points_inner: Some(inner_pts),
             fit: crate::FitMetrics::default(),

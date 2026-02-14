@@ -97,15 +97,22 @@ def add_id_label(
 
 
 def sample_ellipse_xy(ell: dict[str, Any], n: int = 128) -> tuple[list[float], list[float]]:
-    """Sample ellipse polyline from EllipseParams-like dict.
+    """Sample ellipse polyline from ringgrid ellipse dict.
 
-    Expects:
-      center_xy: [cx, cy]
-      semi_axes: [a, b]
-      angle: radians
+    Supports both shapes:
+      v1: {center_xy:[cx, cy], semi_axes:[a, b], angle}
+      v2: {cx, cy, a, b, angle}
     """
-    cx, cy = ell["center_xy"]
-    a, b = ell["semi_axes"]
+    if "center_xy" in ell:
+        cx, cy = ell["center_xy"]
+    else:
+        cx, cy = ell["cx"], ell["cy"]
+
+    if "semi_axes" in ell:
+        a, b = ell["semi_axes"]
+    else:
+        a, b = ell["a"], ell["b"]
+
     ang = ell["angle"]
 
     xs: list[float] = []
@@ -488,6 +495,7 @@ def main() -> None:
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
     supported = {
+        "ringgrid.debug.v7",
         "ringgrid.debug.v6",
         "ringgrid.debug.v5",
         "ringgrid.debug.v4",

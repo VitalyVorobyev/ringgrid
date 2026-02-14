@@ -68,16 +68,25 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 
 ## Public API (v1)
 
+All detection goes through `Detector` methods. No public free functions.
+
 Stable surface (library users):
-- `Detector`, `TargetSpec`
-- `DetectConfig` and related config types
-- Detection functions: `detect_rings(...)`, `detect_rings_with_mapper(...)`, `detect_rings_with_self_undistort(...)`
-- `BoardLayout`, `CameraModel`, `PixelMapper`
-- Result types: `DetectionResult`, `DetectedMarker`, `EllipseParams`
+- `Detector` — entry point
+- `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
+- `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
+- `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
+- `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
+- `Ellipse` — conic geometry
 
 Design constraints in v1:
 - Target JSON is mandatory for high-level detector construction:
-  `TargetSpec::from_json_file(...)` + `Detector::new(...)`.
+  `BoardLayout::from_json_file(...)` + `Detector::new(...)`.
+- `Detector::detect(...)` is config-driven:
+  `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
+- `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
+  `self_undistort` config.
+- `Detector::detect_with_debug(...)` is single-pass only; self-undistort/two-pass
+  orchestration is skipped in debug mode.
 - Low-level math/pipeline modules are internal.
 - Debug dump API is internal/CLI-only (`cli-internal` feature).
 - Example target JSON: `crates/ringgrid/examples/target.json`.
@@ -85,11 +94,11 @@ Design constraints in v1:
 Minimal usage:
 
 ```rust
-use ringgrid::{Detector, TargetSpec};
+use ringgrid::{BoardLayout, Detector};
 use std::path::Path;
 
-let target = TargetSpec::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
-let detector = Detector::new(target);
+let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
+let detector = Detector::new(board);
 // let result = detector.detect(&gray_image);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -99,7 +108,17 @@ let detector = Detector::new(target);
 ```text
 crates/
   ringgrid/
-    src/           # library code (curated public API in lib.rs)
+    src/
+      lib.rs       # re-exports only (public API surface)
+      api.rs       # Detector facade
+      pipeline/    # stage orchestration: single_pass, multi_pass, run, fit_decode, finalize
+      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
+      ring/        # ring-level sampling: edge, radius, projective center
+      marker/      # codebook, decode, marker spec
+      homography/  # DLT + RANSAC, refit utilities
+      conic/       # ellipse types, fitting, RANSAC, eigenvalue solver
+      pixelmap/    # camera models, PixelMapper trait, self-undistort
+      debug_dump.rs # debug JSON schema (feature-gated)
     examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
@@ -109,7 +128,12 @@ tools/
   viz_detect_debug.py  # debug overlay rendering
 docs/
   assets/
+  module_structure.md
+  pipeline_analysis.md  # detailed pipeline architecture analysis
 ```
+
+Module ownership and dependency direction are documented in `docs/module_structure.md`.
+Detailed pipeline architecture is in `docs/pipeline_analysis.md`.
 
 ## Examples
 
@@ -140,6 +164,7 @@ Other commonly used toggles:
 - `--no-complete`
 - `--marker-diameter-min <px>`
 - `--marker-diameter-max <px>`
+- `--self-undistort` (mutually exclusive with camera `--cam-*` flags)
 - `--debug-json <path>`
 - `--debug-store-points`
 

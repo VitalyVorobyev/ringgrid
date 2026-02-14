@@ -1,22 +1,19 @@
 use image::GrayImage;
 
-use super::super::inner_fit;
-use super::super::marker_build::{
+use super::inner_fit;
+use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
 };
-use super::super::outer_fit::{
+use super::outer_fit::{
     compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
     OuterFitCandidate,
 };
-use super::super::{
-    dedup_by_id, dedup_markers, dedup_with_debug, find_proposals_with_seeds, DebugCollectConfig,
-    DetectConfig, SeedProposalParams,
-};
-use crate::camera::PixelMapper;
+use super::{dedup_by_id, dedup_markers, dedup_with_debug, DebugCollectConfig, DetectConfig};
 use crate::debug_dump as dbg;
+use crate::detector::proposal::Proposal;
+use crate::detector::DetectedMarker;
+use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
-use crate::ring::proposal::Proposal;
-use crate::DetectedMarker;
 
 pub(super) struct FitDecodeCoreOutput {
     pub(super) markers: Vec<DetectedMarker>,
@@ -255,8 +252,8 @@ fn process_candidate(
         decode_result.as_ref().map(|d| d.id),
         confidence,
         center,
-        Some(crate::EllipseParams::from(outer)),
-        inner_params.clone(),
+        Some(outer),
+        inner_params,
         Some(edge.outer_points.clone()),
         Some(inner_fit.points_inner.clone()),
         fit_metrics.clone(),
@@ -269,8 +266,8 @@ fn process_candidate(
             edge: edge_for_debug(&edge, ctx.store_points),
             outer_estimation: Some(outer_estimate),
             chosen_outer_hypothesis: Some(chosen_hypothesis),
-            ellipse_outer: Some(crate::EllipseParams::from(outer)),
-            ellipse_inner: inner_params.clone(),
+            ellipse_outer: Some(outer),
+            ellipse_inner: inner_params,
             inner_estimation: Some(inner_fit.estimate.clone()),
             fit: fit_metrics,
             inner_points_fit: if ctx.store_points {
@@ -328,11 +325,9 @@ pub(super) fn run(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    seed_centers_image: &[[f32; 2]],
-    seed_cfg: &SeedProposalParams,
+    proposals: Vec<Proposal>,
     debug_cfg: Option<&DebugCollectConfig>,
 ) -> FitDecodeCoreOutput {
-    let proposals = find_proposals_with_seeds(gray, &config.proposal, seed_centers_image, seed_cfg);
     tracing::info!("{} proposals found", proposals.len());
 
     let inner_fit_cfg = inner_fit::InnerFitConfig::default();

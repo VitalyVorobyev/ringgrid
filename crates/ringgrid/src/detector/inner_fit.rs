@@ -1,8 +1,8 @@
 use image::GrayImage;
 
-use crate::camera::PixelMapper;
 use crate::conic::{self, Ellipse, RansacConfig};
-use crate::marker_spec::MarkerSpec;
+use crate::marker::MarkerSpec;
+use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
     estimate_inner_scale_from_outer_with_mapper, InnerEstimate, InnerStatus, Polarity,
@@ -10,7 +10,7 @@ use crate::ring::inner_estimate::{
 
 /// Outcome category for robust inner ellipse fitting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum InnerFitStatus {
+pub(crate) enum InnerFitStatus {
     /// Inner ellipse fit is valid and accepted by quality gates.
     Ok,
     /// A candidate was fitted but rejected by quality gates.
@@ -23,7 +23,7 @@ pub(super) enum InnerFitStatus {
 ///
 /// Outer ellipse is used only as a geometric/search prior.
 #[derive(Debug, Clone)]
-pub(super) struct InnerFitConfig {
+pub(crate) struct InnerFitConfig {
     /// Minimum number of sampled points required to attempt a fit.
     pub min_points: usize,
     /// Minimum accepted inlier ratio when RANSAC is used.
@@ -61,7 +61,7 @@ impl Default for InnerFitConfig {
 
 /// Robust inner fit result with shared inner-estimate diagnostics.
 #[derive(Debug, Clone)]
-pub(super) struct InnerFitResult {
+pub(crate) struct InnerFitResult {
     /// Shared radial-hint estimation output.
     pub estimate: InnerEstimate,
     /// Final inner-ellipse fit status.
@@ -208,7 +208,7 @@ fn sample_inner_points_from_hint(
 ///
 /// The radial hint/polarity stage is delegated to `estimate_inner_scale_from_outer`
 /// so there is a single source of truth for inner-edge signal extraction.
-pub(super) fn fit_inner_ellipse_from_outer_hint(
+pub(crate) fn fit_inner_ellipse_from_outer_hint(
     gray: &GrayImage,
     outer: &Ellipse,
     spec: &MarkerSpec,
@@ -367,7 +367,7 @@ pub(super) fn fit_inner_ellipse_from_outer_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::marker_spec::GradPolarity;
+    use crate::marker::GradPolarity;
     use image::Luma;
 
     fn draw_ring_image(

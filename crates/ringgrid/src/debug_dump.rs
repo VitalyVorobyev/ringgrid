@@ -7,22 +7,22 @@
 use serde::{Deserialize, Serialize};
 
 use crate::board_layout::BoardLayout;
-use crate::camera::CameraModel;
-use crate::homography::RansacHomographyConfig;
-use crate::marker_spec::MarkerSpec;
-use crate::ring::decode::{DecodeConfig, DecodeDiagnostics, DecodeResult};
-use crate::ring::detect::{
-    CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams,
+use crate::conic::Ellipse;
+use crate::detector::proposal::{Proposal, ProposalConfig};
+use crate::detector::{
+    CircleRefinementMethod, CompletionAttemptRecord, CompletionParams, CompletionStats,
+    DebugCollectConfig, DetectConfig, MarkerScalePrior, ProjectiveCenterParams, SeedProposalParams,
 };
+use crate::homography::RansacHomographyConfig;
+use crate::marker::decode::{DecodeDiagnostics, DecodeResult};
+use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::edge_sample::{EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::InnerEstimate;
 use crate::ring::outer_estimate::{OuterEstimate, OuterEstimationConfig};
-use crate::ring::proposal::{Proposal, ProposalConfig};
-use crate::self_undistort::SelfUndistortConfig;
-use crate::{DecodeMetrics, DetectedMarker, EllipseParams, FitMetrics, RansacStats};
+use crate::{DecodeMetrics, DetectedMarker, FitMetrics, RansacStats};
 
-pub const DEBUG_SCHEMA_V6: &str = "ringgrid.debug.v6";
+pub const DEBUG_SCHEMA_V8: &str = "ringgrid.debug.v8";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDump {
@@ -72,12 +72,11 @@ impl From<&BoardLayout> for BoardSummary {
 pub struct DetectConfigSnapshot {
     pub marker_scale: MarkerScalePrior,
     pub proposal: ProposalConfig,
+    pub seed_proposals: SeedProposalParams,
     pub edge_sample: EdgeSampleConfig,
     pub outer_estimation: OuterEstimationConfig,
     pub decode: DecodeConfig,
     pub marker_spec: MarkerSpec,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub camera: Option<CameraModel>,
     pub circle_refinement: CircleRefinementMethod,
     pub projective_center: ProjectiveCenterParams,
     pub completion: CompletionParams,
@@ -98,11 +97,11 @@ impl DetectConfigSnapshot {
         Self {
             marker_scale: config.marker_scale,
             proposal: config.proposal.clone(),
+            seed_proposals: config.seed_proposals.clone(),
             edge_sample: config.edge_sample.clone(),
             outer_estimation: config.outer_estimation.clone(),
             decode: config.decode.clone(),
             marker_spec: config.marker_spec.clone(),
-            camera: config.camera,
             circle_refinement: config.circle_refinement,
             projective_center: config.projective_center.clone(),
             completion: config.completion.clone(),
@@ -187,9 +186,9 @@ pub struct RingFitDebug {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_outer_hypothesis: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ellipse_outer: Option<EllipseParams>,
+    pub ellipse_outer: Option<Ellipse>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ellipse_inner: Option<EllipseParams>,
+    pub ellipse_inner: Option<Ellipse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner_estimation: Option<InnerEstimate>,
     pub fit: FitMetrics,
@@ -280,8 +279,8 @@ pub struct RefinedMarkerDebug {
 pub struct CompletionDebug {
     pub enabled: bool,
     pub params: CompletionParams,
-    pub attempted: Vec<crate::ring::detect::CompletionAttemptRecord>,
-    pub stats: crate::ring::detect::CompletionStats,
+    pub attempted: Vec<CompletionAttemptRecord>,
+    pub stats: CompletionStats,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
@@ -310,7 +309,7 @@ mod tests {
             store_points: false,
         };
         let dd = DebugDump {
-            schema_version: DEBUG_SCHEMA_V6.to_string(),
+            schema_version: DEBUG_SCHEMA_V8.to_string(),
             image: ImageDebug {
                 path: None,
                 width: 640,
@@ -357,7 +356,7 @@ mod tests {
 
         let s = serde_json::to_string_pretty(&dd).unwrap();
         let dd2: DebugDump = serde_json::from_str(&s).unwrap();
-        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V6);
+        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V8);
         assert_eq!(dd2.image.width, 640);
     }
 }

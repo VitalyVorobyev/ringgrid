@@ -3,7 +3,7 @@ use image::GrayImage;
 use crate::conic::rms_sampson_distance;
 use crate::conic::Ellipse;
 use crate::debug_dump as dbg;
-use crate::homography::project;
+use crate::homography::homography_project as project;
 use crate::ring::edge_sample::EdgeSampleResult;
 use crate::ring::outer_estimate::OuterEstimate;
 use crate::{DetectedMarker, FitMetrics};
@@ -51,9 +51,9 @@ pub struct CompletionStats {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct CompletionDebugOptions {
-    pub(super) store_points: bool,
-    pub(super) record: bool,
+pub(crate) struct CompletionDebugOptions {
+    pub(crate) store_points: bool,
+    pub(crate) record: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ fn compute_candidate_quality(
 
 /// Returns `Some(reason)` when decode disagrees with expected ID.
 fn check_decode_gate(
-    decode_result: Option<&crate::ring::decode::DecodeResult>,
+    decode_result: Option<&crate::marker::decode::DecodeResult>,
     expected_id: usize,
 ) -> Option<String> {
     if let Some(d) = decode_result {
@@ -207,7 +207,7 @@ fn build_pre_gate_fit_debug(ctx: &FitDebugContext<'_>) -> dbg::RingFitDebug {
         edge: edge_for_debug(ctx.edge, ctx.store_points),
         outer_estimation: Some(ctx.outer_estimate.clone()),
         chosen_outer_hypothesis: Some(ctx.chosen_hypothesis),
-        ellipse_outer: Some(crate::EllipseParams::from(*ctx.outer)),
+        ellipse_outer: Some(*ctx.outer),
         ellipse_inner: None,
         inner_estimation: None,
         fit: FitMetrics {
@@ -227,7 +227,7 @@ fn build_pre_gate_fit_debug(ctx: &FitDebugContext<'_>) -> dbg::RingFitDebug {
 fn build_success_fit_debug(
     ctx: &FitDebugContext<'_>,
     inner_fit: &InnerFitResult,
-    inner_params: Option<&crate::EllipseParams>,
+    inner_params: Option<&Ellipse>,
     fit: &crate::FitMetrics,
 ) -> dbg::RingFitDebug {
     dbg::RingFitDebug {
@@ -235,7 +235,7 @@ fn build_success_fit_debug(
         edge: edge_for_debug(ctx.edge, ctx.store_points),
         outer_estimation: Some(ctx.outer_estimate.clone()),
         chosen_outer_hypothesis: Some(ctx.chosen_hypothesis),
-        ellipse_outer: Some(crate::EllipseParams::from(*ctx.outer)),
+        ellipse_outer: Some(*ctx.outer),
         ellipse_inner: inner_params.cloned(),
         inner_estimation: Some(inner_fit.estimate.clone()),
         fit: fit.clone(),
@@ -255,13 +255,13 @@ fn build_success_fit_debug(
 ///
 /// This is intentionally conservative: it only runs when H exists and rejects
 /// any fit that deviates from the H-projected center by more than a tight gate.
-pub(super) fn complete_with_h(
+pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<DetectedMarker>,
     config: &DetectConfig,
     board: &crate::board_layout::BoardLayout,
-    mapper: Option<&dyn crate::camera::PixelMapper>,
+    mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     debug: CompletionDebugOptions,
 ) -> (CompletionStats, Option<Vec<CompletionAttemptRecord>>) {
     use std::collections::HashSet;
@@ -466,8 +466,8 @@ pub(super) fn complete_with_h(
             Some(id),
             confidence,
             quality.center,
-            Some(crate::EllipseParams::from(&outer)),
-            inner_params.clone(),
+            Some(outer),
+            inner_params,
             Some(edge.outer_points.clone()),
             Some(inner_fit.points_inner.clone()),
             fit.clone(),

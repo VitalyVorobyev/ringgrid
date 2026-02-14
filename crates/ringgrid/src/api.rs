@@ -118,7 +118,7 @@ impl Detector {
         if self.config.self_undistort.enable {
             pipeline::detect_with_self_undistort(image, &self.config)
         } else {
-            pipeline::detect_single_pass(image, &self.config, None)
+            pipeline::detect_single_pass(image, &self.config)
         }
     }
 

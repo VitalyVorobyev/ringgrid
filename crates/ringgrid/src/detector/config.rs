@@ -21,7 +21,7 @@ pub struct DebugCollectConfig {
 
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct SeedProposalParams {
+pub struct SeedProposalParams {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
     /// Score assigned to injected seed proposals.
@@ -223,6 +223,8 @@ pub struct DetectConfig {
     pub outer_estimation: OuterEstimationConfig,
     /// Proposal generation configuration.
     pub proposal: ProposalConfig,
+    /// Seed-injection controls for multi-pass proposal generation.
+    pub seed_proposals: SeedProposalParams,
     /// Radial edge sampling configuration.
     pub edge_sample: EdgeSampleConfig,
     /// Marker decode configuration.
@@ -305,6 +307,7 @@ impl Default for DetectConfig {
             marker_scale: MarkerScalePrior::default(),
             outer_estimation: OuterEstimationConfig::default(),
             proposal: ProposalConfig::default(),
+            seed_proposals: SeedProposalParams::default(),
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),

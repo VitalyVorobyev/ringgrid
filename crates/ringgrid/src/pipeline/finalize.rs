@@ -325,7 +325,7 @@ fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
     };
 
     dbg::DebugDump {
-        schema_version: dbg::DEBUG_SCHEMA_V7.to_string(),
+        schema_version: dbg::DEBUG_SCHEMA_V8.to_string(),
         image: dbg::ImageDebug {
             path: debug_cfg.image_path.clone(),
             width: image_size[0],

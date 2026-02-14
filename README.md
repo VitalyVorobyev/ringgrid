@@ -111,7 +111,7 @@ crates/
     src/
       lib.rs       # re-exports only (public API surface)
       api.rs       # Detector facade
-      pipeline/    # stage orchestration: run, fit_decode, finalize, two_pass
+      pipeline/    # stage orchestration: single_pass, multi_pass, run, fit_decode, finalize
       detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
       ring/        # ring-level sampling: edge, radius, projective center
       marker/      # codebook, decode, marker spec

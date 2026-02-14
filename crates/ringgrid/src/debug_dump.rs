@@ -11,7 +11,7 @@ use crate::conic::Ellipse;
 use crate::detector::proposal::{Proposal, ProposalConfig};
 use crate::detector::{
     CircleRefinementMethod, CompletionAttemptRecord, CompletionParams, CompletionStats,
-    DebugCollectConfig, DetectConfig, MarkerScalePrior, ProjectiveCenterParams,
+    DebugCollectConfig, DetectConfig, MarkerScalePrior, ProjectiveCenterParams, SeedProposalParams,
 };
 use crate::homography::RansacHomographyConfig;
 use crate::marker::decode::{DecodeDiagnostics, DecodeResult};
@@ -22,7 +22,7 @@ use crate::ring::inner_estimate::InnerEstimate;
 use crate::ring::outer_estimate::{OuterEstimate, OuterEstimationConfig};
 use crate::{DecodeMetrics, DetectedMarker, FitMetrics, RansacStats};
 
-pub const DEBUG_SCHEMA_V7: &str = "ringgrid.debug.v7";
+pub const DEBUG_SCHEMA_V8: &str = "ringgrid.debug.v8";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugDump {
@@ -72,6 +72,7 @@ impl From<&BoardLayout> for BoardSummary {
 pub struct DetectConfigSnapshot {
     pub marker_scale: MarkerScalePrior,
     pub proposal: ProposalConfig,
+    pub seed_proposals: SeedProposalParams,
     pub edge_sample: EdgeSampleConfig,
     pub outer_estimation: OuterEstimationConfig,
     pub decode: DecodeConfig,
@@ -96,6 +97,7 @@ impl DetectConfigSnapshot {
         Self {
             marker_scale: config.marker_scale,
             proposal: config.proposal.clone(),
+            seed_proposals: config.seed_proposals.clone(),
             edge_sample: config.edge_sample.clone(),
             outer_estimation: config.outer_estimation.clone(),
             decode: config.decode.clone(),
@@ -307,7 +309,7 @@ mod tests {
             store_points: false,
         };
         let dd = DebugDump {
-            schema_version: DEBUG_SCHEMA_V7.to_string(),
+            schema_version: DEBUG_SCHEMA_V8.to_string(),
             image: ImageDebug {
                 path: None,
                 width: 640,
@@ -354,7 +356,7 @@ mod tests {
 
         let s = serde_json::to_string_pretty(&dd).unwrap();
         let dd2: DebugDump = serde_json::from_str(&s).unwrap();
-        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V7);
+        assert_eq!(dd2.schema_version, DEBUG_SCHEMA_V8);
         assert_eq!(dd2.image.width, 640);
     }
 }

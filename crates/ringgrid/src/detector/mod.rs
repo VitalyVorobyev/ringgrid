@@ -23,7 +23,7 @@ pub(crate) use completion::{
 };
 pub use config::{
     CircleRefinementMethod, CompletionParams, DebugCollectConfig, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams,
+    ProjectiveCenterParams, SeedProposalParams,
 };
 pub(crate) use dedup::dedup_with_debug;
 pub use dedup::{dedup_by_id, dedup_markers};

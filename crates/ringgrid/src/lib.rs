@@ -29,7 +29,7 @@ pub use pipeline::DetectionResult;
 // Configuration
 pub use detector::{
     CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
-    ProjectiveCenterParams,
+    ProjectiveCenterParams, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
 

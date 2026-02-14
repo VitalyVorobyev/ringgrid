@@ -1,4 +1,4 @@
-//! Two-pass detection and self-undistort orchestration.
+//! Multi-pass detection orchestration.
 //!
 //! Two-pass detection: pass-1 runs without mapper for seed generation,
 //! pass-2 runs with mapper and pass-1 centers injected as proposal seeds.
@@ -15,43 +15,20 @@ use super::run as stages;
 use super::{dedup_by_id, dedup_markers, DetectConfig, DetectionResult};
 
 // ---------------------------------------------------------------------------
-// Seed-related helpers (private, use hardcoded defaults)
+// Seed-related helpers
 // ---------------------------------------------------------------------------
-
-fn seed_params() -> SeedProposalParams {
-    SeedProposalParams::default()
-}
-
-fn collect_seed_centers(pass1: &DetectionResult) -> Vec<[f32; 2]> {
-    let params = seed_params();
-    let max = params.max_seeds.unwrap_or(pass1.detected_markers.len());
-    pass1
-        .detected_markers
-        .iter()
-        .take(max.min(pass1.detected_markers.len()))
-        .filter_map(|m| {
-            let x = m.center[0] as f32;
-            let y = m.center[1] as f32;
-            if x.is_finite() && y.is_finite() {
-                Some([x, y])
-            } else {
-                None
-            }
-        })
-        .collect()
-}
 
 fn find_proposals_with_seeds(
     gray: &GrayImage,
     proposal_cfg: &ProposalConfig,
     seed_centers_image: &[[f32; 2]],
+    params: &SeedProposalParams,
 ) -> Vec<Proposal> {
     let mut proposals = find_proposals(gray, proposal_cfg);
     if seed_centers_image.is_empty() {
         return proposals;
     }
 
-    let params = seed_params();
     let merge_r2 = params.merge_radius_px.max(0.0).powi(2);
     let max_seeds = params
         .max_seeds
@@ -171,8 +148,10 @@ fn run_pass2(
     mapper: &dyn PixelMapper,
     pass1: &DetectionResult,
 ) -> DetectionResult {
-    let seeds = collect_seed_centers(pass1);
-    let proposals = find_proposals_with_seeds(gray, &config.proposal, &seeds);
+    let seed_params = &config.seed_proposals;
+    // TODO: use pass1 markers as proposals without find_proposals_with_seeds
+    let seeds = pass1.seed_centers(seed_params.max_seeds);
+    let proposals = find_proposals_with_seeds(gray, &config.proposal, &seeds, seed_params);
     let mut pass2 = stages::run(gray, config, Some(mapper), proposals, None).0;
 
     if pass2.detected_markers.is_empty() && !seeds.is_empty() {
@@ -181,6 +160,7 @@ fn run_pass2(
         pass2 = stages::run(gray, config, Some(mapper), proposals, None).0;
     }
 
+    // TODO: make this merge optional
     pass2.detected_markers = merge_two_pass_markers(
         &pass1.detected_markers,
         pass2.detected_markers,
@@ -198,7 +178,7 @@ fn run_pass2(
 ///
 /// Returned detections are in mapper working-frame coordinates. Any retained
 /// pass-1 fallback markers are remapped to the same working frame.
-pub(super) fn detect_two_pass(
+pub(crate) fn detect_two_pass(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
@@ -212,7 +192,7 @@ pub(super) fn detect_two_pass(
 /// Runs a baseline pass first. If `config.self_undistort.enable` is true and
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
-pub(super) fn detect_with_self_undistort(
+pub(crate) fn detect_with_self_undistort(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> DetectionResult {

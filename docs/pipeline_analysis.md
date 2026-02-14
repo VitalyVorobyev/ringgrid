@@ -18,12 +18,12 @@ pipeline/mod.rs                    -- entry points: detect_single_pass, detect_t
   |     +-- fit_decode::run()      -- proposals -> fit -> decode -> dedup
   |     +-- finalize::run()        -- PC -> global_filter -> refine_h -> PC(reapply) -> completion -> PC -> final_h
   |
-  +-- two_pass.rs                  -- two-pass + self-undistort orchestration
+  +-- multi_pass.rs                -- two-pass + self-undistort orchestration
         +-- detect_two_pass()      -- pass-1 (raw) -> pass-2 (mapper + seeds) -> merge
         +-- detect_with_self_undistort() -- baseline -> estimate model -> pass-2
 ```
 
-Single-pass entry points build proposals and call `run::run()` directly from `mod.rs`. Two-pass and self-undistort orchestration lives in `pipeline/two_pass.rs`. Proposal building (including seed injection) happens before `run::run()` — the core pipeline accepts pre-built `Vec<Proposal>`.
+Single-pass entry points build proposals and call `run::run()` directly. Two-pass and self-undistort orchestration lives in `pipeline/multi_pass.rs`. Proposal building (including seed injection) happens before `run::run()` — the core pipeline accepts pre-built `Vec<Proposal>`.
 
 ### 1.1 Entry Points
 
@@ -35,7 +35,7 @@ All detection goes through `Detector` methods. No public free functions.
 | `detect_with_mapper` | explicit `&dyn PixelMapper` | auto | no | yes |
 | `detect_with_debug` | optional | none | yes | no |
 
-The mapper is always passed explicitly — `DetectConfig` does not store a camera model. Seed injection is an internal detail of two-pass orchestration (hardcoded `SeedProposalParams::default()`).
+The mapper is always passed explicitly — `DetectConfig` does not store a camera model. Seed injection is controlled by `DetectConfig.seed_proposals` and is used in multi-pass modes.
 
 Internal `pub(crate)` pipeline functions: `detect_single_pass`, `detect_two_pass`, `detect_with_self_undistort`, `detect_single_pass_with_debug`.
 
@@ -44,11 +44,11 @@ Internal `pub(crate)` pipeline functions: `detect_single_pass`, `detect_two_pass
 ## 2. Pipeline Stages In Detail
 
 ### Stage 0: Proposal Generation
-**File**: `pipeline/fit_decode.rs`, calls `find_proposals_with_seeds` (via `pipeline/two_pass.rs`)
+**File**: `pipeline/fit_decode.rs`, calls `find_proposals_with_seeds` (via `pipeline/multi_pass.rs`)
 
 - Scharr gradient voting + NMS generates candidate centers
 - Seed centers (from pass-1 in two-pass mode) are merged or injected
-- Seeds with score `1e12` are effectively guaranteed to be processed
+- Seeds with very high score (default `1e12`, see `DetectConfig.seed_proposals.seed_score`) are effectively guaranteed to be processed
 
 ### Stage 1: Fit + Decode (per candidate)
 **File**: `pipeline/fit_decode.rs`, function `process_candidate`
@@ -241,7 +241,7 @@ Create a single `MarkerAcceptanceGate` struct that encodes acceptance criteria c
 
 ### 5.2 Make Two-Pass a Pipeline Concern
 
-Currently, two-pass logic lives alongside the pipeline (in `pipeline/two_pass.rs`) but calls `pipeline/run.rs::run` twice. Consider making two-pass a first-class pipeline concept so that debug collection and self-undistort can work together.
+Currently, two-pass logic lives alongside the pipeline (in `pipeline/multi_pass.rs`) but calls `pipeline/run.rs::run` twice. Consider making two-pass a first-class pipeline concept so that debug collection and self-undistort can work together.
 
 ### 5.3 Separate Debug from Logic
 

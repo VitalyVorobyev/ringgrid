@@ -7,9 +7,8 @@ The detection pipeline has **two layers of orchestration**:
 ```
 Detector (api.rs)                  -- public API, owns DetectConfig
   |
-  +-- detect()                     -- single-pass (no mapper)
+  +-- detect()                     -- config-driven (single-pass or self-undistort flow)
   +-- detect_with_mapper()         -- two-pass with custom PixelMapper
-  +-- detect_with_self_undistort() -- self-undistort + re-run
   +-- detect_with_debug()          -- single-pass with debug dump (feature-gated)
   |
   v
@@ -32,9 +31,8 @@ All detection goes through `Detector` methods. No public free functions.
 
 | Method | Mapper | Seeds | Debug | Two-Pass |
 |--------|--------|-------|-------|----------|
-| `detect` | none | none | no | no |
+| `detect` | none or estimated from `self_undistort` config | none or auto | no | config-driven |
 | `detect_with_mapper` | explicit `&dyn PixelMapper` | auto | no | yes |
-| `detect_with_self_undistort` | estimated | auto | no | yes |
 | `detect_with_debug` | optional | none | yes | no |
 
 The mapper is always passed explicitly — `DetectConfig` does not store a camera model. Seed injection is an internal detail of two-pass orchestration (hardcoded `SeedProposalParams::default()`).
@@ -168,7 +166,7 @@ The criteria differ across stages by design. Each stage has different goals:
 
 ### 3.5 DESIGN: Two-Pass vs Debug Incompatibility
 
-**Debug collection only works in single-pass mode.** Two-pass detection (via `detect_with_mapper` or `detect_with_self_undistort`) cannot produce debug dumps. This is a known limitation.
+**Debug collection only works in single-pass mode.** Two-pass detection (via `detect_with_mapper` or `detect` with `self_undistort.enable=true`) cannot produce debug dumps. This is a known limitation.
 
 ### 3.6 ~~RESOLVED~~ Refine-H Always Runs Debug Path
 
@@ -255,15 +253,14 @@ The `collect_debug` flag creates significant code branching throughout `pipeline
 
 | Method | When to use |
 |--------|------------|
-| `detect` | Standard single-pass, no distortion correction |
+| `detect` | Standard non-camera entrypoint; single-pass or self-undistort based on `DetectConfig` |
 | `detect_with_mapper` | Custom distortion adapter via PixelMapper trait (triggers two-pass) |
-| `detect_with_self_undistort` | Estimate + apply lens distortion (triggers two-pass) |
 | `detect_with_debug` | CLI/internal use (behind `cli-internal` feature gate), accepts optional mapper |
 
 **Notes**:
 - The mapper is always passed explicitly to the method — `DetectConfig` does not store a camera model.
-- `detect_with_self_undistort` has unique orchestration (run once, estimate, optionally re-run). This is the only place where `DetectionResult.self_undistort` is populated.
-- Two-pass is only triggered by `detect_with_mapper()` and `detect_with_self_undistort()`.
+- `detect` with `self_undistort.enable=true` runs unique orchestration (run once, estimate, optionally re-run). This is the only public path where `DetectionResult.self_undistort` is populated.
+- Two-pass is triggered by `detect_with_mapper()` and by `detect()` when self-undistort is enabled.
 
 ---
 
@@ -298,7 +295,7 @@ When `pipeline/run.rs::run` receives a mapper:
 ### 7.3 Self-Undistort Flow
 
 ```
-detect_with_self_undistort:
+detect() with self_undistort.enable=true:
   |
   +-- run_single_pass(no mapper)       → pass-1 result in IMAGE frame
   |     edge_points_outer/inner are in image frame

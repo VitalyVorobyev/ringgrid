@@ -2,7 +2,7 @@
 //!
 //! [`Detector`] is the primary entry point for detecting ring markers.
 //! It wraps a [`DetectConfig`] and provides convenience methods for
-//! common detection scenarios (with/without camera, debug, mapper).
+//! common detection scenarios (config-driven detect, external mapper, debug).
 
 use image::GrayImage;
 use std::path::Path;
@@ -106,15 +106,29 @@ impl Detector {
         &mut self.config
     }
 
-    /// Detect markers in a grayscale image (single-pass, no distortion mapping).
+    /// Detect markers in a grayscale image.
+    ///
+    /// When `config.self_undistort.enable` is `false`, runs single-pass
+    /// detection in image coordinates.
+    ///
+    /// When `config.self_undistort.enable` is `true`, runs baseline detection,
+    /// estimates a self-undistort model, and optionally runs a second seeded
+    /// pass with the estimated mapper.
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_single_pass(image, &self.config, None)
+        if self.config.self_undistort.enable {
+            pipeline::detect_with_self_undistort(image, &self.config)
+        } else {
+            pipeline::detect_single_pass(image, &self.config, None)
+        }
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
     ///
     /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
     /// Results are in mapper working frame.
+    ///
+    /// This method always uses the provided mapper and does not run
+    /// self-undistort estimation from `config.self_undistort`.
     pub fn detect_with_mapper(
         &self,
         image: &GrayImage,
@@ -123,18 +137,10 @@ impl Detector {
         pipeline::detect_two_pass(image, &self.config, mapper)
     }
 
-    /// Detect with automatic self-undistortion estimation.
-    ///
-    /// Runs a baseline detection, then estimates a division-model distortion
-    /// correction from ellipse edge points. If the model improves reprojection,
-    /// re-runs detection with the estimated mapper.
-    ///
-    /// Requires `config.self_undistort.enable = true` (set via config_mut).
-    pub fn detect_with_self_undistort(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_with_self_undistort(image, &self.config)
-    }
-
     /// Detect with debug dump collection (single-pass).
+    ///
+    /// Debug collection does not run self-undistort estimation and does not
+    /// run the two-pass seeded pipeline.
     #[cfg(feature = "cli-internal")]
     pub fn detect_with_debug(
         &self,
@@ -149,6 +155,19 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pixelmap::PixelMapper;
+
+    struct IdentityMapper;
+
+    impl PixelMapper for IdentityMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some(image_xy)
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some(working_xy)
+        }
+    }
 
     #[test]
     fn detector_basic_detect() {
@@ -156,6 +175,30 @@ mod tests {
         let img = GrayImage::new(200, 200);
         let result = det.detect(&img);
         assert!(result.detected_markers.is_empty());
+        assert!(result.self_undistort.is_none());
+    }
+
+    #[test]
+    fn detector_detect_honors_self_undistort_enable() {
+        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        cfg.self_undistort.enable = true;
+        cfg.self_undistort.min_markers = 0;
+        let det = Detector::with_config(cfg);
+        let img = GrayImage::new(200, 200);
+        let result = det.detect(&img);
+        assert!(result.self_undistort.is_some());
+    }
+
+    #[test]
+    fn detector_mapper_ignores_self_undistort_config() {
+        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        cfg.self_undistort.enable = true;
+        cfg.self_undistort.min_markers = 0;
+        let det = Detector::with_config(cfg);
+        let img = GrayImage::new(200, 200);
+        let mapper = IdentityMapper;
+        let result = det.detect_with_mapper(&img, &mapper);
+        assert!(result.self_undistort.is_none());
     }
 
     #[test]

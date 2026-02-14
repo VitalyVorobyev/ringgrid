@@ -342,6 +342,40 @@ fn build_detect_config(
     config
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetectExecutionMode {
+    DebugSinglePass,
+    MapperTwoPass,
+    ConfigDrivenDetect,
+}
+
+fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
+    if overrides.camera.is_some() && overrides.self_undistort_enable {
+        return Err(
+            "camera mapping (--cam-*) and self-undistort (--self-undistort) are mutually exclusive"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn select_detect_mode(debug_requested: bool, has_camera: bool) -> DetectExecutionMode {
+    if debug_requested {
+        DetectExecutionMode::DebugSinglePass
+    } else if has_camera {
+        DetectExecutionMode::MapperTwoPass
+    } else {
+        DetectExecutionMode::ConfigDrivenDetect
+    }
+}
+
+fn should_warn_debug_skips_self_undistort(
+    debug_requested: bool,
+    self_undistort_enabled: bool,
+) -> bool {
+    debug_requested && self_undistort_enabled
+}
+
 fn main() -> CliResult<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -449,6 +483,15 @@ fn run_decode_test(word_str: &str) -> CliResult<()> {
 // ── detect ─────────────────────────────────────────────────────────────
 
 fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
+    let preset = args.to_preset();
+    if args.marker_diameter.is_some() {
+        tracing::warn!(
+            "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
+        );
+    }
+    let overrides = args.to_overrides()?;
+    validate_correction_compat(&overrides)?;
+
     tracing::info!("Loading image: {}", args.image.display());
 
     let img = image::open(&args.image).map_err(|e| -> CliError {
@@ -458,14 +501,6 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let (w, h) = gray.dimensions();
 
     tracing::info!("Image size: {}x{}", w, h);
-
-    let preset = args.to_preset();
-    if args.marker_diameter.is_some() {
-        tracing::warn!(
-            "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
-        );
-    }
-    let overrides = args.to_overrides()?;
 
     let board = if let Some(target_path) = &args.target {
         let board =
@@ -496,26 +531,40 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         tracing::warn!("--debug is deprecated; use --debug-json instead");
     }
 
-    let detector = ringgrid::Detector::with_config(config.clone());
+    if should_warn_debug_skips_self_undistort(
+        debug_out_path.is_some(),
+        config.self_undistort.enable,
+    ) {
+        tracing::warn!(
+            "debug mode is single-pass; self-undistort is skipped when --debug-json is set"
+        );
+    }
+
+    let detector = ringgrid::Detector::with_config(config);
     let camera_mapper: Option<&dyn ringgrid::PixelMapper> = overrides
         .camera
         .as_ref()
         .map(|c| c as &dyn ringgrid::PixelMapper);
-    let (result, debug_dump) = if debug_out_path.is_some() {
-        let dbg_cfg = ringgrid::DebugCollectConfig {
-            image_path: Some(args.image.display().to_string()),
-            marker_diameter_px: preset.marker_scale.nominal_diameter_px() as f64,
-            max_candidates: args.debug_max_candidates,
-            store_points: args.debug_store_points,
-        };
-        let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg, camera_mapper);
-        (r, Some(d))
-    } else if config.self_undistort.enable {
-        (detector.detect_with_self_undistort(&gray), None)
-    } else if let Some(camera) = &overrides.camera {
-        (detector.detect_with_mapper(&gray, camera), None)
-    } else {
-        (detector.detect(&gray), None)
+    let mode = select_detect_mode(debug_out_path.is_some(), overrides.camera.is_some());
+    let (result, debug_dump) = match mode {
+        DetectExecutionMode::DebugSinglePass => {
+            let dbg_cfg = ringgrid::DebugCollectConfig {
+                image_path: Some(args.image.display().to_string()),
+                marker_diameter_px: preset.marker_scale.nominal_diameter_px() as f64,
+                max_candidates: args.debug_max_candidates,
+                store_points: args.debug_store_points,
+            };
+            let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg, camera_mapper);
+            (r, Some(d))
+        }
+        DetectExecutionMode::MapperTwoPass => {
+            let camera = overrides
+                .camera
+                .as_ref()
+                .expect("camera is present for mapper mode");
+            (detector.detect_with_mapper(&gray, camera), None)
+        }
+        DetectExecutionMode::ConfigDrivenDetect => (detector.detect(&gray), None),
     };
 
     let n_with_id = result
@@ -564,4 +613,95 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_overrides() -> DetectOverrides {
+        DetectOverrides {
+            use_global_filter: true,
+            refine_with_h: true,
+            ransac_thresh_px: 5.0,
+            ransac_iters: 2000,
+            completion_enable: true,
+            completion_reproj_gate_px: 3.0,
+            completion_min_fit_confidence: 0.45,
+            completion_roi_radius_px: None,
+            camera: None,
+            circle_refinement: ringgrid::CircleRefinementMethod::ProjectiveCenter,
+            projective_center_max_shift_px: None,
+            projective_center_max_residual: 0.25,
+            projective_center_min_eig_sep: 1e-6,
+            self_undistort_enable: false,
+            self_undistort_lambda_range: [-8e-7, 8e-7],
+            self_undistort_min_markers: 6,
+        }
+    }
+
+    fn sample_camera() -> ringgrid::CameraModel {
+        ringgrid::CameraModel {
+            intrinsics: ringgrid::CameraIntrinsics {
+                fx: 900.0,
+                fy: 900.0,
+                cx: 640.0,
+                cy: 480.0,
+            },
+            distortion: ringgrid::RadialTangentialDistortion {
+                k1: 0.0,
+                k2: 0.0,
+                p1: 0.0,
+                p2: 0.0,
+                k3: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn validate_correction_compat_rejects_camera_plus_self_undistort() {
+        let mut overrides = base_overrides();
+        overrides.camera = Some(sample_camera());
+        overrides.self_undistort_enable = true;
+        assert!(validate_correction_compat(&overrides).is_err());
+    }
+
+    #[test]
+    fn validate_correction_compat_accepts_non_conflicting_modes() {
+        let mut with_camera = base_overrides();
+        with_camera.camera = Some(sample_camera());
+        assert!(validate_correction_compat(&with_camera).is_ok());
+
+        let mut with_self_undistort = base_overrides();
+        with_self_undistort.self_undistort_enable = true;
+        assert!(validate_correction_compat(&with_self_undistort).is_ok());
+    }
+
+    #[test]
+    fn select_detect_mode_prioritizes_debug() {
+        assert_eq!(
+            select_detect_mode(true, false),
+            DetectExecutionMode::DebugSinglePass
+        );
+        assert_eq!(
+            select_detect_mode(true, true),
+            DetectExecutionMode::DebugSinglePass
+        );
+        assert_eq!(
+            select_detect_mode(false, true),
+            DetectExecutionMode::MapperTwoPass
+        );
+        assert_eq!(
+            select_detect_mode(false, false),
+            DetectExecutionMode::ConfigDrivenDetect
+        );
+    }
+
+    #[test]
+    fn debug_warning_gate_is_explicit() {
+        assert!(should_warn_debug_skips_self_undistort(true, true));
+        assert!(!should_warn_debug_skips_self_undistort(true, false));
+        assert!(!should_warn_debug_skips_self_undistort(false, true));
+        assert!(!should_warn_debug_skips_self_undistort(false, false));
+    }
 }

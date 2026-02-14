@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     cfg.self_undistort.min_markers = 12;
 
     let detector = Detector::with_config(cfg);
-    let result = detector.detect_with_self_undistort(&image);
+    let result = detector.detect(&image);
     if let Some(su) = result.self_undistort.as_ref() {
         println!(
             "Self-undistort: lambda={:.3e}, applied={}, objective {:.4} -> {:.4}",

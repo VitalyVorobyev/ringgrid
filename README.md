@@ -81,6 +81,12 @@ Stable surface (library users):
 Design constraints in v1:
 - Target JSON is mandatory for high-level detector construction:
   `BoardLayout::from_json_file(...)` + `Detector::new(...)`.
+- `Detector::detect(...)` is config-driven:
+  `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
+- `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
+  `self_undistort` config.
+- `Detector::detect_with_debug(...)` is single-pass only; self-undistort/two-pass
+  orchestration is skipped in debug mode.
 - Low-level math/pipeline modules are internal.
 - Debug dump API is internal/CLI-only (`cli-internal` feature).
 - Example target JSON: `crates/ringgrid/examples/target.json`.
@@ -158,6 +164,7 @@ Other commonly used toggles:
 - `--no-complete`
 - `--marker-diameter-min <px>`
 - `--marker-diameter-max <px>`
+- `--self-undistort` (mutually exclusive with camera `--cam-*` flags)
 - `--debug-json <path>`
 - `--debug-store-points`
 

@@ -124,7 +124,13 @@ let result = detector.detect_with_mapper(&image, &mapper);
 let (result, debug) = detector.detect_with_debug(&image, &debug_cfg);
 
 detector.config_mut().completion.enable = false;   // post-construction tuning
+detector.config_mut().self_undistort.enable = true; // makes detect() run self-undistort flow
 ```
+
+Notes:
+- `detect()` is config-driven: self-undistort runs only when `config.self_undistort.enable=true`.
+- `detect_with_mapper()` ignores `config.self_undistort` and always uses the provided mapper.
+- `detect_with_debug()` is single-pass only and skips self-undistort/two-pass orchestration.
 
 ## Debugging workflow
 

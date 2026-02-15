@@ -11,8 +11,8 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
 ) -> DetectionResult {
-    let fit_out = super::fit_decode::run(gray, config, mapper, proposals);
-    super::finalize::run(gray, fit_out, config, mapper)
+    let fit_markers = super::fit_decode::run(gray, config, mapper, proposals);
+    super::finalize::run(gray, fit_markers, config, mapper)
 }
 
 // ---------------------------------------------------------------------------

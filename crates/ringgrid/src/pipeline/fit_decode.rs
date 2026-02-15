@@ -16,10 +16,6 @@ use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 
-pub(super) struct FitDecodeCoreOutput {
-    pub(super) markers: Vec<DetectedMarker>,
-}
-
 struct CandidateProcessContext<'a> {
     gray: &'a GrayImage,
     config: &'a DetectConfig,
@@ -131,7 +127,7 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
-) -> FitDecodeCoreOutput {
+) -> Vec<DetectedMarker> {
     let input_count = proposals.len();
     tracing::info!("{} proposals found", input_count);
     let proposals = select_proposals_for_fit(proposals, config.proposal.max_candidates);
@@ -182,7 +178,7 @@ pub(super) fn run(
 
     tracing::info!("{} markers detected after dedup", markers.len());
 
-    FitDecodeCoreOutput { markers }
+    markers
 }
 
 #[cfg(test)]
@@ -258,12 +254,11 @@ mod tests {
 
         let relaxed_out = run(&img, &relaxed, None, proposals.clone());
         assert!(
-            !relaxed_out.markers.is_empty(),
+            !relaxed_out.is_empty(),
             "expected at least one marker with relaxed inner-fit params"
         );
-        let relaxed_marker =
-            nearest_marker(&relaxed_out.markers, [center[0] as f64, center[1] as f64])
-                .expect("nearest marker");
+        let relaxed_marker = nearest_marker(&relaxed_out, [center[0] as f64, center[1] as f64])
+            .expect("nearest marker");
         assert!(
             relaxed_marker.ellipse_inner.is_some(),
             "expected inner ellipse with relaxed inner-fit params"
@@ -274,12 +269,11 @@ mod tests {
 
         let strict_out = run(&img, &strict, None, proposals);
         assert!(
-            !strict_out.markers.is_empty(),
+            !strict_out.is_empty(),
             "expected marker to remain present when inner-fit is disabled by strict gate"
         );
-        let strict_marker =
-            nearest_marker(&strict_out.markers, [center[0] as f64, center[1] as f64])
-                .expect("nearest marker");
+        let strict_marker = nearest_marker(&strict_out, [center[0] as f64, center[1] as f64])
+            .expect("nearest marker");
         assert!(
             strict_marker.ellipse_inner.is_none(),
             "expected no inner ellipse when min_points gate is impossible"
@@ -304,7 +298,7 @@ mod tests {
 
         let out = run(&img, &cfg, None, proposals);
         assert!(
-            out.markers.is_empty(),
+            out.is_empty(),
             "expected no markers when proposal cap is zero"
         );
     }

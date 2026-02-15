@@ -163,7 +163,7 @@ fn build_result(
 
 pub(super) fn run(
     gray: &GrayImage,
-    fit_out: super::fit_decode::FitDecodeCoreOutput,
+    fit_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> DetectionResult {
@@ -173,7 +173,7 @@ pub(super) fn run(
     warn_center_correction_without_intrinsics(config, mapper.is_some());
     let flags = finalize_flags(config);
 
-    let mut filter_phase = phase_filter_and_refine_h(gray, fit_out.markers, config, mapper, flags);
+    let mut filter_phase = phase_filter_and_refine_h(gray, fit_markers, config, mapper, flags);
 
     if filter_phase.short_circuit_no_h {
         return build_result(filter_phase.markers, image_size, None, None);

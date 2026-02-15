@@ -29,7 +29,6 @@ fn refine_impl(
     mapper: Option<&dyn PixelMapper>,
 ) -> Vec<DetectedMarker> {
     let mut refined = Vec::with_capacity(markers.len());
-    let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
 
     for m in markers {
         let id = match m.id {
@@ -93,7 +92,7 @@ fn refine_impl(
             &outer,
             &config.marker_spec,
             mapper,
-            &inner_fit_cfg,
+            &config.inner_fit,
             false,
         );
         let inner_params = inner_ellipse_params(&inner_fit);

@@ -173,11 +173,15 @@ cargo test
 
 - Do regenerate generated assets via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust codebook).
 - Do keep generator(s) + runtime target JSON schema + decoder/scorer consistent if formats change.
+- Do keep configuration structs and default values as a single source of truth. If multiple stages use the same knobs, use one shared type instead of `*Params` + `*Config` mirrors.
+- Do remove old structs/conversions immediately when consolidating APIs, and update all call sites to the shared type.
 - Don’t change the codebook/board ID conventions without updating:
   - generator scripts
   - embedded Rust modules
   - decoding + global filter logic
   - tests and scoring scripts
+- Don’t introduce logic duplication (especially thresholds/gates/defaults) across modules without a documented necessity.
+- Don’t add adapter/conversion layers between near-identical structs unless they represent different semantic domains.
 
 ## Open decisions for maintainers
 

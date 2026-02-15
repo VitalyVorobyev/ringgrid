@@ -27,7 +27,7 @@ pub use pipeline::DetectionResult;
 
 // Configuration
 pub use detector::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
+    CircleRefinementMethod, CompletionParams, DetectConfig, InnerFitConfig, MarkerScalePrior,
     ProjectiveCenterParams, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;

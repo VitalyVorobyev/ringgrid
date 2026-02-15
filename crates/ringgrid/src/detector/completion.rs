@@ -124,7 +124,6 @@ pub(crate) fn complete_with_h(
     use std::collections::HashSet;
 
     let params = &config.completion;
-    let inner_fit_cfg = super::inner_fit::InnerFitConfig::default();
     if !params.enable {
         return CompletionStats::default();
     }
@@ -229,7 +228,7 @@ pub(crate) fn complete_with_h(
             &outer,
             &config.marker_spec,
             mapper,
-            &inner_fit_cfg,
+            &config.inner_fit,
             false,
         );
         let inner_params = inner_ellipse_params(&inner_fit);

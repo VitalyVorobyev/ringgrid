@@ -111,7 +111,7 @@ impl Conic2D {
 }
 
 /// Configuration for RANSAC ellipse fitting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RansacConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,

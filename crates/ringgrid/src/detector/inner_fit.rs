@@ -1,6 +1,7 @@
 use image::GrayImage;
 
-use crate::conic::{self, Ellipse, RansacConfig};
+use super::config::InnerFitConfig;
+use crate::conic::{self, Ellipse};
 use crate::marker::MarkerSpec;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
@@ -17,46 +18,6 @@ pub(crate) enum InnerFitStatus {
     Rejected,
     /// Fitting could not be completed (insufficient/invalid data).
     Failed,
-}
-
-/// Tuning parameters for robust inner ellipse fitting.
-///
-/// Outer ellipse is used only as a geometric/search prior.
-#[derive(Debug, Clone)]
-pub(crate) struct InnerFitConfig {
-    /// Minimum number of sampled points required to attempt a fit.
-    pub min_points: usize,
-    /// Minimum accepted inlier ratio when RANSAC is used.
-    pub min_inlier_ratio: f32,
-    /// Maximum accepted RMS Sampson residual (px) of the fitted inner ellipse.
-    pub max_rms_residual: f64,
-    /// Maximum allowed center shift from outer to inner fit center (px).
-    pub max_center_shift_px: f64,
-    /// Maximum allowed absolute error in recovered scale ratio vs radial hint.
-    pub max_ratio_abs_error: f64,
-    /// Local half-width (in radius-sample indices) around the radial hint.
-    pub local_peak_halfwidth_idx: usize,
-    /// RANSAC config for robust inner ellipse fitting.
-    pub ransac: RansacConfig,
-}
-
-impl Default for InnerFitConfig {
-    fn default() -> Self {
-        Self {
-            min_points: 20,
-            min_inlier_ratio: 0.5,
-            max_rms_residual: 1.0,
-            max_center_shift_px: 12.0,
-            max_ratio_abs_error: 0.15,
-            local_peak_halfwidth_idx: 3,
-            ransac: RansacConfig {
-                max_iters: 200,
-                inlier_threshold: 1.5,
-                min_inliers: 8,
-                seed: 43,
-            },
-        }
-    }
 }
 
 /// Robust inner fit result.

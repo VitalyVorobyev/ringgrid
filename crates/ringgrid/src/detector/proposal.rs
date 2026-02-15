@@ -22,6 +22,9 @@ pub struct ProposalConfig {
     pub min_vote_frac: f32,
     /// Gaussian sigma for accumulator smoothing.
     pub accum_sigma: f32,
+    /// Optional cap on number of proposals returned (after score sorting).
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
 }
 
 impl Default for ProposalConfig {
@@ -33,6 +36,7 @@ impl Default for ProposalConfig {
             nms_radius: 7.0,
             min_vote_frac: 0.1,
             accum_sigma: 2.0,
+            max_candidates: None,
         }
     }
 }
@@ -184,6 +188,9 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
 
     // Sort by score descending
     proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    if let Some(max_candidates) = config.max_candidates {
+        proposals.truncate(max_candidates.min(proposals.len()));
+    }
     proposals
 }
 
@@ -230,6 +237,7 @@ mod tests {
             nms_radius: 5.0,
             min_vote_frac: 0.05,
             accum_sigma: 1.5,
+            max_candidates: None,
         };
 
         let proposals = find_proposals(&img, &config);

@@ -20,7 +20,7 @@ pub(crate) use center_correction::{
 };
 pub(crate) use completion::{complete_with_h, CompletionStats};
 pub use config::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, MarkerScalePrior,
+    CircleRefinementMethod, CompletionParams, DetectConfig, InnerFitConfig, MarkerScalePrior,
     ProjectiveCenterParams, SeedProposalParams,
 };
 pub use dedup::{dedup_by_id, dedup_markers};

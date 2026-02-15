@@ -153,6 +153,10 @@ Self-undistort mode estimates a division-model distortion correction from detect
 - `codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - `lib.rs` is purely re-exports; type definitions live at their construction sites
+- Keep one source of truth for shared configs/defaults: if a config is used by multiple stages, define it once and reuse it directly.
+- Avoid mirrored structs (`*Params` vs `*Config`) that carry the same fields/defaults; consolidate into one type unless domains are genuinely different.
+- Avoid duplicated thresholds/gating logic across modules; centralize constants and semantics.
+- If a translation layer is unavoidable, document why it exists and ensure only one side owns defaults.
 
 ## CI / checks
 

@@ -98,6 +98,44 @@ impl Default for ProjectiveCenterParams {
     }
 }
 
+/// Configuration for robust inner ellipse fitting from outer-fit hints.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InnerFitConfig {
+    /// Minimum number of sampled points required to attempt a fit.
+    pub min_points: usize,
+    /// Minimum accepted inlier ratio when RANSAC is used.
+    pub min_inlier_ratio: f32,
+    /// Maximum accepted RMS Sampson residual (px) of the fitted inner ellipse.
+    pub max_rms_residual: f64,
+    /// Maximum allowed center shift from outer to inner fit center (px).
+    pub max_center_shift_px: f64,
+    /// Maximum allowed absolute error in recovered scale ratio vs radial hint.
+    pub max_ratio_abs_error: f64,
+    /// Local half-width (in radius-sample indices) around the radial hint.
+    pub local_peak_halfwidth_idx: usize,
+    /// RANSAC configuration for robust inner ellipse fitting.
+    pub ransac: crate::conic::RansacConfig,
+}
+
+impl Default for InnerFitConfig {
+    fn default() -> Self {
+        Self {
+            min_points: 20,
+            min_inlier_ratio: 0.5,
+            max_rms_residual: 1.0,
+            max_center_shift_px: 12.0,
+            max_ratio_abs_error: 0.15,
+            local_peak_halfwidth_idx: 3,
+            ransac: crate::conic::RansacConfig {
+                max_iters: 200,
+                inlier_threshold: 1.5,
+                min_inliers: 8,
+                seed: 43,
+            },
+        }
+    }
+}
+
 /// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CircleRefinementMethod {
@@ -218,6 +256,8 @@ pub struct DetectConfig {
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
+    /// Robust inner ellipse fitting controls shared across pipeline stages.
+    pub inner_fit: InnerFitConfig,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -298,6 +338,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            inner_fit: InnerFitConfig::default(),
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -363,5 +404,32 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
         let r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
         config.marker_spec.r_inner_expected = r_inner_expected;
         config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inner_fit_config_defaults_are_stable() {
+        let core = InnerFitConfig::default();
+        assert_eq!(core.min_points, 20);
+        assert!((core.min_inlier_ratio - 0.5).abs() < 1e-6);
+        assert!((core.max_rms_residual - 1.0).abs() < 1e-9);
+        assert!((core.max_center_shift_px - 12.0).abs() < 1e-9);
+        assert!((core.max_ratio_abs_error - 0.15).abs() < 1e-9);
+        assert_eq!(core.local_peak_halfwidth_idx, 3);
+        assert_eq!(core.ransac.max_iters, 200);
+        assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
+        assert_eq!(core.ransac.min_inliers, 8);
+        assert_eq!(core.ransac.seed, 43);
+    }
+
+    #[test]
+    fn detect_config_includes_inner_fit_config() {
+        let cfg = DetectConfig::default();
+        assert_eq!(cfg.inner_fit.min_points, 20);
+        assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
     }
 }

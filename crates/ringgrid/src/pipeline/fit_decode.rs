@@ -7,7 +7,7 @@ use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner,
 };
 use super::outer_fit::{
-    compute_center, fit_outer_candidate_from_prior, marker_outer_radius_expected_px,
+    fit_outer_candidate_from_prior,
     OuterFitCandidate,
 };
 use super::{dedup_by_id, dedup_markers, DetectConfig};
@@ -61,7 +61,7 @@ fn process_candidate(
     let fit = match fit_outer_candidate_from_prior(
         ctx.gray,
         center_prior,
-        marker_outer_radius_expected_px(ctx.config),
+        ctx.config.marker_scale.nominal_outer_radius_px(),
         ctx.config,
         ctx.mapper,
     ) {
@@ -77,7 +77,7 @@ fn process_candidate(
         ..
     } = fit;
 
-    let center = compute_center(&outer);
+    let center = outer.center();
     let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
         ctx.gray,
         &outer,

@@ -6,9 +6,9 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use crate::DetectedMarker;
 
 use super::{
-    compute_center, fit_outer_candidate_from_prior_for_completion,
+    fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner},
-    marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, CompletionParams,
+    median_outer_radius_from_neighbors_px, CompletionParams,
     DetectConfig, OuterFitCandidate,
 };
 
@@ -38,7 +38,7 @@ fn compute_candidate_quality(
     projected_center: [f64; 2],
     r_expected: f32,
 ) -> CandidateQuality {
-    let center = compute_center(outer);
+    let center = outer.center();
     let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
     let inlier_ratio = outer_ransac
         .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
@@ -171,7 +171,7 @@ pub(crate) fn complete_with_h(
         stats.n_attempted += 1;
 
         let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
-            .unwrap_or(marker_outer_radius_expected_px(config));
+            .unwrap_or(config.marker_scale.nominal_outer_radius_px());
 
         let fit_cand = match fit_outer_candidate_from_prior_for_completion(
             gray,

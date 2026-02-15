@@ -63,6 +63,16 @@ pub struct Ellipse {
     pub angle: f64,
 }
 
+impl Ellipse {
+    pub fn mean_axis(&self) -> f64 {
+        (self.a + self.b) * 0.5
+    }
+
+    pub fn center(&self) -> [f64; 2] {
+        [ self.cx, self.cy ]
+    }
+}
+
 /// 2D conic in homogeneous image coordinates: `x^T Q x = 0`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Conic2D {

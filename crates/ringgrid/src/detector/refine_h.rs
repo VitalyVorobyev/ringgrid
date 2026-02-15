@@ -9,18 +9,7 @@ use super::marker_build::{
     decode_metrics_from_result, fit_metrics_with_inner,
 };
 
-pub(crate) fn refine_with_homography(
-    gray: &GrayImage,
-    markers: &[DetectedMarker],
-    h: &nalgebra::Matrix3<f64>,
-    config: &super::DetectConfig,
-    board: &BoardLayout,
-    mapper: Option<&dyn PixelMapper>,
-) -> Vec<DetectedMarker> {
-    refine_impl(gray, markers, h, config, board, mapper)
-}
-
-fn refine_impl(
+pub fn refine_with_homography(
     gray: &GrayImage,
     markers: &[DetectedMarker],
     h: &nalgebra::Matrix3<f64>,
@@ -53,8 +42,10 @@ fn refine_impl(
             continue;
         }
 
-        let r_expected = super::mean_axis_px_from_marker(m)
-            .unwrap_or(super::marker_outer_radius_expected_px(config));
+        let r_expected = match m.ellipse_outer {
+            Some(e) => e.mean_axis() as f32,
+            None => config.marker_scale.nominal_outer_radius_px()
+        };
 
         let fit_cand = match super::fit_outer_candidate_from_prior(
             gray,
@@ -83,7 +74,7 @@ fn refine_impl(
             continue;
         }
 
-        let center = super::compute_center(&outer);
+        let center = outer.center();
 
         let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
             gray,

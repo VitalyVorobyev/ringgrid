@@ -60,27 +60,6 @@ pub(crate) fn fit_outer_ellipse_with_reason(
     Ok((outer, outer_ransac))
 }
 
-/// Marker center used by the detector.
-///
-/// We use the outer ellipse center as the base estimate. Inner edge estimation
-/// is constrained to be concentric with the outer ellipse and is not allowed
-/// to bias the center when unreliable.
-pub(crate) fn compute_center(outer: &Ellipse) -> [f64; 2] {
-    [outer.cx, outer.cy]
-}
-
-pub(crate) fn marker_outer_radius_expected_px(config: &DetectConfig) -> f32 {
-    config.marker_scale.nominal_outer_radius_px().max(2.0)
-}
-
-fn mean_axis_px_from_params(params: &Ellipse) -> f32 {
-    ((params.a + params.b) * 0.5) as f32
-}
-
-pub(crate) fn mean_axis_px_from_marker(marker: &DetectedMarker) -> Option<f32> {
-    marker.ellipse_outer.as_ref().map(mean_axis_px_from_params)
-}
-
 pub(crate) fn median_outer_radius_from_neighbors_px(
     projected_center: [f64; 2],
     markers: &[DetectedMarker],
@@ -88,15 +67,15 @@ pub(crate) fn median_outer_radius_from_neighbors_px(
 ) -> Option<f32> {
     let mut candidates: Vec<(f64, f32)> = Vec::new();
     for m in markers {
-        let r = match mean_axis_px_from_marker(m) {
-            Some(v) if v.is_finite() && v > 1.0 => v,
-            _ => continue,
+        let r = match m.ellipse_outer {
+            Some(v) => v.mean_axis(),
+            None => continue,
         };
         let dx = m.center[0] - projected_center[0];
         let dy = m.center[1] - projected_center[1];
         let d2 = dx * dx + dy * dy;
         if d2.is_finite() {
-            candidates.push((d2, r));
+            candidates.push((d2, r as f32));
         }
     }
     if candidates.is_empty() {

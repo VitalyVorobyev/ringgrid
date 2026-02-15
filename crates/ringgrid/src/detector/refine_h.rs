@@ -6,7 +6,7 @@ use crate::pixelmap::PixelMapper;
 use crate::DetectedMarker;
 
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_with_inner, marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_with_inner,
 };
 
 pub(crate) fn refine_with_homography(
@@ -93,23 +93,23 @@ fn refine_impl(
             &config.inner_fit,
             false,
         );
-        let inner_params = inner_fit.ellipse_inner;
         let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
 
         let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
         let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
 
-        let updated = marker_with_defaults(
-            Some(id),
+        let updated = DetectedMarker {
+            id: Some(id),
             confidence,
             center,
-            Some(outer),
-            inner_params,
-            Some(edge.outer_points.clone()),
-            Some(inner_fit.points_inner.clone()),
+            ellipse_outer: Some(outer),
+            ellipse_inner: inner_fit.ellipse_inner,
+            edge_points_outer: Some(edge.outer_points),
+            edge_points_inner: Some(inner_fit.points_inner),
             fit,
-            decode_metrics,
-        );
+            decode: decode_metrics,
+            ..DetectedMarker::default()
+        };
 
         refined.push(updated);
     }

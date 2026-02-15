@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::inner_fit;
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_with_inner, marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_with_inner,
 };
 use super::outer_fit::{
     compute_center, fit_outer_candidate_from_prior, marker_outer_radius_expected_px,
@@ -95,8 +95,6 @@ fn process_candidate(
             inner_fit.reason
         );
     }
-    let inner_params = inner_fit.ellipse_inner;
-
     let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
     let confidence = decode_result
         .as_ref()
@@ -107,17 +105,18 @@ fn process_candidate(
     let outer_points = edge.outer_points;
     let inner_points = inner_fit.points_inner;
 
-    Ok(marker_with_defaults(
-        marker_id,
+    Ok(DetectedMarker {
+        id: marker_id,
         confidence,
         center,
-        Some(outer),
-        inner_params,
-        Some(outer_points),
-        Some(inner_points),
-        fit_metrics,
-        decode_metrics,
-    ))
+        ellipse_outer: Some(outer),
+        ellipse_inner: inner_fit.ellipse_inner,
+        edge_points_outer: Some(outer_points),
+        edge_points_inner: Some(inner_points),
+        fit: fit_metrics,
+        decode: decode_metrics,
+        ..DetectedMarker::default()
+    })
 }
 
 pub(super) fn run(

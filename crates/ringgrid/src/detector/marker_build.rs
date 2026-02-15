@@ -31,7 +31,7 @@ pub struct FitMetrics {
 }
 
 /// A detected marker with its refined center and optional ID.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,31 +118,4 @@ pub(crate) fn decode_metrics_from_result(
         margin: d.margin,
         decode_confidence: d.confidence,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn marker_with_defaults(
-    id: Option<usize>,
-    confidence: f32,
-    center: [f64; 2],
-    ellipse_outer: Option<Ellipse>,
-    ellipse_inner: Option<Ellipse>,
-    edge_points_outer: Option<Vec<[f64; 2]>>,
-    edge_points_inner: Option<Vec<[f64; 2]>>,
-    fit: FitMetrics,
-    decode: Option<DecodeMetrics>,
-) -> DetectedMarker {
-    DetectedMarker {
-        id,
-        confidence,
-        center,
-        center_projective: None,
-        center_projective_residual: None,
-        ellipse_outer,
-        ellipse_inner,
-        edge_points_outer,
-        edge_points_inner,
-        fit,
-        decode,
-    }
 }

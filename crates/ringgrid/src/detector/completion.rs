@@ -7,7 +7,7 @@ use crate::DetectedMarker;
 
 use super::{
     compute_center, fit_outer_candidate_from_prior_for_completion,
-    marker_build::{decode_metrics_from_result, fit_metrics_with_inner, marker_with_defaults},
+    marker_build::{decode_metrics_from_result, fit_metrics_with_inner},
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, CompletionParams,
     DetectConfig, OuterFitCandidate,
 };
@@ -219,7 +219,6 @@ pub(crate) fn complete_with_h(
             &config.inner_fit,
             false,
         );
-        let inner_params = inner_fit.ellipse_inner;
         let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
         let decode_metrics =
             decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));
@@ -228,17 +227,18 @@ pub(crate) fn complete_with_h(
             .map(|d| d.decode_confidence)
             .unwrap_or(quality.fit_confidence);
 
-        markers.push(marker_with_defaults(
-            Some(id),
+        markers.push(DetectedMarker {
+            id: Some(id),
             confidence,
-            quality.center,
-            Some(outer),
-            inner_params,
-            Some(edge.outer_points.clone()),
-            Some(inner_fit.points_inner.clone()),
+            center: quality.center,
+            ellipse_outer: Some(outer),
+            ellipse_inner: inner_fit.ellipse_inner,
+            edge_points_outer: Some(edge.outer_points.clone()),
+            edge_points_inner: Some(inner_fit.points_inner.clone()),
             fit,
-            decode_metrics,
-        ));
+            decode: decode_metrics,
+            ..DetectedMarker::default()
+        });
         stats.n_added += 1;
         tracing::debug!(
             "Completion added id={} reproj_err={:.2}px",

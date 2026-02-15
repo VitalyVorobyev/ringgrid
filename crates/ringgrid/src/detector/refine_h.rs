@@ -62,8 +62,8 @@ fn refine_impl(
             r_expected,
             config,
             mapper,
-            &config.edge_sample,
             false,
+            false
         ) {
             Ok(v) => v,
             Err(_) => {

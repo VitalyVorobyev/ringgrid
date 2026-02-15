@@ -137,13 +137,6 @@ pub(crate) fn complete_with_h(
 
     let present_ids: HashSet<usize> = markers.iter().filter_map(|m| m.id).collect();
 
-    let mut edge_cfg = config.edge_sample.clone();
-    edge_cfg.r_max = roi_radius as f32;
-    edge_cfg.min_rays_with_ring = ((edge_cfg.n_rays as f32) * params.min_arc_coverage)
-        .ceil()
-        .max(6.0) as usize;
-    edge_cfg.min_rays_with_ring = edge_cfg.min_rays_with_ring.min(edge_cfg.n_rays);
-
     let mut stats = CompletionStats {
         n_candidates_total: board.n_markers(),
         ..Default::default()
@@ -189,8 +182,8 @@ pub(crate) fn complete_with_h(
             r_expected,
             config,
             mapper,
-            &edge_cfg,
             false,
+            true
         ) {
             Ok(v) => v,
             Err(_) => {

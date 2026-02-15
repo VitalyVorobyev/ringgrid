@@ -64,8 +64,8 @@ fn process_candidate(
         marker_outer_radius_expected_px(ctx.config),
         ctx.config,
         ctx.mapper,
-        &ctx.config.edge_sample,
         false,
+        false
     ) {
         Ok(v) => v,
         Err(reason) => return Err(format!("outer_fit:{reason}")),

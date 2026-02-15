@@ -232,12 +232,25 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
     r_outer_expected_px: f32,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    edge_cfg: &EdgeSampleConfig,
     store_response: bool,
+    completion: bool,
 ) -> Result<OuterFitCandidate, String> {
     let r_expected = r_outer_expected_px.max(2.0);
+    let edge_cfg = if completion {
+        let mut edge_cfg = config.edge_sample.clone();
+        let params = &config.completion;
+        let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
+        edge_cfg.r_max = roi_radius as f32;
+        edge_cfg.min_rays_with_ring = ((edge_cfg.n_rays as f32) * params.min_arc_coverage)
+            .ceil()
+            .max(6.0) as usize;
+        edge_cfg.min_rays_with_ring = edge_cfg.min_rays_with_ring.min(edge_cfg.n_rays);
+        edge_cfg
+    } else {
+        config.edge_sample.clone()
+    };
 
-    let mut outer_cfg = config.outer_estimation.clone();
+    let mut outer_cfg: crate::ring::OuterEstimationConfig = config.outer_estimation.clone();
     outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
     let sampler = DistortionAwareSampler::new(gray, mapper);
 
@@ -271,7 +284,7 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
             center_prior,
             hyp.r_outer_px,
             pol,
-            edge_cfg,
+            &edge_cfg,
             outer_cfg.refine_halfwidth_px,
         );
 

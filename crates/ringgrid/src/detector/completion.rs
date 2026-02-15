@@ -6,11 +6,8 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use crate::DetectedMarker;
 
 use super::{
-    compute_center, fit_outer_ellipse_robust_with_reason,
-    marker_build::{
-        decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params,
-        marker_with_defaults,
-    },
+    compute_center, fit_outer_candidate_from_prior_for_completion,
+    marker_build::{decode_metrics_from_result, fit_metrics_with_inner, marker_with_defaults},
     marker_outer_radius_expected_px, median_outer_radius_from_neighbors_px, CompletionParams,
     DetectConfig, OuterFitCandidate,
 };
@@ -176,14 +173,12 @@ pub(crate) fn complete_with_h(
         let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
             .unwrap_or(marker_outer_radius_expected_px(config));
 
-        let fit_cand = match fit_outer_ellipse_robust_with_reason(
+        let fit_cand = match fit_outer_candidate_from_prior_for_completion(
             gray,
             [projected_center[0] as f32, projected_center[1] as f32],
             r_expected,
             config,
             mapper,
-            false,
-            true
         ) {
             Ok(v) => v,
             Err(_) => {
@@ -224,7 +219,7 @@ pub(crate) fn complete_with_h(
             &config.inner_fit,
             false,
         );
-        let inner_params = inner_ellipse_params(&inner_fit);
+        let inner_params = inner_fit.ellipse_inner;
         let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
         let decode_metrics =
             decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));

@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use super::inner_fit;
 use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
+    decode_metrics_from_result, fit_metrics_with_inner, marker_with_defaults,
 };
 use super::outer_fit::{
-    compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
+    compute_center, fit_outer_candidate_from_prior, marker_outer_radius_expected_px,
     OuterFitCandidate,
 };
 use super::{dedup_by_id, dedup_markers, DetectConfig};
@@ -58,14 +58,12 @@ fn process_candidate(
         return Err("proposal_unmappable".to_string());
     };
 
-    let fit = match fit_outer_ellipse_robust_with_reason(
+    let fit = match fit_outer_candidate_from_prior(
         ctx.gray,
         center_prior,
         marker_outer_radius_expected_px(ctx.config),
         ctx.config,
         ctx.mapper,
-        false,
-        false
     ) {
         Ok(v) => v,
         Err(reason) => return Err(format!("outer_fit:{reason}")),
@@ -97,7 +95,7 @@ fn process_candidate(
             inner_fit.reason
         );
     }
-    let inner_params = inner_ellipse_params(&inner_fit);
+    let inner_params = inner_fit.ellipse_inner;
 
     let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
     let confidence = decode_result

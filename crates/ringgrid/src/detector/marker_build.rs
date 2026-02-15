@@ -107,11 +107,6 @@ pub(crate) fn fit_metrics_with_inner(
     )
 }
 
-/// Extract inner ellipse params from an inner fit result.
-pub(crate) fn inner_ellipse_params(inner: &InnerFitResult) -> Option<Ellipse> {
-    inner.ellipse_inner
-}
-
 pub(crate) fn decode_metrics_from_result(
     decode_result: Option<&DecodeResult>,
 ) -> Option<DecodeMetrics> {

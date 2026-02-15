@@ -41,24 +41,31 @@ Hand off when your phase in the workflow is complete. Do not accumulate multiple
 
 ## Handoff Flow by Workflow
 
+All workflows start with **Project Lead** dispatching and end with **Project Lead** closing.
+
+### Planning
+```
+Project Lead ↔ Human (discuss, specify, dispatch, track)
+```
+
 ### Feature Development
 ```
-Pipeline Architect → Algorithm Engineer → Pipeline Architect → Validation Engineer → Performance Engineer → Pipeline Architect
+Project Lead → Pipeline Architect → Algorithm Engineer → Pipeline Architect → Validation Engineer → (Performance Engineer) → Pipeline Architect → Project Lead
 ```
 
 ### Bug Fix
 ```
-Validation Engineer → Algorithm Engineer → Validation Engineer → (Performance Engineer) → Pipeline Architect
+Project Lead → Validation Engineer → Algorithm Engineer → Validation Engineer → (Performance Engineer) → Pipeline Architect → Project Lead
 ```
 
 ### Performance Optimization
 ```
-Performance Engineer → (Algorithm Engineer) → Validation Engineer → Performance Engineer
+Project Lead → Performance Engineer → (Algorithm Engineer) → Validation Engineer → Performance Engineer → Project Lead
 ```
 
 ### Algorithm Improvement
 ```
-Algorithm Engineer → Pipeline Architect → Algorithm Engineer → Validation Engineer → Performance Engineer → Pipeline Architect
+Project Lead → Algorithm Engineer → Pipeline Architect → Algorithm Engineer → Validation Engineer → Performance Engineer → Pipeline Architect → Project Lead
 ```
 
 Roles in parentheses are conditional — only involved if their expertise is needed.

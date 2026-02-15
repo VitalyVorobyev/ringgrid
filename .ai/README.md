@@ -6,6 +6,7 @@ Structured workflow for AI-assisted development of ringgrid.
 
 | Role | Skills | Responsibility |
 |------|--------|---------------|
+| **Project Lead** | — | Backlog, task specs, prioritization, milestone tracking. Owns `state/`. First point of contact for planning |
 | **Algorithm Engineer** | `metrology-invariants`, `tests-synthetic-fixtures` | Math primitives: ellipse fitting, RANSAC, homography, projective center, decode. Owns `conic/`, `homography/`, `ring/`, `marker/` |
 | **Pipeline Architect** | `api-shaping` | Pipeline orchestration, public API, config design, module boundaries. Owns `pipeline/`, `api.rs`, `lib.rs`, `detector/config.rs` |
 | **Performance Engineer** | `hotpath-rust`, `criterion-bench` | Hot loop optimization, benchmarking, allocation profiling. Reviews any changed inner loop |
@@ -13,16 +14,18 @@ Structured workflow for AI-assisted development of ringgrid.
 
 ## Quick Start
 
-1. **Pick a workflow** based on task type (see below)
-2. **Read the role prompt** for your assigned role in `roles/`
-3. **Follow the workflow steps** in `workflows/`
-4. **Hand off** using `templates/handoff-note.md` when your phase completes
-5. **Human** reviews and merges to main
+1. **To discuss priorities or plan work** — start with [planning](workflows/planning.md) workflow (Project Lead)
+2. **To execute a task** — pick a workflow based on task type (see below)
+3. **Read the role prompt** for your assigned role in `roles/`
+4. **Follow the workflow steps** in `workflows/`
+5. **Hand off** using `templates/handoff-note.md` when your phase completes
+6. **Human** reviews and merges to main
 
 ## Workflow Selection
 
 | Task Type | Workflow | Starting Role |
 |-----------|----------|--------------|
+| Discuss priorities, plan milestones, triage new work | [planning](workflows/planning.md) | Project Lead |
 | New pipeline stage, detection mode, or API entry point | [feature-development](workflows/feature-development.md) | Pipeline Architect |
 | Correctness regression or defect | [bug-fix](workflows/bug-fix.md) | Validation Engineer |
 | Latency or throughput improvement | [performance-optimization](workflows/performance-optimization.md) | Performance Engineer |

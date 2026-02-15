@@ -6,7 +6,9 @@
 
 pub const CODEBOOK_BITS: usize = 16;
 pub const CODEBOOK_N: usize = 893;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const CODEBOOK_MIN_CYCLIC_DIST: usize = 2;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const CODEBOOK_SEED: u64 = 1;
 
 pub const CODEBOOK: [u16; 893] = [

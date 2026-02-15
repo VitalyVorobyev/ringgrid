@@ -44,11 +44,11 @@ jobs:
           <html lang="en">
           <head>
             <meta charset="utf-8" />
-            <meta http-equiv="refresh" content="0; url=ringgrid_core/index.html" />
+            <meta http-equiv="refresh" content="0; url=ringgrid/index.html" />
             <title>ringgrid docs</title>
           </head>
           <body>
-            <a href="ringgrid_core/index.html">Go to ringgrid_core docs</a>
+            <a href="ringgrid/index.html">Go to ringgrid docs</a>
           </body>
           </html>
           EOF

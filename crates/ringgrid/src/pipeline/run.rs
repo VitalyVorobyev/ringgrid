@@ -19,29 +19,6 @@ pub(super) fn run(
 }
 
 // ---------------------------------------------------------------------------
-// Single-pass helper (used internally by two-pass for pass-1)
-// ---------------------------------------------------------------------------
-pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    let proposals = find_proposals(gray, &config.proposal);
-    run(gray, config, None, proposals, None).0
-}
-
-/// Single-pass detection with debug dump collection.
-pub fn detect_single_pass_with_debug(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    debug_cfg: &DebugCollectConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> (DetectionResult, DebugDump) {
-    let proposals = find_proposals(gray, &config.proposal);
-    let (result, dump) = run::run(gray, config, mapper, proposals, Some(debug_cfg));
-    (
-        result,
-        dump.expect("debug dump present when debug_cfg is provided"),
-    )
-}
-
-// ---------------------------------------------------------------------------
 // Pass-2 orchestration (shared by two-pass and self-undistort)
 // ---------------------------------------------------------------------------
 fn run_pass2(
@@ -58,12 +35,16 @@ fn run_pass2(
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
+pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+    let proposals = find_proposals(gray, &config.proposal);
+    run(gray, config, None, proposals, None).0
+}
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
 ///
 /// Returned detections are in mapper working-frame coordinates. Any retained
 /// pass-1 fallback markers are remapped to the same working frame.
-pub(crate) fn detect_with_mapper(
+pub fn detect_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
@@ -77,7 +58,7 @@ pub(crate) fn detect_with_mapper(
 /// Runs a baseline pass first. If `config.self_undistort.enable` is true and
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
-pub(crate) fn detect_with_self_undistort(
+pub fn detect_with_self_undistort(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> DetectionResult {
@@ -104,4 +85,20 @@ pub(crate) fn detect_with_self_undistort(
 
     result.self_undistort = Some(su_result);
     result
+}
+
+/// Single-pass detection with debug dump collection.
+#[cfg(feature = "cli-internal")]
+pub fn detect_single_pass_with_debug(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    debug_cfg: &DebugCollectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> (DetectionResult, DebugDump) {
+    let proposals = find_proposals(gray, &config.proposal);
+    let (result, dump) = run::run(gray, config, mapper, proposals, Some(debug_cfg));
+    (
+        result,
+        dump.expect("debug dump present when debug_cfg is provided"),
+    )
 }

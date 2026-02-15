@@ -495,6 +495,7 @@ def main() -> None:
     debug = load_json(args.debug_json)
     schema_version = debug.get("schema_version")
     supported = {
+        "ringgrid.debug.v8",
         "ringgrid.debug.v7",
         "ringgrid.debug.v6",
         "ringgrid.debug.v5",
@@ -516,90 +517,18 @@ def main() -> None:
     img_w = int(debug.get("image", {}).get("width", img.shape[1]))
     img_h = int(debug.get("image", {}).get("height", img.shape[0]))
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+    render_dpi = 100
+    fig = plt.figure(
+        figsize=(img_w / render_dpi, img_h / render_dpi),
+        dpi=render_dpi,
+        frameon=False,
+    )
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.imshow(img, cmap="gray")
+    ax.set_axis_off()
 
-    title = f"ringgrid debug overlay ({args.stage})"
-    if args.id is not None:
-        title += f" id={args.id}"
-
-        # Add inner/outer estimation metrics (if available) to the title.
-        rf = ring_fit_debug_for_id(debug, args.id) or {}
-        inner = rf.get("inner_estimation")
-        outer = rf.get("outer_estimation")
-        if outer:
-            status = outer.get("status")
-            chosen = rf.get("chosen_outer_hypothesis")
-            hypotheses = outer.get("hypotheses") or []
-            r_found = None
-            if chosen is not None and 0 <= int(chosen) < len(hypotheses):
-                h = hypotheses[int(chosen)]
-                r_found = h.get("r_outer_px")
-            tc = outer.get("theta_consistency")
-            ps = outer.get("peak_strength")
-            reason = outer.get("reason")
-            title += (
-                f"\nouter: status={status}"
-                f" r={r_found if r_found is not None else 'NA'}"
-                f" tc={tc if tc is not None else 'NA'}"
-                f" ps={ps if ps is not None else 'NA'}"
-                f" hyp={chosen if chosen is not None else 'NA'}"
-            )
-            if reason:
-                title += f" ({reason})"
-        if inner:
-            status = inner.get("status")
-            r_found = inner.get("r_inner_found")
-            tc = inner.get("theta_consistency")
-            ps = inner.get("peak_strength")
-            reason = inner.get("reason")
-            title += (
-                f"\ninner: status={status}"
-                f" r={r_found if r_found is not None else 'NA'}"
-                f" tc={tc if tc is not None else 'NA'}"
-                f" ps={ps if ps is not None else 'NA'}"
-            )
-            if reason:
-                title += f" ({reason})"
-
-    ax.set_title(title)
-
-    # If focusing on a marker id and the debug contains the aggregated radial
-    # response curve, plot it as an inset.
-    if args.id is not None:
-        rf = ring_fit_debug_for_id(debug, args.id) or {}
-        inner = rf.get("inner_estimation")
-        outer = rf.get("outer_estimation")
-        if outer and outer.get("radial_response_agg") is not None and outer.get("r_samples") is not None:
-            try:
-                from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
-                r_samples = outer["r_samples"]
-                resp = outer["radial_response_agg"]
-                inset = inset_axes(ax, width="35%", height="25%", loc="upper left", borderpad=1.0)
-                inset.plot(r_samples, resp, color="cyan", linewidth=1.0)
-                inset.set_title("outer dI/dr (agg)", fontsize=8, color="white")
-                inset.tick_params(axis="both", labelsize=7, colors="white")
-                inset.grid(True, alpha=0.2)
-                inset.set_facecolor((0, 0, 0, 0.35))
-            except Exception:
-                pass
-
-        if inner and inner.get("radial_response_agg") is not None and inner.get("r_samples") is not None:
-            try:
-                from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
-                r_samples = inner["r_samples"]
-                resp = inner["radial_response_agg"]
-                inset = inset_axes(ax, width="35%", height="25%", loc="lower left", borderpad=1.0)
-                inset.plot(r_samples, resp, color="white", linewidth=1.0)
-                inset.set_title("inner dI/dr (agg)", fontsize=8, color="white")
-                inset.tick_params(axis="both", labelsize=7, colors="white")
-                inset.grid(True, alpha=0.2)
-                inset.set_facecolor((0, 0, 0, 0.35))
-            except Exception:
-                # Inset plotting is best-effort (backend/toolkit availability).
-                pass
+    # Keep visualization focused on raw image + overlay only:
+    # no figure title and no inset diagnostic plots.
 
     # Helpers for ransac inlier/outlier sets (ids)
     ransac = debug.get("stages", {}).get("stage3_ransac", {})
@@ -693,11 +622,10 @@ def main() -> None:
             ax.set_xlim(x0, x1)
             ax.set_ylim(y1, y0)  # invert y for image coords
     ax.set_aspect("equal")
-    fig.tight_layout()
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(args.out, dpi=150, bbox_inches="tight")
+        fig.savefig(args.out, dpi=render_dpi, pad_inches=0)
         plt.close(fig)
         print(f"Wrote overlay to {args.out}")
     else:

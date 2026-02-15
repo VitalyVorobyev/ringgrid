@@ -9,7 +9,7 @@ Target print example:
 
 ![Ringgrid target print](docs/assets/target_print.png)
 
-Detection overlay example (`tools/out/synth_002/img_0002.png`):
+Detection overlay example:
 
 ![Detection overlay example](docs/assets/det_overlay_0002.png)
 
@@ -146,7 +146,7 @@ cargo run -p ringgrid --example basic_detect -- \
 cargo run -p ringgrid --example detect_with_camera -- \
   crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 
-cargo run -p ringgrid --example detect_with_config -- \
+cargo run -p ringgrid --example detect_with_self_undistort -- \
   crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 ```
 

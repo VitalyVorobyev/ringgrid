@@ -29,7 +29,7 @@ use crate::DetectionResult;
 /// use image::GrayImage;
 /// use std::path::Path;
 ///
-/// let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
+/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
 /// let detector = Detector::new(board);
 /// let image = GrayImage::new(640, 480);
 /// let result = detector.detect(&image);

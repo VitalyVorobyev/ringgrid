@@ -1,13 +1,11 @@
 use image::GrayImage;
 
 use super::{
-    apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
-    global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, reapply_projective_centers,
-    refine_with_homography, refine_with_homography_with_debug, refit_homography_matrix,
-    warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionDebugOptions,
-    CompletionStats, DebugCollectConfig, DetectConfig,
+    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
+    mean_reproj_error_px, reapply_projective_centers, refine_with_homography,
+    refit_homography_matrix, warn_center_correction_without_intrinsics, CompletionStats,
+    DetectConfig,
 };
-use crate::debug_dump as dbg;
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
 use crate::pipeline::DetectionResult;
@@ -16,121 +14,39 @@ use crate::pixelmap::PixelMapper;
 #[derive(Clone, Copy)]
 struct FinalizeFlags {
     use_projective_center: bool,
-    collect_debug: bool,
-    store_points: bool,
 }
 
 struct FilterPhaseOutput {
     markers: Vec<DetectedMarker>,
     h_current: Option<nalgebra::Matrix3<f64>>,
     ransac_stats: Option<RansacStats>,
-    ransac_debug: Option<dbg::RansacDebug>,
-    refine_debug: Option<dbg::RefineDebug>,
-    short_circuit_no_h_no_debug: bool,
+    short_circuit_no_h: bool,
 }
 
-struct CompletionPhaseOutput {
-    stats: CompletionStats,
-    attempts: Option<Vec<CompletionAttemptRecord>>,
-    h_available: bool,
-}
-
-fn finalize_flags(config: &DetectConfig, debug_cfg: Option<&DebugCollectConfig>) -> FinalizeFlags {
+fn finalize_flags(config: &DetectConfig) -> FinalizeFlags {
     FinalizeFlags {
         use_projective_center: config.circle_refinement.uses_projective_center()
             && config.projective_center.enable,
-        collect_debug: debug_cfg.is_some(),
-        store_points: debug_cfg.map(|cfg| cfg.store_points).unwrap_or(false),
     }
 }
 
 fn phase_filter_and_refine_h(
     gray: &GrayImage,
     mut fit_markers: Vec<DetectedMarker>,
-    marker_cand_idx: &[usize],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     flags: FinalizeFlags,
 ) -> FilterPhaseOutput {
-    // 1st PC pass: correct fit-decode markers before global filter
     if flags.use_projective_center {
         apply_projective_centers(&mut fit_markers, config);
     }
 
     if !config.use_global_filter {
-        let ransac_debug = if flags.collect_debug {
-            Some(dbg::RansacDebug {
-                enabled: false,
-                result: None,
-                stats: None,
-                correspondences_used: 0,
-                inlier_ids: Vec::new(),
-                outlier_ids: Vec::new(),
-                per_id_error_px: Vec::new(),
-                notes: vec!["global_filter_disabled".to_string()],
-            })
-        } else {
-            None
-        };
-
         return FilterPhaseOutput {
             markers: fit_markers,
             h_current: None,
             ransac_stats: None,
-            ransac_debug,
-            refine_debug: None,
-            short_circuit_no_h_no_debug: !flags.collect_debug,
-        };
-    }
-
-    if flags.collect_debug {
-        let (filtered, h_result, stats, rdbg) = global_filter_with_debug(
-            &fit_markers,
-            marker_cand_idx,
-            &config.ransac_homography,
-            &config.board,
-        );
-        let mut h_current = h_result.as_ref().map(|r| r.h);
-        let h_matrix = h_result.as_ref().map(|r| &r.h);
-
-        let (mut markers, refine_debug) = if config.refine_with_h {
-            if let Some(h) = h_matrix {
-                if filtered.len() >= 10 {
-                    let (refined, refine_dbg) = refine_with_homography_with_debug(
-                        gray,
-                        &filtered,
-                        h,
-                        config,
-                        &config.board,
-                        mapper,
-                    );
-                    (refined, Some(refine_dbg))
-                } else {
-                    (filtered, None)
-                }
-            } else {
-                (filtered, None)
-            }
-        } else {
-            (filtered, None)
-        };
-
-        // 2nd PC pass: reapply after refine-H (new ellipses)
-        if flags.use_projective_center && refine_debug.is_some() {
-            reapply_projective_centers(&mut markers, config);
-        }
-
-        if h_current.is_none() {
-            h_current = h_result.map(|r| r.h);
-        }
-
-        return FilterPhaseOutput {
-            markers,
-            h_current,
-            ransac_stats: stats,
-            ransac_debug: Some(rdbg),
-            refine_debug,
-            short_circuit_no_h_no_debug: false,
+            short_circuit_no_h: true,
         };
     }
 
@@ -155,7 +71,6 @@ fn phase_filter_and_refine_h(
         (filtered, false)
     };
 
-    // 2nd PC pass: reapply after refine-H (new ellipses)
     if flags.use_projective_center && did_refine {
         reapply_projective_centers(&mut markers, config);
     }
@@ -164,9 +79,7 @@ fn phase_filter_and_refine_h(
         markers,
         h_current,
         ransac_stats: stats,
-        ransac_debug: None,
-        refine_debug: None,
-        short_circuit_no_h_no_debug: false,
+        short_circuit_no_h: false,
     }
 }
 
@@ -176,50 +89,16 @@ fn phase_completion(
     h_current: Option<&nalgebra::Matrix3<f64>>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    flags: FinalizeFlags,
-) -> CompletionPhaseOutput {
+) -> CompletionStats {
     if !config.completion.enable {
-        return CompletionPhaseOutput {
-            stats: CompletionStats::default(),
-            attempts: if flags.collect_debug {
-                Some(Vec::new())
-            } else {
-                None
-            },
-            h_available: h_current.is_some(),
-        };
+        return CompletionStats::default();
     }
 
     let Some(h) = h_current else {
-        return CompletionPhaseOutput {
-            stats: CompletionStats::default(),
-            attempts: if flags.collect_debug {
-                Some(Vec::new())
-            } else {
-                None
-            },
-            h_available: false,
-        };
+        return CompletionStats::default();
     };
 
-    let (stats, attempts) = complete_with_h(
-        gray,
-        h,
-        final_markers,
-        config,
-        &config.board,
-        mapper,
-        CompletionDebugOptions {
-            store_points: flags.store_points,
-            record: flags.collect_debug,
-        },
-    );
-
-    CompletionPhaseOutput {
-        stats,
-        attempts,
-        h_available: true,
-    }
+    complete_with_h(gray, h, final_markers, config, &config.board, mapper)
 }
 
 fn phase_final_h(
@@ -227,7 +106,6 @@ fn phase_final_h(
     h_current: Option<nalgebra::Matrix3<f64>>,
     mut ransac_stats: Option<RansacStats>,
     config: &DetectConfig,
-    refine_debug: &mut Option<dbg::RefineDebug>,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let did_refit = config.refine_with_h && final_markers.len() >= 10;
     let final_h_matrix = if did_refit {
@@ -265,12 +143,6 @@ fn phase_final_h(
         })
         .or_else(|| ransac_stats.take());
 
-    if did_refit {
-        if let Some(rd) = refine_debug.as_mut() {
-            rd.h_refit = final_h;
-        }
-    }
-
     (final_h, final_ransac)
 }
 
@@ -289,111 +161,29 @@ fn build_result(
     }
 }
 
-struct DumpBuildInput<'a> {
-    debug_cfg: &'a DebugCollectConfig,
-    config: &'a DetectConfig,
-    image_size: [u32; 2],
-    stage0: Option<dbg::StageDebug>,
-    stage1: Option<dbg::StageDebug>,
-    stage2: Option<dbg::DedupDebug>,
-    ransac_debug: dbg::RansacDebug,
-    refine_debug: Option<dbg::RefineDebug>,
-    completion: CompletionPhaseOutput,
-    result: &'a DetectionResult,
-}
-
-fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
-    let DumpBuildInput {
-        debug_cfg,
-        config,
-        image_size,
-        stage0,
-        stage1,
-        stage2,
-        ransac_debug,
-        refine_debug,
-        completion,
-        result,
-    } = input;
-    let completion_added = completion.stats.n_added;
-    let completion_debug = dbg::CompletionDebug {
-        enabled: config.completion.enable && completion.h_available,
-        params: config.completion.clone(),
-        attempted: completion.attempts.unwrap_or_default(),
-        stats: completion.stats,
-        notes: Vec::new(),
-    };
-
-    dbg::DebugDump {
-        schema_version: dbg::DEBUG_SCHEMA_V8.to_string(),
-        image: dbg::ImageDebug {
-            path: debug_cfg.image_path.clone(),
-            width: image_size[0],
-            height: image_size[1],
-        },
-        detect_config: dbg::DetectConfigSnapshot::from_config(config, debug_cfg),
-        stages: dbg::StagesDebug {
-            stage0_proposals: stage0.expect("stage0 debug should be present"),
-            stage1_fit_decode: stage1.expect("stage1 debug should be present"),
-            stage2_dedup: stage2.expect("stage2 debug should be present"),
-            stage3_ransac: ransac_debug,
-            stage4_refine: refine_debug,
-            stage5_completion: Some(completion_debug),
-            final_: dbg::FinalDebug {
-                h_final: result.homography,
-                detections: result.detected_markers.clone(),
-                notes: if completion_added > 0 {
-                    vec![format!("completion_added={}", completion_added)]
-                } else {
-                    Vec::new()
-                },
-            },
-        },
-    }
-}
-
 pub(super) fn run(
     gray: &GrayImage,
     fit_out: super::fit_decode::FitDecodeCoreOutput,
-    image_size: [u32; 2],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    debug_cfg: Option<&DebugCollectConfig>,
-) -> (DetectionResult, Option<dbg::DebugDump>) {
+) -> DetectionResult {
+    let (w, h) = gray.dimensions();
+    let image_size = [w, h];
+
     warn_center_correction_without_intrinsics(config, mapper.is_some());
-    let flags = finalize_flags(config, debug_cfg);
+    let flags = finalize_flags(config);
 
-    let super::fit_decode::FitDecodeCoreOutput {
-        markers: fit_markers,
-        marker_cand_idx,
-        stage0,
-        stage1,
-        stage2,
-    } = fit_out;
+    let mut filter_phase = phase_filter_and_refine_h(gray, fit_out.markers, config, mapper, flags);
 
-    let mut filter_phase =
-        phase_filter_and_refine_h(gray, fit_markers, &marker_cand_idx, config, mapper, flags);
-
-    if filter_phase.short_circuit_no_h_no_debug {
-        // PC was already applied in phase_filter_and_refine_h (1st pass)
-        let result = build_result(filter_phase.markers, image_size, None, None);
-        return (result, None);
+    if filter_phase.short_circuit_no_h {
+        return build_result(filter_phase.markers, image_size, None, None);
     }
 
     let mut final_markers = filter_phase.markers;
     let h_current = filter_phase.h_current;
-    let mut refine_debug = filter_phase.refine_debug;
+    let completion_stats =
+        phase_completion(gray, &mut final_markers, h_current.as_ref(), config, mapper);
 
-    let completion = phase_completion(
-        gray,
-        &mut final_markers,
-        h_current.as_ref(),
-        config,
-        mapper,
-        flags,
-    );
-
-    // 3rd PC pass: correct completion-only markers (skips already-corrected ones)
     if flags.use_projective_center {
         apply_projective_centers(&mut final_markers, config);
     }
@@ -403,7 +193,6 @@ pub(super) fn run(
         h_current,
         filter_phase.ransac_stats.take(),
         config,
-        &mut refine_debug,
     );
 
     tracing::info!(
@@ -415,27 +204,13 @@ pub(super) fn run(
             ""
         }
     );
+    tracing::debug!(
+        "Completion summary: attempted={}, added={}, failed_fit={}, failed_gate={}",
+        completion_stats.n_attempted,
+        completion_stats.n_added,
+        completion_stats.n_failed_fit,
+        completion_stats.n_failed_gate
+    );
 
-    let result = build_result(final_markers, image_size, final_h, final_ransac);
-
-    let dump = if let Some(debug_cfg) = debug_cfg {
-        Some(build_debug_dump(DumpBuildInput {
-            debug_cfg,
-            config,
-            image_size,
-            stage0,
-            stage1,
-            stage2,
-            ransac_debug: filter_phase
-                .ransac_debug
-                .expect("ransac debug should be present when debug is enabled"),
-            refine_debug,
-            completion,
-            result: &result,
-        }))
-    } else {
-        None
-    };
-
-    (result, dump)
+    build_result(final_markers, image_size, final_h, final_ransac)
 }

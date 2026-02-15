@@ -20,7 +20,7 @@ This document describes the refactored `ringgrid` module boundaries.
 3. dedup
 4. optional homography filter/refine
 5. optional completion
-6. final result/debug assembly
+6. final result assembly
 
 Public detection entrypoints (`detect_rings*`) are implemented in this module and re-exported from `lib.rs`.
 
@@ -48,8 +48,6 @@ Marker-specific primitives:
 - marker geometry spec
 - ring-sector decode config/diagnostics
 - codebook + codec
-
-CLI-only codebook/codec module exports remain feature-gated via `cli-internal`.
 
 ### `ring/`
 

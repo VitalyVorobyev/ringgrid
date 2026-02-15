@@ -58,7 +58,7 @@ target/release/ringgrid detect \
   --out tools/out/synth_001/score_0000.json
 ```
 
-### 6. Render detection debug overlay
+### 6. Render detection overlay
 
 ```bash
 tools/run_synth_viz.sh tools/out/synth_001 0
@@ -85,10 +85,7 @@ Design constraints in v1:
   `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
 - `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
   `self_undistort` config.
-- `Detector::detect_with_debug(...)` is single-pass only; self-undistort/two-pass
-  orchestration is skipped in debug mode.
 - Low-level math/pipeline modules are internal.
-- Debug dump API is internal/CLI-only (`cli-internal` feature).
 - Example target JSON: `crates/ringgrid/examples/target.json`.
 
 Minimal usage:
@@ -118,14 +115,13 @@ crates/
       homography/  # DLT + RANSAC, refit utilities
       conic/       # ellipse types, fitting, RANSAC, eigenvalue solver
       pixelmap/    # camera models, PixelMapper trait, self-undistort
-      debug_dump.rs # debug JSON schema (feature-gated)
     examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
   gen_synth.py         # synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
-  viz_detect_debug.py  # debug overlay rendering
+  viz_detect.py        # DetectionResult overlay rendering
 docs/
   assets/
   module_structure.md
@@ -165,8 +161,6 @@ Other commonly used toggles:
 - `--marker-diameter-min <px>`
 - `--marker-diameter-max <px>`
 - `--self-undistort` (mutually exclusive with camera `--cam-*` flags)
-- `--debug-json <path>`
-- `--debug-store-points`
 
 ## Metrics (Synthetic Scoring)
 

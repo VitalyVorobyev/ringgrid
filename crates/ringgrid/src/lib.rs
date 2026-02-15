@@ -7,7 +7,6 @@
 mod api;
 mod board_layout;
 mod conic;
-mod debug_dump;
 mod detector;
 mod homography;
 mod marker;
@@ -39,20 +38,9 @@ pub use conic::Ellipse;
 pub use marker::MarkerSpec;
 
 // Camera / distortion
+pub use marker::codebook;
+pub use marker::codec;
 pub use pixelmap::{
     CameraIntrinsics, CameraModel, DivisionModel, PixelMapper, RadialTangentialDistortion,
     SelfUndistortConfig, SelfUndistortResult,
 };
-
-// ── Feature-gated (CLI-internal) ────────────────────────────────────────
-
-#[cfg(feature = "cli-internal")]
-pub use debug_dump::DebugDump;
-#[cfg(feature = "cli-internal")]
-pub use detector::DebugCollectConfig;
-#[cfg(feature = "cli-internal")]
-pub use marker::codebook;
-#[cfg(feature = "cli-internal")]
-pub use marker::codec;
-#[cfg(feature = "cli-internal")]
-pub use pipeline::detect_single_pass_with_debug;

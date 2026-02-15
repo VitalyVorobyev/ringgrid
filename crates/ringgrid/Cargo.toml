@@ -14,10 +14,6 @@ keywords = ["computer-vision", "calibration", "fiducial", "marker", "homography"
 rust-version = "1.87"
 include = ["src/**", "examples/**", "README.md", "LICENSE-*", "Cargo.toml"]
 
-[features]
-default = []
-cli-internal = []
-
 [dependencies]
 nalgebra = { workspace = true }
 image = { workspace = true }

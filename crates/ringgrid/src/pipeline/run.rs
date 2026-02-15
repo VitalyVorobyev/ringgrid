@@ -1,7 +1,6 @@
 //! Top-level pipeline orchestrator: fit_decode → finalize.
 
 use super::*;
-use crate::debug_dump::DebugDump;
 use crate::detector::proposal::find_proposals;
 use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
@@ -11,11 +10,9 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
-    debug_cfg: Option<&DebugCollectConfig>,
-) -> (DetectionResult, Option<DebugDump>) {
-    let (w, h) = gray.dimensions();
-    let fit_out = super::fit_decode::run(gray, config, mapper, proposals, debug_cfg);
-    super::finalize::run(gray, fit_out, [w, h], config, mapper, debug_cfg)
+) -> DetectionResult {
+    let fit_out = super::fit_decode::run(gray, config, mapper, proposals);
+    super::finalize::run(gray, fit_out, config, mapper)
 }
 
 // ---------------------------------------------------------------------------
@@ -29,7 +26,7 @@ fn run_pass2(
 ) -> DetectionResult {
     let seed_params = &config.seed_proposals;
     let proposals = pass1.seed_proposals(seed_params.max_seeds);
-    run(gray, config, Some(mapper), proposals, None).0
+    run(gray, config, Some(mapper), proposals)
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +34,7 @@ fn run_pass2(
 // ---------------------------------------------------------------------------
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let proposals = find_proposals(gray, &config.proposal);
-    run(gray, config, None, proposals, None).0
+    run(gray, config, None, proposals)
 }
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
@@ -58,10 +55,7 @@ pub fn detect_with_mapper(
 /// Runs a baseline pass first. If `config.self_undistort.enable` is true and
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
-pub fn detect_with_self_undistort(
-    gray: &GrayImage,
-    config: &DetectConfig,
-) -> DetectionResult {
+pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let mut result = detect_single_pass(gray, config);
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
@@ -85,20 +79,4 @@ pub fn detect_with_self_undistort(
 
     result.self_undistort = Some(su_result);
     result
-}
-
-/// Single-pass detection with debug dump collection.
-#[cfg(feature = "cli-internal")]
-pub fn detect_single_pass_with_debug(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    debug_cfg: &DebugCollectConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> (DetectionResult, DebugDump) {
-    let proposals = find_proposals(gray, &config.proposal);
-    let (result, dump) = run::run(gray, config, mapper, proposals, Some(debug_cfg));
-    (
-        result,
-        dump.expect("debug dump present when debug_cfg is provided"),
-    )
 }

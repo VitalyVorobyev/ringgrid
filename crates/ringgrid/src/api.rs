@@ -2,16 +2,12 @@
 //!
 //! [`Detector`] is the primary entry point for detecting ring markers.
 //! It wraps a [`DetectConfig`] and provides convenience methods for
-//! common detection scenarios (config-driven detect, external mapper, debug).
+//! common detection scenarios (config-driven detect and external mapper).
 
 use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::BoardLayout;
-#[cfg(feature = "cli-internal")]
-use crate::debug_dump::DebugDump;
-#[cfg(feature = "cli-internal")]
-use crate::detector::DebugCollectConfig;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
@@ -135,20 +131,6 @@ impl Detector {
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
         pipeline::detect_with_mapper(image, &self.config, mapper)
-    }
-
-    /// Detect with debug dump collection (single-pass).
-    ///
-    /// Debug collection does not run self-undistort estimation and does not
-    /// run the two-pass seeded pipeline.
-    #[cfg(feature = "cli-internal")]
-    pub fn detect_with_debug(
-        &self,
-        image: &GrayImage,
-        debug_cfg: &DebugCollectConfig,
-        mapper: Option<&dyn PixelMapper>,
-    ) -> (DetectionResult, DebugDump) {
-        pipeline::detect_single_pass_with_debug(image, &self.config, debug_cfg, mapper)
     }
 }
 

@@ -14,7 +14,7 @@ name = "ringgrid"
 path = "src/main.rs"
 
 [dependencies]
-ringgrid = { path = "../ringgrid", default-features = false, features = ["cli-internal"] }
+ringgrid = { path = "../ringgrid" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

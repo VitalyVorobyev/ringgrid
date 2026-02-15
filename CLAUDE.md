@@ -44,10 +44,10 @@ crates/ringgrid/src/
 │   └── marker_spec.rs  # MarkerSpec type
 ├── pipeline/           # Detection pipeline orchestration
 │   ├── mod.rs          # DetectionResult struct, module glue, re-exports
-│   ├── run.rs          # Top-level run() orchestrator (proposals → finalize)
+│   ├── run.rs          # Top-level orchestrator + pass-2/self-undistort flow
 │   ├── fit_decode.rs   # Proposals → fit → decode → dedup
 │   ├── finalize.rs     # Global filter → refine → complete → assemble
-│   └── two_pass.rs     # Two-pass + self-undistort orchestration
+│   └── result.rs       # DetectionResult type
 ├── homography/         # Homography estimation & utilities
 │   ├── core.rs         # DLT + RANSAC, RansacStats
 │   └── utils.rs        # Refit, reprojection error, matrix conversion
@@ -60,7 +60,6 @@ crates/ringgrid/src/
 │   ├── cameramodel.rs  # CameraModel, CameraIntrinsics
 │   ├── distortion.rs   # RadialTangentialDistortion, DivisionModel
 │   └── self_undistort.rs # Self-undistort estimation
-└── debug_dump.rs       # Debug JSON schema (feature-gated)
 ```
 
 ## Detection Pipeline Architecture
@@ -152,9 +151,7 @@ Self-undistort mode estimates a division-model distortion correction from detect
 - External JSON uses `serde` structs (see `DetectionResult` in `pipeline/mod.rs`)
 - Never introduce OpenCV bindings
 - `codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
-- Debug schema is versioned (`ringgrid.debug.v7`)
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
-- Debug collection is feature-gated via `cli-internal` feature flag
 - `lib.rs` is purely re-exports; type definitions live at their construction sites
 
 ## CI / checks

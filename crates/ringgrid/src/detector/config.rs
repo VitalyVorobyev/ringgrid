@@ -6,19 +6,6 @@ use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 use super::proposal::ProposalConfig;
 
-/// Debug collection options for `detect_rings_with_debug`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DebugCollectConfig {
-    /// Optional source image path copied into debug dump metadata.
-    pub image_path: Option<String>,
-    /// Marker diameter used for this run (debug metadata only).
-    pub marker_diameter_px: f64,
-    /// Maximum number of per-candidate records stored in stage dumps.
-    pub max_candidates: usize,
-    /// Whether to include sampled edge points in debug output.
-    pub store_points: bool,
-}
-
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeedProposalParams {
@@ -327,19 +314,6 @@ impl Default for DetectConfig {
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
         cfg
-    }
-}
-
-impl DetectConfig {
-    /// Build config from marker diameter using the built-in default board layout.
-    ///
-    /// Intended for internal CLI compatibility paths.
-    #[cfg(feature = "cli-internal")]
-    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
-        Self::from_target_and_scale_prior(
-            BoardLayout::default(),
-            MarkerScalePrior::from_nominal_diameter_px(diameter_px),
-        )
     }
 }
 

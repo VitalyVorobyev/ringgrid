@@ -7,9 +7,7 @@ use crate::marker::decode::decode_marker_with_diagnostics_and_mapper;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
-use crate::ring::outer_estimate::{
-    estimate_outer_from_prior_with_mapper, OuterEstimate, OuterStatus,
-};
+use crate::ring::outer_estimate::{estimate_outer_from_prior_with_mapper, OuterStatus};
 use crate::DetectedMarker;
 
 use super::DetectConfig;
@@ -224,10 +222,7 @@ pub(crate) struct OuterFitCandidate {
     pub(crate) edge: EdgeSampleResult,
     pub(crate) outer: Ellipse,
     pub(crate) outer_ransac: Option<crate::conic::RansacResult>,
-    pub(crate) outer_estimate: OuterEstimate,
-    pub(crate) chosen_hypothesis: usize,
     pub(crate) decode_result: Option<crate::marker::decode::DecodeResult>,
-    pub(crate) decode_diag: crate::marker::decode::DecodeDiagnostics,
     pub(crate) score: f32,
 }
 
@@ -270,7 +265,7 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
 
     let mut best: Option<OuterFitCandidate> = None;
 
-    for (hi, hyp) in outer_estimate.hypotheses.iter().enumerate() {
+    for hyp in &outer_estimate.hypotheses {
         let (outer_points, outer_radii) = sample_outer_edge_points(
             sampler,
             center_prior,
@@ -301,7 +296,7 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
             Err(_) => continue,
         };
 
-        let (decode_result, decode_diag) =
+        let (decode_result, diagnostics) =
             decode_marker_with_diagnostics_and_mapper(gray, &outer, &config.decode, mapper);
 
         let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
@@ -315,7 +310,7 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
         let size_err = ((mean_axis - r_expected).abs() / r_expected.max(1.0)).min(2.0);
         let size_score = (1.0 - size_err).clamp(0.0, 1.0);
 
-        let decode_score = decode_diag.decode_confidence;
+        let decode_score = diagnostics.decode_confidence;
 
         let score = 2.0 * decode_score + 0.7 * (arc_cov * inlier_ratio) + 0.3 * size_score
             - 0.05 * residual;
@@ -324,10 +319,7 @@ pub(crate) fn fit_outer_ellipse_robust_with_reason(
             edge,
             outer,
             outer_ransac,
-            outer_estimate: outer_estimate.clone(),
-            chosen_hypothesis: hi,
             decode_result,
-            decode_diag,
             score,
         };
 

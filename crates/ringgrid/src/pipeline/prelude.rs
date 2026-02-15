@@ -11,5 +11,5 @@ pub(crate) use crate::homography::{
 
 pub(crate) use crate::detector::{
     apply_projective_centers, complete_with_h, dedup_by_id, dedup_markers, global_filter,
-    reapply_projective_centers, refine_with_homography, warn_center_correction_without_intrinsics,
+    warn_center_correction_without_intrinsics,
 };

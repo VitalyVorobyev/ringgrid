@@ -18,7 +18,7 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| — | — | — | — | — | — | — |
+| FEAT-001 | in-progress | P0 | feature | Normalize marker center API and simplify finalize flow | Pipeline Architect | Breaking API change: `center` always image-space, add `center_mapped`, remove `center_projective*`, remove `refine_with_h` |
 
 ## Up Next
 

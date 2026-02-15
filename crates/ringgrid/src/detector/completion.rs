@@ -8,8 +8,7 @@ use crate::DetectedMarker;
 use super::{
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner},
-    median_outer_radius_from_neighbors_px, CompletionParams,
-    DetectConfig, OuterFitCandidate,
+    median_outer_radius_from_neighbors_px, CompletionParams, DetectConfig, OuterFitCandidate,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

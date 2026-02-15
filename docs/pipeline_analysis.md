@@ -12,7 +12,7 @@ Detector (api.rs)
         v
 pipeline/run.rs
   +-- fit_decode::run()         -- proposals -> fit/decode -> dedup
-  +-- finalize::run()           -- projective-center -> filter/refine -> completion -> final H
+  +-- finalize::run()           -- projective-center -> filter -> completion -> final H
 ```
 
 Single-pass entry points build proposals and call `run::run()` directly.
@@ -56,13 +56,12 @@ File: `detector/dedup.rs`
 - Dedup by proximity (`dedup_radius`)
 - Dedup by decoded ID (keep highest confidence)
 
-### Stage 3: Global filter + H-refine
-Files: `detector/global_filter.rs`, `detector/refine_h.rs`, `pipeline/finalize.rs`
+### Stage 3: Global filter
+Files: `detector/global_filter.rs`, `pipeline/finalize.rs`
 
 - Build board/image correspondences from decoded markers
 - Fit homography via RANSAC
 - Keep inliers only
-- Optional H-guided refinement when H exists and marker count is sufficient
 
 ### Stage 4: Completion
 File: `detector/completion.rs`
@@ -81,10 +80,9 @@ File: `pipeline/finalize.rs`
 
 ## 4. Center Correction Order
 
-Projective-center correction is applied in three points:
+Projective-center correction is applied once per marker:
 1. before global filtering
-2. after H-refinement (reapply on updated ellipses)
-3. after completion (apply for completion-added markers)
+2. after completion (for completion-added markers only)
 
 ## 5. Coordinate Frames
 
@@ -94,6 +92,11 @@ Projective-center correction is applied in three points:
 | working frame | undistorted pixel coordinates (or image frame when no mapper) |
 
 `DistortionAwareSampler` keeps geometry in working coordinates while sampling image intensities in raw image space.
+
+Public result contract:
+- `DetectedMarker.center` is always image frame.
+- `DetectedMarker.center_mapped` is optional working frame center when mapper-driven passes are active.
+- `DetectionResult.center_frame` and `DetectionResult.homography_frame` carry explicit frame metadata.
 
 ## 6. Short-circuit Behavior
 

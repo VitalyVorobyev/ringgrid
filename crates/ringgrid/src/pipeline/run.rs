@@ -39,8 +39,10 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
 ///
-/// Returned detections are in mapper working-frame coordinates. Any retained
-/// pass-1 fallback markers are remapped to the same working frame.
+/// Returned marker centers are always image-space (`DetectedMarker.center`).
+/// When a mapper is active, mapper-frame centers are preserved in
+/// `DetectedMarker.center_mapped` and homography frame metadata is set to
+/// `DetectionFrame::Working`.
 pub fn detect_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,

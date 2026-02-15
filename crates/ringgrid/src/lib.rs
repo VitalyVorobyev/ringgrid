@@ -1,7 +1,7 @@
 //! ringgrid — pure-Rust detector for coded ring calibration targets.
 //!
 //! The high-level stage order is owned by `pipeline` (internal):
-//! proposal -> local fit/decode -> dedup -> global filter -> refinement -> completion.
+//! proposal -> local fit/decode -> dedup -> global filter -> completion -> final H refit.
 //! Low-level fitting/sampling primitives are implemented in `detector` and `ring`.
 
 mod api;
@@ -23,7 +23,7 @@ pub use api::Detector;
 pub use detector::{DetectedMarker, FitMetrics};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
-pub use pipeline::DetectionResult;
+pub use pipeline::{DetectionFrame, DetectionResult};
 
 // Configuration
 pub use detector::{

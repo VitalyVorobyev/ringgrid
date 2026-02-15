@@ -324,10 +324,19 @@ def resolve_gt_mode(mode: str, pred_data: dict[str, Any]) -> str:
     return "image"
 
 
-def resolve_pred_mode(mode: str, pred_data: dict[str, Any]) -> str:
-    """Resolve prediction frame mode from metadata."""
+def normalize_frame_name(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value in ("image", "working"):
+        return value
+    return None
+
+
+def resolve_pred_mode(mode: str, pred_data: dict[str, Any], frame_key: str) -> str:
+    """Resolve prediction frame mode from explicit metadata with fallback."""
     if mode != "auto":
         return mode
+    explicit = normalize_frame_name(pred_data.get(frame_key))
+    if explicit is not None:
+        return explicit
     if pred_data.get("camera") is not None:
         return "working"
     su = pred_data.get("self_undistort")
@@ -795,8 +804,8 @@ def main():
         help=(
             "Frame of prediction marker centers: "
             "'image' for distorted image pixels, 'working' for undistorted working pixels. "
-            "'auto' chooses 'working' when prediction JSON contains camera metadata "
-            "or self_undistort metadata with applied=true."
+            "'auto' first checks prediction JSON `center_frame`, then falls back to "
+            "legacy camera/self-undistort heuristics."
         ),
     )
     parser.add_argument(
@@ -805,8 +814,8 @@ def main():
         default="auto",
         help=(
             "Frame of prediction homography outputs. "
-            "'auto' chooses 'working' when prediction JSON contains camera metadata "
-            "or self_undistort metadata with applied=true."
+            "'auto' first checks prediction JSON `homography_frame`, then falls back to "
+            "legacy camera/self-undistort heuristics."
         ),
     )
     parser.add_argument(
@@ -829,8 +838,10 @@ def main():
     division_model = parse_division_model(pred_data)
     center_gt_mode = resolve_gt_mode(args.center_gt_key, pred_data)
     homography_gt_mode = resolve_gt_mode(args.homography_gt_key, pred_data)
-    pred_center_mode = resolve_pred_mode(args.pred_center_frame, pred_data)
-    pred_h_mode = resolve_pred_mode(args.pred_homography_frame, pred_data)
+    pred_center_mode = resolve_pred_mode(args.pred_center_frame, pred_data, "center_frame")
+    pred_h_mode = resolve_pred_mode(
+        args.pred_homography_frame, pred_data, "homography_frame"
+    )
 
     expected_ratio = None
     if args.check_inner_ratio:

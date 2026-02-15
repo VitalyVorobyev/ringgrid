@@ -276,8 +276,6 @@ pub struct DetectConfig {
     pub use_global_filter: bool,
     /// RANSAC homography configuration.
     pub ransac_homography: RansacHomographyConfig,
-    /// Enable one-iteration refinement using H.
-    pub refine_with_h: bool,
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
@@ -348,7 +346,6 @@ impl Default for DetectConfig {
             dedup_radius: 6.0,
             use_global_filter: true,
             ransac_homography: RansacHomographyConfig::default(),
-            refine_with_h: true,
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
         };

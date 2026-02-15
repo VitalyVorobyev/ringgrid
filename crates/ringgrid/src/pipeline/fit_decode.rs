@@ -3,13 +3,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::inner_fit;
-use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_with_inner,
-};
-use super::outer_fit::{
-    fit_outer_candidate_from_prior,
-    OuterFitCandidate,
-};
+use super::marker_build::{decode_metrics_from_result, fit_metrics_with_inner};
+use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate};
 use super::{dedup_by_id, dedup_markers, DetectConfig};
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;

@@ -38,17 +38,13 @@ pub struct DetectedMarker {
     pub id: Option<usize>,
     /// Combined detection + decode confidence in [0, 1].
     pub confidence: f32,
-    /// Marker center in detector working pixel coordinates.
+    /// Marker center in raw image pixel coordinates.
     ///
-    /// This is the undistorted pixel frame when camera intrinsics are provided,
-    /// otherwise it is the raw image pixel frame.
+    /// This field is always image-space, independent of mapper usage.
     pub center: [f64; 2],
-    /// Projective unbiased center estimated from inner+outer ring conics.
+    /// Marker center in mapper working coordinates, when a mapper is active.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub center_projective: Option<[f64; 2]>,
-    /// Selection residual used by the projective-center eigenpair chooser.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub center_projective_residual: Option<f64>,
+    pub center_mapped: Option<[f64; 2]>,
     /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<Ellipse>,

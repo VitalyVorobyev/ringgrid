@@ -18,9 +18,9 @@ This document describes the refactored `ringgrid` module boundaries.
 1. proposal generation
 2. local fit/decode
 3. dedup
-4. optional homography filter/refine
+4. optional homography filter
 5. optional completion
-6. final result assembly
+6. final homography refit + result assembly
 
 Public detection entrypoints (`detect_rings*`) are implemented in this module and re-exported from `lib.rs`.
 

@@ -121,7 +121,8 @@ impl Detector {
     /// Detect with a custom pixel mapper (two-pass pipeline).
     ///
     /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
-    /// Results are in mapper working frame.
+    /// Marker centers in the returned result are always image-space.
+    /// Mapper-frame centers are exposed via `DetectedMarker.center_mapped`.
     ///
     /// This method always uses the provided mapper and does not run
     /// self-undistort estimation from `config.self_undistort`.
@@ -157,6 +158,8 @@ mod tests {
         let img = GrayImage::new(200, 200);
         let result = det.detect(&img);
         assert!(result.detected_markers.is_empty());
+        assert_eq!(result.center_frame, crate::DetectionFrame::Image);
+        assert_eq!(result.homography_frame, crate::DetectionFrame::Image);
         assert!(result.self_undistort.is_none());
     }
 
@@ -180,6 +183,8 @@ mod tests {
         let img = GrayImage::new(200, 200);
         let mapper = IdentityMapper;
         let result = det.detect_with_mapper(&img, &mapper);
+        assert_eq!(result.center_frame, crate::DetectionFrame::Image);
+        assert_eq!(result.homography_frame, crate::DetectionFrame::Working);
         assert!(result.self_undistort.is_none());
     }
 

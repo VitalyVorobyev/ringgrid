@@ -1,14 +1,27 @@
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 
+/// Coordinate frame used by serialized detection outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionFrame {
+    #[default]
+    Image,
+    Working,
+}
+
 /// Full detection result for a single image.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
-    /// Detected markers in detector working pixel coordinates.
+    /// Detected markers.
     pub detected_markers: Vec<DetectedMarker>,
+    /// Coordinate frame of `DetectedMarker.center`.
+    pub center_frame: DetectionFrame,
+    /// Coordinate frame of `homography` output.
+    pub homography_frame: DetectionFrame,
     /// Image dimensions [width, height].
     pub image_size: [u32; 2],
-    /// Fitted board-to-working-frame homography (3x3, row-major), if available.
+    /// Fitted board-to-output-frame homography (3x3, row-major), if available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homography: Option<[[f64; 3]; 3]>,
     /// RANSAC statistics, if homography was fitted.
@@ -24,6 +37,8 @@ impl DetectionResult {
     pub fn empty(width: u32, height: u32) -> Self {
         Self {
             detected_markers: Vec::new(),
+            center_frame: DetectionFrame::Image,
+            homography_frame: DetectionFrame::Image,
             image_size: [width, height],
             homography: None,
             ransac: None,

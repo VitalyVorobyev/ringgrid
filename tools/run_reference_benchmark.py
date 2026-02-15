@@ -180,17 +180,6 @@ def mean_of(rows: list[dict], key: str) -> float | None:
     return sum(vals) / len(vals)
 
 
-def resolve_pred_frame_for_detection(correction: str, det_data: dict) -> str:
-    if correction == "external":
-        return "working"
-    if correction == "self_undistort":
-        su = det_data.get("self_undistort")
-        if isinstance(su, dict) and bool(su.get("applied", False)):
-            return "working"
-        return "image"
-    return "image"
-
-
 def parse_correction_names(args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[str]:
     if args.corrections is None:
         return ["external"] if args.pass_camera_to_detector else ["none"]
@@ -454,9 +443,6 @@ def main() -> None:
                         ]
                     )
                 run_checked(detect_cmd)
-                with open(det_path) as f:
-                    det_data = json.load(f)
-                pred_frame = resolve_pred_frame_for_detection(correction, det_data)
                 run_checked(
                     [
                         sys.executable,
@@ -472,9 +458,9 @@ def main() -> None:
                         "--homography-gt-key",
                         "image",
                         "--pred-center-frame",
-                        pred_frame,
+                        "auto",
                         "--pred-homography-frame",
-                        pred_frame,
+                        "auto",
                         "--out",
                         str(score_path),
                     ]

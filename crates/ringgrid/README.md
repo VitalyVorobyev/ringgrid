@@ -30,9 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Coordinate Frames
 
-- `Detector::detect(...)` runs in image coordinates by default.
-- When self-undistort is enabled (`config.self_undistort.enable = true`), detection may run a second pass in an estimated undistorted working frame.
-- `Detector::detect_with_mapper(...)` always uses the provided mapper working frame and ignores `self_undistort` config.
+- `DetectedMarker.center` is always in image coordinates.
+- `DetectedMarker.center_mapped` is present only when a mapper-driven pass is active.
+- `DetectionResult.center_frame` and `DetectionResult.homography_frame` explicitly describe output-frame conventions.
 
 ## Related Tools
 

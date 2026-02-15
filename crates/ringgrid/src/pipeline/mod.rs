@@ -1,7 +1,7 @@
 //! High-level detection pipeline.
 //!
 //! This module is the internal "glue" layer that wires together detector stages:
-//! proposal generation -> fit/decode -> dedup -> global filter/refine -> completion.
+//! proposal generation -> fit/decode -> dedup -> global filter -> completion.
 //!
 //! Algorithmic primitives live in `crate::detector`, `crate::ring`, and `crate::pixelmap`.
 //! The pipeline layer focuses on stage boundaries, call order, and data flow.
@@ -19,7 +19,7 @@ mod prelude;
 mod result;
 mod run;
 
-pub use result::DetectionResult;
+pub use result::{DetectionFrame, DetectionResult};
 
 pub(crate) use prelude::*;
 

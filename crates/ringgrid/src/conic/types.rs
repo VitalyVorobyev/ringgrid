@@ -69,7 +69,7 @@ impl Ellipse {
     }
 
     pub fn center(&self) -> [f64; 2] {
-        [ self.cx, self.cy ]
+        [self.cx, self.cy]
     }
 }
 

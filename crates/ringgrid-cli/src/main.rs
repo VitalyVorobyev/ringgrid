@@ -79,10 +79,6 @@ struct CliDetectArgs {
     #[arg(long)]
     no_global_filter: bool,
 
-    /// Disable refinement using fitted homography.
-    #[arg(long)]
-    no_refine: bool,
-
     /// Disable homography-guided completion (fitting missing IDs at H-projected locations).
     #[arg(long)]
     no_complete: bool,
@@ -231,7 +227,6 @@ struct DetectPreset {
 #[derive(Debug, Clone)]
 struct DetectOverrides {
     use_global_filter: bool,
-    refine_with_h: bool,
     ransac_thresh_px: f64,
     ransac_iters: usize,
     completion_enable: bool,
@@ -266,7 +261,6 @@ impl CliDetectArgs {
 
         Ok(DetectOverrides {
             use_global_filter: !self.no_global_filter,
-            refine_with_h: !self.no_refine,
             ransac_thresh_px: self.ransac_thresh_px,
             ransac_iters: self.ransac_iters,
             completion_enable: !self.no_complete,
@@ -296,9 +290,8 @@ fn build_detect_config(
     let mut config =
         ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
 
-    // Global filter and refinement options
+    // Global filter options
     config.use_global_filter = overrides.use_global_filter;
-    config.refine_with_h = overrides.refine_with_h;
     config.ransac_homography.inlier_threshold = overrides.ransac_thresh_px;
     config.ransac_homography.max_iters = overrides.ransac_iters;
 
@@ -552,7 +545,6 @@ mod tests {
     fn base_overrides() -> DetectOverrides {
         DetectOverrides {
             use_global_filter: true,
-            refine_with_h: true,
             ransac_thresh_px: 5.0,
             ransac_iters: 2000,
             completion_enable: true,

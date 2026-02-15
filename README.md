@@ -85,6 +85,9 @@ Design constraints in v1:
   `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
 - `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
   `self_undistort` config.
+- `DetectedMarker.center` is always image-space; mapper-frame center is optional in
+  `DetectedMarker.center_mapped`.
+- `DetectionResult` includes explicit `center_frame` / `homography_frame` metadata.
 - Low-level math/pipeline modules are internal.
 - Example target JSON: `crates/ringgrid/examples/target.json`.
 
@@ -109,7 +112,7 @@ crates/
       lib.rs       # re-exports only (public API surface)
       api.rs       # Detector facade
       pipeline/    # stage orchestration: single_pass, multi_pass, run, fit_decode, finalize
-      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
+      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, center correction, completion
       ring/        # ring-level sampling: edge, radius, projective center
       marker/      # codebook, decode, marker spec
       homography/  # DLT + RANSAC, refit utilities
@@ -156,7 +159,6 @@ Core refinement selector:
 Other commonly used toggles:
 
 - `--no-global-filter`
-- `--no-refine`
 - `--no-complete`
 - `--marker-diameter-min <px>`
 - `--marker-diameter-max <px>`
@@ -176,8 +178,7 @@ Interpretation:
 - `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
 - For cross-run comparisons, evaluate all metrics in distorted image space.
 - Use `--center-gt-key image --homography-gt-key image`.
-- Set predicted frame explicitly via `--pred-center-frame image|working` and `--pred-homography-frame image|working`.
-- Benchmark scripts in this repository set these frame flags explicitly (no `auto`), so reported numbers are frame-consistent and reproducible.
+- Prefer `--pred-center-frame auto --pred-homography-frame auto` so scorer uses detector-emitted `center_frame` / `homography_frame` metadata.
 
 Distortion-aware eval example:
 

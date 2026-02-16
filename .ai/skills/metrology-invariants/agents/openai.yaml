@@ -1,0 +1,3 @@
+interface:
+  display_name: "Metrology Invariants"
+  short_description: "Coordinate-frame and subpixel-accuracy guardrails"

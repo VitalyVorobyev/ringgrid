@@ -1,0 +1,3 @@
+interface:
+  display_name: "Hotpath Rust"
+  short_description: "Rust hot-loop optimization patterns"

@@ -55,17 +55,26 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 **Goal:** Confirm optimization preserves detection accuracy.
 
 **Steps:**
-1. Run full synthetic eval:
+1. Run baseline synthetic eval:
    ```bash
    python3 tools/run_synth_eval.py --n 5 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_perf
    ```
-2. Compare center error statistics against baseline:
+2. Run challenging synthetic eval:
+   ```bash
+   python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_perf_blur3
+   ```
+3. Run reference and distortion benchmark scripts:
+   ```bash
+   bash tools/run_reference_benchmark.sh
+   bash tools/run_distortion_benchmark.sh
+   ```
+4. Compare center error statistics against baseline:
    - Mean, p50, p95, max center error
    - Decode success rate
    - Homography reprojection error
-3. **Flag any accuracy delta > 0.01 px mean center error** — requires Algorithm Engineer review
-4. Fill in accuracy report from `templates/accuracy-report.md`
-5. Write handoff note → Performance Engineer
+5. **Flag any accuracy delta > 0.01 px mean center error** — requires Algorithm Engineer review
+6. Fill in accuracy report from `templates/accuracy-report.md`, including blur=3.0 and reference/distortion script outputs
+7. Write handoff note → Performance Engineer
 
 **Deliverables:** Accuracy report, scoring comparison, handoff note
 

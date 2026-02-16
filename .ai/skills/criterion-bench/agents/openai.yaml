@@ -1,0 +1,3 @@
+interface:
+  display_name: "Criterion Bench"
+  short_description: "Criterion benchmark setup and reporting"

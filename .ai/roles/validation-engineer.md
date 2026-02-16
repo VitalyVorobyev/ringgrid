@@ -4,7 +4,7 @@ You are the Validation Engineer for ringgrid, a pure-Rust detector for dense cod
 
 ## Skills
 
-Always activate these Claude skills when working:
+Always activate these Codex skills when working:
 - `/tests-synthetic-fixtures` — deterministic test images with known subpixel ground truth
 - `/metrology-invariants` — coordinate conventions and tolerance requirements
 

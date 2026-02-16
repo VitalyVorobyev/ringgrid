@@ -1,6 +1,6 @@
 //! Direct least-squares ellipse fitting (Fitzgibbon et al., 1999).
 
-use nalgebra::{DMatrix, Matrix3, Vector6};
+use nalgebra::{Matrix3, SMatrix, Vector6};
 
 use super::eigen::solve_gep_3x3;
 use super::types::Ellipse;
@@ -25,21 +25,25 @@ pub fn fit_conic_direct(points: &[[f64; 2]]) -> Option<ConicCoeffs> {
     // that mean distance from centroid ≈ √2.
     let (mean_x, mean_y, scale, _) = normalization_params(points);
 
-    // Build the design matrix D = [x², xy, y², x, y, 1] for normalized coords
-    let mut d = DMatrix::<f64>::zeros(n, 6);
-    for (i, &[px, py]) in points.iter().enumerate() {
+    // Accumulate the scatter matrix S = DᵀD directly without materializing D.
+    // This avoids per-fit dynamic allocation of an n×6 matrix in the hot path.
+    let mut s = SMatrix::<f64, 6, 6>::zeros();
+    for &[px, py] in points {
         let x = (px - mean_x) * scale;
         let y = (py - mean_y) * scale;
-        d[(i, 0)] = x * x;
-        d[(i, 1)] = x * y;
-        d[(i, 2)] = y * y;
-        d[(i, 3)] = x;
-        d[(i, 4)] = y;
-        d[(i, 5)] = 1.0;
-    }
 
-    // Scatter matrix S = Dᵀ D
-    let s = d.transpose() * &d;
+        let row = [x * x, x * y, y * y, x, y, 1.0];
+        for r in 0..6 {
+            for c in r..6 {
+                s[(r, c)] += row[r] * row[c];
+            }
+        }
+    }
+    for r in 1..6 {
+        for c in 0..r {
+            s[(r, c)] = s[(c, r)];
+        }
+    }
 
     // Partition S into 3x3 blocks:
     //   S = [S11  S12]

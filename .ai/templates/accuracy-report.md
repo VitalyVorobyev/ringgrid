@@ -4,6 +4,9 @@
 - **Baseline commit:** [hash]
 - **Change commit:** [hash]
 - **Eval command:** `python3 tools/run_synth_eval.py [args]`
+- **Challenging eval command:** `python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 [args]`
+- **Reference benchmark command:** `bash tools/run_reference_benchmark.sh`
+- **Distortion benchmark command:** `bash tools/run_distortion_benchmark.sh`
 
 ## Summary
 
@@ -41,6 +44,23 @@
 | Reprojection error (mean px) | | | |
 | Inlier ratio | | | |
 
+## Reference Benchmark (Script Output Summary)
+
+| Metric | Baseline | After Change | Delta |
+|--------|----------|-------------|-------|
+| Precision | | | |
+| Recall | | | |
+| Center error mean (px) | | | |
+| Homography self-error mean (px) | | | |
+
+## Distortion Benchmark (Script Output Summary)
+
+| Mode/Correction | Baseline | After Change | Delta |
+|-----------------|----------|-------------|-------|
+| projective_center + none | | | |
+| projective_center + external | | | |
+| projective_center + self_undistort | | | |
+
 ## Eval Conditions
 
 - Synthetic images: [count, resolution]
@@ -48,6 +68,7 @@
 - Noise sigma: [value]
 - Marker diameter: [px]
 - Gate distance: [px]
+- Distortion benchmark params: [fx/fy/cx/cy and k1..k3/p1/p2 values used]
 
 ## Verdict
 

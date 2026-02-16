@@ -54,16 +54,12 @@ pub struct Proposal {
 
 /// Deposit a weighted vote into the accumulator using bilinear interpolation.
 #[inline]
-fn bilinear_add(accum: &mut [f32], w: u32, x: f32, y: f32, weight: f32) {
-    let x0 = x.floor() as u32;
-    let y0 = y.floor() as u32;
-    if x0 + 1 >= w {
-        return;
-    }
+fn bilinear_add_in_bounds(accum: &mut [f32], stride: usize, x: f32, y: f32, weight: f32) {
+    let x0 = x as usize;
+    let y0 = y as usize;
     let fx = x - x0 as f32;
     let fy = y - y0 as f32;
-    let stride = w as usize;
-    let base = y0 as usize * stride + x0 as usize;
+    let base = y0 * stride + x0;
     accum[base] += weight * (1.0 - fx) * (1.0 - fy);
     accum[base + 1] += weight * fx * (1.0 - fy);
     accum[base + stride] += weight * (1.0 - fx) * fy;
@@ -78,21 +74,24 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
     if w < 4 || h < 4 {
         return Vec::new();
     }
+    if config.r_max < config.r_min {
+        return Vec::new();
+    }
 
     // Compute Scharr gradients (i16 output)
     let gx = imageproc::gradients::horizontal_scharr(gray);
     let gy = imageproc::gradients::vertical_scharr(gray);
+    let gx_raw = gx.as_raw();
+    let gy_raw = gy.as_raw();
 
     // Find max gradient magnitude for thresholding
     let mut max_mag_sq: f32 = 0.0;
-    for y in 0..h {
-        for x in 0..w {
-            let gxv = gx.get_pixel(x, y)[0] as f32;
-            let gyv = gy.get_pixel(x, y)[0] as f32;
-            let mag_sq = gxv * gxv + gyv * gyv;
-            if mag_sq > max_mag_sq {
-                max_mag_sq = mag_sq;
-            }
+    for (&gxv, &gyv) in gx_raw.iter().zip(gy_raw.iter()) {
+        let gxv = gxv as f32;
+        let gyv = gyv as f32;
+        let mag_sq = gxv * gxv + gyv * gyv;
+        if mag_sq > max_mag_sq {
+            max_mag_sq = mag_sq;
         }
     }
     let max_mag = max_mag_sq.sqrt();
@@ -100,34 +99,56 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
         return Vec::new();
     }
     let threshold = config.grad_threshold * max_mag;
+    let threshold_sq = threshold * threshold;
 
     // Vote accumulation
-    let n = (w * h) as usize;
+    let stride = w as usize;
+    let h_usize = h as usize;
+    let n = stride * h_usize;
     let mut accum = vec![0.0f32; n];
+    let mut radii = Vec::new();
+    let mut r = config.r_min;
+    while r <= config.r_max {
+        radii.push(r);
+        r += 1.0;
+    }
+    if radii.is_empty() {
+        return Vec::new();
+    }
+    let x_limit = (w - 1) as f32;
+    let y_limit = (h - 1) as f32;
 
-    for y in 0..h {
-        for x in 0..w {
-            let gxv = gx.get_pixel(x, y)[0] as f32;
-            let gyv = gy.get_pixel(x, y)[0] as f32;
-            let mag = (gxv * gxv + gyv * gyv).sqrt();
-            if mag < threshold {
+    for y in 0..h_usize {
+        let y_base = y * stride;
+        let yf = y as f32;
+        for x in 0..stride {
+            let idx = y_base + x;
+            let gxv = gx_raw[idx] as f32;
+            let gyv = gy_raw[idx] as f32;
+            let mag_sq = gxv * gxv + gyv * gyv;
+            if mag_sq < threshold_sq {
                 continue;
             }
 
+            let mag = mag_sq.sqrt();
             // Normalized gradient direction
-            let dx = gxv / mag;
-            let dy = gyv / mag;
+            let inv_mag = 1.0 / mag;
+            let dx = gxv * inv_mag;
+            let dy = gyv * inv_mag;
+            let xf = x as f32;
 
             // Vote along +gradient and -gradient directions
-            for &sign in &[-1.0f32, 1.0] {
-                let mut r = config.r_min;
-                while r <= config.r_max {
-                    let vx = x as f32 + sign * dx * r;
-                    let vy = y as f32 + sign * dy * r;
-                    if vx >= 0.0 && vx < (w - 1) as f32 && vy >= 0.0 && vy < (h - 1) as f32 {
-                        bilinear_add(&mut accum, w, vx, vy, mag);
-                    }
-                    r += 1.0;
+            for &r in &radii {
+                let vx_pos = xf + dx * r;
+                let vy_pos = yf + dy * r;
+                if vx_pos >= 0.0 && vx_pos < x_limit && vy_pos >= 0.0 && vy_pos < y_limit {
+                    bilinear_add_in_bounds(&mut accum, stride, vx_pos, vy_pos, mag);
+                }
+
+                let vx_neg = xf - dx * r;
+                let vy_neg = yf - dy * r;
+                if vx_neg >= 0.0 && vx_neg < x_limit && vy_neg >= 0.0 && vy_neg < y_limit {
+                    bilinear_add_in_bounds(&mut accum, stride, vx_neg, vy_neg, mag);
                 }
             }
         }
@@ -147,33 +168,36 @@ pub fn find_proposals(gray: &GrayImage, config: &ProposalConfig) -> Vec<Proposal
     }
     let vote_threshold = config.min_vote_frac * max_val;
     let nms_r = config.nms_radius.ceil() as i32;
+    let nms_r_sq = config.nms_radius * config.nms_radius;
+    let mut nms_offsets = Vec::new();
+    for dy in -nms_r..=nms_r {
+        for dx in -nms_r..=nms_r {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            if (dx * dx + dy * dy) as f32 > nms_r_sq {
+                continue;
+            }
+            nms_offsets.push(dy as isize * stride as isize + dx as isize);
+        }
+    }
 
     // Non-maximum suppression
     let mut proposals = Vec::new();
     for y in nms_r..(h as i32 - nms_r) {
         for x in nms_r..(w as i32 - nms_r) {
-            let idx = y as usize * w as usize + x as usize;
+            let idx = y as usize * stride + x as usize;
             let val = smoothed_data[idx];
             if val < vote_threshold {
                 continue;
             }
             // Check if local maximum within nms_radius
             let mut is_max = true;
-            'outer: for dy in -nms_r..=nms_r {
-                for dx in -nms_r..=nms_r {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-                    if (dx * dx + dy * dy) as f32 > config.nms_radius * config.nms_radius {
-                        continue;
-                    }
-                    let nx = x + dx;
-                    let ny = y + dy;
-                    let nidx = ny as usize * w as usize + nx as usize;
-                    if smoothed_data[nidx] > val || (smoothed_data[nidx] == val && nidx < idx) {
-                        is_max = false;
-                        break 'outer;
-                    }
+            for &off in &nms_offsets {
+                let nidx = idx.wrapping_add_signed(off);
+                if smoothed_data[nidx] > val || (smoothed_data[nidx] == val && nidx < idx) {
+                    is_max = false;
+                    break;
                 }
             }
             if is_max {

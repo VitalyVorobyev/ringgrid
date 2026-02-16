@@ -66,3 +66,26 @@
 ## Blocking Issues
 
 None.
+
+---
+
+## Execution Update (Performance Engineer, 2026-02-16)
+
+Completed:
+
+1. Optimized `crates/ringgrid/src/detector/proposal.rs` hot loops (raw gradient access, tighter vote path, precomputed NMS offsets).
+2. Re-benchmarked with deterministic Criterion command:
+   - `proposal_1280x1024`: `42.404 ms` → `33.612 ms` (`-20.73%`)
+   - `proposal_1920x1080`: `60.614 ms` → `48.357 ms` (`-20.22%`)
+3. Re-captured flamegraphs:
+   - non-mapper: `.ai/state/sessions/2026-02-16-PERF-002-detect-flamegraph.svg`
+   - mapper: `.ai/state/sessions/2026-02-16-PERF-002-detect-flamegraph-mapper.svg`
+4. Completed all required validation gates:
+   - blur=3 eval (`n=10`): `tools/out/eval_perf002_blur3`
+   - `bash tools/run_reference_benchmark.sh`
+   - `bash tools/run_distortion_benchmark.sh`
+5. Re-ran quality gates:
+   - `cargo fmt --all` / `cargo clippy --all-targets --all-features -- -D warnings` / `cargo test --workspace --all-features` (all pass).
+
+Detailed results and handoff:
+- `.ai/state/sessions/2026-02-16-PERF-002-performance-handoff.md`

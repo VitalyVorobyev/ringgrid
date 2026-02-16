@@ -82,7 +82,7 @@ Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `Detect
 | `inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
 | `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None` or `ProjectiveCenter`. |
 | `projective_center` | `ProjectiveCenterParams` | (see sub-configs) | Projective center recovery gates and tuning. `max_center_shift_px` is auto-derived from scale. |
-| `completion` | `CompletionParams` | (see sub-configs) | H-guided completion at missing board positions. `roi_radius_px` is auto-derived from scale. |
+| `completion` | `CompletionParams` | (see sub-configs) | Completion at missing H-projected board positions. `roi_radius_px` is auto-derived from scale. |
 | `min_semi_axis` | `f64` | 3.0 | Minimum semi-axis length (px) for a valid outer ellipse. Auto-derived from scale. |
 | `max_semi_axis` | `f64` | 15.0 | Maximum semi-axis length (px) for a valid outer ellipse. Auto-derived from scale. |
 | `max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |

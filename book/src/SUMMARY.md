@@ -19,7 +19,6 @@
 - [Inner Ellipse Estimation](detection-pipeline/inner-estimate.md)
 - [Deduplication](detection-pipeline/dedup.md)
 - [Projective Center & Global Filter](detection-pipeline/projective-center.md)
-- [H-Guided Refinement](detection-pipeline/h-refinement.md)
 - [Completion & Final Refit](detection-pipeline/completion.md)
 
 # Mathematical Foundations

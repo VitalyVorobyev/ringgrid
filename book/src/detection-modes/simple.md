@@ -13,7 +13,7 @@ the pipeline runs once in raw image coordinates:
 3. 16-sector codes are sampled and matched against the 893-codeword codebook.
 4. Spatial and ID-based deduplication removes redundant detections.
 5. If enough decoded markers exist, a RANSAC homography is fitted.
-6. H-guided refinement and completion fill in missing markers.
+6. Completion fills in missing markers at H-projected positions.
 
 All geometry stays in image space throughout.
 

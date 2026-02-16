@@ -1,6 +1,6 @@
 # Pipeline Overview
 
-The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs, and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction applied at three distinct points.
+The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs, and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction applied once per marker.
 
 ## Two-Phase Architecture
 
@@ -19,31 +19,27 @@ Orchestrated by `pipeline/fit_decode.rs`, this phase takes raw proposals and pro
 
 Stages 2--5 are executed per-proposal inside `process_candidate()`. A proposal that fails at any stage is rejected with a diagnostic reason string. Successfully built markers are collected, then deduplicated in stage 6.
 
-### Phase 2: Finalize (Stages 7--13)
+### Phase 2: Finalize (Stages 7--10)
 
 Orchestrated by `pipeline/finalize.rs`, this phase applies global geometric reasoning to improve and extend the detection set:
 
 | Stage | Name | Description |
 |-------|------|-------------|
-| 7 | [Projective Center](projective-center.md) | 1st pass: correct fit-decode marker centers |
+| 7 | [Projective Center](projective-center.md) | Correct fit-decode marker centers (once per marker) |
 | 8 | [Global Filter](projective-center.md#global-filter) | RANSAC homography from decoded markers with known board positions |
-| 9 | [H-Guided Refinement](h-refinement.md) | Local refit at H-projected priors |
-| 10 | [Projective Center](projective-center.md) | 2nd pass: reapply after refinement |
-| 11 | [Completion](completion.md) | Conservative fits at missing H-projected IDs |
-| 12 | [Projective Center](projective-center.md) | 3rd pass: correct completion-only markers |
-| 13 | [Final H Refit](completion.md#final-homography-refit) | Refit homography from all corrected centers |
+| 9 | [Completion](completion.md) | Conservative fits at missing H-projected IDs (+ projective center for new markers) |
+| 10 | [Final H Refit](completion.md#final-homography-refit) | Refit homography from all corrected centers |
 
-When `use_global_filter` is `false`, stages 7--13 are short-circuited: the finalize phase applies projective center correction (if enabled) and returns the fit-decode markers directly, skipping the homography-dependent stages entirely.
+When `use_global_filter` is `false`, stages 7--10 are short-circuited: the finalize phase applies projective center correction (if enabled) and returns the fit-decode markers directly, skipping the homography-dependent stages entirely.
 
-## Three-Pass Projective Center Correction
+## Projective Center Correction
 
-Projective center correction recovers the true projected center of a ring marker from its inner and outer ellipse pair, compensating for the perspective bias inherent in ellipse center estimation. It is applied at three points in the pipeline:
+Projective center correction recovers the true projected center of a ring marker from its inner and outer ellipse pair, compensating for the perspective bias inherent in ellipse center estimation. It is applied **once per marker** at two points in the pipeline:
 
 1. **Before global filter (stage 7):** Corrects all fit-decode markers so that the homography RANSAC in stage 8 operates on unbiased centers.
-2. **After H-guided refinement (stage 10):** Markers that were refit in stage 9 have new ellipses; their centers must be re-corrected.
-3. **After completion (stage 12):** Newly added completion markers receive their own correction. Only the slice of markers added since the last correction is processed.
+2. **After completion (stage 9):** Newly added completion markers receive their own correction. Only the slice of markers added since the last correction is processed.
 
-Each pass applies `apply_projective_centers()` from `detector/center_correction.rs`, which requires both inner and outer ellipses. Markers without a valid inner ellipse are skipped.
+Each marker is corrected exactly once. `apply_projective_centers()` from `detector/center_correction.rs` requires both inner and outer ellipses. Markers without a valid inner ellipse are skipped.
 
 ## Pipeline Entry Points
 

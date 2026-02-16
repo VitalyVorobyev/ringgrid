@@ -13,17 +13,111 @@ mod marker {
         Median,
         TrimmedMean { trim_fraction: f32 },
     }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum GradPolarity {
+        DarkToLight,
+        LightToDark,
+        Auto,
+    }
+}
+
+#[allow(dead_code)]
+mod pixelmap {
+    pub trait PixelMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]>;
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]>;
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct CameraIntrinsics {
+        pub fx: f64,
+        pub fy: f64,
+        pub cx: f64,
+        pub cy: f64,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct RadialTangentialDistortion {
+        pub k1: f64,
+        pub k2: f64,
+        pub p1: f64,
+        pub p2: f64,
+        pub k3: f64,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct CameraModel {
+        pub intrinsics: CameraIntrinsics,
+        pub distortion: RadialTangentialDistortion,
+    }
+
+    impl PixelMapper for CameraModel {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            let _ = self.intrinsics;
+            let _ = self.distortion;
+            Some(image_xy)
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            let _ = self.intrinsics;
+            let _ = self.distortion;
+            Some(working_xy)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct RadialMapper {
+        pub cx: f64,
+        pub cy: f64,
+        pub k1: f64,
+    }
+
+    impl PixelMapper for RadialMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            let mut x = image_xy[0] - self.cx;
+            let mut y = image_xy[1] - self.cy;
+            for _ in 0..4 {
+                let r2 = x * x + y * y;
+                let radial = 1.0 + self.k1 * r2;
+                if !radial.is_finite() || radial.abs() < 1e-12 {
+                    return None;
+                }
+                x = (image_xy[0] - self.cx) / radial;
+                y = (image_xy[1] - self.cy) / radial;
+            }
+            Some([x + self.cx, y + self.cy])
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            let x = working_xy[0] - self.cx;
+            let y = working_xy[1] - self.cy;
+            let r2 = x * x + y * y;
+            let radial = 1.0 + self.k1 * r2;
+            if !radial.is_finite() {
+                return None;
+            }
+            Some([self.cx + x * radial, self.cy + y * radial])
+        }
+    }
 }
 
 #[allow(dead_code, unused_imports)]
 #[path = "../src/conic/mod.rs"]
 mod conic_impl;
 #[allow(dead_code, unused_imports)]
+#[path = "../src/ring/edge_sample.rs"]
+mod edge_sample;
+#[allow(dead_code, unused_imports)]
+#[path = "../src/ring/outer_estimate.rs"]
+mod outer_estimate;
+#[allow(dead_code, unused_imports)]
 #[path = "../src/detector/proposal.rs"]
 mod proposal_impl;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/ring/radial_profile.rs"]
-mod radial_profile_impl;
+mod radial_profile;
 
 fn make_proposal_fixture(width: u32, height: u32, seed: u64) -> GrayImage {
     let mut img = GrayImage::new(width, height);
@@ -146,20 +240,101 @@ fn bench_radial_profile(c: &mut Criterion) {
         b.iter(|| {
             let mut d_curves = Vec::with_capacity(theta_samples);
             for curve in &curves {
-                let mut d = radial_profile_impl::radial_derivative(curve, r_step);
-                radial_profile_impl::smooth_3point(&mut d);
+                let mut d = radial_profile::radial_derivative(curve, r_step);
+                radial_profile::smooth_3point(&mut d);
                 d_curves.push(d);
             }
 
-            let mut per_theta = radial_profile_impl::per_theta_peak_r(
+            let mut per_theta = radial_profile::per_theta_peak_r(
                 &d_curves,
                 &r_samples,
-                radial_profile_impl::Polarity::Neg,
+                radial_profile::Polarity::Neg,
             );
-            let r_star = radial_profile_impl::aggregate(&mut per_theta, &agg);
-            black_box(radial_profile_impl::theta_consistency(
+            let r_star = radial_profile::aggregate(&mut per_theta, &agg);
+            black_box(radial_profile::theta_consistency(
                 &per_theta, r_star, r_step, 0.25,
             ))
+        })
+    });
+}
+
+fn make_outer_fixture(width: u32, height: u32, seed: u64) -> (GrayImage, [f32; 2], f32) {
+    let mut img = GrayImage::new(width, height);
+    let center = [width as f32 * 0.5, height as f32 * 0.5];
+    let outer_r = width.min(height) as f32 * 0.22;
+    let inner_r = outer_r * 0.62;
+    let band_half = outer_r * 0.09;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - center[0];
+            let dy = y as f32 - center[1];
+            let d = (dx * dx + dy * dy).sqrt();
+            let mut v = 220.0f32;
+
+            if (d - outer_r).abs() <= band_half {
+                v = 34.0;
+            } else if (d - inner_r).abs() <= band_half {
+                v = 28.0;
+            } else if d < inner_r - band_half {
+                v = 175.0;
+            }
+
+            v += 8.0 * ((x as f32 * 0.01).sin() + (y as f32 * 0.015).cos());
+            v += rng.gen_range(-1.5f32..1.5f32);
+            img.as_mut()[(y * width + x) as usize] = v.clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    (img, center, outer_r)
+}
+
+fn bench_outer_estimate(c: &mut Criterion) {
+    let (img, center, r_expected) = make_outer_fixture(512, 512, 123);
+    let cfg = outer_estimate::OuterEstimationConfig {
+        search_halfwidth_px: 4.0,
+        radial_samples: 64,
+        theta_samples: 48,
+        aggregator: marker::AngularAggregator::Median,
+        grad_polarity: marker::GradPolarity::DarkToLight,
+        min_theta_coverage: 0.6,
+        min_theta_consistency: 0.35,
+        allow_two_hypotheses: true,
+        second_peak_min_rel: 0.85,
+        refine_halfwidth_px: 1.0,
+    };
+    let mapper = pixelmap::RadialMapper {
+        cx: 256.0,
+        cy: 256.0,
+        k1: -2.0e-7,
+    };
+
+    c.bench_function("outer_estimate_64r_48t_nomapper", |b| {
+        b.iter(|| {
+            let est = outer_estimate::estimate_outer_from_prior_with_mapper(
+                black_box(&img),
+                black_box(center),
+                black_box(r_expected),
+                black_box(&cfg),
+                None,
+                false,
+            );
+            black_box(est.hypotheses.len())
+        })
+    });
+
+    c.bench_function("outer_estimate_64r_48t_mapper", |b| {
+        b.iter(|| {
+            let est = outer_estimate::estimate_outer_from_prior_with_mapper(
+                black_box(&img),
+                black_box(center),
+                black_box(r_expected),
+                black_box(&cfg),
+                Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
+                false,
+            );
+            black_box(est.hypotheses.len())
         })
     });
 }
@@ -201,6 +376,7 @@ criterion_group!(
     hotpaths,
     bench_proposal,
     bench_radial_profile,
+    bench_outer_estimate,
     bench_ellipse_fit
 );
 criterion_main!(hotpaths);

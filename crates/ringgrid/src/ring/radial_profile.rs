@@ -13,10 +13,15 @@ pub enum Polarity {
 
 /// Aggregate a per-theta response vector into one scalar profile value.
 pub fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
     match *agg {
-        AngularAggregator::Median => values[values.len() / 2],
+        AngularAggregator::Median => {
+            let mid = values.len() / 2;
+            let (_, median, _) =
+                values.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+            *median
+        }
         AngularAggregator::TrimmedMean { trim_fraction } => {
+            values.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let tf = trim_fraction.clamp(0.0, 0.45);
             let k = (values.len() as f32 * tf).floor() as usize;
             let start = k.min(values.len());
@@ -61,18 +66,31 @@ pub fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -
 /// Compute radial derivative `dI/dr` from sampled intensities using central differences.
 ///
 /// Boundary samples use forward/backward differences.
+pub fn radial_derivative_into(i_vals: &[f32], r_step: f32, out: &mut [f32]) {
+    let n = i_vals.len();
+    debug_assert_eq!(out.len(), n);
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        out[0] = 0.0;
+        return;
+    }
+
+    out[0] = (i_vals[1] - i_vals[0]) / r_step;
+    for ri in 1..(n - 1) {
+        out[ri] = (i_vals[ri + 1] - i_vals[ri - 1]) / (2.0 * r_step);
+    }
+    out[n - 1] = (i_vals[n - 1] - i_vals[n - 2]) / r_step;
+}
+
+/// Compute radial derivative `dI/dr` from sampled intensities using central differences.
+///
+/// Boundary samples use forward/backward differences.
 pub fn radial_derivative(i_vals: &[f32], r_step: f32) -> Vec<f32> {
     let n = i_vals.len();
     let mut d = vec![0.0f32; n];
-    for ri in 0..n {
-        if ri == 0 {
-            d[ri] = (i_vals[1] - i_vals[0]) / r_step;
-        } else if ri + 1 == n {
-            d[ri] = (i_vals[n - 1] - i_vals[n - 2]) / r_step;
-        } else {
-            d[ri] = (i_vals[ri + 1] - i_vals[ri - 1]) / (2.0 * r_step);
-        }
-    }
+    radial_derivative_into(i_vals, r_step, &mut d);
     d
 }
 
@@ -84,9 +102,15 @@ pub fn smooth_3point(d: &mut [f32]) {
     if n < 5 {
         return;
     }
-    let prev = d.to_owned();
+
+    // In-place rolling window equivalent to the previous copy-based implementation.
+    let mut left = d[0];
+    let mut mid = d[1];
     for ri in 1..(n - 1) {
-        d[ri] = (prev[ri - 1] + prev[ri] + prev[ri + 1]) / 3.0;
+        let right = d[ri + 1];
+        d[ri] = (left + mid + right) / 3.0;
+        left = mid;
+        mid = right;
     }
 }
 

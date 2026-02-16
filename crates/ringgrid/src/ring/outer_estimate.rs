@@ -146,16 +146,18 @@ pub fn estimate_outer_from_prior_with_mapper(
     let cx = center_prior[0];
     let cy = center_prior[1];
 
-    // Collect derivative curves per theta (only for in-bounds rays).
-    let mut curves: Vec<Vec<f32>> = Vec::new();
+    // Collect derivative curves in a contiguous [theta][radius] slab.
+    let mut curves_flat: Vec<f32> = Vec::with_capacity(n_t * n_r);
+    let mut i_vals = vec![0.0f32; n_r];
+    let mut d_vals = vec![0.0f32; n_r];
+    let mut n_valid_theta = 0usize;
     for ti in 0..n_t {
         let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
         let dx = theta.cos();
         let dy = theta.sin();
 
-        let mut i_vals = Vec::with_capacity(n_r);
         let mut ok = true;
-        for &r in &r_samples {
+        for (ri, &r) in r_samples.iter().enumerate() {
             let x = cx + dx * r;
             let y = cy + dy * r;
             let samp = match sampler.sample_checked(x, y) {
@@ -165,20 +167,20 @@ pub fn estimate_outer_from_prior_with_mapper(
                     break;
                 }
             };
-            i_vals.push(samp);
+            i_vals[ri] = samp;
         }
         if !ok {
             continue;
         }
 
-        let mut d = radial_profile::radial_derivative(&i_vals, r_step);
-        radial_profile::smooth_3point(&mut d);
-
-        curves.push(d);
+        radial_profile::radial_derivative_into(&i_vals, r_step, &mut d_vals);
+        radial_profile::smooth_3point(&mut d_vals);
+        curves_flat.extend_from_slice(&d_vals);
+        n_valid_theta += 1;
     }
 
-    let coverage = curves.len() as f32 / n_t as f32;
-    if curves.is_empty() || coverage < cfg.min_theta_coverage {
+    let coverage = n_valid_theta as f32 / n_t as f32;
+    if n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
         return OuterEstimate {
             r_outer_expected_px: r_expected,
             search_window_px: window,
@@ -209,11 +211,11 @@ pub fn estimate_outer_from_prior_with_mapper(
     for pol in polarity_candidates {
         // Aggregate at each r sample
         let mut agg_resp = vec![0.0f32; n_r];
-        let mut scratch: Vec<f32> = Vec::with_capacity(curves.len());
+        let mut scratch: Vec<f32> = Vec::with_capacity(n_valid_theta);
         for ri in 0..n_r {
             scratch.clear();
-            for d in &curves {
-                scratch.push(d[ri]);
+            for ti in 0..n_valid_theta {
+                scratch.push(curves_flat[ti * n_r + ri]);
             }
             agg_resp[ri] = radial_profile::aggregate(&mut scratch, &cfg.aggregator);
         }
@@ -241,7 +243,12 @@ pub fn estimate_outer_from_prior_with_mapper(
         peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
 
         // Per-theta peaks (for consistency checks)
-        let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
+        let mut per_theta = Vec::with_capacity(n_valid_theta);
+        for ti in 0..n_valid_theta {
+            let start = ti * n_r;
+            let curve = &curves_flat[start..start + n_r];
+            per_theta.push(r_samples[radial_profile::peak_idx(curve, pol)]);
+        }
 
         let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
         let mut best_strength = None::<f32>;

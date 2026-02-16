@@ -19,11 +19,11 @@ ringgrid uses dual concentric ring markers with a 16-sector binary code band bet
 
 **Why rings?** Circles project to ellipses under perspective, and ellipse boundaries can be localized to subpixel precision via gradient-based edge sampling and direct algebraic fitting (Fitzgibbon's method). The dual-ring design enables projective center correction — recovering the true projected center from the inner/outer conic pencil, which corrects the systematic bias inherent in ellipse-fit centers. This yields significantly better accuracy than corner-based targets (checkerboards, ArUco) at oblique viewing angles.
 
-**Detection pipeline** (13 stages): Scharr gradient voting proposes candidate centers → radial profile estimates outer radius → RANSAC ellipse fit → 16-sector code decode → inner ellipse fit → deduplication → projective center correction → RANSAC homography filter → H-guided refinement → completion at missing IDs → final homography refit.
+**Detection pipeline** (10 stages): Scharr gradient voting proposes candidate centers → radial profile estimates outer radius → RANSAC ellipse fit → 16-sector code decode → inner ellipse fit → deduplication → projective center correction (once per marker) → RANSAC homography filter → completion at missing IDs (+ projective center for new markers) → final homography refit.
 
 ## Documentation
 
-- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the 13-stage detection pipeline, mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
+- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the 10-stage detection pipeline, mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
 - [API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) — rustdoc for all public types
 
 ## Quick Start

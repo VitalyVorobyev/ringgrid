@@ -49,44 +49,12 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
    ```
    [bench_name]: baseline_ns → optimized_ns (±X%)
    ```
-5. Write handoff note → Validation Engineer with benchmark results
+5. Run validation gates (see role spec) to verify accuracy is preserved
+6. Write handoff note → Pipeline Architect with benchmark results and validation gate results
 
-**Deliverables:** Optimized code, Criterion benchmarks, before/after numbers, handoff note
+**Deliverables:** Optimized code, Criterion benchmarks, before/after numbers, validation gate results, handoff note
 
-### 3. Accuracy Verification (Validation Engineer)
-
-**Goal:** Confirm optimization preserves detection accuracy.
-
-**Steps:**
-1. Run the standardized blur=3.0 gate (`n=10`) script and snapshot baseline/after:
-   ```bash
-   bash tools/run_blur3_benchmark.sh
-   rm -rf tools/out/eval_<label>_blur3
-   cp -R tools/out/eval_blur3_post_pipeline tools/out/eval_<label>_blur3
-   ```
-2. Run reference benchmark script and preserve summary for each label:
-   ```bash
-   bash tools/run_reference_benchmark.sh
-   cp tools/out/reference_benchmark_post_pipeline/summary.json tools/out/reference_benchmark_post_pipeline_<label>.summary.json
-   ```
-3. Run distortion benchmark script and preserve summary for each label:
-   ```bash
-   bash tools/run_distortion_benchmark.sh
-   cp tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline_<label>.summary.json
-   ```
-4. Compare baseline vs after for all three gates:
-   - Mean, p50, p95, max center error
-   - Precision/recall deltas
-   - Homography self and vs-GT deltas
-   - Frame consistency (expected `image` frame in scorer output)
-5. **Flag any blur=3 mean center delta > +0.01 px** — requires Algorithm Engineer review.
-6. Flag any blur=3 homography mean delta (`self` or `vs-GT`) > `+0.02 px` for investigation/escalation.
-7. Fill `.ai/templates/accuracy-report.md` with the three gate tables and artifact paths.
-8. Write handoff note using `.ai/templates/handoff-note.md` including PERF gate artifact paths and deltas.
-
-**Deliverables:** Accuracy report, gate artifact bundle, standardized handoff note
-
-### 4. Finalize (Performance Engineer)
+### 3. Finalize (Performance Engineer)
 
 **Goal:** Document results and close.
 

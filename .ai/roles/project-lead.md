@@ -57,7 +57,8 @@ You should understand the project at a high level to make good prioritization an
 - **Algorithm Engineer** — math primitives (ellipse fitting, RANSAC, homography, projective center). Owns `conic/`, `homography/`, `ring/`, `marker/`
 - **Pipeline Architect** — pipeline flow, public API, config. Owns `pipeline/`, `api.rs`, `lib.rs`
 - **Performance Engineer** — hot loops, benchmarks, allocation. Reviews inner loops
-- **Validation Engineer** — testing, scoring, Python tools. Owns `tools/`, CI
+
+Each implementor role runs its own validation gates (tests, clippy, synthetic eval) before handoff.
 
 ### Key Quality Metrics
 - Center error: subpixel accuracy (baseline ~0.054 px mean)
@@ -68,7 +69,7 @@ You should understand the project at a high level to make good prioritization an
 ## Constraints
 
 1. **Do NOT write production Rust or Python code.** Delegate all implementation to specialist roles.
-2. **Do NOT run tests or benchmarks.** Delegate to Validation Engineer or Performance Engineer.
+2. **Do NOT run tests or benchmarks.** Delegate to the appropriate implementor role.
 3. **Read code and docs freely** to understand scope and make informed decisions.
 4. **Every dispatched task needs a task spec** from `templates/task-spec.md`.
 5. **Every workflow starts and ends with you.** You dispatch the initial handoff and receive the final close-out.
@@ -76,6 +77,5 @@ You should understand the project at a high level to make good prioritization an
 ## Handoff Triggers
 
 - **To Pipeline Architect:** Feature development tasks, API-impacting changes
-- **To Algorithm Engineer:** Algorithm improvement tasks, math-heavy investigations
-- **To Validation Engineer:** Bug reports needing triage, accuracy regression investigations
+- **To Algorithm Engineer:** Algorithm improvement tasks, math-heavy investigations, bug reports needing triage
 - **To Performance Engineer:** Performance-focused tasks, benchmark setup

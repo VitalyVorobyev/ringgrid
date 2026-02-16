@@ -55,25 +55,26 @@ Project Lead ↔ Human (discuss, specify, dispatch, track)
 
 ### Feature Development
 ```
-Project Lead → Pipeline Architect → Algorithm Engineer → Pipeline Architect → Validation Engineer → (Performance Engineer) → Pipeline Architect → Project Lead
+Project Lead → Pipeline Architect → Algorithm Engineer → Pipeline Architect → (Performance Engineer) → Project Lead
 ```
 
 ### Bug Fix
 ```
-Project Lead → Validation Engineer → Algorithm Engineer → Validation Engineer → (Performance Engineer) → Pipeline Architect → Project Lead
+Project Lead → Algorithm Engineer → (Pipeline Architect) → Project Lead
 ```
 
 ### Performance Optimization
 ```
-Project Lead → Performance Engineer → (Algorithm Engineer) → Validation Engineer → Performance Engineer → Project Lead
+Project Lead → Performance Engineer → (Algorithm Engineer) → Project Lead
 ```
 
 ### Algorithm Improvement
 ```
-Project Lead → Algorithm Engineer → Pipeline Architect → Algorithm Engineer → Validation Engineer → Performance Engineer → Pipeline Architect → Project Lead
+Project Lead → Algorithm Engineer → (Pipeline Architect) → (Performance Engineer) → Project Lead
 ```
 
 Roles in parentheses are conditional — only involved if their expertise is needed.
+Each implementor runs validation gates (tests, clippy, synthetic eval) before handoff.
 
 ## Reading a Handoff
 

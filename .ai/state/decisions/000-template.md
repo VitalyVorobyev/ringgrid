@@ -2,7 +2,7 @@
 
 - **Status:** proposed | accepted | rejected | superseded
 - **Date:** YYYY-MM-DD
-- **Author role:** algorithm-engineer | pipeline-architect | performance-engineer | validation-engineer
+- **Author role:** algorithm-engineer | pipeline-architect | performance-engineer
 - **Supersedes:** ADR-NNN or none
 
 ## Context

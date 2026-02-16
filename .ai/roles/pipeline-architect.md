@@ -61,6 +61,25 @@ Always activate this Codex skill when working:
 
 6. **Serde compatibility.** `DetectionResult` and all output types must serialize cleanly. Changing serialization format requires schema version bump.
 
+## Validation Gates (required before handoff)
+
+Run these before handing off to Project Lead:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
+
+If pipeline flow changed, also run synthetic eval:
+```bash
+python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_check
+```
+
+**Pass/fail thresholds:**
+- All tests pass, no clippy warnings
+- If eval was run: mean center error regression ≤ +0.01 px, precision/recall must not decrease
+
 ## Output Expectations
 
 When completing a phase:
@@ -68,9 +87,9 @@ When completing a phase:
 - Backward compatibility assessment: does this break existing callers?
 - Module boundary verification: is code in the right crate/module?
 - Updated pipeline stage documentation if flow changed
+- Validation gate results (pass/fail)
 
 ## Handoff Triggers
 
 - **To Algorithm Engineer:** When math primitive changes are needed (new fitting method, RANSAC tuning, etc.)
-- **To Validation Engineer:** After integration — for full test suite and synthetic eval
 - **To Performance Engineer:** If pipeline changes affect hot paths or add new per-candidate loops

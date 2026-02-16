@@ -8,7 +8,7 @@ Use this workflow for: correctness regressions, detection failures, decode error
 
 ## Phases
 
-### 1. Triage (Validation Engineer)
+### 1. Triage (Algorithm Engineer)
 
 **Goal:** Reproduce, quantify, and localize the defect.
 
@@ -27,12 +27,8 @@ Use this workflow for: correctness regressions, detection failures, decode error
    python3 tools/viz_detect_debug.py --debug <debug.json> --image <path> --out /tmp/debug_overlay.png
    ```
 5. Create synthetic fixture that triggers the bug (deterministic, seeded)
-6. Write handoff note → Algorithm Engineer with:
-   - Reproduction case (command + input)
-   - Pipeline stage identification
-   - Quantified defect metrics
 
-**Deliverables:** Reproduction fixture, defect quantification, handoff note
+**Deliverables:** Reproduction fixture, defect quantification
 
 ### 2. Root Cause Analysis & Fix (Algorithm Engineer)
 
@@ -48,27 +44,12 @@ Use this workflow for: correctness regressions, detection failures, decode error
 3. Implement fix in the appropriate primitive module
 4. Write regression test using the provided synthetic fixture
 5. Verify the fixture passes with documented tolerance
-6. Write handoff note → Validation Engineer
+6. Run validation gates (see role spec)
+7. Write handoff note → Performance Engineer (if fix touched hot path) or Pipeline Architect
 
-**Deliverables:** Fix, regression test, handoff note with root cause explanation
+**Deliverables:** Fix, regression test, validation gate results, handoff note with root cause explanation
 
-### 3. Validation (Validation Engineer)
-
-**Goal:** Verify fix and check for side effects.
-
-**Steps:**
-1. Run full test suite: `cargo test --workspace --all-features`
-2. Run synthetic eval and compare to pre-bug baseline:
-   ```bash
-   python3 tools/run_synth_eval.py --n 5 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_bugfix
-   ```
-3. Verify the regression fixture passes
-4. Verify no other metrics regressed (center error, decode rate, precision, recall)
-5. Write handoff note → Performance Engineer (if fix touched hot path) or Pipeline Architect
-
-**Deliverables:** CI results, scoring comparison, regression verification, handoff note
-
-### 4. Performance Sanity (Performance Engineer) — conditional
+### 3. Performance Sanity (Performance Engineer) — conditional
 
 **Goal:** Ensure the fix didn't introduce a performance regression.
 
@@ -79,7 +60,7 @@ Use this workflow for: correctness regressions, detection failures, decode error
 
 **Deliverables:** Benchmark comparison, handoff note
 
-### 5. Close (Pipeline Architect)
+### 4. Close (Pipeline Architect)
 
 **Goal:** Verify API integrity and close the task.
 

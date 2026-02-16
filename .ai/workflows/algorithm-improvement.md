@@ -51,37 +51,12 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
    - **Robustness:** success rate under noise sweep (blur 0.5, 1.0, 2.0, 3.0 px)
    - **Edge cases:** near-circular vs high-eccentricity ellipses, small marker count, image borders
 3. Keep old implementation accessible behind config toggle
-4. Write handoff note → Validation Engineer with A/B comparison data
+4. Run validation gates (see role spec) including A/B synthetic eval comparison
+5. Write handoff note → Performance Engineer with A/B comparison data
 
-**Deliverables:** New algorithm, comparison tests, A/B results, handoff note
+**Deliverables:** New algorithm, comparison tests, A/B results, validation gate results, handoff note
 
-### 4. End-to-End Validation (Validation Engineer)
-
-**Goal:** Full pipeline comparison: old algorithm vs new.
-
-**Steps:**
-1. Run full synthetic eval with old algorithm (baseline):
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_baseline
-   ```
-2. Run full synthetic eval with new algorithm:
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_new
-   ```
-3. Produce comparison report using `templates/accuracy-report.md`:
-   - Precision, recall, F1
-   - Center error (mean, p50, p95, max)
-   - Decode success rate
-   - Homography reprojection error
-4. Test under stress conditions (blur 3.0, noise):
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_stress
-   ```
-5. Write handoff note → Performance Engineer
-
-**Deliverables:** Accuracy report (baseline vs new), stress test results, handoff note
-
-### 5. Performance Comparison (Performance Engineer)
+### 4. Performance Comparison (Performance Engineer)
 
 **Goal:** Quantify the latency impact.
 

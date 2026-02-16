@@ -1,7 +1,7 @@
 # PERF Validation Suite Runbook
 
-- **Canonical owner:** Validation Engineer
-- **Primary workflow:** `.ai/workflows/performance-optimization.md` (Phase 3)
+- **Canonical owner:** Performance Engineer (run as part of validation gates)
+- **Primary workflow:** `.ai/workflows/performance-optimization.md` (Phase 2)
 - **Canonical template:** `.ai/templates/accuracy-report.md`
 
 ## Purpose

@@ -25,7 +25,7 @@
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
 | INFRA-003 | todo | P1 | infra | Replace stringly reject reasons with typed enums | Pipeline Architect | `String`-based reasons appear across `inner_fit`, `outer_fit`, `completion`, `decode`; move to typed error/reject enums and structured serialization |
-| BUG-001 | todo | P1 | bug | Fix decode config drift and expose hidden thresholds | Validation Engineer | `DecodeConfig` docs in `crates/ringgrid/src/marker/decode.rs` disagree with defaults; hardcoded decode constants (`low_contrast`, k-means iter/eps) should be explicit config or documented invariants |
+| BUG-001 | todo | P1 | bug | Fix decode config drift and expose hidden thresholds | Algorithm Engineer | `DecodeConfig` docs in `crates/ringgrid/src/marker/decode.rs` disagree with defaults; hardcoded decode constants (`low_contrast`, k-means iter/eps) should be explicit config or documented invariants |
 
 ## Backlog
 
@@ -34,9 +34,9 @@
 | INFRA-004 | todo | P2 | infra | Deduplicate homography correspondence/stats utilities | Pipeline Architect | Similar correspondence and stats logic exists in `detector/global_filter.rs`, `homography/utils.rs`, and `pixelmap/self_undistort.rs`; consolidate into one internal utility layer |
 | INFRA-005 | todo | P2 | infra | Harden BoardLayout invariants and loading errors | Pipeline Architect | `BoardLayout` exposes mutable `markers` while requiring manual `build_index()` sync; enforce invariant-safe mutation API and typed load/validation errors |
 | INFRA-006 | todo | P2 | infra | Split outer-fit responsibilities and remove hardcoded solver knobs | Pipeline Architect | `crates/ringgrid/src/detector/outer_fit.rs` mixes sampling, fitting, decode, and scoring; contains local hardcoded RANSAC config instead of shared config source |
-| BUG-002 | todo | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Validation Engineer | `DetectionResult::seed_proposals` currently takes first markers in iteration order; rank by confidence and define tie-breaking for stable pass-2 seeds |
+| BUG-002 | todo | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Pipeline Architect | `DetectionResult::seed_proposals` currently takes first markers in iteration order; rank by confidence and define tie-breaking for stable pass-2 seeds |
 | ALGO-002 | todo | P2 | algo | Decompose projective-center solver into testable stages | Algorithm Engineer | `ring_center_projective_with_debug` in `crates/ringgrid/src/ring/projective_center.rs` is a large mixed-responsibility routine; split candidate generation/scoring/selection for clarity and safer evolution |
-| INFRA-007 | todo | P2 | infra | Add maintainability guardrails to CI | Validation Engineer | Add lint/doc complexity policy (function-size hotspots, rustdoc coverage, forbid new `allow(dead_code)` in hot modules) to prevent quality regressions |
+| INFRA-007 | todo | P2 | infra | Add maintainability guardrails to CI | Pipeline Architect | Add lint/doc complexity policy (function-size hotspots, rustdoc coverage, forbid new `allow(dead_code)` in hot modules) to prevent quality regressions |
 
 ## Done
 

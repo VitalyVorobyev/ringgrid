@@ -40,7 +40,25 @@ Always activate these Codex skills when working:
 
 4. **No heavy new dependencies for convenience.** Performance gains must come from better algorithms or tighter code, not large dependency additions.
 
-5. **Accuracy must be preserved.** Any optimization that changes numerical results requires validation-engineer sign-off. Flag changes > 0.01 px mean center error.
+5. **Accuracy must be preserved.** Any optimization that changes numerical results must be verified via synthetic eval before handoff. Flag changes > 0.01 px mean center error.
+
+## Validation Gates (required before handoff)
+
+Run these before handing off to Project Lead:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_check
+```
+
+**Pass/fail thresholds:**
+- Mean center error regression: ≤ +0.01 px vs baseline
+- Precision/recall: must not decrease vs baseline
+- All tests pass, no clippy warnings
+
+If accuracy regresses beyond threshold, investigate root cause before handoff — do not hand off with a known regression.
 
 ## Output Expectations
 
@@ -48,10 +66,9 @@ When completing a phase:
 - Before/after Criterion benchmark numbers with % change
 - Flamegraph or profiling observations (top hotspots, allocation counts)
 - Allocation profile changes (per-detect call)
-- Explicit statement on accuracy impact (preserved / changed / needs verification)
+- Accuracy impact: validation gate results (pass/fail + key numbers)
 
 ## Handoff Triggers
 
 - **To Algorithm Engineer:** If optimization requires changing the mathematical approach (e.g., coarser-to-finer search, approximate fitting)
-- **To Validation Engineer:** After any optimization — to verify accuracy is preserved via synthetic eval
 - **To Pipeline Architect:** If optimization changes function signatures or buffer ownership patterns

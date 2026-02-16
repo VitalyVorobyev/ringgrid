@@ -159,6 +159,9 @@ mod outer_estimate;
 #[path = "../src/detector/proposal.rs"]
 mod proposal_impl;
 #[allow(dead_code, unused_imports)]
+#[path = "../src/ring/radial_estimator.rs"]
+mod radial_estimator;
+#[allow(dead_code, unused_imports)]
 #[path = "../src/ring/radial_profile.rs"]
 mod radial_profile;
 

@@ -11,6 +11,7 @@ use crate::marker::{GradPolarity, MarkerSpec};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
+use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid};
 use super::radial_profile;
 pub use super::radial_profile::Polarity;
 
@@ -96,9 +97,27 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
 
     let n_r = spec.radial_samples.max(5);
     let n_t = spec.theta_samples.max(8);
-
-    let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
-    let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
+    let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
+        GradPolarity::DarkToLight => vec![Polarity::Pos],
+        GradPolarity::LightToDark => vec![Polarity::Neg],
+        GradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
+    };
+    let track_pos = polarity_candidates.contains(&Polarity::Pos);
+    let track_neg = polarity_candidates.contains(&Polarity::Neg);
+    let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
+        return InnerEstimate {
+            r_inner_expected: spec.r_inner_expected,
+            search_window: window,
+            r_inner_found: None,
+            polarity: None,
+            peak_strength: None,
+            theta_consistency: None,
+            status: InnerStatus::Failed,
+            reason: Some("invalid_search_window".to_string()),
+            radial_response_agg: None,
+            r_samples: None,
+        };
+    };
 
     // Precompute rotation for ellipse sampling
     let cx = outer.cx as f32;
@@ -108,58 +127,28 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
     let ca = (outer.angle as f32).cos();
     let sa = (outer.angle as f32).sin();
     let sampler = DistortionAwareSampler::new(gray, mapper);
-
-    // Collect derivative curves in a contiguous [radius][theta] slab.
-    let mut curves_by_radius = vec![0.0f32; n_r * n_t];
-    let mut per_theta_pos = Vec::with_capacity(n_t);
-    let mut per_theta_neg = Vec::with_capacity(n_t);
-    let mut i_vals = vec![0.0f32; n_r];
-    let mut d_vals = vec![0.0f32; n_r];
-    let mut n_valid_theta = 0usize;
-
-    let d_theta = 2.0 * std::f32::consts::PI / n_t as f32;
-    let c_step = d_theta.cos();
-    let s_step = d_theta.sin();
-    let mut ct = 1.0f32;
-    let mut st = 0.0f32;
-    for _ in 0..n_t {
-        // Sample intensity along r
-        let mut ok = true;
-        for (ri, &r) in r_samples.iter().enumerate() {
-            // v = [a*r*cosθ, b*r*sinθ] then rotate by ellipse angle
-            let vx = a * r * ct;
-            let vy = b * r * st;
-            let x = cx + ca * vx - sa * vy;
-            let y = cy + sa * vx + ca * vy;
-
-            let samp = match sampler.sample_checked(x, y) {
-                Some(v) => v,
-                None => {
-                    ok = false;
-                    break;
-                }
-            };
-            i_vals[ri] = samp;
-        }
-        if ok {
-            radial_profile::radial_derivative_into(&i_vals, r_step, &mut d_vals);
-            radial_profile::smooth_3point(&mut d_vals);
-
-            for ri in 0..n_r {
-                curves_by_radius[ri * n_t + n_valid_theta] = d_vals[ri];
+    let scan = scan_radial_derivatives(
+        grid,
+        n_t,
+        track_pos,
+        track_neg,
+        |ct, st, r_samples, i_vals| {
+            for (ri, &r) in r_samples.iter().enumerate() {
+                // v = [a*r*cosθ, b*r*sinθ] then rotate by ellipse angle
+                let vx = a * r * ct;
+                let vy = b * r * st;
+                let x = cx + ca * vx - sa * vy;
+                let y = cy + sa * vx + ca * vy;
+                let Some(sample) = sampler.sample_checked(x, y) else {
+                    return false;
+                };
+                i_vals[ri] = sample;
             }
-            per_theta_pos.push(r_samples[radial_profile::peak_idx(&d_vals, Polarity::Pos)]);
-            per_theta_neg.push(r_samples[radial_profile::peak_idx(&d_vals, Polarity::Neg)]);
-            n_valid_theta += 1;
-        }
+            true
+        },
+    );
 
-        let next_ct = ct * c_step - st * s_step;
-        let next_st = st * c_step + ct * s_step;
-        ct = next_ct;
-        st = next_st;
-    }
-
-    let coverage = n_valid_theta as f32 / n_t as f32;
+    let coverage = scan.coverage();
     if coverage < spec.min_theta_coverage {
         return InnerEstimate {
             r_inner_expected: spec.r_inner_expected,
@@ -175,7 +164,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             )),
             radial_response_agg: None,
             r_samples: if store_response {
-                Some(r_samples)
+                Some(scan.grid.r_samples.clone())
             } else {
                 None
             },
@@ -187,32 +176,18 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         (idx, agg[idx])
     }
 
-    let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
-        GradPolarity::DarkToLight => vec![Polarity::Pos],
-        GradPolarity::LightToDark => vec![Polarity::Neg],
-        GradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
-    };
+    let agg_resp = scan.aggregate_response(&spec.aggregator);
 
     let mut best: Option<(InnerEstimate, f32)> = None;
 
     for pol in polarity_candidates {
-        // Aggregate across theta at each radius sample
-        let mut agg_resp = vec![0.0f32; n_r];
-        for (ri, out) in agg_resp.iter_mut().enumerate().take(n_r) {
-            let start = ri * n_t;
-            let values = &mut curves_by_radius[start..start + n_valid_theta];
-            *out = radial_profile::aggregate(values, &spec.aggregator);
-        }
-
         let (peak_idx, peak_val) = find_peak_idx(&agg_resp, pol);
-        let r_star = r_samples[peak_idx];
+        let r_star = scan.grid.r_samples[peak_idx];
 
         // Consistency: how many per-theta peaks agree with r_star
-        let per_theta = match pol {
-            Polarity::Pos => &per_theta_pos,
-            Polarity::Neg => &per_theta_neg,
-        };
-        let theta_consistency = radial_profile::theta_consistency(per_theta, r_star, r_step, 0.02);
+        let per_theta = scan.per_theta_peaks(pol);
+        let theta_consistency =
+            radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.02);
 
         let peak_strength = peak_val.abs();
 
@@ -247,7 +222,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
                 None
             },
             r_samples: if store_response {
-                Some(r_samples.clone())
+                Some(scan.grid.r_samples.clone())
             } else {
                 None
             },
@@ -274,7 +249,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         reason: Some("no_polarity_candidates".to_string()),
         radial_response_agg: None,
         r_samples: if store_response {
-            Some(r_samples)
+            Some(scan.grid.r_samples.clone())
         } else {
             None
         },

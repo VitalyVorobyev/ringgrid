@@ -11,6 +11,7 @@ use crate::marker::{AngularAggregator, GradPolarity};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
+use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid};
 use super::radial_profile;
 use super::radial_profile::Polarity;
 
@@ -140,47 +141,50 @@ pub fn estimate_outer_from_prior_with_mapper(
 
     let n_r = cfg.radial_samples.max(7);
     let n_t = cfg.theta_samples.max(8);
-    let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
-    let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
+    let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
+        GradPolarity::DarkToLight => vec![Polarity::Pos],
+        GradPolarity::LightToDark => vec![Polarity::Neg],
+        GradPolarity::Auto => vec![Polarity::Pos, Polarity::Neg],
+    };
+    let track_pos = polarity_candidates.contains(&Polarity::Pos);
+    let track_neg = polarity_candidates.contains(&Polarity::Neg);
+    let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
+        return OuterEstimate {
+            r_outer_expected_px: r_expected,
+            search_window_px: window,
+            polarity: None,
+            hypotheses: Vec::new(),
+            status: OuterStatus::Failed,
+            reason: Some("invalid_search_window".to_string()),
+            radial_response_agg: None,
+            r_samples: None,
+        };
+    };
     let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
     let cy = center_prior[1];
 
-    // Collect derivative curves in a contiguous [theta][radius] slab.
-    let mut curves_flat: Vec<f32> = Vec::with_capacity(n_t * n_r);
-    let mut i_vals = vec![0.0f32; n_r];
-    let mut d_vals = vec![0.0f32; n_r];
-    let mut n_valid_theta = 0usize;
-    for ti in 0..n_t {
-        let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
-        let dx = theta.cos();
-        let dy = theta.sin();
+    let scan = scan_radial_derivatives(
+        grid,
+        n_t,
+        track_pos,
+        track_neg,
+        |ct, st, r_samples, i_vals| {
+            for (ri, &r) in r_samples.iter().enumerate() {
+                let x = cx + ct * r;
+                let y = cy + st * r;
+                let Some(sample) = sampler.sample_checked(x, y) else {
+                    return false;
+                };
+                i_vals[ri] = sample;
+            }
+            true
+        },
+    );
+    let n_r = scan.grid.r_samples.len();
 
-        let mut ok = true;
-        for (ri, &r) in r_samples.iter().enumerate() {
-            let x = cx + dx * r;
-            let y = cy + dy * r;
-            let samp = match sampler.sample_checked(x, y) {
-                Some(v) => v,
-                None => {
-                    ok = false;
-                    break;
-                }
-            };
-            i_vals[ri] = samp;
-        }
-        if !ok {
-            continue;
-        }
-
-        radial_profile::radial_derivative_into(&i_vals, r_step, &mut d_vals);
-        radial_profile::smooth_3point(&mut d_vals);
-        curves_flat.extend_from_slice(&d_vals);
-        n_valid_theta += 1;
-    }
-
-    let coverage = n_valid_theta as f32 / n_t as f32;
-    if n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
+    let coverage = scan.coverage();
+    if scan.n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
         return OuterEstimate {
             r_outer_expected_px: r_expected,
             search_window_px: window,
@@ -193,33 +197,18 @@ pub fn estimate_outer_from_prior_with_mapper(
             )),
             radial_response_agg: None,
             r_samples: if store_response {
-                Some(r_samples)
+                Some(scan.grid.r_samples.clone())
             } else {
                 None
             },
         };
     }
 
-    let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
-        GradPolarity::DarkToLight => vec![Polarity::Pos],
-        GradPolarity::LightToDark => vec![Polarity::Neg],
-        GradPolarity::Auto => vec![Polarity::Pos, Polarity::Neg],
-    };
+    let agg_resp = scan.aggregate_response(&cfg.aggregator);
 
     let mut best: Option<(OuterEstimate, f32)> = None;
 
     for pol in polarity_candidates {
-        // Aggregate at each r sample
-        let mut agg_resp = vec![0.0f32; n_r];
-        let mut scratch: Vec<f32> = Vec::with_capacity(n_valid_theta);
-        for ri in 0..n_r {
-            scratch.clear();
-            for ti in 0..n_valid_theta {
-                scratch.push(curves_flat[ti * n_r + ri]);
-            }
-            agg_resp[ri] = radial_profile::aggregate(&mut scratch, &cfg.aggregator);
-        }
-
         // Convert to a score where "larger is better" regardless of polarity.
         let score_vec: Vec<f32> = match pol {
             Polarity::Pos => agg_resp.clone(),
@@ -242,13 +231,7 @@ pub fn estimate_outer_from_prior_with_mapper(
         // Sort peaks by score desc.
         peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
 
-        // Per-theta peaks (for consistency checks)
-        let mut per_theta = Vec::with_capacity(n_valid_theta);
-        for ti in 0..n_valid_theta {
-            let start = ti * n_r;
-            let curve = &curves_flat[start..start + n_r];
-            per_theta.push(r_samples[radial_profile::peak_idx(curve, pol)]);
-        }
+        let per_theta = scan.per_theta_peaks(pol);
 
         let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
         let mut best_strength = None::<f32>;
@@ -257,7 +240,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             if pi == 0 || pi + 1 == n_r {
                 continue;
             }
-            let r_star = r_samples[pi];
+            let r_star = scan.grid.r_samples[pi];
             let peak_strength = agg_resp[pi].abs();
             if best_strength.is_none() {
                 best_strength = Some(peak_strength);
@@ -270,7 +253,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             }
 
             let theta_consistency =
-                radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.75);
+                radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.75);
 
             if theta_consistency < cfg.min_theta_consistency {
                 continue;
@@ -301,9 +284,13 @@ pub fn estimate_outer_from_prior_with_mapper(
             hypotheses,
             status: OuterStatus::Ok,
             reason: None,
-            radial_response_agg: if store_response { Some(agg_resp) } else { None },
+            radial_response_agg: if store_response {
+                Some(agg_resp.clone())
+            } else {
+                None
+            },
             r_samples: if store_response {
-                Some(r_samples.clone())
+                Some(scan.grid.r_samples.clone())
             } else {
                 None
             },
@@ -326,7 +313,7 @@ pub fn estimate_outer_from_prior_with_mapper(
         reason: Some("no_polarity_candidates".to_string()),
         radial_response_agg: None,
         r_samples: if store_response {
-            Some(r_samples)
+            Some(scan.grid.r_samples.clone())
         } else {
             None
         },

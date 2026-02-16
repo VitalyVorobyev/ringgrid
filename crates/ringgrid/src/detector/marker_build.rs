@@ -6,6 +6,10 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::inner_fit::InnerFitResult;
 
 /// Fit quality metrics for a detected marker.
+///
+/// Reports the edge sampling and ellipse fit quality. High RANSAC inlier
+/// ratios (> 0.8) and low RMS Sampson residuals (< 0.5 px) indicate a
+/// precise ellipse fit.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FitMetrics {
     /// Total number of radial rays cast.
@@ -31,24 +35,25 @@ pub struct FitMetrics {
 }
 
 /// A detected marker with its refined center and optional ID.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+///
+/// The `center` field is always in image-pixel coordinates, regardless of
+/// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is
+/// active, `center_mapped` provides the working-frame (undistorted)
+/// coordinates. Ellipses are in the working frame when a mapper is active.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<usize>,
     /// Combined detection + decode confidence in [0, 1].
     pub confidence: f32,
-    /// Marker center in detector working pixel coordinates.
+    /// Marker center in raw image pixel coordinates.
     ///
-    /// This is the undistorted pixel frame when camera intrinsics are provided,
-    /// otherwise it is the raw image pixel frame.
+    /// This field is always image-space, independent of mapper usage.
     pub center: [f64; 2],
-    /// Projective unbiased center estimated from inner+outer ring conics.
+    /// Marker center in mapper working coordinates, when a mapper is active.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub center_projective: Option<[f64; 2]>,
-    /// Selection residual used by the projective-center eigenpair chooser.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub center_projective_residual: Option<f64>,
+    pub center_mapped: Option<[f64; 2]>,
     /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<Ellipse>,
@@ -107,11 +112,6 @@ pub(crate) fn fit_metrics_with_inner(
     )
 }
 
-/// Extract inner ellipse params from an inner fit result.
-pub(crate) fn inner_ellipse_params(inner: &InnerFitResult) -> Option<Ellipse> {
-    inner.ellipse_inner
-}
-
 pub(crate) fn decode_metrics_from_result(
     decode_result: Option<&DecodeResult>,
 ) -> Option<DecodeMetrics> {
@@ -123,31 +123,4 @@ pub(crate) fn decode_metrics_from_result(
         margin: d.margin,
         decode_confidence: d.confidence,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn marker_with_defaults(
-    id: Option<usize>,
-    confidence: f32,
-    center: [f64; 2],
-    ellipse_outer: Option<Ellipse>,
-    ellipse_inner: Option<Ellipse>,
-    edge_points_outer: Option<Vec<[f64; 2]>>,
-    edge_points_inner: Option<Vec<[f64; 2]>>,
-    fit: FitMetrics,
-    decode: Option<DecodeMetrics>,
-) -> DetectedMarker {
-    DetectedMarker {
-        id,
-        confidence,
-        center,
-        center_projective: None,
-        center_projective_residual: None,
-        ellipse_outer,
-        ellipse_inner,
-        edge_points_outer,
-        edge_points_inner,
-        fit,
-        decode,
-    }
 }

@@ -2,16 +2,12 @@
 //!
 //! [`Detector`] is the primary entry point for detecting ring markers.
 //! It wraps a [`DetectConfig`] and provides convenience methods for
-//! common detection scenarios (config-driven detect, external mapper, debug).
+//! common detection scenarios (config-driven detect and external mapper).
 
 use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::BoardLayout;
-#[cfg(feature = "cli-internal")]
-use crate::debug_dump::DebugDump;
-#[cfg(feature = "cli-internal")]
-use crate::detector::DebugCollectConfig;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
@@ -29,7 +25,7 @@ use crate::DetectionResult;
 /// use image::GrayImage;
 /// use std::path::Path;
 ///
-/// let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json")).unwrap();
+/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
 /// let detector = Detector::new(board);
 /// let image = GrayImage::new(640, 480);
 /// let result = detector.detect(&image);
@@ -125,7 +121,8 @@ impl Detector {
     /// Detect with a custom pixel mapper (two-pass pipeline).
     ///
     /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
-    /// Results are in mapper working frame.
+    /// Marker centers in the returned result are always image-space.
+    /// Mapper-frame centers are exposed via `DetectedMarker.center_mapped`.
     ///
     /// This method always uses the provided mapper and does not run
     /// self-undistort estimation from `config.self_undistort`.
@@ -135,20 +132,6 @@ impl Detector {
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
         pipeline::detect_with_mapper(image, &self.config, mapper)
-    }
-
-    /// Detect with debug dump collection (single-pass).
-    ///
-    /// Debug collection does not run self-undistort estimation and does not
-    /// run the two-pass seeded pipeline.
-    #[cfg(feature = "cli-internal")]
-    pub fn detect_with_debug(
-        &self,
-        image: &GrayImage,
-        debug_cfg: &DebugCollectConfig,
-        mapper: Option<&dyn PixelMapper>,
-    ) -> (DetectionResult, DebugDump) {
-        pipeline::detect_single_pass_with_debug(image, &self.config, debug_cfg, mapper)
     }
 }
 
@@ -175,6 +158,8 @@ mod tests {
         let img = GrayImage::new(200, 200);
         let result = det.detect(&img);
         assert!(result.detected_markers.is_empty());
+        assert_eq!(result.center_frame, crate::DetectionFrame::Image);
+        assert_eq!(result.homography_frame, crate::DetectionFrame::Image);
         assert!(result.self_undistort.is_none());
     }
 
@@ -198,6 +183,8 @@ mod tests {
         let img = GrayImage::new(200, 200);
         let mapper = IdentityMapper;
         let result = det.detect_with_mapper(&img, &mapper);
+        assert_eq!(result.center_frame, crate::DetectionFrame::Image);
+        assert_eq!(result.homography_frame, crate::DetectionFrame::Working);
         assert!(result.self_undistort.is_none());
     }
 

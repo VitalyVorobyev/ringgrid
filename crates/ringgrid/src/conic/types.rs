@@ -46,21 +46,36 @@ impl std::error::Error for ConicError {}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConicCoeffs(pub [f64; 6]);
 
-/// Geometric ellipse parameters.
+/// Geometric ellipse parameters fitted to a ring marker boundary.
+///
+/// Produced by the Fitzgibbon direct ellipse fit with RANSAC. Each detected
+/// marker has an outer ellipse (always present) and optionally an inner ellipse.
+///
+/// The coordinate frame depends on the detection mode:
+/// - Without a [`PixelMapper`](crate::PixelMapper): image pixel coordinates.
+/// - With a [`PixelMapper`](crate::PixelMapper): working-frame (undistorted) coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Ellipse {
-    /// Center x.
-    /// This is the undistorted pixel frame when camera intrinsics are provided,
-    /// otherwise it is the raw image pixel frame.
+    /// Center x coordinate (pixels).
     pub cx: f64,
-    /// Center y.
+    /// Center y coordinate (pixels).
     pub cy: f64,
-    /// Semi-major axis length.
+    /// Semi-major axis length (pixels, always ≥ `b`).
     pub a: f64,
-    /// Semi-minor axis length.
+    /// Semi-minor axis length (pixels).
     pub b: f64,
     /// Rotation angle of the major axis from +x, in radians (−π/2, π/2].
     pub angle: f64,
+}
+
+impl Ellipse {
+    pub fn mean_axis(&self) -> f64 {
+        (self.a + self.b) * 0.5
+    }
+
+    pub fn center(&self) -> [f64; 2] {
+        [self.cx, self.cy]
+    }
 }
 
 /// 2D conic in homogeneous image coordinates: `x^T Q x = 0`.
@@ -111,7 +126,7 @@ impl Conic2D {
 }
 
 /// Configuration for RANSAC ellipse fitting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RansacConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,

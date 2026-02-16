@@ -1,6 +1,7 @@
 use image::GrayImage;
 
-use crate::conic::{self, Ellipse, RansacConfig};
+use super::config::InnerFitConfig;
+use crate::conic::{self, Ellipse};
 use crate::marker::MarkerSpec;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
@@ -19,51 +20,9 @@ pub(crate) enum InnerFitStatus {
     Failed,
 }
 
-/// Tuning parameters for robust inner ellipse fitting.
-///
-/// Outer ellipse is used only as a geometric/search prior.
-#[derive(Debug, Clone)]
-pub(crate) struct InnerFitConfig {
-    /// Minimum number of sampled points required to attempt a fit.
-    pub min_points: usize,
-    /// Minimum accepted inlier ratio when RANSAC is used.
-    pub min_inlier_ratio: f32,
-    /// Maximum accepted RMS Sampson residual (px) of the fitted inner ellipse.
-    pub max_rms_residual: f64,
-    /// Maximum allowed center shift from outer to inner fit center (px).
-    pub max_center_shift_px: f64,
-    /// Maximum allowed absolute error in recovered scale ratio vs radial hint.
-    pub max_ratio_abs_error: f64,
-    /// Local half-width (in radius-sample indices) around the radial hint.
-    pub local_peak_halfwidth_idx: usize,
-    /// RANSAC config for robust inner ellipse fitting.
-    pub ransac: RansacConfig,
-}
-
-impl Default for InnerFitConfig {
-    fn default() -> Self {
-        Self {
-            min_points: 20,
-            min_inlier_ratio: 0.5,
-            max_rms_residual: 1.0,
-            max_center_shift_px: 12.0,
-            max_ratio_abs_error: 0.15,
-            local_peak_halfwidth_idx: 3,
-            ransac: RansacConfig {
-                max_iters: 200,
-                inlier_threshold: 1.5,
-                min_inliers: 8,
-                seed: 43,
-            },
-        }
-    }
-}
-
-/// Robust inner fit result with shared inner-estimate diagnostics.
+/// Robust inner fit result.
 #[derive(Debug, Clone)]
 pub(crate) struct InnerFitResult {
-    /// Shared radial-hint estimation output.
-    pub estimate: InnerEstimate,
     /// Final inner-ellipse fit status.
     pub status: InnerFitStatus,
     /// Optional reject/failure reason from fit stage.
@@ -221,7 +180,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
 
     if estimate.status != InnerStatus::Ok {
         return InnerFitResult {
-            estimate,
             status: InnerFitStatus::Failed,
             reason: Some("inner_estimate_not_ok".to_string()),
             ellipse_inner: None,
@@ -232,7 +190,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     }
     if estimate.r_inner_found.is_none() || estimate.polarity.is_none() {
         return InnerFitResult {
-            estimate,
             status: InnerFitStatus::Failed,
             reason: Some("inner_estimate_missing_hint".to_string()),
             ellipse_inner: None,
@@ -245,7 +202,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, mapper);
     if points_inner.len() < cfg.min_points {
         return InnerFitResult {
-            estimate,
             status: InnerFitStatus::Failed,
             reason: Some(format!(
                 "insufficient_inner_points({}<{})",
@@ -269,7 +225,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                 Some(e) => (e, None),
                 None => {
                     return InnerFitResult {
-                        estimate,
                         status: InnerFitStatus::Failed,
                         reason: Some("inner_fit_failed".to_string()),
                         ellipse_inner: None,
@@ -285,7 +240,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             Some(e) => (e, None),
             None => {
                 return InnerFitResult {
-                    estimate,
                     status: InnerFitStatus::Failed,
                     reason: Some("inner_fit_failed".to_string()),
                     ellipse_inner: None,
@@ -343,7 +297,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
 
     if let Some(reason) = reject_reason {
         return InnerFitResult {
-            estimate,
             status: InnerFitStatus::Rejected,
             reason: Some(reason),
             ellipse_inner: None,
@@ -354,7 +307,6 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     }
 
     InnerFitResult {
-        estimate,
         status: InnerFitStatus::Ok,
         reason: None,
         ellipse_inner: Some(ellipse_inner),
@@ -424,7 +376,6 @@ mod tests {
             false,
         );
         assert_eq!(res.status, InnerFitStatus::Ok, "reason={:?}", res.reason);
-        assert_eq!(res.estimate.status, InnerStatus::Ok);
         let e = res.ellipse_inner.expect("inner ellipse");
         assert!((e.cx - outer.cx).abs() < 1.2);
         assert!((e.cy - outer.cy).abs() < 1.2);

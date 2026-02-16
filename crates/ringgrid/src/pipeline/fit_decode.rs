@@ -1,324 +1,117 @@
 use image::GrayImage;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use super::inner_fit;
-use super::marker_build::{
-    decode_metrics_from_result, fit_metrics_with_inner, inner_ellipse_params, marker_with_defaults,
-};
-use super::outer_fit::{
-    compute_center, fit_outer_ellipse_robust_with_reason, marker_outer_radius_expected_px,
-    OuterFitCandidate,
-};
-use super::{dedup_by_id, dedup_markers, dedup_with_debug, DebugCollectConfig, DetectConfig};
-use crate::debug_dump as dbg;
+use super::marker_build::{decode_metrics_from_result, fit_metrics_with_inner};
+use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate};
+use super::{dedup_by_id, dedup_markers, DetectConfig};
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
-use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
-
-pub(super) struct FitDecodeCoreOutput {
-    pub(super) markers: Vec<DetectedMarker>,
-    pub(super) marker_cand_idx: Vec<usize>,
-    pub(super) stage0: Option<dbg::StageDebug>,
-    pub(super) stage1: Option<dbg::StageDebug>,
-    pub(super) stage2: Option<dbg::DedupDebug>,
-}
-
-fn edge_for_debug(edge: &EdgeSampleResult, store_points: bool) -> EdgeSampleResult {
-    if store_points {
-        return edge.clone();
-    }
-    let mut out = edge.clone();
-    out.outer_points.clear();
-    out.inner_points.clear();
-    out
-}
-
-fn stage0_candidate(cand_idx: usize, proposal: Proposal) -> dbg::CandidateDebug {
-    dbg::CandidateDebug {
-        cand_idx,
-        proposal,
-        ring_fit: None,
-        decode: None,
-        decision: dbg::DecisionDebug {
-            status: dbg::DecisionStatus::Accepted,
-            reason: "proposal".to_string(),
-        },
-        derived: dbg::DerivedDebug {
-            id: None,
-            confidence: None,
-            center_xy: None,
-        },
-    }
-}
-
-fn stage1_candidate_stub(cand_idx: usize, proposal: Proposal) -> dbg::CandidateDebug {
-    dbg::CandidateDebug {
-        cand_idx,
-        proposal,
-        ring_fit: None,
-        decode: None,
-        decision: dbg::DecisionDebug {
-            status: dbg::DecisionStatus::Rejected,
-            reason: "unprocessed".to_string(),
-        },
-        derived: dbg::DerivedDebug {
-            id: None,
-            confidence: None,
-            center_xy: None,
-        },
-    }
-}
-
-struct DebugState {
-    collect_debug: bool,
-    store_points: bool,
-    n_rec: usize,
-    stage0: Option<dbg::StageDebug>,
-    stage1: Option<dbg::StageDebug>,
-    stage1_slot_by_cand_idx: Option<Vec<Option<usize>>>,
-}
-
-impl DebugState {
-    fn new(proposals: &[Proposal], debug_cfg: Option<&DebugCollectConfig>) -> Self {
-        let collect_debug = debug_cfg.is_some();
-        let store_points = debug_cfg.map(|cfg| cfg.store_points).unwrap_or(false);
-        let n_rec = debug_cfg
-            .map(|cfg| proposals.len().min(cfg.max_candidates))
-            .unwrap_or(0);
-
-        let stage0 = if collect_debug {
-            let mut stage = dbg::StageDebug {
-                n_total: proposals.len(),
-                n_recorded: n_rec,
-                candidates: Vec::with_capacity(n_rec),
-                notes: Vec::new(),
-            };
-            for (i, p) in proposals.iter().take(n_rec).enumerate() {
-                stage.candidates.push(stage0_candidate(i, *p));
-            }
-            Some(stage)
-        } else {
-            None
-        };
-
-        let stage1 = if collect_debug {
-            Some(dbg::StageDebug {
-                n_total: proposals.len(),
-                n_recorded: n_rec,
-                candidates: Vec::with_capacity(n_rec),
-                notes: Vec::new(),
-            })
-        } else {
-            None
-        };
-
-        let stage1_slot_by_cand_idx = if collect_debug {
-            Some(vec![None; n_rec])
-        } else {
-            None
-        };
-
-        Self {
-            collect_debug,
-            store_points,
-            n_rec,
-            stage0,
-            stage1,
-            stage1_slot_by_cand_idx,
-        }
-    }
-
-    fn should_record_candidate(&self, cand_idx: usize) -> bool {
-        self.collect_debug && cand_idx < self.n_rec
-    }
-
-    fn record_stage1_candidate(&mut self, candidate: Option<dbg::CandidateDebug>) {
-        let Some(candidate) = candidate else {
-            return;
-        };
-        let Some(stage1) = self.stage1.as_mut() else {
-            return;
-        };
-
-        let cand_idx = candidate.cand_idx;
-        let slot = stage1.candidates.len();
-        stage1.candidates.push(candidate);
-
-        if let Some(map) = self.stage1_slot_by_cand_idx.as_mut() {
-            if cand_idx < map.len() {
-                map[cand_idx] = Some(slot);
-            }
-        }
-    }
-
-    fn into_stages(self) -> (Option<dbg::StageDebug>, Option<dbg::StageDebug>) {
-        (self.stage0, self.stage1)
-    }
-}
+use crate::ring::edge_sample::DistortionAwareSampler;
 
 struct CandidateProcessContext<'a> {
     gray: &'a GrayImage,
     config: &'a DetectConfig,
     mapper: Option<&'a dyn PixelMapper>,
     sampler: DistortionAwareSampler<'a>,
-    inner_fit_cfg: &'a inner_fit::InnerFitConfig,
-    store_points: bool,
 }
 
-struct CandidateProcessOutput {
-    marker: Option<DetectedMarker>,
-    marker_cand_idx: Option<usize>,
-    debug_candidate: Option<dbg::CandidateDebug>,
+fn fallback_fit_confidence(
+    edge: &crate::ring::edge_sample::EdgeSampleResult,
+    outer_ransac: Option<&crate::conic::RansacResult>,
+) -> f32 {
+    let arc_cov = edge.n_good_rays as f32 / edge.n_total_rays.max(1) as f32;
+    let inlier_ratio = outer_ransac
+        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+        .unwrap_or(1.0);
+    (arc_cov * inlier_ratio).clamp(0.0, 1.0)
+}
+
+fn select_proposals_for_fit(
+    mut proposals: Vec<Proposal>,
+    max_candidates: Option<usize>,
+) -> Vec<Proposal> {
+    let Some(max_candidates) = max_candidates else {
+        return proposals;
+    };
+    if proposals.len() <= max_candidates {
+        return proposals;
+    }
+
+    proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+    proposals.truncate(max_candidates);
+    proposals
 }
 
 fn process_candidate(
-    cand_idx: usize,
     proposal: Proposal,
     ctx: &CandidateProcessContext<'_>,
-    record_debug: bool,
-) -> CandidateProcessOutput {
-    let center_prior = match ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) {
-        Some(v) => v,
-        None => {
-            return CandidateProcessOutput {
-                marker: None,
-                marker_cand_idx: None,
-                debug_candidate: None,
-            };
-        }
+) -> Result<DetectedMarker, String> {
+    let Some(center_prior) = ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) else {
+        return Err("proposal_unmappable".to_string());
     };
 
-    let mut cand_debug = record_debug.then(|| stage1_candidate_stub(cand_idx, proposal));
-
-    let fit = match fit_outer_ellipse_robust_with_reason(
+    let fit = match fit_outer_candidate_from_prior(
         ctx.gray,
         center_prior,
-        marker_outer_radius_expected_px(ctx.config),
+        ctx.config.marker_scale.nominal_outer_radius_px(),
         ctx.config,
         ctx.mapper,
-        &ctx.config.edge_sample,
-        ctx.store_points,
     ) {
         Ok(v) => v,
-        Err(reason) => {
-            if let Some(cd) = cand_debug.as_mut() {
-                cd.decision = dbg::DecisionDebug {
-                    status: dbg::DecisionStatus::Rejected,
-                    reason,
-                };
-            }
-            return CandidateProcessOutput {
-                marker: None,
-                marker_cand_idx: None,
-                debug_candidate: cand_debug,
-            };
-        }
+        Err(reason) => return Err(format!("outer_fit:{reason}")),
     };
 
     let OuterFitCandidate {
         edge,
         outer,
         outer_ransac,
-        outer_estimate,
-        chosen_hypothesis,
         decode_result,
-        decode_diag,
         ..
     } = fit;
 
-    let center = compute_center(&outer);
+    let center = outer.center();
     let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
         ctx.gray,
         &outer,
         &ctx.config.marker_spec,
         ctx.mapper,
-        ctx.inner_fit_cfg,
-        ctx.store_points,
+        &ctx.config.inner_fit,
+        false,
     );
     if inner_fit.status != inner_fit::InnerFitStatus::Ok {
         tracing::trace!(
-            "inner fit rejected/failed: status={:?}, reason={:?}",
+            "inner fit rejected/failed at proposal ({:.1},{:.1}): status={:?}, reason={:?}",
+            proposal.x,
+            proposal.y,
             inner_fit.status,
             inner_fit.reason
         );
     }
-    let inner_params = inner_ellipse_params(&inner_fit);
-
     let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
-
-    let confidence = decode_result.as_ref().map(|d| d.confidence).unwrap_or(0.0);
+    let confidence = decode_result
+        .as_ref()
+        .map(|d| d.confidence)
+        .unwrap_or_else(|| fallback_fit_confidence(&edge, outer_ransac.as_ref()));
     let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
-    let marker = marker_with_defaults(
-        decode_result.as_ref().map(|d| d.id),
+    let marker_id = decode_result.as_ref().map(|d| d.id);
+    let outer_points = edge.outer_points;
+    let inner_points = inner_fit.points_inner;
+
+    Ok(DetectedMarker {
+        id: marker_id,
         confidence,
         center,
-        Some(outer),
-        inner_params,
-        Some(edge.outer_points.clone()),
-        Some(inner_fit.points_inner.clone()),
-        fit_metrics.clone(),
-        decode_metrics.clone(),
-    );
-
-    if let Some(cd) = cand_debug.as_mut() {
-        cd.ring_fit = Some(dbg::RingFitDebug {
-            center_xy_fit: center,
-            edge: edge_for_debug(&edge, ctx.store_points),
-            outer_estimation: Some(outer_estimate),
-            chosen_outer_hypothesis: Some(chosen_hypothesis),
-            ellipse_outer: Some(outer),
-            ellipse_inner: inner_params,
-            inner_estimation: Some(inner_fit.estimate.clone()),
-            fit: fit_metrics,
-            inner_points_fit: if ctx.store_points {
-                Some(inner_fit.points_inner)
-            } else {
-                None
-            },
-        });
-
-        cd.decode = Some(dbg::DecodeDebug {
-            diagnostics: decode_diag.clone(),
-            result: decode_result.clone(),
-            decode_metrics,
-        });
-
-        cd.decision = dbg::DecisionDebug {
-            status: dbg::DecisionStatus::Accepted,
-            reason: if let Some(r) = decode_diag.reject_reason.as_ref() {
-                format!("ok_with_decode_reject:{}", r)
-            } else {
-                "ok".to_string()
-            },
-        };
-        cd.derived = dbg::DerivedDebug {
-            id: decode_result.as_ref().map(|d| d.id),
-            confidence: Some(confidence),
-            center_xy: Some(center),
-        };
-    }
-
-    CandidateProcessOutput {
-        marker: Some(marker),
-        marker_cand_idx: Some(cand_idx),
-        debug_candidate: cand_debug,
-    }
-}
-
-fn run_dedup_phase(
-    markers: Vec<DetectedMarker>,
-    marker_cand_idx: Vec<usize>,
-    dedup_radius: f64,
-    collect_debug: bool,
-) -> (Vec<DetectedMarker>, Vec<usize>, Option<dbg::DedupDebug>) {
-    if collect_debug {
-        let (m, idx, d) = dedup_with_debug(markers, marker_cand_idx, dedup_radius);
-        (m, idx, Some(d))
-    } else {
-        let mut m = dedup_markers(markers, dedup_radius);
-        dedup_by_id(&mut m);
-        (m, Vec::new(), None)
-    }
+        ellipse_outer: Some(outer),
+        ellipse_inner: inner_fit.ellipse_inner,
+        edge_points_outer: Some(outer_points),
+        edge_points_inner: Some(inner_points),
+        fit: fit_metrics,
+        decode: decode_metrics,
+        ..DetectedMarker::default()
+    })
 }
 
 pub(super) fn run(
@@ -326,54 +119,179 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
-    debug_cfg: Option<&DebugCollectConfig>,
-) -> FitDecodeCoreOutput {
-    tracing::info!("{} proposals found", proposals.len());
+) -> Vec<DetectedMarker> {
+    let input_count = proposals.len();
+    tracing::info!("{} proposals found", input_count);
+    let proposals = select_proposals_for_fit(proposals, config.proposal.max_candidates);
+    if proposals.len() != input_count {
+        tracing::info!(
+            "proposal cap active: evaluating {} / {} proposals",
+            proposals.len(),
+            input_count
+        );
+    }
 
-    let inner_fit_cfg = inner_fit::InnerFitConfig::default();
     let sampler = DistortionAwareSampler::new(gray, mapper);
-
-    let mut debug_state = DebugState::new(&proposals, debug_cfg);
 
     let ctx = CandidateProcessContext {
         gray,
         config,
         mapper,
         sampler,
-        inner_fit_cfg: &inner_fit_cfg,
-        store_points: debug_state.store_points,
     };
 
     let mut markers: Vec<DetectedMarker> = Vec::new();
-    let mut marker_cand_idx: Vec<usize> = Vec::new();
-
-    for (i, proposal) in proposals.iter().copied().enumerate() {
-        let out = process_candidate(i, proposal, &ctx, debug_state.should_record_candidate(i));
-
-        if let Some(marker) = out.marker {
-            markers.push(marker);
+    let mut reject_reasons: HashMap<String, usize> = HashMap::new();
+    for proposal in proposals {
+        match process_candidate(proposal, &ctx) {
+            Ok(marker) => markers.push(marker),
+            Err(reason) => *reject_reasons.entry(reason).or_insert(0) += 1,
         }
-        if let Some(ci) = out.marker_cand_idx {
-            marker_cand_idx.push(ci);
-        }
-        debug_state.record_stage1_candidate(out.debug_candidate);
+    }
+    if !reject_reasons.is_empty() {
+        let mut summary: Vec<(String, usize)> = reject_reasons.into_iter().collect();
+        summary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let rejected_total: usize = summary.iter().map(|(_, n)| *n).sum();
+        let top = summary
+            .iter()
+            .take(4)
+            .map(|(reason, n)| format!("{reason}={n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        tracing::debug!(
+            "fit/decode rejected {} proposals (top reasons: {})",
+            rejected_total,
+            top
+        );
     }
 
-    let (markers, marker_cand_idx, stage2) = run_dedup_phase(
-        markers,
-        marker_cand_idx,
-        config.dedup_radius,
-        debug_state.collect_debug,
-    );
+    markers = dedup_markers(markers, config.dedup_radius);
+    dedup_by_id(&mut markers);
 
     tracing::info!("{} markers detected after dedup", markers.len());
 
-    let (stage0, stage1) = debug_state.into_stages();
-    FitDecodeCoreOutput {
-        markers,
-        marker_cand_idx,
-        stage0,
-        stage1,
-        stage2,
+    markers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Luma;
+
+    fn draw_ring_image(
+        w: u32,
+        h: u32,
+        center: [f32; 2],
+        outer_radius: f32,
+        inner_radius: f32,
+    ) -> GrayImage {
+        let mut img = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - center[0];
+                let dy = y as f32 - center[1];
+                let d = (dx * dx + dy * dy).sqrt();
+                let pix = if d >= inner_radius && d <= outer_radius {
+                    24u8
+                } else {
+                    230u8
+                };
+                img.put_pixel(x, y, Luma([pix]));
+            }
+        }
+        img
+    }
+
+    fn nearest_marker(markers: &[DetectedMarker], center: [f64; 2]) -> Option<&DetectedMarker> {
+        markers.iter().min_by(|a, b| {
+            let da = (a.center[0] - center[0]) * (a.center[0] - center[0])
+                + (a.center[1] - center[1]) * (a.center[1] - center[1]);
+            let db = (b.center[0] - center[0]) * (b.center[0] - center[0])
+                + (b.center[1] - center[1]) * (b.center[1] - center[1]);
+            da.partial_cmp(&db).unwrap_or(Ordering::Equal)
+        })
+    }
+
+    #[test]
+    fn fit_decode_honors_inner_fit_config() {
+        let center = [64.0f32, 64.0f32];
+        let outer_radius = 24.0f32;
+        let inner_radius = 11.75f32; // ratio ≈ 0.49, aligned with default target geometry prior
+        let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
+        let proposals = vec![
+            Proposal {
+                x: center[0],
+                y: center[1],
+                score: 10.0,
+            },
+            Proposal {
+                x: center[0] + 1.0,
+                y: center[1],
+                score: 9.0,
+            },
+            Proposal {
+                x: center[0],
+                y: center[1] + 1.0,
+                score: 8.0,
+            },
+        ];
+
+        let mut relaxed = DetectConfig::default();
+        relaxed.set_marker_diameter_hint_px(outer_radius * 2.0);
+        relaxed.inner_fit.min_points = 1;
+        relaxed.inner_fit.min_inlier_ratio = 0.0;
+        relaxed.inner_fit.max_rms_residual = f64::INFINITY;
+        relaxed.inner_fit.max_center_shift_px = f64::INFINITY;
+        relaxed.inner_fit.max_ratio_abs_error = f64::INFINITY;
+
+        let relaxed_out = run(&img, &relaxed, None, proposals.clone());
+        assert!(
+            !relaxed_out.is_empty(),
+            "expected at least one marker with relaxed inner-fit params"
+        );
+        let relaxed_marker = nearest_marker(&relaxed_out, [center[0] as f64, center[1] as f64])
+            .expect("nearest marker");
+        assert!(
+            relaxed_marker.ellipse_inner.is_some(),
+            "expected inner ellipse with relaxed inner-fit params"
+        );
+
+        let mut strict = relaxed.clone();
+        strict.inner_fit.min_points = usize::MAX;
+
+        let strict_out = run(&img, &strict, None, proposals);
+        assert!(
+            !strict_out.is_empty(),
+            "expected marker to remain present when inner-fit is disabled by strict gate"
+        );
+        let strict_marker = nearest_marker(&strict_out, [center[0] as f64, center[1] as f64])
+            .expect("nearest marker");
+        assert!(
+            strict_marker.ellipse_inner.is_none(),
+            "expected no inner ellipse when min_points gate is impossible"
+        );
+    }
+
+    #[test]
+    fn fit_decode_respects_proposal_cap() {
+        let center = [64.0f32, 64.0f32];
+        let outer_radius = 24.0f32;
+        let inner_radius = 11.75f32;
+        let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
+        let proposals = vec![Proposal {
+            x: center[0],
+            y: center[1],
+            score: 10.0,
+        }];
+
+        let mut cfg = DetectConfig::default();
+        cfg.set_marker_diameter_hint_px(outer_radius * 2.0);
+        cfg.proposal.max_candidates = Some(0);
+
+        let out = run(&img, &cfg, None, proposals);
+        assert!(
+            out.is_empty(),
+            "expected no markers when proposal cap is zero"
+        );
     }
 }

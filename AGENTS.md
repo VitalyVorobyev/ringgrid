@@ -82,14 +82,12 @@ Outputs in `tools/out/synth_001/`:
 cargo run -- detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json \
-  --debug-json tools/out/synth_001/debug_0000.json \
   --marker-diameter 32.0
 ```
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- Debug dump CLI flags (`--debug-json`, `--debug-store-points`) are always available (no feature flag needed).
-- NL refinement (board-plane circle fit) runs when a homography is available; disable with `--no-nl-refine`.
+- Refinement runs when a homography is available; disable with `--no-refine`.
 
 ### 4) Score detections
 
@@ -121,7 +119,6 @@ let detector = Detector::with_config(config);       // full control
 
 let result = detector.detect(&image);
 let result = detector.detect_with_mapper(&image, &mapper);
-let (result, debug) = detector.detect_with_debug(&image, &debug_cfg);
 
 detector.config_mut().completion.enable = false;   // post-construction tuning
 detector.config_mut().self_undistort.enable = true; // makes detect() run self-undistort flow
@@ -130,7 +127,6 @@ detector.config_mut().self_undistort.enable = true; // makes detect() run self-u
 Notes:
 - `detect()` is config-driven: self-undistort runs only when `config.self_undistort.enable=true`.
 - `detect_with_mapper()` ignores `config.self_undistort` and always uses the provided mapper.
-- `detect_with_debug()` is single-pass only and skips self-undistort/two-pass orchestration.
 
 ## Debugging workflow
 
@@ -139,7 +135,7 @@ Notes:
   - Or run `ringgrid detect` directly on `img_XXXX.png` while tweaking `--marker-diameter`, `--ransac-thresh-px`, `--no-global-filter`, `--no-refine`.
 - Inspect artifacts:
   - Ground truth: `tools/out/<run>/synth/gt_XXXX.json`
-  - Predictions: `tools/out/<run>/det/det_XXXX.json` (and `debug_XXXX.json`)
+  - Predictions: `tools/out/<run>/det/det_XXXX.json`
   - Scores: `tools/out/<run>/det/score_XXXX.json` and `aggregate.json`
 - Visual sanity check (GT overlay):
   ```bash
@@ -149,11 +145,11 @@ Notes:
     --out tools/out/synth_001/viz_0000.png
   ```
 
-- Visual sanity check (detection debug overlay):
+- Visual sanity check (detection overlay):
   ```bash
-  python3 tools/viz_detect_debug.py \
+  python3 tools/viz_detect.py \
     --image tools/out/synth_001/img_0000.png \
-    --debug_json tools/out/synth_001/debug_0000.json \
+    --det_json tools/out/synth_001/det_0000.json \
     --out tools/out/synth_001/det_overlay_0000.png
   ```
 
@@ -177,12 +173,15 @@ cargo test
 
 - Do regenerate generated assets via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust codebook).
 - Do keep generator(s) + runtime target JSON schema + decoder/scorer consistent if formats change.
-- Do keep debug schema evolution versioned (`ringgrid.debug.v1`, `v2`, ...).
+- Do keep configuration structs and default values as a single source of truth. If multiple stages use the same knobs, use one shared type instead of `*Params` + `*Config` mirrors.
+- Do remove old structs/conversions immediately when consolidating APIs, and update all call sites to the shared type.
 - Don’t change the codebook/board ID conventions without updating:
   - generator scripts
   - embedded Rust modules
   - decoding + global filter logic
   - tests and scoring scripts
+- Don’t introduce logic duplication (especially thresholds/gates/defaults) across modules without a documented necessity.
+- Don’t add adapter/conversion layers between near-identical structs unless they represent different semantic domains.
 
 ## Open decisions for maintainers
 

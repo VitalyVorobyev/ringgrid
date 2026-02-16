@@ -62,6 +62,44 @@ jobs:
       - name: Run end-to-end synthetic smoke eval
         run: python tools/run_synth_eval.py --n 1 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/ci_smoke
 
+  check-docs:
+    name: Documentation (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install mdbook
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cargo/bin"
+          tag="$(curl -fsSL https://api.github.com/repos/rust-lang/mdBook/releases/latest \
+            | sed -nE 's/^[[:space:]]*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' \
+            | head -n1)"
+          if [ -z "$tag" ]; then
+            echo "failed to resolve mdBook release tag" >&2
+            exit 1
+          fi
+          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C "$HOME/.cargo/bin"
+
+      - name: Build book
+        run: mdbook build book
+
+      - name: Build rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --all-features --no-deps
+
+      - name: Test doctests
+        run: cargo test --doc --workspace
+
   cross-build:
     name: Cross-platform Build/Test
     strategy:

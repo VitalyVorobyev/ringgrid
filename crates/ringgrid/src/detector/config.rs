@@ -6,19 +6,6 @@ use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 use super::proposal::ProposalConfig;
 
-/// Debug collection options for `detect_rings_with_debug`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DebugCollectConfig {
-    /// Optional source image path copied into debug dump metadata.
-    pub image_path: Option<String>,
-    /// Marker diameter used for this run (debug metadata only).
-    pub marker_diameter_px: f64,
-    /// Maximum number of per-candidate records stored in stage dumps.
-    pub max_candidates: usize,
-    /// Whether to include sampled edge points in debug output.
-    pub store_points: bool,
-}
-
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeedProposalParams {
@@ -111,6 +98,44 @@ impl Default for ProjectiveCenterParams {
     }
 }
 
+/// Configuration for robust inner ellipse fitting from outer-fit hints.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InnerFitConfig {
+    /// Minimum number of sampled points required to attempt a fit.
+    pub min_points: usize,
+    /// Minimum accepted inlier ratio when RANSAC is used.
+    pub min_inlier_ratio: f32,
+    /// Maximum accepted RMS Sampson residual (px) of the fitted inner ellipse.
+    pub max_rms_residual: f64,
+    /// Maximum allowed center shift from outer to inner fit center (px).
+    pub max_center_shift_px: f64,
+    /// Maximum allowed absolute error in recovered scale ratio vs radial hint.
+    pub max_ratio_abs_error: f64,
+    /// Local half-width (in radius-sample indices) around the radial hint.
+    pub local_peak_halfwidth_idx: usize,
+    /// RANSAC configuration for robust inner ellipse fitting.
+    pub ransac: crate::conic::RansacConfig,
+}
+
+impl Default for InnerFitConfig {
+    fn default() -> Self {
+        Self {
+            min_points: 20,
+            min_inlier_ratio: 0.5,
+            max_rms_residual: 1.0,
+            max_center_shift_px: 12.0,
+            max_ratio_abs_error: 0.15,
+            local_peak_halfwidth_idx: 3,
+            ransac: crate::conic::RansacConfig {
+                max_iters: 200,
+                inlier_threshold: 1.5,
+                min_inliers: 8,
+                seed: 43,
+            },
+        }
+    }
+}
+
 /// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CircleRefinementMethod {
@@ -130,9 +155,14 @@ impl CircleRefinementMethod {
 
 /// Scale prior for marker diameter in detector working pixels.
 ///
-/// The detector uses this range to derive proposal radii, outer-edge search,
-/// and validation gates. A single known size can be expressed by setting
-/// `diameter_min_px == diameter_max_px`.
+/// The detector uses this range to derive proposal radii, outer-edge search
+/// windows, ellipse validation bounds, and completion ROI. When the marker
+/// scale prior is set via [`DetectConfig::set_marker_scale_prior`] or a
+/// constructor, all scale-dependent parameters are auto-derived.
+///
+/// A single known size can be expressed with
+/// [`MarkerScalePrior::from_nominal_diameter_px`]. For scenes where markers
+/// vary in apparent size, use [`MarkerScalePrior::new`] with a range.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct MarkerScalePrior {
     /// Minimum expected marker outer diameter in pixels.
@@ -215,6 +245,17 @@ impl Default for MarkerScalePrior {
 }
 
 /// Top-level detection configuration.
+///
+/// Contains all parameters that control the detection pipeline. Use one of the
+/// recommended constructors rather than constructing directly:
+///
+/// - [`DetectConfig::from_target`] — default scale prior
+/// - [`DetectConfig::from_target_and_scale_prior`] — explicit scale range
+/// - [`DetectConfig::from_target_and_marker_diameter`] — fixed diameter hint
+///
+/// These constructors auto-derive scale-dependent parameters (proposal radii,
+/// edge search windows, validation bounds) from the board geometry and marker
+/// scale prior. Individual fields can be tuned after construction.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
     /// Marker diameter prior (range) in working-frame pixels.
@@ -231,6 +272,8 @@ pub struct DetectConfig {
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
     pub marker_spec: MarkerSpec,
+    /// Robust inner ellipse fitting controls shared across pipeline stages.
+    pub inner_fit: InnerFitConfig,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -249,8 +292,6 @@ pub struct DetectConfig {
     pub use_global_filter: bool,
     /// RANSAC homography configuration.
     pub ransac_homography: RansacHomographyConfig,
-    /// Enable one-iteration refinement using H.
-    pub refine_with_h: bool,
     /// Board layout: marker positions and geometry.
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
@@ -311,6 +352,7 @@ impl Default for DetectConfig {
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
+            inner_fit: InnerFitConfig::default(),
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -320,26 +362,12 @@ impl Default for DetectConfig {
             dedup_radius: 6.0,
             use_global_filter: true,
             ransac_homography: RansacHomographyConfig::default(),
-            refine_with_h: true,
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
         cfg
-    }
-}
-
-impl DetectConfig {
-    /// Build config from marker diameter using the built-in default board layout.
-    ///
-    /// Intended for internal CLI compatibility paths.
-    #[cfg(feature = "cli-internal")]
-    pub fn from_marker_diameter_px(diameter_px: f32) -> Self {
-        Self::from_target_and_scale_prior(
-            BoardLayout::default(),
-            MarkerScalePrior::from_nominal_diameter_px(diameter_px),
-        )
     }
 }
 
@@ -389,5 +417,32 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
         let r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
         config.marker_spec.r_inner_expected = r_inner_expected;
         config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inner_fit_config_defaults_are_stable() {
+        let core = InnerFitConfig::default();
+        assert_eq!(core.min_points, 20);
+        assert!((core.min_inlier_ratio - 0.5).abs() < 1e-6);
+        assert!((core.max_rms_residual - 1.0).abs() < 1e-9);
+        assert!((core.max_center_shift_px - 12.0).abs() < 1e-9);
+        assert!((core.max_ratio_abs_error - 0.15).abs() < 1e-9);
+        assert_eq!(core.local_peak_halfwidth_idx, 3);
+        assert_eq!(core.ransac.max_iters, 200);
+        assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
+        assert_eq!(core.ransac.min_inliers, 8);
+        assert_eq!(core.ransac.seed, 43);
+    }
+
+    #[test]
+    fn detect_config_includes_inner_fit_config() {
+        let cfg = DetectConfig::default();
+        assert_eq!(cfg.inner_fit.min_points, 20);
+        assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
     }
 }

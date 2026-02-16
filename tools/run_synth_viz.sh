@@ -3,19 +3,17 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Run ringgrid detection + debug overlay on a synthetic dataset sample.
+Run ringgrid detection + overlay on a synthetic dataset sample.
 
 Usage:
-  tools/run_synth_viz.sh <synth_dir> <index> [-- <extra viz_detect_debug.py args...>]
+  tools/run_synth_viz.sh <synth_dir> <index> [-- <extra viz_detect.py args...>]
 
 Examples:
   tools/run_synth_viz.sh tools/out/synth_001 0
-  tools/run_synth_viz.sh tools/out/eval_run/synth 0 -- --id 42 --zoom 6 --show-edge-points
-  tools/run_synth_viz.sh tools/out/synth_001 12 -- --stage stage1_fit_decode
+  tools/run_synth_viz.sh tools/out/eval_run/synth 0 -- --id 42 --zoom 6
 
 Outputs (written next to the input image):
   det_XXXX.json          (normal DetectionResult)
-  debug_XXXX.json        (ringgrid.debug.v7)
   det_overlay_XXXX.png   (overlay render)
 
 Environment variables:
@@ -38,7 +36,7 @@ synth_dir="$1"
 idx="$2"
 shift 2
 
-# Optional: pass through extra args to tools/viz_detect_debug.py (recommended with a `--` separator).
+# Optional: pass through extra args to tools/viz_detect.py (recommended with a `--` separator).
 if [[ $# -gt 0 && "${1:-}" == "--" ]]; then
   shift
 fi
@@ -47,7 +45,6 @@ printf -v idx4 "%04d" "$idx"
 
 img="${synth_dir}/img_${idx4}.png"
 det="${synth_dir}/det_${idx4}.json"
-dbg="${synth_dir}/debug_${idx4}.json"
 overlay="${synth_dir}/det_overlay_${idx4}.png"
 
 if [[ ! -f "$img" ]]; then
@@ -78,8 +75,7 @@ fi
 echo "[1/2] Detect: $img"
 "${ringgrid_cmd[@]}" detect \
   --image "$img" \
-  --out "$det" \
-  --debug-json "$dbg"
+  --out "$det"
 
 echo "[2/2] Overlay: $overlay"
 # Preflight: ensure matplotlib is available before we run the visualizer.
@@ -92,21 +88,20 @@ fi
 
 if [[ -n "${SHOW:-}" ]]; then
   echo "SHOW=1 set; opening interactive window (no output file)."
-  "${py[@]}" tools/viz_detect_debug.py \
+  "${py[@]}" tools/viz_detect.py \
     --image "$img" \
-    --debug_json "$dbg" \
+    --det_json "$det" \
     "$@"
 else
-  "${py[@]}" tools/viz_detect_debug.py \
+  "${py[@]}" tools/viz_detect.py \
     --image "$img" \
-    --debug_json "$dbg" \
+    --det_json "$det" \
     --out "$overlay" \
     "$@"
 fi
 
 echo "Wrote:"
 echo "  $det"
-echo "  $dbg"
 if [[ -z "${SHOW:-}" ]]; then
   echo "  $overlay"
 fi

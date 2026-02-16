@@ -1,172 +1,38 @@
 use image::GrayImage;
 
 use super::{
-    apply_projective_centers, complete_with_h, compute_h_stats, global_filter,
-    global_filter_with_debug, matrix3_to_array, mean_reproj_error_px, reapply_projective_centers,
-    refine_with_homography, refine_with_homography_with_debug, refit_homography_matrix,
-    warn_center_correction_without_intrinsics, CompletionAttemptRecord, CompletionDebugOptions,
-    CompletionStats, DebugCollectConfig, DetectConfig,
+    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
+    mean_reproj_error_px, refit_homography_matrix, warn_center_correction_without_intrinsics,
+    CompletionStats, DetectConfig,
 };
-use crate::debug_dump as dbg;
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
-use crate::pipeline::DetectionResult;
+use crate::pipeline::{DetectionFrame, DetectionResult};
 use crate::pixelmap::PixelMapper;
-
-#[derive(Clone, Copy)]
-struct FinalizeFlags {
-    use_projective_center: bool,
-    collect_debug: bool,
-    store_points: bool,
-}
 
 struct FilterPhaseOutput {
     markers: Vec<DetectedMarker>,
     h_current: Option<nalgebra::Matrix3<f64>>,
     ransac_stats: Option<RansacStats>,
-    ransac_debug: Option<dbg::RansacDebug>,
-    refine_debug: Option<dbg::RefineDebug>,
-    short_circuit_no_h_no_debug: bool,
 }
 
-struct CompletionPhaseOutput {
-    stats: CompletionStats,
-    attempts: Option<Vec<CompletionAttemptRecord>>,
-    h_available: bool,
-}
-
-fn finalize_flags(config: &DetectConfig, debug_cfg: Option<&DebugCollectConfig>) -> FinalizeFlags {
-    FinalizeFlags {
-        use_projective_center: config.circle_refinement.uses_projective_center()
-            && config.projective_center.enable,
-        collect_debug: debug_cfg.is_some(),
-        store_points: debug_cfg.map(|cfg| cfg.store_points).unwrap_or(false),
-    }
-}
-
-fn phase_filter_and_refine_h(
-    gray: &GrayImage,
-    mut fit_markers: Vec<DetectedMarker>,
-    marker_cand_idx: &[usize],
-    config: &DetectConfig,
-    mapper: Option<&dyn PixelMapper>,
-    flags: FinalizeFlags,
-) -> FilterPhaseOutput {
-    // 1st PC pass: correct fit-decode markers before global filter
-    if flags.use_projective_center {
-        apply_projective_centers(&mut fit_markers, config);
-    }
-
+fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> FilterPhaseOutput {
     if !config.use_global_filter {
-        let ransac_debug = if flags.collect_debug {
-            Some(dbg::RansacDebug {
-                enabled: false,
-                result: None,
-                stats: None,
-                correspondences_used: 0,
-                inlier_ids: Vec::new(),
-                outlier_ids: Vec::new(),
-                per_id_error_px: Vec::new(),
-                notes: vec!["global_filter_disabled".to_string()],
-            })
-        } else {
-            None
-        };
-
         return FilterPhaseOutput {
             markers: fit_markers,
             h_current: None,
             ransac_stats: None,
-            ransac_debug,
-            refine_debug: None,
-            short_circuit_no_h_no_debug: !flags.collect_debug,
-        };
-    }
-
-    if flags.collect_debug {
-        let (filtered, h_result, stats, rdbg) = global_filter_with_debug(
-            &fit_markers,
-            marker_cand_idx,
-            &config.ransac_homography,
-            &config.board,
-        );
-        let mut h_current = h_result.as_ref().map(|r| r.h);
-        let h_matrix = h_result.as_ref().map(|r| &r.h);
-
-        let (mut markers, refine_debug) = if config.refine_with_h {
-            if let Some(h) = h_matrix {
-                if filtered.len() >= 10 {
-                    let (refined, refine_dbg) = refine_with_homography_with_debug(
-                        gray,
-                        &filtered,
-                        h,
-                        config,
-                        &config.board,
-                        mapper,
-                    );
-                    (refined, Some(refine_dbg))
-                } else {
-                    (filtered, None)
-                }
-            } else {
-                (filtered, None)
-            }
-        } else {
-            (filtered, None)
-        };
-
-        // 2nd PC pass: reapply after refine-H (new ellipses)
-        if flags.use_projective_center && refine_debug.is_some() {
-            reapply_projective_centers(&mut markers, config);
-        }
-
-        if h_current.is_none() {
-            h_current = h_result.map(|r| r.h);
-        }
-
-        return FilterPhaseOutput {
-            markers,
-            h_current,
-            ransac_stats: stats,
-            ransac_debug: Some(rdbg),
-            refine_debug,
-            short_circuit_no_h_no_debug: false,
         };
     }
 
     let (filtered, h_result, stats) =
         global_filter(&fit_markers, &config.ransac_homography, &config.board);
     let h_current = h_result.as_ref().map(|r| r.h);
-    let h_matrix = h_result.as_ref().map(|r| &r.h);
-
-    let (mut markers, did_refine) = if config.refine_with_h {
-        if let Some(h) = h_matrix {
-            if filtered.len() >= 10 {
-                let refined =
-                    refine_with_homography(gray, &filtered, h, config, &config.board, mapper);
-                (refined, true)
-            } else {
-                (filtered, false)
-            }
-        } else {
-            (filtered, false)
-        }
-    } else {
-        (filtered, false)
-    };
-
-    // 2nd PC pass: reapply after refine-H (new ellipses)
-    if flags.use_projective_center && did_refine {
-        reapply_projective_centers(&mut markers, config);
-    }
 
     FilterPhaseOutput {
-        markers,
+        markers: filtered,
         h_current,
         ransac_stats: stats,
-        ransac_debug: None,
-        refine_debug: None,
-        short_circuit_no_h_no_debug: false,
     }
 }
 
@@ -176,50 +42,16 @@ fn phase_completion(
     h_current: Option<&nalgebra::Matrix3<f64>>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    flags: FinalizeFlags,
-) -> CompletionPhaseOutput {
+) -> CompletionStats {
     if !config.completion.enable {
-        return CompletionPhaseOutput {
-            stats: CompletionStats::default(),
-            attempts: if flags.collect_debug {
-                Some(Vec::new())
-            } else {
-                None
-            },
-            h_available: h_current.is_some(),
-        };
+        return CompletionStats::default();
     }
 
     let Some(h) = h_current else {
-        return CompletionPhaseOutput {
-            stats: CompletionStats::default(),
-            attempts: if flags.collect_debug {
-                Some(Vec::new())
-            } else {
-                None
-            },
-            h_available: false,
-        };
+        return CompletionStats::default();
     };
 
-    let (stats, attempts) = complete_with_h(
-        gray,
-        h,
-        final_markers,
-        config,
-        &config.board,
-        mapper,
-        CompletionDebugOptions {
-            store_points: flags.store_points,
-            record: flags.collect_debug,
-        },
-    );
-
-    CompletionPhaseOutput {
-        stats,
-        attempts,
-        h_available: true,
-    }
+    complete_with_h(gray, h, final_markers, config, &config.board, mapper)
 }
 
 fn phase_final_h(
@@ -227,10 +59,8 @@ fn phase_final_h(
     h_current: Option<nalgebra::Matrix3<f64>>,
     mut ransac_stats: Option<RansacStats>,
     config: &DetectConfig,
-    refine_debug: &mut Option<dbg::RefineDebug>,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
-    let did_refit = config.refine_with_h && final_markers.len() >= 10;
-    let final_h_matrix = if did_refit {
+    let final_h_matrix = if final_markers.len() >= 10 {
         let h_refit =
             refit_homography_matrix(final_markers, &config.ransac_homography, &config.board)
                 .map(|(h, _)| h);
@@ -265,137 +95,91 @@ fn phase_final_h(
         })
         .or_else(|| ransac_stats.take());
 
-    if did_refit {
-        if let Some(rd) = refine_debug.as_mut() {
-            rd.h_refit = final_h;
-        }
-    }
-
     (final_h, final_ransac)
 }
 
-fn build_result(
-    final_markers: Vec<DetectedMarker>,
-    image_size: [u32; 2],
-    final_h: Option<[[f64; 3]; 3]>,
-    final_ransac: Option<RansacStats>,
-) -> DetectionResult {
-    DetectionResult {
-        detected_markers: final_markers,
-        image_size,
-        homography: final_h,
-        ransac: final_ransac,
-        self_undistort: None,
-    }
+fn drop_unmappable_markers(markers: &mut Vec<DetectedMarker>, mapper: &dyn PixelMapper) -> usize {
+    let before = markers.len();
+    markers.retain(|m| {
+        mapper
+            .working_to_image_pixel(m.center)
+            .map(|p| p[0].is_finite() && p[1].is_finite())
+            .unwrap_or(false)
+    });
+    before.saturating_sub(markers.len())
 }
 
-struct DumpBuildInput<'a> {
-    debug_cfg: &'a DebugCollectConfig,
-    config: &'a DetectConfig,
-    image_size: [u32; 2],
-    stage0: Option<dbg::StageDebug>,
-    stage1: Option<dbg::StageDebug>,
-    stage2: Option<dbg::DedupDebug>,
-    ransac_debug: dbg::RansacDebug,
-    refine_debug: Option<dbg::RefineDebug>,
-    completion: CompletionPhaseOutput,
-    result: &'a DetectionResult,
-}
-
-fn build_debug_dump(input: DumpBuildInput<'_>) -> dbg::DebugDump {
-    let DumpBuildInput {
-        debug_cfg,
-        config,
-        image_size,
-        stage0,
-        stage1,
-        stage2,
-        ransac_debug,
-        refine_debug,
-        completion,
-        result,
-    } = input;
-    let completion_added = completion.stats.n_added;
-    let completion_debug = dbg::CompletionDebug {
-        enabled: config.completion.enable && completion.h_available,
-        params: config.completion.clone(),
-        attempted: completion.attempts.unwrap_or_default(),
-        stats: completion.stats,
-        notes: Vec::new(),
-    };
-
-    dbg::DebugDump {
-        schema_version: dbg::DEBUG_SCHEMA_V8.to_string(),
-        image: dbg::ImageDebug {
-            path: debug_cfg.image_path.clone(),
-            width: image_size[0],
-            height: image_size[1],
-        },
-        detect_config: dbg::DetectConfigSnapshot::from_config(config, debug_cfg),
-        stages: dbg::StagesDebug {
-            stage0_proposals: stage0.expect("stage0 debug should be present"),
-            stage1_fit_decode: stage1.expect("stage1 debug should be present"),
-            stage2_dedup: stage2.expect("stage2 debug should be present"),
-            stage3_ransac: ransac_debug,
-            stage4_refine: refine_debug,
-            stage5_completion: Some(completion_debug),
-            final_: dbg::FinalDebug {
-                h_final: result.homography,
-                detections: result.detected_markers.clone(),
-                notes: if completion_added > 0 {
-                    vec![format!("completion_added={}", completion_added)]
-                } else {
-                    Vec::new()
-                },
-            },
-        },
+fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper) {
+    for marker in markers.iter_mut() {
+        let center_mapped = marker.center;
+        marker.center_mapped = Some(center_mapped);
+        if let Some(center_image) = mapper.working_to_image_pixel(center_mapped) {
+            marker.center = center_image;
+        }
     }
 }
 
 pub(super) fn run(
     gray: &GrayImage,
-    fit_out: super::fit_decode::FitDecodeCoreOutput,
-    image_size: [u32; 2],
+    fit_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    debug_cfg: Option<&DebugCollectConfig>,
-) -> (DetectionResult, Option<dbg::DebugDump>) {
+) -> DetectionResult {
+    let (w, h) = gray.dimensions();
+    let image_size = [w, h];
+    let homography_frame = if mapper.is_some() {
+        DetectionFrame::Working
+    } else {
+        DetectionFrame::Image
+    };
+
     warn_center_correction_without_intrinsics(config, mapper.is_some());
-    let flags = finalize_flags(config, debug_cfg);
 
-    let super::fit_decode::FitDecodeCoreOutput {
-        markers: fit_markers,
-        marker_cand_idx,
-        stage0,
-        stage1,
-        stage2,
-    } = fit_out;
-
-    let mut filter_phase =
-        phase_filter_and_refine_h(gray, fit_markers, &marker_cand_idx, config, mapper, flags);
-
-    if filter_phase.short_circuit_no_h_no_debug {
-        // PC was already applied in phase_filter_and_refine_h (1st pass)
-        let result = build_result(filter_phase.markers, image_size, None, None);
-        return (result, None);
+    let mut corrected_markers = fit_markers;
+    if config.projective_center.enable {
+        apply_projective_centers(&mut corrected_markers, config);
     }
+
+    if !config.use_global_filter {
+        if let Some(mapper) = mapper {
+            let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
+            if dropped > 0 {
+                tracing::warn!(
+                    dropped,
+                    "dropping markers whose mapped centers cannot be converted to image frame"
+                );
+            }
+            map_centers_to_image(&mut corrected_markers, mapper);
+        }
+        return DetectionResult {
+            detected_markers: corrected_markers,
+            center_frame: DetectionFrame::Image,
+            homography_frame,
+            image_size,
+            ..DetectionResult::default()
+        };
+    }
+
+    let mut filter_phase = filter_with_h(corrected_markers, config);
 
     let mut final_markers = filter_phase.markers;
     let h_current = filter_phase.h_current;
-    let mut refine_debug = filter_phase.refine_debug;
+    let n_before_completion = final_markers.len();
+    let completion_stats =
+        phase_completion(gray, &mut final_markers, h_current.as_ref(), config, mapper);
 
-    let completion = phase_completion(
-        gray,
-        &mut final_markers,
-        h_current.as_ref(),
-        config,
-        mapper,
-        flags,
-    );
+    if config.projective_center.enable && final_markers.len() > n_before_completion {
+        apply_projective_centers(&mut final_markers[n_before_completion..], config);
+    }
 
-    // 3rd PC pass: correct completion-only markers (skips already-corrected ones)
-    if flags.use_projective_center {
-        apply_projective_centers(&mut final_markers, config);
+    if let Some(mapper) = mapper {
+        let dropped = drop_unmappable_markers(&mut final_markers, mapper);
+        if dropped > 0 {
+            tracing::warn!(
+                dropped,
+                "dropping markers whose mapped centers cannot be converted to image frame"
+            );
+        }
     }
 
     let (final_h, final_ransac) = phase_final_h(
@@ -403,39 +187,122 @@ pub(super) fn run(
         h_current,
         filter_phase.ransac_stats.take(),
         config,
-        &mut refine_debug,
     );
+
+    if let Some(mapper) = mapper {
+        map_centers_to_image(&mut final_markers, mapper);
+    }
 
     tracing::info!(
-        "{} markers after global filter{}",
+        "{} markers after global filter/completion",
         final_markers.len(),
-        if config.refine_with_h {
-            " + refinement"
-        } else {
-            ""
-        }
+    );
+    tracing::debug!(
+        "Completion summary: attempted={}, added={}, failed_fit={}, failed_gate={}",
+        completion_stats.n_attempted,
+        completion_stats.n_added,
+        completion_stats.n_failed_fit,
+        completion_stats.n_failed_gate
     );
 
-    let result = build_result(final_markers, image_size, final_h, final_ransac);
+    DetectionResult {
+        detected_markers: final_markers,
+        center_frame: DetectionFrame::Image,
+        homography_frame,
+        image_size,
+        homography: final_h,
+        ransac: final_ransac,
+        ..DetectionResult::default()
+    }
+}
 
-    let dump = if let Some(debug_cfg) = debug_cfg {
-        Some(build_debug_dump(DumpBuildInput {
-            debug_cfg,
-            config,
-            image_size,
-            stage0,
-            stage1,
-            stage2,
-            ransac_debug: filter_phase
-                .ransac_debug
-                .expect("ransac debug should be present when debug is enabled"),
-            refine_debug,
-            completion,
-            result: &result,
-        }))
-    } else {
-        None
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    (result, dump)
+    struct OffsetMapper;
+
+    impl PixelMapper for OffsetMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some([image_xy[0] + 5.0, image_xy[1] + 7.0])
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some([working_xy[0] - 5.0, working_xy[1] - 7.0])
+        }
+    }
+
+    struct RejectingMapper;
+
+    impl PixelMapper for RejectingMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some(image_xy)
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            if working_xy[0] > 50.0 {
+                None
+            } else {
+                Some([working_xy[0], working_xy[1]])
+            }
+        }
+    }
+
+    fn marker(center: [f64; 2]) -> DetectedMarker {
+        DetectedMarker {
+            confidence: 1.0,
+            center,
+            ..DetectedMarker::default()
+        }
+    }
+
+    fn no_global_filter_config() -> DetectConfig {
+        DetectConfig {
+            use_global_filter: false,
+            projective_center: crate::ProjectiveCenterParams {
+                enable: false,
+                ..crate::ProjectiveCenterParams::default()
+            },
+            ..DetectConfig::default()
+        }
+    }
+
+    #[test]
+    fn no_mapper_keeps_image_space_centers() {
+        let img = GrayImage::new(100, 80);
+        let markers = vec![marker([12.0, 22.0])];
+        let result = run(&img, markers, &no_global_filter_config(), None);
+
+        assert_eq!(result.center_frame, DetectionFrame::Image);
+        assert_eq!(result.homography_frame, DetectionFrame::Image);
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].center, [12.0, 22.0]);
+        assert!(result.detected_markers[0].center_mapped.is_none());
+    }
+
+    #[test]
+    fn mapper_outputs_image_center_and_preserves_mapped_center() {
+        let img = GrayImage::new(100, 80);
+        let markers = vec![marker([20.0, 30.0])];
+        let mapper = OffsetMapper;
+        let result = run(&img, markers, &no_global_filter_config(), Some(&mapper));
+
+        assert_eq!(result.center_frame, DetectionFrame::Image);
+        assert_eq!(result.homography_frame, DetectionFrame::Working);
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].center, [15.0, 23.0]);
+        assert_eq!(result.detected_markers[0].center_mapped, Some([20.0, 30.0]));
+    }
+
+    #[test]
+    fn mapper_drops_unmappable_centers() {
+        let img = GrayImage::new(100, 80);
+        let markers = vec![marker([10.0, 10.0]), marker([60.0, 10.0])];
+        let mapper = RejectingMapper;
+        let result = run(&img, markers, &no_global_filter_config(), Some(&mapper));
+
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].center, [10.0, 10.0]);
+        assert_eq!(result.detected_markers[0].center_mapped, Some([10.0, 10.0]));
+    }
 }

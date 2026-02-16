@@ -28,6 +28,7 @@ pub fn rotate_left_16(word: u16, k: u32) -> u16 {
 }
 
 /// Return the canonical form (minimum over all cyclic rotations).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn canonical_16(word: u16) -> u16 {
     (0..16).map(|k| rotate_left_16(word, k)).min().unwrap()
 }
@@ -64,21 +65,25 @@ pub struct Match {
 
 impl Codebook {
     /// Create a codebook from a static slice of codewords.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(words: &'static [u16]) -> Self {
         Self { words }
     }
 
     /// Number of codewords.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn len(&self) -> usize {
         self.words.len()
     }
 
     /// Whether the codebook is empty.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
     }
 
     /// Get the codeword for a given marker ID.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn word(&self, id: usize) -> Option<u16> {
         self.words.get(id).copied()
     }

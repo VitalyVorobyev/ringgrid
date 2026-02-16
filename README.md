@@ -9,9 +9,22 @@ Target print example:
 
 ![Ringgrid target print](docs/assets/target_print.png)
 
-Detection overlay example (`tools/out/synth_002/img_0002.png`):
+Detection overlay example:
 
 ![Detection overlay example](docs/assets/det_overlay_0002.png)
+
+## How It Works
+
+ringgrid uses dual concentric ring markers with a 16-sector binary code band between the inner and outer rings. Each marker encodes a unique ID from a 893-codeword codebook with minimum cyclic Hamming distance of 5.
+
+**Why rings?** Circles project to ellipses under perspective, and ellipse boundaries can be localized to subpixel precision via gradient-based edge sampling and direct algebraic fitting (Fitzgibbon's method). The dual-ring design enables projective center correction — recovering the true projected center from the inner/outer conic pencil, which corrects the systematic bias inherent in ellipse-fit centers. This yields significantly better accuracy than corner-based targets (checkerboards, ArUco) at oblique viewing angles.
+
+**Detection pipeline** (13 stages): Scharr gradient voting proposes candidate centers → radial profile estimates outer radius → RANSAC ellipse fit → 16-sector code decode → inner ellipse fit → deduplication → projective center correction → RANSAC homography filter → H-guided refinement → completion at missing IDs → final homography refit.
+
+## Documentation
+
+- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the 13-stage detection pipeline, mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
+- [API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) — rustdoc for all public types
 
 ## Quick Start
 
@@ -58,7 +71,7 @@ target/release/ringgrid detect \
   --out tools/out/synth_001/score_0000.json
 ```
 
-### 6. Render detection debug overlay
+### 6. Render detection overlay
 
 ```bash
 tools/run_synth_viz.sh tools/out/synth_001 0
@@ -85,10 +98,10 @@ Design constraints in v1:
   `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
 - `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
   `self_undistort` config.
-- `Detector::detect_with_debug(...)` is single-pass only; self-undistort/two-pass
-  orchestration is skipped in debug mode.
+- `DetectedMarker.center` is always image-space; mapper-frame center is optional in
+  `DetectedMarker.center_mapped`.
+- `DetectionResult` includes explicit `center_frame` / `homography_frame` metadata.
 - Low-level math/pipeline modules are internal.
-- Debug dump API is internal/CLI-only (`cli-internal` feature).
 - Example target JSON: `crates/ringgrid/examples/target.json`.
 
 Minimal usage:
@@ -112,20 +125,19 @@ crates/
       lib.rs       # re-exports only (public API surface)
       api.rs       # Detector facade
       pipeline/    # stage orchestration: single_pass, multi_pass, run, fit_decode, finalize
-      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, refine, completion
+      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, center correction, completion
       ring/        # ring-level sampling: edge, radius, projective center
       marker/      # codebook, decode, marker spec
       homography/  # DLT + RANSAC, refit utilities
       conic/       # ellipse types, fitting, RANSAC, eigenvalue solver
       pixelmap/    # camera models, PixelMapper trait, self-undistort
-      debug_dump.rs # debug JSON schema (feature-gated)
     examples/      # concise library usage examples
   ringgrid-cli/    # CLI binary: ringgrid
 tools/
   gen_synth.py         # synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
-  viz_detect_debug.py  # debug overlay rendering
+  viz_detect.py        # DetectionResult overlay rendering
 docs/
   assets/
   module_structure.md
@@ -146,27 +158,73 @@ cargo run -p ringgrid --example basic_detect -- \
 cargo run -p ringgrid --example detect_with_camera -- \
   crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 
-cargo run -p ringgrid --example detect_with_config -- \
+cargo run -p ringgrid --example detect_with_self_undistort -- \
   crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
 ```
 
 ## Detection Modes
 
-Core refinement selector:
+### Rust API
 
-- `--circle-refine-method none`
-- `--circle-refine-method projective-center` (default)
+**Simple detection** (no distortion correction):
 
-Other commonly used toggles:
+```rust,no_run
+use ringgrid::{BoardLayout, Detector};
+use std::path::Path;
 
-- `--no-global-filter`
-- `--no-refine`
-- `--no-complete`
-- `--marker-diameter-min <px>`
-- `--marker-diameter-max <px>`
-- `--self-undistort` (mutually exclusive with camera `--cam-*` flags)
-- `--debug-json <path>`
-- `--debug-store-points`
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::new(board);
+let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
+```
+
+**With camera model** (two-pass distortion-aware pipeline):
+
+```rust,no_run
+use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
+use std::path::Path;
+
+let camera = CameraModel {
+    intrinsics: CameraIntrinsics { fx: 900.0, fy: 900.0, cx: 640.0, cy: 480.0 },
+    distortion: RadialTangentialDistortion { k1: -0.15, k2: 0.05, p1: 0.0, p2: 0.0, k3: 0.0 },
+};
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::new(board);
+let result = detector.detect_with_mapper(&image::open("photo.png").unwrap().to_luma8(), &camera);
+```
+
+**Self-undistort** (estimates distortion from markers, no calibration needed):
+
+```rust,no_run
+use ringgrid::{BoardLayout, DetectConfig, Detector};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let mut cfg = DetectConfig::from_target(board);
+cfg.self_undistort.enable = true;
+let detector = Detector::with_config(cfg);
+let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
+```
+
+### CLI Flags
+
+- `--circle-refine-method none|projective-center` (default: projective-center)
+- `--no-global-filter` — disable global homography filtering
+- `--no-complete` — disable H-guided completion
+- `--marker-diameter-min <px>` / `--marker-diameter-max <px>` — scale search range
+- `--self-undistort` — enable self-undistort estimation (mutually exclusive with `--cam-*`)
+- `--cam-fx/fy/cx/cy` + `--cam-k1/k2/k3/p1/p2` — external camera model
+
+## Distortion Correction
+
+ringgrid supports three distortion correction modes:
+
+| Mode | Requires | Method |
+|---|---|---|
+| None | — | Single-pass in image coordinates |
+| External camera | Calibrated intrinsics + distortion | Two-pass with `CameraModel` implementing `PixelMapper` |
+| Self-undistort | Nothing | Estimates 1-parameter division model from detected markers |
+
+Camera model and self-undistort are mutually exclusive. See the [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for details.
 
 ## Metrics (Synthetic Scoring)
 
@@ -182,8 +240,7 @@ Interpretation:
 - `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
 - For cross-run comparisons, evaluate all metrics in distorted image space.
 - Use `--center-gt-key image --homography-gt-key image`.
-- Set predicted frame explicitly via `--pred-center-frame image|working` and `--pred-homography-frame image|working`.
-- Benchmark scripts in this repository set these frame flags explicitly (no `auto`), so reported numbers are frame-consistent and reproducible.
+- Prefer `--pred-center-frame auto --pred-homography-frame auto` so scorer uses detector-emitted `center_frame` / `homography_frame` metadata.
 
 Distortion-aware eval example:
 
@@ -310,19 +367,6 @@ Snapshot:
 | Avg center error (px) | 0.278 |
 | Avg H vs GT error (px) | 0.147 |
 | Avg H self error (px) | 0.235 |
-
-## CI Workflows
-
-Draft CI is configured under `.github/workflows/`:
-
-- `ci.yml`
-  - rust formatting/lint/tests on Ubuntu
-  - synthetic smoke eval (`tools/run_synth_eval.py --n 1`)
-  - cross-platform build/test on macOS + Windows
-- `audit.yml`
-  - weekly `cargo audit`
-- `publish-docs.yml`
-  - publish Rustdoc to GitHub Pages
 
 ## Regenerate Embedded Assets
 

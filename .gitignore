@@ -1,4 +1,5 @@
 /target
+book/book/
 .venv/
 tools/out/
 **/*.rs.bk

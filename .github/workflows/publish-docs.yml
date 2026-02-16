@@ -1,4 +1,4 @@
-name: Publish Rust Docs
+name: Publish Docs
 
 on:
   push:
@@ -32,23 +32,52 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install mdbook
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cargo/bin"
+          tag="$(curl -fsSL https://api.github.com/repos/rust-lang/mdBook/releases/latest \
+            | sed -nE 's/^[[:space:]]*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' \
+            | head -n1)"
+          if [ -z "$tag" ]; then
+            echo "failed to resolve mdBook release tag" >&2
+            exit 1
+          fi
+          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C "$HOME/.cargo/bin"
+
+      - name: Build mdbook
+        run: mdbook build book
+
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --all-features --no-deps
 
-      - name: Set rustdoc landing page
+      - name: Assemble site
         run: |
-          cat > target/doc/index.html <<'EOF'
+          mkdir -p target/site
+          cp -r target/doc/* target/site/
+          cp -r book/book target/site/book
+
+      - name: Set landing page
+        run: |
+          cat > target/site/index.html <<'EOF'
           <!doctype html>
           <html lang="en">
           <head>
             <meta charset="utf-8" />
-            <meta http-equiv="refresh" content="0; url=ringgrid_core/index.html" />
-            <title>ringgrid docs</title>
+            <title>ringgrid documentation</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; }
+              a { display: block; margin: 12px 0; font-size: 1.2em; }
+            </style>
           </head>
           <body>
-            <a href="ringgrid_core/index.html">Go to ringgrid_core docs</a>
+            <h1>ringgrid</h1>
+            <p>Pure-Rust detector for coded ring calibration targets.</p>
+            <a href="book/index.html">User Guide (mdbook)</a>
+            <a href="ringgrid/index.html">API Reference (rustdoc)</a>
           </body>
           </html>
           EOF
@@ -56,7 +85,7 @@ jobs:
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: target/doc
+          path: target/site
 
   deploy:
     environment:

@@ -52,22 +52,6 @@ struct CliDetectArgs {
     #[arg(long)]
     out: PathBuf,
 
-    /// DEPRECATED: use --debug-json. Writes a versioned debug dump (JSON).
-    #[arg(long)]
-    debug: Option<PathBuf>,
-
-    /// Path to write a comprehensive versioned debug dump (JSON).
-    #[arg(long)]
-    debug_json: Option<PathBuf>,
-
-    /// Include edge point arrays in debug dump (can get large).
-    #[arg(long)]
-    debug_store_points: bool,
-
-    /// Maximum number of candidates to record in the debug dump.
-    #[arg(long, default_value = "300")]
-    debug_max_candidates: usize,
-
     /// Fixed marker outer diameter in pixels (legacy compatibility path).
     ///
     /// When set, this overrides `--marker-diameter-min` / `--marker-diameter-max`
@@ -94,10 +78,6 @@ struct CliDetectArgs {
     /// Disable global homography filtering.
     #[arg(long)]
     no_global_filter: bool,
-
-    /// Disable refinement using fitted homography.
-    #[arg(long)]
-    no_refine: bool,
 
     /// Disable homography-guided completion (fitting missing IDs at H-projected locations).
     #[arg(long)]
@@ -247,7 +227,6 @@ struct DetectPreset {
 #[derive(Debug, Clone)]
 struct DetectOverrides {
     use_global_filter: bool,
-    refine_with_h: bool,
     ransac_thresh_px: f64,
     ransac_iters: usize,
     completion_enable: bool,
@@ -282,7 +261,6 @@ impl CliDetectArgs {
 
         Ok(DetectOverrides {
             use_global_filter: !self.no_global_filter,
-            refine_with_h: !self.no_refine,
             ransac_thresh_px: self.ransac_thresh_px,
             ransac_iters: self.ransac_iters,
             completion_enable: !self.no_complete,
@@ -312,9 +290,8 @@ fn build_detect_config(
     let mut config =
         ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
 
-    // Global filter and refinement options
+    // Global filter options
     config.use_global_filter = overrides.use_global_filter;
-    config.refine_with_h = overrides.refine_with_h;
     config.ransac_homography.inlier_threshold = overrides.ransac_thresh_px;
     config.ransac_homography.max_iters = overrides.ransac_iters;
 
@@ -342,13 +319,6 @@ fn build_detect_config(
     config
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DetectExecutionMode {
-    DebugSinglePass,
-    MapperTwoPass,
-    ConfigDrivenDetect,
-}
-
 fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
     if overrides.camera.is_some() && overrides.self_undistort_enable {
         return Err(
@@ -357,23 +327,6 @@ fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
         );
     }
     Ok(())
-}
-
-fn select_detect_mode(debug_requested: bool, has_camera: bool) -> DetectExecutionMode {
-    if debug_requested {
-        DetectExecutionMode::DebugSinglePass
-    } else if has_camera {
-        DetectExecutionMode::MapperTwoPass
-    } else {
-        DetectExecutionMode::ConfigDrivenDetect
-    }
-}
-
-fn should_warn_debug_skips_self_undistort(
-    debug_requested: bool,
-    self_undistort_enabled: bool,
-) -> bool {
-    debug_requested && self_undistort_enabled
 }
 
 #[derive(serde::Serialize)]
@@ -539,47 +492,10 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     let config = build_detect_config(board, preset, &overrides);
 
-    let deprecated_debug_path = args.debug.as_deref();
-    let debug_out_path = args.debug_json.as_deref().or(deprecated_debug_path);
-
-    if deprecated_debug_path.is_some() && args.debug_json.is_none() {
-        tracing::warn!("--debug is deprecated; use --debug-json instead");
-    }
-
-    if should_warn_debug_skips_self_undistort(
-        debug_out_path.is_some(),
-        config.self_undistort.enable,
-    ) {
-        tracing::warn!(
-            "debug mode is single-pass; self-undistort is skipped when --debug-json is set"
-        );
-    }
-
     let detector = ringgrid::Detector::with_config(config);
-    let camera_mapper: Option<&dyn ringgrid::PixelMapper> = overrides
-        .camera
-        .as_ref()
-        .map(|c| c as &dyn ringgrid::PixelMapper);
-    let mode = select_detect_mode(debug_out_path.is_some(), overrides.camera.is_some());
-    let (result, debug_dump) = match mode {
-        DetectExecutionMode::DebugSinglePass => {
-            let dbg_cfg = ringgrid::DebugCollectConfig {
-                image_path: Some(args.image.display().to_string()),
-                marker_diameter_px: preset.marker_scale.nominal_diameter_px() as f64,
-                max_candidates: args.debug_max_candidates,
-                store_points: args.debug_store_points,
-            };
-            let (r, d) = detector.detect_with_debug(&gray, &dbg_cfg, camera_mapper);
-            (r, Some(d))
-        }
-        DetectExecutionMode::MapperTwoPass => {
-            let camera = overrides
-                .camera
-                .as_ref()
-                .expect("camera is present for mapper mode");
-            (detector.detect_with_mapper(&gray, camera), None)
-        }
-        DetectExecutionMode::ConfigDrivenDetect => (detector.detect(&gray), None),
+    let result = match overrides.camera.as_ref() {
+        Some(camera) => detector.detect_with_mapper(&gray, camera),
+        None => detector.detect(&gray),
     };
 
     let n_with_id = result
@@ -619,14 +535,6 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     std::fs::write(&args.out, &json)?;
     tracing::info!("Results written to {}", args.out.display());
 
-    // Write debug dump (versioned schema)
-    if let Some(debug_path) = debug_out_path {
-        let dump = debug_dump.expect("debug dump present when debug_out_path is set");
-        let debug_json = serde_json::to_string_pretty(&dump)?;
-        std::fs::write(debug_path, &debug_json)?;
-        tracing::info!("Debug dump written to {}", debug_path.display());
-    }
-
     Ok(())
 }
 
@@ -637,7 +545,6 @@ mod tests {
     fn base_overrides() -> DetectOverrides {
         DetectOverrides {
             use_global_filter: true,
-            refine_with_h: true,
             ransac_thresh_px: 5.0,
             ransac_iters: 2000,
             completion_enable: true,
@@ -690,34 +597,6 @@ mod tests {
         let mut with_self_undistort = base_overrides();
         with_self_undistort.self_undistort_enable = true;
         assert!(validate_correction_compat(&with_self_undistort).is_ok());
-    }
-
-    #[test]
-    fn select_detect_mode_prioritizes_debug() {
-        assert_eq!(
-            select_detect_mode(true, false),
-            DetectExecutionMode::DebugSinglePass
-        );
-        assert_eq!(
-            select_detect_mode(true, true),
-            DetectExecutionMode::DebugSinglePass
-        );
-        assert_eq!(
-            select_detect_mode(false, true),
-            DetectExecutionMode::MapperTwoPass
-        );
-        assert_eq!(
-            select_detect_mode(false, false),
-            DetectExecutionMode::ConfigDrivenDetect
-        );
-    }
-
-    #[test]
-    fn debug_warning_gate_is_explicit() {
-        assert!(should_warn_debug_skips_self_undistort(true, true));
-        assert!(!should_warn_debug_skips_self_undistort(true, false));
-        assert!(!should_warn_debug_skips_self_undistort(false, true));
-        assert!(!should_warn_debug_skips_self_undistort(false, false));
     }
 
     #[test]

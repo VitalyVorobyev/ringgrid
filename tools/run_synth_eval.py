@@ -88,16 +88,6 @@ def binary_supports_self_undistort_cli(binary: str) -> bool:
     return "--self-undistort" in text
 
 
-def resolve_pred_frame(args: argparse.Namespace, det_data: dict) -> str:
-    if args.pass_camera_to_detector:
-        return "working"
-    if args.self_undistort:
-        su = det_data.get("self_undistort")
-        if isinstance(su, dict) and bool(su.get("applied", False)):
-            return "working"
-    return "image"
-
-
 def main():
     parser = argparse.ArgumentParser(description="Run synthetic eval pipeline")
     parser.add_argument("--n", type=int, default=3, help="Number of images")
@@ -301,10 +291,7 @@ def main():
         ]
         # All benchmark metrics are evaluated in distorted image pixel space.
         cmd.extend(["--center-gt-key", "image", "--homography-gt-key", "image"])
-        with open(det_path) as f:
-            det_data = json.load(f)
-        pred_frame = resolve_pred_frame(args, det_data)
-        cmd.extend(["--pred-center-frame", pred_frame, "--pred-homography-frame", pred_frame])
+        cmd.extend(["--pred-center-frame", "auto", "--pred-homography-frame", "auto"])
         result = subprocess.run(cmd, capture_output=True, text=True)
         print(result.stdout.strip())
 

@@ -1,77 +1,100 @@
 # Accuracy Report: [Task ID]
 
 - **Date:** YYYY-MM-DD
-- **Baseline commit:** [hash]
-- **Change commit:** [hash]
-- **Eval command:** `python3 tools/run_synth_eval.py [args]`
-- **Challenging eval command:** `python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 [args]`
-- **Reference benchmark command:** `bash tools/run_reference_benchmark.sh`
-- **Distortion benchmark command:** `bash tools/run_distortion_benchmark.sh`
+- **Workflow:** `.ai/workflows/performance-optimization.md` (Phase 3)
+- **Runbook:** `.ai/workflows/perf-validation-suite-runbook.md`
+- **Baseline label:** [example: perf004]
+- **After label:** [example: perf005]
+- **Baseline commit:** [hash or n/a]
+- **After commit:** [hash or n/a]
 
-## Summary
+## Commands
 
-[One-line: improved / regressed / neutral]
+| Gate | Baseline command | After command |
+|------|------------------|---------------|
+| Blur-3 synth eval (`n=10`) | `bash tools/run_blur3_benchmark.sh && rm -rf tools/out/eval_[baseline]_blur3 && cp -R tools/out/eval_blur3_post_pipeline tools/out/eval_[baseline]_blur3` | `bash tools/run_blur3_benchmark.sh && rm -rf tools/out/eval_[after]_blur3 && cp -R tools/out/eval_blur3_post_pipeline tools/out/eval_[after]_blur3` |
+| Reference benchmark | `bash tools/run_reference_benchmark.sh` | `bash tools/run_reference_benchmark.sh` |
+| Distortion benchmark | `bash tools/run_distortion_benchmark.sh` | `bash tools/run_distortion_benchmark.sh` |
 
-## Detection Metrics
+## Artifact Paths
 
-| Metric | Baseline | After Change | Delta |
-|--------|----------|-------------|-------|
-| Precision | | | |
-| Recall | | | |
-| F1 | | | |
-| Markers detected (mean) | | | |
+| Gate | Baseline artifact | After artifact |
+|------|-------------------|----------------|
+| Blur-3 synth eval | `tools/out/eval_[baseline]_blur3/det/aggregate.json` | `tools/out/eval_[after]_blur3/det/aggregate.json` |
+| Reference benchmark | `tools/out/reference_benchmark_post_pipeline_[baseline].summary.json` | `tools/out/reference_benchmark_post_pipeline_[after].summary.json` |
+| Distortion benchmark | `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline_[baseline].summary.json` | `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline_[after].summary.json` |
 
-## Center Error (px)
+## Gate A: Blur-3 Synth Eval Metrics
 
-| Statistic | Baseline | After Change | Delta |
-|-----------|----------|-------------|-------|
-| Mean | | | |
-| Median (p50) | | | |
-| p95 | | | |
-| Max | | | |
+| Metric | Baseline | After | Delta | Status |
+|--------|----------|-------|-------|--------|
+| Precision | | | | |
+| Recall | | | | |
+| F1 | | | | |
+| Decode success rate | | | | |
+| Center mean (px) | | | | |
+| Center p50 (px, avg per-image) | | | | |
+| Center p95 (px, avg per-image) | | | | |
+| Center max (px, worst image) | | | | |
+| Homography self mean (px) | | | | |
+| Homography self p95 (px, avg per-image) | | | | |
+| Homography vs-GT mean (px) | | | | |
+| Homography vs-GT p95 (px, avg per-image) | | | | |
 
-## Decode Metrics
+## Gate A: Frame Consistency Check
 
-| Metric | Baseline | After Change | Delta |
-|--------|----------|-------------|-------|
-| Decode success rate | | | |
-| Hamming distance (mean) | | | |
+| Field set | Baseline | After | Status |
+|-----------|----------|-------|--------|
+| `center_gt_frame / pred_center_frame / homography_self_error.eval_frame / homography_error_vs_gt.gt_frame / homography_error_vs_gt.pred_h_frame` | | | |
 
-## Homography
+## Gate B: Reference Benchmark Summary
 
-| Metric | Baseline | After Change | Delta |
-|--------|----------|-------------|-------|
-| Reprojection error (mean px) | | | |
-| Inlier ratio | | | |
+| Mode | Metric | Baseline | After | Delta | Status |
+|------|--------|----------|-------|-------|--------|
+| `none__none` | Precision | | | | |
+| `none__none` | Recall | | | | |
+| `none__none` | Center mean (px) | | | | |
+| `none__none` | Homography self mean (px) | | | | |
+| `none__none` | Homography vs-GT mean (px) | | | | |
+| `projective_center__none` | Precision | | | | |
+| `projective_center__none` | Recall | | | | |
+| `projective_center__none` | Center mean (px) | | | | |
+| `projective_center__none` | Homography self mean (px) | | | | |
+| `projective_center__none` | Homography vs-GT mean (px) | | | | |
 
-## Reference Benchmark (Script Output Summary)
+## Gate C: Distortion Benchmark Summary
 
-| Metric | Baseline | After Change | Delta |
-|--------|----------|-------------|-------|
-| Precision | | | |
-| Recall | | | |
-| Center error mean (px) | | | |
-| Homography self-error mean (px) | | | |
+| Mode | Metric | Baseline | After | Delta | Status |
+|------|--------|----------|-------|-------|--------|
+| `projective_center__none` | Precision | | | | |
+| `projective_center__none` | Recall | | | | |
+| `projective_center__none` | Center mean (px) | | | | |
+| `projective_center__none` | Homography self mean (px) | | | | |
+| `projective_center__none` | Homography vs-GT mean (px) | | | | |
+| `projective_center__external` | Precision | | | | |
+| `projective_center__external` | Recall | | | | |
+| `projective_center__external` | Center mean (px) | | | | |
+| `projective_center__external` | Homography self mean (px) | | | | |
+| `projective_center__external` | Homography vs-GT mean (px) | | | | |
+| `projective_center__self_undistort` | Precision | | | | |
+| `projective_center__self_undistort` | Recall | | | | |
+| `projective_center__self_undistort` | Center mean (px) | | | | |
+| `projective_center__self_undistort` | Homography self mean (px) | | | | |
+| `projective_center__self_undistort` | Homography vs-GT mean (px) | | | | |
 
-## Distortion Benchmark (Script Output Summary)
+## Threshold Evaluation
 
-| Mode/Correction | Baseline | After Change | Delta |
-|-----------------|----------|-------------|-------|
-| projective_center + none | | | |
-| projective_center + external | | | |
-| projective_center + self_undistort | | | |
-
-## Eval Conditions
-
-- Synthetic images: [count, resolution]
-- Blur: [px]
-- Noise sigma: [value]
-- Marker diameter: [px]
-- Gate distance: [px]
-- Distortion benchmark params: [fx/fy/cx/cy and k1..k3/p1/p2 values used]
+| Rule | Result | Status |
+|------|--------|--------|
+| Blur-3 center mean delta `<= +0.01 px` | | |
+| Blur-3 homography self mean delta `<= +0.02 px` | | |
+| Blur-3 homography vs-GT mean delta `<= +0.02 px` | | |
+| Reference benchmark precision/recall deltas recorded | | |
+| Distortion benchmark precision/recall deltas recorded | | |
 
 ## Verdict
 
-[Pass / Fail / Conditional-pass with explanation]
-
-Threshold: flag any mean center error increase > 0.01 px.
+- **Overall:** [Pass / Fail / Conditional-pass]
+- **Escalate to Algorithm Engineer:** [yes/no + why]
+- **Escalate to Pipeline Architect:** [yes/no + why]
+- **Notes:** [short summary]

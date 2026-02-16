@@ -18,7 +18,7 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| PERF-003 | in-progress | P1 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Validation Engineer | Convert recurring perf-validation commands into standardized, repeatable validation workflow/reporting artifacts |
+| — | — | — | — | — | — | — |
 
 ## Up Next
 
@@ -36,6 +36,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| PERF-003 | 2026-02-16 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Completed: canonical runbook `.ai/workflows/perf-validation-suite-runbook.md` (session snapshot retained), blur gate shell wrapper `tools/run_blur3_benchmark.sh`, standardized report template `.ai/templates/accuracy-report.md`, PERF handoff contract updates, and dry-run report `.ai/state/sessions/2026-02-16-PERF-003-dry-run-accuracy-report.md` |
 | PERF-005 | 2026-02-16 | perf | Optimize inner-fit hotspot group | Completed: `inner_fit_64r_96t_nomapper` `68.051 us -> 59.358 us` (`-12.77%`), `inner_fit_64r_96t_mapper` `93.909 us -> 82.433 us` (`-12.22%`); validation gates passed |
 | PERF-004 | 2026-02-16 | perf | Optimize outer-fit/outer-estimate hotspot group | Completed: `outer_estimate_64r_48t_nomapper` `34.365 us -> 16.996 us` (`-50.54%`), `outer_estimate_64r_48t_mapper` `40.082 us -> 23.310 us` (`-41.85%`); validation gates passed |
 | PERF-002 | 2026-02-16 | perf | Optimize proposal hotspot (`detector::proposal::find_proposals`) | Accepted: `proposal_1280x1024` `42.404 ms → 33.612 ms` (`-20.73%`), `proposal_1920x1080` `60.614 ms → 48.357 ms` (`-20.22%`); required validation gates passed |

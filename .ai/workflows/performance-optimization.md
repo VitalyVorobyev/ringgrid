@@ -5,6 +5,9 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 ## Prerequisites
 - Performance concern identified (profiling data, user report, or benchmark regression)
 - Task added to `state/backlog.md`
+- PERF validation uses the standardized suite in:
+  - `.ai/workflows/perf-validation-suite-runbook.md`
+  - `.ai/templates/accuracy-report.md`
 
 ## Phases
 
@@ -55,28 +58,33 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 **Goal:** Confirm optimization preserves detection accuracy.
 
 **Steps:**
-1. Run baseline synthetic eval:
+1. Run the standardized blur=3.0 gate (`n=10`) script and snapshot baseline/after:
    ```bash
-   python3 tools/run_synth_eval.py --n 5 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_perf
+   bash tools/run_blur3_benchmark.sh
+   rm -rf tools/out/eval_<label>_blur3
+   cp -R tools/out/eval_blur3_post_pipeline tools/out/eval_<label>_blur3
    ```
-2. Run challenging synthetic eval:
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_perf_blur3
-   ```
-3. Run reference and distortion benchmark scripts:
+2. Run reference benchmark script and preserve summary for each label:
    ```bash
    bash tools/run_reference_benchmark.sh
-   bash tools/run_distortion_benchmark.sh
+   cp tools/out/reference_benchmark_post_pipeline/summary.json tools/out/reference_benchmark_post_pipeline_<label>.summary.json
    ```
-4. Compare center error statistics against baseline:
+3. Run distortion benchmark script and preserve summary for each label:
+   ```bash
+   bash tools/run_distortion_benchmark.sh
+   cp tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline_<label>.summary.json
+   ```
+4. Compare baseline vs after for all three gates:
    - Mean, p50, p95, max center error
-   - Decode success rate
-   - Homography reprojection error
-5. **Flag any accuracy delta > 0.01 px mean center error** — requires Algorithm Engineer review
-6. Fill in accuracy report from `templates/accuracy-report.md`, including blur=3.0 and reference/distortion script outputs
-7. Write handoff note → Performance Engineer
+   - Precision/recall deltas
+   - Homography self and vs-GT deltas
+   - Frame consistency (expected `image` frame in scorer output)
+5. **Flag any blur=3 mean center delta > +0.01 px** — requires Algorithm Engineer review.
+6. Flag any blur=3 homography mean delta (`self` or `vs-GT`) > `+0.02 px` for investigation/escalation.
+7. Fill `.ai/templates/accuracy-report.md` with the three gate tables and artifact paths.
+8. Write handoff note using `.ai/templates/handoff-note.md` including PERF gate artifact paths and deltas.
 
-**Deliverables:** Accuracy report, scoring comparison, handoff note
+**Deliverables:** Accuracy report, gate artifact bundle, standardized handoff note
 
 ### 4. Finalize (Performance Engineer)
 

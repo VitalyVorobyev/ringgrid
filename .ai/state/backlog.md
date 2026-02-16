@@ -18,14 +18,15 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| PERF-001 | in-progress | P1 | perf | Establish comprehensive performance tracing baseline and benchmark harness | Performance Engineer | Next deliverable: baseline report with Criterion numbers, flamegraph top-3 hotspots, allocation profile, and optimization recommendations |
+| PERF-002 | in-progress | P1 | perf | Optimize proposal hotspot (`detector::proposal::find_proposals`) | Performance Engineer | Primary optimization task from PERF-001 baseline (`~61.11%` hotspot share); target >=10% reduction with validation gates |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| PERF-002 | todo | P1 | perf | Optimize top hotspot identified by PERF-001 baseline | Performance Engineer | Start only after baseline evidence is published; target >=10% improvement on selected hotspot |
-| PERF-003 | todo | P2 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Validation Engineer | Make post-change validation consistently include `run_reference_benchmark.sh` and `run_distortion_benchmark.sh` |
+| PERF-004 | todo | P2 | perf | Optimize outer-fit/outer-estimate hotspot group | Performance Engineer + Algorithm Engineer | Ordered candidate #2; focus on radial/profile temp allocations and per-candidate sorting overhead; same validation gates as PERF-002 |
+| PERF-005 | todo | P2 | perf | Optimize inner-fit hotspot group | Performance Engineer | Ordered candidate #3; focus on per-theta profile aggregation overhead; same validation gates as PERF-002 |
+| PERF-003 | todo | P2 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Validation Engineer | Ensure every PERF optimization handoff includes blur=3 eval, reference benchmark, and distortion benchmark outputs |
 
 ## Backlog
 
@@ -37,5 +38,6 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| PERF-001 | 2026-02-16 | perf | Establish comprehensive performance tracing baseline and benchmark harness | Completed baseline report + hotspot ranking + follow-up plan. Allocation counts documented via proxy (RSS) due `xctrace`/SIP tooling limits |
 | FEAT-001 | 2026-02-16 | feature | Normalize marker center API and simplify finalize flow | Closed by human decision: marginal regression accepted for now; follow-up perf/accuracy work tracked in PERF tasks |
 | INFRA-001 | 2026-02-15 | infra | Set up `.ai/` agent workflow | Bootstrap ADR-001 |

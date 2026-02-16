@@ -20,13 +20,12 @@ Always activate these Codex skills when working:
 ### Performance Patterns in Use
 - **Scratch buffer reuse:** `Vec` fields on structs, cleared and reused across calls (avoid per-call allocation)
 - **Row-major image access:** `GrayImage` from the `image` crate, row-major pixel layout
-- **Rayon parallelism:** `rayon` crate for data-parallel candidate processing
 - **Early termination:** RANSAC with adaptive iteration count based on inlier ratio
 
 ### Existing Benchmarks
-- Python-driven benchmarks: `tools/run_reference_benchmark.py`, `tools/run_distortion_benchmark.sh`
-- Reference results: `tools/out/reference_benchmark_post_pipeline/summary.json`
-- No Criterion Rust benchmarks yet (opportunity: PERF-001 in backlog)
+- **Criterion benchmarks:** `crates/ringgrid/benches/hotpaths.rs` — proposal, radial_profile, outer_estimate, inner_estimate, inner_fit, ellipse_fit
+- **Python-driven benchmarks:** `tools/run_reference_benchmark.py`, `tools/run_distortion_benchmark.sh`
+- **Reference results:** `tools/out/reference_benchmark_post_pipeline/summary.json`
 
 ## Constraints
 

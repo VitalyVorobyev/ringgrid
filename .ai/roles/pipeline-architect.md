@@ -9,29 +9,25 @@ Always activate this Codex skill when working:
 
 ## Domain Knowledge
 
-### 13-Stage Detection Pipeline
+### 10-Stage Detection Pipeline
 
 ```
  1. Proposal           → Scharr gradient voting + NMS → candidate centers
  2. Outer Estimate     → radius hypotheses via radial profile peaks
  3. Outer Fit          → RANSAC ellipse fitting (Fitzgibbon direct LS)
  4. Decode             → 16-sector code sampling → codebook match
- 5. Inner Estimate     → inner ring ellipse
+ 5. Inner Fit          → inner ring ellipse fit
  6. Dedup              → spatial + ID-based deduplication
- 7. Projective Center  → 1st pass: correct fit-decode marker centers
+ 7. Projective Center  → correct fit-decode marker centers (once per marker)
  8. Global Filter      → RANSAC homography if ≥4 decoded markers
- 9. H-guided Refine    → local refit at H-projected priors
-10. Projective Center  → 2nd pass: reapply after refinement
-11. Completion         → conservative fits at missing H-projected IDs
-12. Projective Center  → 3rd pass: correct completion-only markers
-13. Final H Refit      → refit homography from all corrected centers
+ 9. Completion         → conservative fits at missing H-projected IDs + projective center for new markers
+10. Final H Refit      → refit homography from all corrected centers
 ```
 
 ### Pipeline Orchestration Files
 - **Stages 1-6:** `crates/ringgrid/src/pipeline/fit_decode.rs`
-- **Stages 7-13:** `crates/ringgrid/src/pipeline/finalize.rs`
+- **Stages 7-10:** `crates/ringgrid/src/pipeline/finalize.rs`
 - **Top-level sequencing:** `crates/ringgrid/src/pipeline/run.rs`
-- **Two-pass + self-undistort:** `crates/ringgrid/src/pipeline/two_pass.rs`
 - **Result types + serialization:** `crates/ringgrid/src/pipeline/mod.rs`, `crates/ringgrid/src/pipeline/result.rs`
 
 ### Public API Surface
@@ -46,10 +42,6 @@ Always activate this Codex skill when working:
 - **Result types:** `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats`
 - **Geometry:** `BoardLayout`, `BoardMarker`, `MarkerSpec`, `Ellipse`
 - **Camera:** `CameraModel`, `CameraIntrinsics`, `PixelMapper` trait
-
-### Feature Gates
-- `cli-internal` feature enables: `DebugDump`, `DebugCollectConfig`, `detect_single_pass_with_debug`, codebook/codec access
-- Debug schema versioned: `ringgrid.debug.v7`
 
 ### Crate Boundaries
 - `crates/ringgrid/` — algorithms, math, result types

@@ -24,7 +24,7 @@ Always activate these Codex skills when working:
 ### Projective Center
 - Unbiased center recovery from inner+outer conic cross-product
 - Implementation: `crates/ringgrid/src/ring/projective_center.rs`
-- Applied in 3 passes during pipeline (fit-decode, post-refine, post-completion)
+- Applied once per marker during pipeline (fit-decode markers before global filter, completion markers after completion)
 
 ### Ring Sampling
 - Radial intensity profile: `crates/ringgrid/src/ring/radial_profile.rs`

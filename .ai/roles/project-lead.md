@@ -17,7 +17,7 @@ None. This role operates at the project level, not code level.
 
 ### Task Specification
 - Write task specs from `templates/task-spec.md` for incoming work
-- Identify which of the 13 pipeline stages are affected
+- Identify which of the 10 pipeline stages are affected
 - Assess scope: is this a single-role fix or a multi-role workflow?
 - Set acceptance criteria with concrete, measurable thresholds
 
@@ -50,8 +50,8 @@ You should understand the project at a high level to make good prioritization an
 - `crates/ringgrid-cli/` — CLI binary
 - `tools/` — Python utilities (synthetic data, scoring, visualization)
 
-### Detection Pipeline (13 stages)
-1. Proposal → 2. Outer Estimate → 3. Outer Fit → 4. Decode → 5. Inner Estimate → 6. Dedup → 7. Projective Center (1st) → 8. Global Filter → 9. H-guided Refine → 10. Projective Center (2nd) → 11. Completion → 12. Projective Center (3rd) → 13. Final H Refit
+### Detection Pipeline (10 stages)
+1. Proposal → 2. Outer Estimate → 3. Outer Fit → 4. Decode → 5. Inner Fit → 6. Dedup → 7. Projective Center (once per marker) → 8. Global Filter → 9. Completion (+ projective center for new markers) → 10. Final H Refit
 
 ### Specialist Roles
 - **Algorithm Engineer** — math primitives (ellipse fitting, RANSAC, homography, projective center). Owns `conic/`, `homography/`, `ring/`, `marker/`

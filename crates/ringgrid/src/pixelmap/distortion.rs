@@ -3,8 +3,22 @@ use serde::{Deserialize, Serialize};
 
 /// Single-parameter division distortion model.
 ///
-/// Negative lambda corresponds to barrel distortion (most common),
-/// positive to pincushion distortion.
+/// Maps distorted (observed) pixel coordinates to undistorted coordinates:
+///
+/// ```text
+/// x_u = cx + (x_d - cx) / (1 + λ · r²)
+/// y_u = cy + (y_d - cy) / (1 + λ · r²)
+/// ```
+///
+/// where `r² = (x_d - cx)² + (y_d - cy)²`.
+///
+/// - `λ < 0` → barrel distortion (most common in wide-angle lenses)
+/// - `λ > 0` → pincushion distortion
+/// - `λ = 0` → identity (no distortion)
+///
+/// Implements [`PixelMapper`] for use with
+/// [`Detector::detect_with_mapper`](crate::Detector::detect_with_mapper).
+/// Also used internally by the self-undistort estimator.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct DivisionModel {
     /// Distortion parameter.
@@ -50,9 +64,7 @@ impl DivisionModel {
 
     /// Distort a point (inverse mapping: undistorted → distorted).
     ///
-    /// Uses iterative fixed-point method since the inverse is not closed-form.
-    ///
-    /// TODO: make it analytically
+    /// Uses an iterative fixed-point method since the inverse has no closed form.
     pub fn distort_point(&self, undistorted_xy: [f64; 2]) -> Option<[f64; 2]> {
         if self.lambda.abs() < 1e-18 {
             return Some(undistorted_xy);
@@ -104,6 +116,16 @@ impl PixelMapper for DivisionModel {
 }
 
 /// Brown-Conrady radial-tangential distortion coefficients.
+///
+/// The distortion model applied to normalized (pinhole) coordinates `(x, y)`:
+///
+/// ```text
+/// r² = x² + y²
+/// x_d = x · (1 + k1·r² + k2·r⁴ + k3·r⁶) + 2·p1·x·y + p2·(r² + 2·x²)
+/// y_d = y · (1 + k1·r² + k2·r⁴ + k3·r⁶) + p1·(r² + 2·y²) + 2·p2·x·y
+/// ```
+///
+/// Used as a component of [`CameraModel`](super::CameraModel).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct RadialTangentialDistortion {
     /// Radial coefficient k1.

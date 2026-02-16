@@ -6,6 +6,10 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::inner_fit::InnerFitResult;
 
 /// Fit quality metrics for a detected marker.
+///
+/// Reports the edge sampling and ellipse fit quality. High RANSAC inlier
+/// ratios (> 0.8) and low RMS Sampson residuals (< 0.5 px) indicate a
+/// precise ellipse fit.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FitMetrics {
     /// Total number of radial rays cast.
@@ -31,6 +35,11 @@ pub struct FitMetrics {
 }
 
 /// A detected marker with its refined center and optional ID.
+///
+/// The `center` field is always in image-pixel coordinates, regardless of
+/// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is
+/// active, `center_mapped` provides the working-frame (undistorted)
+/// coordinates. Ellipses are in the working frame when a mapper is active.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.

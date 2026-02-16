@@ -13,6 +13,19 @@ Detection overlay example:
 
 ![Detection overlay example](docs/assets/det_overlay_0002.png)
 
+## How It Works
+
+ringgrid uses dual concentric ring markers with a 16-sector binary code band between the inner and outer rings. Each marker encodes a unique ID from a 893-codeword codebook with minimum cyclic Hamming distance of 5.
+
+**Why rings?** Circles project to ellipses under perspective, and ellipse boundaries can be localized to subpixel precision via gradient-based edge sampling and direct algebraic fitting (Fitzgibbon's method). The dual-ring design enables projective center correction — recovering the true projected center from the inner/outer conic pencil, which corrects the systematic bias inherent in ellipse-fit centers. This yields significantly better accuracy than corner-based targets (checkerboards, ArUco) at oblique viewing angles.
+
+**Detection pipeline** (13 stages): Scharr gradient voting proposes candidate centers → radial profile estimates outer radius → RANSAC ellipse fit → 16-sector code decode → inner ellipse fit → deduplication → projective center correction → RANSAC homography filter → H-guided refinement → completion at missing IDs → final homography refit.
+
+## Documentation
+
+- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the 13-stage detection pipeline, mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
+- [API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) — rustdoc for all public types
+
 ## Quick Start
 
 ### 1. Build
@@ -151,18 +164,67 @@ cargo run -p ringgrid --example detect_with_self_undistort -- \
 
 ## Detection Modes
 
-Core refinement selector:
+### Rust API
 
-- `--circle-refine-method none`
-- `--circle-refine-method projective-center` (default)
+**Simple detection** (no distortion correction):
 
-Other commonly used toggles:
+```rust,no_run
+use ringgrid::{BoardLayout, Detector};
+use std::path::Path;
 
-- `--no-global-filter`
-- `--no-complete`
-- `--marker-diameter-min <px>`
-- `--marker-diameter-max <px>`
-- `--self-undistort` (mutually exclusive with camera `--cam-*` flags)
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::new(board);
+let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
+```
+
+**With camera model** (two-pass distortion-aware pipeline):
+
+```rust,no_run
+use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
+use std::path::Path;
+
+let camera = CameraModel {
+    intrinsics: CameraIntrinsics { fx: 900.0, fy: 900.0, cx: 640.0, cy: 480.0 },
+    distortion: RadialTangentialDistortion { k1: -0.15, k2: 0.05, p1: 0.0, p2: 0.0, k3: 0.0 },
+};
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::new(board);
+let result = detector.detect_with_mapper(&image::open("photo.png").unwrap().to_luma8(), &camera);
+```
+
+**Self-undistort** (estimates distortion from markers, no calibration needed):
+
+```rust,no_run
+use ringgrid::{BoardLayout, DetectConfig, Detector};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let mut cfg = DetectConfig::from_target(board);
+cfg.self_undistort.enable = true;
+let detector = Detector::with_config(cfg);
+let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
+```
+
+### CLI Flags
+
+- `--circle-refine-method none|projective-center` (default: projective-center)
+- `--no-global-filter` — disable global homography filtering
+- `--no-complete` — disable H-guided completion
+- `--marker-diameter-min <px>` / `--marker-diameter-max <px>` — scale search range
+- `--self-undistort` — enable self-undistort estimation (mutually exclusive with `--cam-*`)
+- `--cam-fx/fy/cx/cy` + `--cam-k1/k2/k3/p1/p2` — external camera model
+
+## Distortion Correction
+
+ringgrid supports three distortion correction modes:
+
+| Mode | Requires | Method |
+|---|---|---|
+| None | — | Single-pass in image coordinates |
+| External camera | Calibrated intrinsics + distortion | Two-pass with `CameraModel` implementing `PixelMapper` |
+| Self-undistort | Nothing | Estimates 1-parameter division model from detected markers |
+
+Camera model and self-undistort are mutually exclusive. See the [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for details.
 
 ## Metrics (Synthetic Scoring)
 
@@ -305,19 +367,6 @@ Snapshot:
 | Avg center error (px) | 0.278 |
 | Avg H vs GT error (px) | 0.147 |
 | Avg H self error (px) | 0.235 |
-
-## CI Workflows
-
-Draft CI is configured under `.github/workflows/`:
-
-- `ci.yml`
-  - rust formatting/lint/tests on Ubuntu
-  - synthetic smoke eval (`tools/run_synth_eval.py --n 1`)
-  - cross-platform build/test on macOS + Windows
-- `audit.yml`
-  - weekly `cargo audit`
-- `publish-docs.yml`
-  - publish Rustdoc to GitHub Pages
 
 ## Regenerate Embedded Assets
 

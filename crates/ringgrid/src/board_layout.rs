@@ -16,17 +16,39 @@ const DEFAULT_LONG_ROW_COLS: usize = 14;
 const DEFAULT_OUTER_RADIUS_MM: f32 = 4.8;
 const DEFAULT_INNER_RADIUS_MM: f32 = 3.2;
 /// A single marker's position on the calibration board.
+///
+/// Each marker has a unique `id` (codebook index 0–892), a physical position
+/// `xy_mm` on the board, and optional hex-lattice axial coordinates `(q, r)`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BoardMarker {
+    /// Unique marker ID (codebook index, 0–892).
     pub id: usize,
+    /// Position on the board in millimeters `[x, y]`.
     pub xy_mm: [f32; 2],
+    /// Hex-lattice axial coordinate q (column offset).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<i16>,
+    /// Hex-lattice axial coordinate r (row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r: Option<i16>,
 }
 
 /// Runtime board layout used by the detector.
+///
+/// Describes the physical hex-lattice arrangement of ring markers: their
+/// positions in millimeters, ring radii, and lattice parameters. Load from
+/// a JSON file conforming to `ringgrid.target.v3` schema, or use the
+/// built-in default via [`BoardLayout::default()`].
+///
+/// # Example
+///
+/// ```no_run
+/// use ringgrid::BoardLayout;
+/// use std::path::Path;
+///
+/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+/// println!("{} markers, pitch={} mm", board.n_markers(), board.pitch_mm);
+/// ```
 #[derive(Debug, Clone)]
 pub struct BoardLayout {
     pub name: String,

@@ -16,19 +16,24 @@ use crate::ring::edge_sample::DistortionAwareSampler;
 use super::codec::Codebook;
 
 /// Decode quality metrics for a detected marker.
+///
+/// Reports how confidently a 16-sector binary code was matched against the
+/// 893-codeword codebook. A `best_dist` of 0 means an exact match; `margin`
+/// measures how far the second-best codeword is (higher = more confident).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeMetrics {
     /// Raw 16-bit word sampled from the code band.
     pub observed_word: u16,
-    /// Best-matching codebook entry index.
+    /// Best-matching codebook entry index (0–892).
     pub best_id: usize,
-    /// Cyclic rotation that produced the best match.
+    /// Cyclic rotation (0–15 sectors) that produced the best match.
     pub best_rotation: u8,
-    /// Hamming distance to the best-matching codeword.
+    /// Hamming distance (bit errors) to the best-matching codeword.
     pub best_dist: u8,
-    /// Margin: second_best_dist - best_dist.
+    /// Margin: `second_best_dist - best_dist`. Higher values indicate
+    /// a more reliable decode. A margin of 3 or more is typically very confident.
     pub margin: u8,
-    /// Confidence heuristic in [0, 1].
+    /// Combined confidence heuristic in \[0, 1\].
     pub decode_confidence: f32,
 }
 

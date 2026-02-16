@@ -155,9 +155,14 @@ impl CircleRefinementMethod {
 
 /// Scale prior for marker diameter in detector working pixels.
 ///
-/// The detector uses this range to derive proposal radii, outer-edge search,
-/// and validation gates. A single known size can be expressed by setting
-/// `diameter_min_px == diameter_max_px`.
+/// The detector uses this range to derive proposal radii, outer-edge search
+/// windows, ellipse validation bounds, and completion ROI. When the marker
+/// scale prior is set via [`DetectConfig::set_marker_scale_prior`] or a
+/// constructor, all scale-dependent parameters are auto-derived.
+///
+/// A single known size can be expressed with
+/// [`MarkerScalePrior::from_nominal_diameter_px`]. For scenes where markers
+/// vary in apparent size, use [`MarkerScalePrior::new`] with a range.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct MarkerScalePrior {
     /// Minimum expected marker outer diameter in pixels.
@@ -240,6 +245,17 @@ impl Default for MarkerScalePrior {
 }
 
 /// Top-level detection configuration.
+///
+/// Contains all parameters that control the detection pipeline. Use one of the
+/// recommended constructors rather than constructing directly:
+///
+/// - [`DetectConfig::from_target`] — default scale prior
+/// - [`DetectConfig::from_target_and_scale_prior`] — explicit scale range
+/// - [`DetectConfig::from_target_and_marker_diameter`] — fixed diameter hint
+///
+/// These constructors auto-derive scale-dependent parameters (proposal radii,
+/// edge search windows, validation bounds) from the board geometry and marker
+/// scale prior. Individual fields can be tuned after construction.
 #[derive(Debug, Clone)]
 pub struct DetectConfig {
     /// Marker diameter prior (range) in working-frame pixels.

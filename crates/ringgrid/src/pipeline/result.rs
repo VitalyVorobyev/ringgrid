@@ -2,15 +2,25 @@ use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 
 /// Coordinate frame used by serialized detection outputs.
+///
+/// - `Image` — raw distorted pixel coordinates.
+/// - `Working` — undistorted coordinates produced by a [`PixelMapper`](crate::PixelMapper).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionFrame {
+    /// Raw image pixel coordinates.
     #[default]
     Image,
+    /// Working-frame (undistorted) pixel coordinates.
     Working,
 }
 
 /// Full detection result for a single image.
+///
+/// Returned by [`Detector::detect`](crate::Detector::detect) and
+/// [`Detector::detect_with_mapper`](crate::Detector::detect_with_mapper).
+/// Contains detected markers, an optional board-to-image homography,
+/// and quality statistics. Serializable to JSON via `serde`.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
     /// Detected markers.

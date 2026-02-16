@@ -49,6 +49,32 @@ impl CameraIntrinsics {
 }
 
 /// Complete camera model (intrinsics + radial-tangential distortion).
+///
+/// Implements [`PixelMapper`], making it usable directly with
+/// [`Detector::detect_with_mapper`](crate::Detector::detect_with_mapper)
+/// for distortion-aware detection.
+///
+/// # Example
+///
+/// ```no_run
+/// use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel,
+///                Detector, RadialTangentialDistortion};
+/// use std::path::Path;
+///
+/// let camera = CameraModel {
+///     intrinsics: CameraIntrinsics {
+///         fx: 900.0, fy: 900.0, cx: 640.0, cy: 480.0,
+///     },
+///     distortion: RadialTangentialDistortion {
+///         k1: -0.15, k2: 0.05, p1: 0.0, p2: 0.0, k3: 0.0,
+///     },
+/// };
+///
+/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+/// let detector = Detector::new(board);
+/// let image = image::open("photo.png").unwrap().to_luma8();
+/// let result = detector.detect_with_mapper(&image, &camera);
+/// ```
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct CameraModel {
     /// Camera intrinsics.

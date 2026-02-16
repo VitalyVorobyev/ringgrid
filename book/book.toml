@@ -1,0 +1,15 @@
+[book]
+title = "ringgrid"
+authors = ["Vitaly Vorobyev"]
+description = "User guide for ringgrid — pure-Rust detector for coded ring calibration targets"
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/VitalyVorobyev/ringgrid"
+default-theme = "light"
+preferred-dark-theme = "navy"

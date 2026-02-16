@@ -66,3 +66,35 @@
 ## Blocking Issues
 
 None.
+
+---
+
+## Execution Update (Performance Engineer, 2026-02-16)
+
+Completed:
+
+1. Added deterministic PERF-005 benchmarks in `crates/ringgrid/benches/hotpaths.rs`:
+   - `inner_estimate_64r_96t_nomapper`
+   - `inner_estimate_64r_96t_mapper`
+   - `inner_fit_64r_96t_nomapper`
+   - `inner_fit_64r_96t_mapper`
+2. Optimized hot loops in:
+   - `crates/ringgrid/src/ring/inner_estimate.rs`
+   - `crates/ringgrid/src/detector/inner_fit.rs`
+3. Re-benchmarked with fixed Criterion command:
+   - `inner_fit_64r_96t_nomapper`: `68.051 us` -> `59.358 us` (`-12.77%`)
+   - `inner_fit_64r_96t_mapper`: `93.909 us` -> `82.433 us` (`-12.22%`)
+4. Captured PERF-005 flamegraphs:
+   - `.ai/state/sessions/2026-02-16-PERF-005-detect-flamegraph.svg`
+   - `.ai/state/sessions/2026-02-16-PERF-005-detect-flamegraph-mapper.svg`
+5. Completed required validation gates:
+   - `./.venv/bin/python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_perf005_blur3`
+   - `bash tools/run_reference_benchmark.sh`
+   - `bash tools/run_distortion_benchmark.sh`
+6. Re-ran quality gates:
+   - `cargo fmt --all`
+   - `cargo clippy --all-targets --all-features -- -D warnings`
+   - `cargo test --workspace --all-features`
+
+Detailed report:
+- `.ai/state/sessions/2026-02-16-PERF-005-performance-handoff.md`

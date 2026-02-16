@@ -21,6 +21,43 @@ mod marker {
         LightToDark,
         Auto,
     }
+
+    #[derive(Debug, Clone)]
+    pub struct MarkerSpec {
+        pub r_inner_expected: f32,
+        pub inner_search_halfwidth: f32,
+        pub inner_grad_polarity: GradPolarity,
+        pub radial_samples: usize,
+        pub theta_samples: usize,
+        pub aggregator: AngularAggregator,
+        pub min_theta_coverage: f32,
+        pub min_theta_consistency: f32,
+    }
+
+    impl Default for MarkerSpec {
+        fn default() -> Self {
+            let r_inner_expected = 0.328f32 / 0.672f32;
+            Self {
+                r_inner_expected,
+                inner_search_halfwidth: 0.08,
+                inner_grad_polarity: GradPolarity::LightToDark,
+                radial_samples: 64,
+                theta_samples: 96,
+                aggregator: AngularAggregator::Median,
+                min_theta_coverage: 0.6,
+                min_theta_consistency: 0.35,
+            }
+        }
+    }
+
+    impl MarkerSpec {
+        pub fn search_window(&self) -> [f32; 2] {
+            [
+                self.r_inner_expected - self.inner_search_halfwidth,
+                self.r_inner_expected + self.inner_search_halfwidth,
+            ]
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -106,9 +143,15 @@ mod pixelmap {
 #[allow(dead_code, unused_imports)]
 #[path = "../src/conic/mod.rs"]
 mod conic_impl;
+mod conic {
+    pub use crate::conic_impl::*;
+}
 #[allow(dead_code, unused_imports)]
 #[path = "../src/ring/edge_sample.rs"]
 mod edge_sample;
+#[allow(dead_code, unused_imports)]
+#[path = "../src/ring/inner_estimate.rs"]
+mod inner_estimate;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/ring/outer_estimate.rs"]
 mod outer_estimate;
@@ -118,6 +161,48 @@ mod proposal_impl;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/ring/radial_profile.rs"]
 mod radial_profile;
+
+mod ring {
+    pub(crate) use crate::edge_sample;
+    pub(crate) use crate::inner_estimate;
+    pub(crate) use crate::radial_profile;
+}
+
+mod config {
+    #[derive(Debug, Clone)]
+    pub struct InnerFitConfig {
+        pub min_points: usize,
+        pub min_inlier_ratio: f32,
+        pub max_rms_residual: f64,
+        pub max_center_shift_px: f64,
+        pub max_ratio_abs_error: f64,
+        pub local_peak_halfwidth_idx: usize,
+        pub ransac: crate::conic::RansacConfig,
+    }
+
+    impl Default for InnerFitConfig {
+        fn default() -> Self {
+            Self {
+                min_points: 20,
+                min_inlier_ratio: 0.5,
+                max_rms_residual: 1.0,
+                max_center_shift_px: 12.0,
+                max_ratio_abs_error: 0.15,
+                local_peak_halfwidth_idx: 3,
+                ransac: crate::conic::RansacConfig {
+                    max_iters: 200,
+                    inlier_threshold: 1.5,
+                    min_inliers: 8,
+                    seed: 43,
+                },
+            }
+        }
+    }
+}
+
+#[allow(dead_code, unused_imports)]
+#[path = "../src/detector/inner_fit.rs"]
+mod inner_fit;
 
 fn make_proposal_fixture(width: u32, height: u32, seed: u64) -> GrayImage {
     let mut img = GrayImage::new(width, height);
@@ -339,6 +424,143 @@ fn bench_outer_estimate(c: &mut Criterion) {
     });
 }
 
+fn make_inner_fixture(
+    width: u32,
+    height: u32,
+    seed: u64,
+) -> (GrayImage, conic::Ellipse, marker::MarkerSpec) {
+    let mut img = GrayImage::new(width, height);
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.5;
+    let a_outer = width.min(height) as f32 * 0.24;
+    let b_outer = a_outer * 0.86;
+    let angle = 0.37f32;
+    let ca = angle.cos();
+    let sa = angle.sin();
+
+    let spec = marker::MarkerSpec {
+        radial_samples: 64,
+        theta_samples: 96,
+        inner_grad_polarity: marker::GradPolarity::LightToDark,
+        ..marker::MarkerSpec::default()
+    };
+    let r_inner = spec.r_inner_expected;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let xr = ca * dx + sa * dy;
+            let yr = -sa * dx + ca * dy;
+            let r_norm = ((xr / a_outer).powi(2) + (yr / b_outer).powi(2)).sqrt();
+
+            let mut v = 0.88f32;
+            if (r_norm - 1.0).abs() <= 0.055 {
+                v = 0.18;
+            } else if (r_norm - r_inner).abs() <= 0.045 {
+                v = 0.20;
+            } else if r_norm < r_inner - 0.045 {
+                v = 0.80;
+            }
+
+            if r_norm > (r_inner + 0.02) && r_norm < 0.92 {
+                let ang = yr.atan2(xr);
+                let sector = (((ang / (2.0 * PI_F32) + 0.5) * 24.0) as i32).rem_euclid(24);
+                if sector % 2 == 0 {
+                    v = (v + 0.55) * 0.5;
+                }
+            }
+
+            v += 0.04 * ((x as f32 * 0.017).sin() + (y as f32 * 0.013).cos());
+            v += rng.gen_range(-0.012f32..0.012f32);
+            img.as_mut()[(y * width + x) as usize] = (v.clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+
+    let outer = conic::Ellipse {
+        cx: cx as f64,
+        cy: cy as f64,
+        a: a_outer as f64,
+        b: b_outer as f64,
+        angle: angle as f64,
+    };
+    (img, outer, spec)
+}
+
+fn bench_inner_estimate(c: &mut Criterion) {
+    let (img, outer, spec) = make_inner_fixture(512, 512, 321);
+    let mapper = pixelmap::RadialMapper {
+        cx: 256.0,
+        cy: 256.0,
+        k1: -2.0e-7,
+    };
+
+    c.bench_function("inner_estimate_64r_96t_nomapper", |b| {
+        b.iter(|| {
+            let est = inner_estimate::estimate_inner_scale_from_outer_with_mapper(
+                black_box(&img),
+                black_box(&outer),
+                black_box(&spec),
+                None,
+                false,
+            );
+            black_box(est.r_inner_found)
+        })
+    });
+
+    c.bench_function("inner_estimate_64r_96t_mapper", |b| {
+        b.iter(|| {
+            let est = inner_estimate::estimate_inner_scale_from_outer_with_mapper(
+                black_box(&img),
+                black_box(&outer),
+                black_box(&spec),
+                Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
+                false,
+            );
+            black_box(est.r_inner_found)
+        })
+    });
+}
+
+fn bench_inner_fit(c: &mut Criterion) {
+    let (img, outer, spec) = make_inner_fixture(512, 512, 654);
+    let cfg = config::InnerFitConfig::default();
+    let mapper = pixelmap::RadialMapper {
+        cx: 256.0,
+        cy: 256.0,
+        k1: -2.0e-7,
+    };
+
+    c.bench_function("inner_fit_64r_96t_nomapper", |b| {
+        b.iter(|| {
+            let res = inner_fit::fit_inner_ellipse_from_outer_hint(
+                black_box(&img),
+                black_box(&outer),
+                black_box(&spec),
+                None,
+                black_box(&cfg),
+                false,
+            );
+            black_box(res.points_inner.len())
+        })
+    });
+
+    c.bench_function("inner_fit_64r_96t_mapper", |b| {
+        b.iter(|| {
+            let res = inner_fit::fit_inner_ellipse_from_outer_hint(
+                black_box(&img),
+                black_box(&outer),
+                black_box(&spec),
+                Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
+                black_box(&cfg),
+                false,
+            );
+            black_box(res.points_inner.len())
+        })
+    });
+}
+
 fn make_ellipse_points(n: usize) -> Vec<[f64; 2]> {
     let cx = 640.0f64;
     let cy = 512.0f64;
@@ -377,6 +599,8 @@ criterion_group!(
     bench_proposal,
     bench_radial_profile,
     bench_outer_estimate,
+    bench_inner_estimate,
+    bench_inner_fit,
     bench_ellipse_fit
 );
 criterion_main!(hotpaths);

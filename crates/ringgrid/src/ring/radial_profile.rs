@@ -55,6 +55,7 @@ pub fn peak_idx(values: &[f32], pol: Polarity) -> usize {
 }
 
 /// Compute per-theta peak radii from derivative curves.
+#[allow(dead_code)]
 pub fn per_theta_peak_r(curves: &[Vec<f32>], r_samples: &[f32], pol: Polarity) -> Vec<f32> {
     let mut peaks = Vec::with_capacity(curves.len());
     for d in curves {
@@ -87,6 +88,7 @@ pub fn radial_derivative_into(i_vals: &[f32], r_step: f32, out: &mut [f32]) {
 /// Compute radial derivative `dI/dr` from sampled intensities using central differences.
 ///
 /// Boundary samples use forward/backward differences.
+#[allow(dead_code)]
 pub fn radial_derivative(i_vals: &[f32], r_step: f32) -> Vec<f32> {
     let n = i_vals.len();
     let mut d = vec![0.0f32; n];

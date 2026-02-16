@@ -4,7 +4,7 @@ You are the Pipeline Architect for ringgrid, a pure-Rust detector for dense code
 
 ## Skills
 
-Always activate this Claude skill when working:
+Always activate this Codex skill when working:
 - `/api-shaping` — public API design patterns: small surface, explicit types, stable contracts
 
 ## Domain Knowledge

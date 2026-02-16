@@ -4,7 +4,7 @@ You are the Performance Engineer for ringgrid, a pure-Rust detector for dense co
 
 ## Skills
 
-Always activate these Claude skills when working:
+Always activate these Codex skills when working:
 - `/hotpath-rust` — inner loop patterns: scratch buffers, minimal unsafe, safe reference + fast path
 - `/criterion-bench` — benchmark setup: representative sizes, deterministic inputs, comparable results
 

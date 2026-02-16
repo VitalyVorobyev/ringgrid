@@ -109,19 +109,23 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
     let sa = (outer.angle as f32).sin();
     let sampler = DistortionAwareSampler::new(gray, mapper);
 
-    // Collect per-theta derivative curves (only for thetas fully in-bounds).
-    let mut curves: Vec<Vec<f32>> = Vec::new();
-    let mut theta_indices: Vec<usize> = Vec::new();
+    // Collect derivative curves in a contiguous [radius][theta] slab.
+    let mut curves_by_radius = vec![0.0f32; n_r * n_t];
+    let mut per_theta_pos = Vec::with_capacity(n_t);
+    let mut per_theta_neg = Vec::with_capacity(n_t);
+    let mut i_vals = vec![0.0f32; n_r];
+    let mut d_vals = vec![0.0f32; n_r];
+    let mut n_valid_theta = 0usize;
 
-    for ti in 0..n_t {
-        let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
-        let ct = theta.cos();
-        let st = theta.sin();
-
+    let d_theta = 2.0 * std::f32::consts::PI / n_t as f32;
+    let c_step = d_theta.cos();
+    let s_step = d_theta.sin();
+    let mut ct = 1.0f32;
+    let mut st = 0.0f32;
+    for _ in 0..n_t {
         // Sample intensity along r
-        let mut i_vals: Vec<f32> = Vec::with_capacity(n_r);
         let mut ok = true;
-        for &r in &r_samples {
+        for (ri, &r) in r_samples.iter().enumerate() {
             // v = [a*r*cosθ, b*r*sinθ] then rotate by ellipse angle
             let vx = a * r * ct;
             let vy = b * r * st;
@@ -135,20 +139,27 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
                     break;
                 }
             };
-            i_vals.push(samp);
+            i_vals[ri] = samp;
         }
-        if !ok {
-            continue;
+        if ok {
+            radial_profile::radial_derivative_into(&i_vals, r_step, &mut d_vals);
+            radial_profile::smooth_3point(&mut d_vals);
+
+            for ri in 0..n_r {
+                curves_by_radius[ri * n_t + n_valid_theta] = d_vals[ri];
+            }
+            per_theta_pos.push(r_samples[radial_profile::peak_idx(&d_vals, Polarity::Pos)]);
+            per_theta_neg.push(r_samples[radial_profile::peak_idx(&d_vals, Polarity::Neg)]);
+            n_valid_theta += 1;
         }
 
-        let mut d = radial_profile::radial_derivative(&i_vals, r_step);
-        radial_profile::smooth_3point(&mut d);
-
-        curves.push(d);
-        theta_indices.push(ti);
+        let next_ct = ct * c_step - st * s_step;
+        let next_st = st * c_step + ct * s_step;
+        ct = next_ct;
+        st = next_st;
     }
 
-    let coverage = curves.len() as f32 / n_t as f32;
+    let coverage = n_valid_theta as f32 / n_t as f32;
     if coverage < spec.min_theta_coverage {
         return InnerEstimate {
             r_inner_expected: spec.r_inner_expected,
@@ -187,21 +198,21 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
     for pol in polarity_candidates {
         // Aggregate across theta at each radius sample
         let mut agg_resp = vec![0.0f32; n_r];
-        let mut scratch: Vec<f32> = Vec::with_capacity(curves.len());
-        for ri in 0..n_r {
-            scratch.clear();
-            for d in &curves {
-                scratch.push(d[ri]);
-            }
-            agg_resp[ri] = radial_profile::aggregate(&mut scratch, &spec.aggregator);
+        for (ri, out) in agg_resp.iter_mut().enumerate().take(n_r) {
+            let start = ri * n_t;
+            let values = &mut curves_by_radius[start..start + n_valid_theta];
+            *out = radial_profile::aggregate(values, &spec.aggregator);
         }
 
         let (peak_idx, peak_val) = find_peak_idx(&agg_resp, pol);
         let r_star = r_samples[peak_idx];
 
         // Consistency: how many per-theta peaks agree with r_star
-        let per_theta = radial_profile::per_theta_peak_r(&curves, &r_samples, pol);
-        let theta_consistency = radial_profile::theta_consistency(&per_theta, r_star, r_step, 0.02);
+        let per_theta = match pol {
+            Polarity::Pos => &per_theta_pos,
+            Polarity::Neg => &per_theta_neg,
+        };
+        let theta_consistency = radial_profile::theta_consistency(per_theta, r_star, r_step, 0.02);
 
         let peak_strength = peak_val.abs();
 

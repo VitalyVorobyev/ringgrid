@@ -8,6 +8,7 @@ use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
     estimate_inner_scale_from_outer_with_mapper, InnerEstimate, InnerStatus, Polarity,
 };
+use crate::ring::radial_profile;
 
 /// Outcome category for robust inner ellipse fitting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,18 +38,6 @@ pub(crate) struct InnerFitResult {
     pub rms_residual_inner: Option<f64>,
 }
 
-fn outer_scaled_point(outer: &Ellipse, theta: f32, r_norm: f32) -> [f32; 2] {
-    let ca = (outer.angle as f32).cos();
-    let sa = (outer.angle as f32).sin();
-    let ct = theta.cos();
-    let st = theta.sin();
-    let vx = (outer.a as f32) * r_norm * ct;
-    let vy = (outer.b as f32) * r_norm * st;
-    let x = (outer.cx as f32) + ca * vx - sa * vy;
-    let y = (outer.cy as f32) + sa * vx + ca * vy;
-    [x, y]
-}
-
 fn signed_peak_value(v: f32, pol: Polarity) -> f32 {
     match pol {
         Polarity::Pos => v,
@@ -71,19 +60,6 @@ fn refine_peak_idx_subpixel(curve: &[f32], idx: usize, pol: Polarity) -> f32 {
     (idx as f32 + offs.clamp(-1.0, 1.0)).clamp(0.0, (curve.len() - 1) as f32)
 }
 
-fn idx_to_r(r_samples: &[f32], idx_f: f32) -> f32 {
-    if r_samples.is_empty() {
-        return 0.0;
-    }
-    if r_samples.len() == 1 {
-        return r_samples[0];
-    }
-    let i0 = idx_f.floor().clamp(0.0, (r_samples.len() - 1) as f32) as usize;
-    let i1 = (i0 + 1).min(r_samples.len() - 1);
-    let t = (idx_f - i0 as f32).clamp(0.0, 1.0);
-    r_samples[i0] * (1.0 - t) + r_samples[i1] * t
-}
-
 fn sample_inner_points_from_hint(
     gray: &GrayImage,
     outer: &Ellipse,
@@ -102,62 +78,63 @@ fn sample_inner_points_from_hint(
         return Vec::new();
     }
     let r_step = (window[1] - window[0]) / (n_r as f32 - 1.0);
-    let r_samples: Vec<f32> = (0..n_r).map(|i| window[0] + i as f32 * r_step).collect();
-
-    let hint_idx = r_samples
-        .iter()
-        .enumerate()
-        .min_by(|a, b| {
-            (a.1 - r_hint)
-                .abs()
-                .partial_cmp(&(b.1 - r_hint).abs())
-                .unwrap()
-        })
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+    let hint_idx = ((r_hint - window[0]) / r_step)
+        .round()
+        .clamp(0.0, (n_r - 1) as f32) as usize;
     let sampler = DistortionAwareSampler::new(gray, mapper);
+    let cx = outer.cx as f32;
+    let cy = outer.cy as f32;
+    let a = outer.a as f32;
+    let b = outer.b as f32;
+    let ca = (outer.angle as f32).cos();
+    let sa = (outer.angle as f32).sin();
 
     let mut points = Vec::<[f64; 2]>::with_capacity(n_t);
-    for ti in 0..n_t {
-        let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
-        let mut profile = Vec::with_capacity(n_r);
+    let mut profile = vec![0.0f32; n_r];
+    let mut d = vec![0.0f32; n_r];
+    let d_theta = 2.0 * std::f32::consts::PI / n_t as f32;
+    let c_step = d_theta.cos();
+    let s_step = d_theta.sin();
+    let mut ct = 1.0f32;
+    let mut st = 0.0f32;
+    for _ in 0..n_t {
+        let ray_x = ca * (a * ct) - sa * (b * st);
+        let ray_y = sa * (a * ct) + ca * (b * st);
+
         let mut ok = true;
-        for &r in &r_samples {
-            let p = outer_scaled_point(outer, theta, r);
-            let Some(v) = sampler.sample_checked(p[0], p[1]) else {
+        for (ri, sample) in profile.iter_mut().enumerate().take(n_r) {
+            let r = window[0] + ri as f32 * r_step;
+            let x = cx + ray_x * r;
+            let y = cy + ray_y * r;
+            let Some(v) = sampler.sample_checked(x, y) else {
                 ok = false;
                 break;
             };
-            profile.push(v);
+            *sample = v;
         }
-        if !ok {
-            continue;
+        if ok {
+            radial_profile::radial_derivative_into(&profile, r_step, &mut d);
+            radial_profile::smooth_3point(&mut d);
+
+            let lo = hint_idx.saturating_sub(cfg.local_peak_halfwidth_idx);
+            let hi = (hint_idx + cfg.local_peak_halfwidth_idx).min(n_r - 1);
+            let local_i = match pol {
+                Polarity::Pos => (lo..=hi)
+                    .max_by(|&i, &j| d[i].partial_cmp(&d[j]).unwrap())
+                    .unwrap_or(hint_idx),
+                Polarity::Neg => (lo..=hi)
+                    .min_by(|&i, &j| d[i].partial_cmp(&d[j]).unwrap())
+                    .unwrap_or(hint_idx),
+            };
+            let idx_f = refine_peak_idx_subpixel(&d, local_i, pol);
+            let r = (window[0] + idx_f * r_step).clamp(window[0], window[1]);
+            points.push([(cx + ray_x * r) as f64, (cy + ray_y * r) as f64]);
         }
 
-        let mut d = vec![0.0f32; n_r];
-        for ri in 0..n_r {
-            if ri == 0 {
-                d[ri] = (profile[1] - profile[0]) / r_step;
-            } else if ri + 1 == n_r {
-                d[ri] = (profile[n_r - 1] - profile[n_r - 2]) / r_step;
-            } else {
-                d[ri] = (profile[ri + 1] - profile[ri - 1]) / (2.0 * r_step);
-            }
-        }
-
-        let lo = hint_idx.saturating_sub(cfg.local_peak_halfwidth_idx);
-        let hi = (hint_idx + cfg.local_peak_halfwidth_idx).min(n_r - 1);
-        let local_i = (lo..=hi)
-            .max_by(|&i, &j| {
-                signed_peak_value(d[i], pol)
-                    .partial_cmp(&signed_peak_value(d[j], pol))
-                    .unwrap()
-            })
-            .unwrap_or(hint_idx);
-        let idx_f = refine_peak_idx_subpixel(&d, local_i, pol);
-        let r = idx_to_r(&r_samples, idx_f);
-        let p = outer_scaled_point(outer, theta, r);
-        points.push([p[0] as f64, p[1] as f64]);
+        let next_ct = ct * c_step - st * s_step;
+        let next_st = st * c_step + ct * s_step;
+        ct = next_ct;
+        st = next_st;
     }
 
     points

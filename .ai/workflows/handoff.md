@@ -38,6 +38,11 @@ Hand off when your phase in the workflow is complete. Do not accumulate multiple
 ### Performance Fields (required if hot path changes)
 - Benchmark name and before/after numbers
 - Allocation count change
+- PERF validation gate artifacts/deltas:
+  - blur=3 synth eval (`n=10`) via `run_blur3_benchmark.sh`
+  - `run_reference_benchmark.sh`
+  - `run_distortion_benchmark.sh`
+- Link to filled `.ai/templates/accuracy-report.md`
 
 ## Handoff Flow by Workflow
 

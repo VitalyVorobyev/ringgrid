@@ -1,0 +1,3 @@
+interface:
+  display_name: "Synthetic Fixtures"
+  short_description: "Deterministic synthetic fixtures and regression tests"

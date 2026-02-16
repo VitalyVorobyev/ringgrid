@@ -111,23 +111,9 @@ impl<'a> DistortionAwareSampler<'a> {
 /// Sample a grayscale image at sub-pixel position using bilinear interpolation.
 /// Returns intensity in [0, 1].
 #[inline]
+#[allow(dead_code)]
 pub fn bilinear_sample_u8(img: &GrayImage, x: f32, y: f32) -> f32 {
-    let (w, h) = img.dimensions();
-    if x < 0.0 || y < 0.0 {
-        return 0.0;
-    }
-    let x0 = x.floor() as u32;
-    let y0 = y.floor() as u32;
-    if x0 + 1 >= w || y0 + 1 >= h {
-        return 0.0;
-    }
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    let p00 = img.get_pixel(x0, y0)[0] as f32 / 255.0;
-    let p10 = img.get_pixel(x0 + 1, y0)[0] as f32 / 255.0;
-    let p01 = img.get_pixel(x0, y0 + 1)[0] as f32 / 255.0;
-    let p11 = img.get_pixel(x0 + 1, y0 + 1)[0] as f32 / 255.0;
-    (1.0 - fx) * (1.0 - fy) * p00 + fx * (1.0 - fy) * p10 + (1.0 - fx) * fy * p01 + fx * fy * p11
+    bilinear_sample_u8_checked(img, x, y).unwrap_or(0.0)
 }
 
 /// Sample a grayscale image at sub-pixel position using bilinear interpolation.
@@ -135,15 +121,38 @@ pub fn bilinear_sample_u8(img: &GrayImage, x: f32, y: f32) -> f32 {
 #[inline]
 pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32> {
     let (w, h) = img.dimensions();
-    if x < 0.0 || y < 0.0 {
+    if w < 2 || h < 2 || x < 0.0 || y < 0.0 {
         return None;
     }
     let x0 = x.floor() as u32;
     let y0 = y.floor() as u32;
-    if x0 + 1 >= w || y0 + 1 >= h {
+    if x0 >= w - 1 || y0 >= h - 1 {
         return None;
     }
-    Some(bilinear_sample_u8(img, x, y))
+
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let stride = w as usize;
+    let x0 = x0 as usize;
+    let y0 = y0 as usize;
+    let idx00 = y0 * stride + x0;
+    let idx10 = idx00 + 1;
+    let idx01 = idx00 + stride;
+    let idx11 = idx01 + 1;
+
+    let raw = img.as_raw();
+    const INV_255: f32 = 1.0 / 255.0;
+    let p00 = raw[idx00] as f32 * INV_255;
+    let p10 = raw[idx10] as f32 * INV_255;
+    let p01 = raw[idx01] as f32 * INV_255;
+    let p11 = raw[idx11] as f32 * INV_255;
+
+    Some(
+        (1.0 - fx) * (1.0 - fy) * p00
+            + fx * (1.0 - fy) * p10
+            + (1.0 - fx) * fy * p01
+            + fx * fy * p11,
+    )
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ You are the Algorithm Engineer for ringgrid, a pure-Rust detector for dense code
 
 ## Skills
 
-Always activate these Claude skills when working:
+Always activate these Codex skills when working:
 - `/metrology-invariants` — subpixel coordinate conventions, edge detection correctness
 - `/tests-synthetic-fixtures` — deterministic test images with known ground truth
 

@@ -18,13 +18,12 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| INFRA-002 | in-progress | P1 | infra | Decompose self-undistort into focused modules | Pipeline Architect | Dispatched on 2026-02-16. API breaks are explicitly allowed for v0.1.x if they reduce complexity and improve maintainability |
+| ALGO-001 | in-progress | P1 | algo | Unify duplicated radial-estimator core (inner/outer) | Algorithm Engineer | Dispatched on 2026-02-16. API breaks are allowed in v0.1.x if they materially reduce duplication and improve long-term maintainability |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| ALGO-001 | todo | P1 | algo | Unify duplicated radial-estimator core (inner/outer) | Algorithm Engineer | `crates/ringgrid/src/ring/inner_estimate.rs` and `crates/ringgrid/src/ring/outer_estimate.rs` duplicate sampling/coverage/polarity/aggregation flow; extract shared engine and keep stage-specific gates thin |
 | INFRA-003 | todo | P1 | infra | Replace stringly reject reasons with typed enums | Pipeline Architect | `String`-based reasons appear across `inner_fit`, `outer_fit`, `completion`, `decode`; move to typed error/reject enums and structured serialization |
 | BUG-001 | todo | P1 | bug | Fix decode config drift and expose hidden thresholds | Validation Engineer | `DecodeConfig` docs in `crates/ringgrid/src/marker/decode.rs` disagree with defaults; hardcoded decode constants (`low_contrast`, k-means iter/eps) should be explicit config or documented invariants |
 
@@ -43,6 +42,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| INFRA-002 | 2026-02-16 | infra | Decompose self-undistort into focused modules | Completed: split `pixelmap::self_undistort` into focused modules (`config`, `result`, `objective`, `optimizer`, `policy`, `estimator`, tests), preserved public entrypoint surface, and passed fmt/clippy/tests + required blur3/reference/distortion validation scripts |
 | PERF-003 | 2026-02-16 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Completed: canonical runbook `.ai/workflows/perf-validation-suite-runbook.md` (session snapshot retained), blur gate shell wrapper `tools/run_blur3_benchmark.sh`, standardized report template `.ai/templates/accuracy-report.md`, PERF handoff contract updates, and dry-run report `.ai/state/sessions/2026-02-16-PERF-003-dry-run-accuracy-report.md` |
 | PERF-005 | 2026-02-16 | perf | Optimize inner-fit hotspot group | Completed: `inner_fit_64r_96t_nomapper` `68.051 us -> 59.358 us` (`-12.77%`), `inner_fit_64r_96t_mapper` `93.909 us -> 82.433 us` (`-12.22%`); validation gates passed |
 | PERF-004 | 2026-02-16 | perf | Optimize outer-fit/outer-estimate hotspot group | Completed: `outer_estimate_64r_48t_nomapper` `34.365 us -> 16.996 us` (`-50.54%`), `outer_estimate_64r_48t_mapper` `40.082 us -> 23.310 us` (`-41.85%`); validation gates passed |

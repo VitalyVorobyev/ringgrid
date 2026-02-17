@@ -86,7 +86,16 @@ When completing a phase:
 - Report accuracy metrics if measurable (center error, decode success rate)
 - Validation gate results (pass/fail + key numbers)
 
+## Workflows
+
+This role participates in:
+- [feature-development](../workflows/feature-development.md) — Phase 2: Algorithm Implementation
+- [bug-fix](../workflows/bug-fix.md) — Phase 1: Triage, Phase 2: Root Cause & Fix
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — Phase 1: Design, Phase 3: Implementation
+- [performance-optimization](../workflows/performance-optimization.md) — Phase 2: Implementation (if algorithmic change needed)
+
 ## Handoff Triggers
 
+- **To Project Lead:** When task is complete and validation gates pass (default final handoff)
 - **To Performance Engineer:** If new code introduces hot loops (per-pixel, per-candidate, per-RANSAC-iteration)
 - **To Pipeline Architect:** If changes affect pipeline stage ordering, new types needed, or config additions required

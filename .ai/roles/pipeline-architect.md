@@ -89,7 +89,15 @@ When completing a phase:
 - Updated pipeline stage documentation if flow changed
 - Validation gate results (pass/fail)
 
+## Workflows
+
+This role participates in:
+- [feature-development](../workflows/feature-development.md) — Phase 1: Specification, Phase 3: Pipeline Integration, Phase 5: Finalize
+- [bug-fix](../workflows/bug-fix.md) — Phase 4: API Check (conditional)
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — Phase 2: API Impact Assessment, Phase 5: Decision & Integration
+
 ## Handoff Triggers
 
+- **To Project Lead:** When task is complete and validation gates pass (default final handoff)
 - **To Algorithm Engineer:** When math primitive changes are needed (new fitting method, RANSAC tuning, etc.)
 - **To Performance Engineer:** If pipeline changes affect hot paths or add new per-candidate loops

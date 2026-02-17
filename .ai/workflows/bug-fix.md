@@ -60,13 +60,27 @@ Use this workflow for: correctness regressions, detection failures, decode error
 
 **Deliverables:** Benchmark comparison, handoff note
 
-### 4. Close (Pipeline Architect)
+### 4. API Check (Pipeline Architect) — conditional
 
-**Goal:** Verify API integrity and close the task.
+**Goal:** Verify API integrity if pipeline or public types were affected.
 
 **Steps:**
 1. Verify public API surface is unchanged
 2. Verify CI passes
-3. Update `state/backlog.md` — mark task done
-4. Write session note summarizing root cause and fix
-5. Human reviews and merges
+3. Write handoff note → Project Lead
+
+**Deliverables:** API integrity check, handoff note
+
+### 5. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
+4. Update `state/backlog.md` — mark task done
+5. Write session summary with root cause and fix description
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

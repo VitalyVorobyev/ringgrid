@@ -69,7 +69,7 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 
 **Deliverables:** Benchmark report, handoff note
 
-### 6. Decision & Integration (Pipeline Architect)
+### 5. Decision & Integration (Pipeline Architect)
 
 **Goal:** Make the adopt/reject decision and integrate.
 
@@ -85,5 +85,20 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 3. If adopted:
    - Update `CLAUDE.md` pipeline documentation if applicable
    - Update ADR with decision outcome and evidence summary
+4. Write handoff note → Project Lead with decision and evidence summary
+
+**Deliverables:** Decision, integration (if adopted), handoff note
+
+### 6. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
 4. Update `state/backlog.md` — mark task done
-5. Human reviews and merges
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

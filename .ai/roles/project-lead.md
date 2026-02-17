@@ -74,6 +74,15 @@ Each implementor role runs its own validation gates (tests, clippy, synthetic ev
 4. **Every dispatched task needs a task spec** from `templates/task-spec.md`.
 5. **Every workflow starts and ends with you.** You dispatch the initial handoff and receive the final close-out.
 
+## Workflows
+
+This role participates in all workflows as the entry and exit point:
+- [planning](../workflows/planning.md) — all phases (with human)
+- [feature-development](../workflows/feature-development.md) — dispatches Phase 1, receives Phase 6: Close-Out
+- [bug-fix](../workflows/bug-fix.md) — dispatches Phase 1, receives Phase 5: Close-Out
+- [performance-optimization](../workflows/performance-optimization.md) — dispatches Phase 1, receives Phase 4: Close-Out
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — dispatches Phase 1, receives Phase 6: Close-Out
+
 ## Handoff Triggers
 
 - **To Pipeline Architect:** Feature development tasks, API-impacting changes

@@ -68,7 +68,16 @@ When completing a phase:
 - Allocation profile changes (per-detect call)
 - Accuracy impact: validation gate results (pass/fail + key numbers)
 
+## Workflows
+
+This role participates in:
+- [performance-optimization](../workflows/performance-optimization.md) — Phase 1: Baseline, Phase 2: Implementation, Phase 3: Finalize
+- [feature-development](../workflows/feature-development.md) — Phase 4: Performance Check (conditional)
+- [bug-fix](../workflows/bug-fix.md) — Phase 3: Performance Sanity (conditional)
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — Phase 4: Performance Comparison
+
 ## Handoff Triggers
 
+- **To Project Lead:** When task is complete and validation gates pass (default final handoff)
 - **To Algorithm Engineer:** If optimization requires changing the mathematical approach (e.g., coarser-to-finer search, approximate fitting)
 - **To Pipeline Architect:** If optimization changes function signatures or buffer ownership patterns

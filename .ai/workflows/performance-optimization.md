@@ -56,7 +56,7 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 
 ### 3. Finalize (Performance Engineer)
 
-**Goal:** Document results and close.
+**Goal:** Document results and hand off.
 
 **Steps:**
 1. Fill in benchmark report from `templates/benchmark-report.md`
@@ -67,5 +67,20 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
    proposal_1280x1024: 1.2ms → 0.9ms (-25%)
    Accuracy: unchanged (center error mean 0.054 px)
    ```
-3. Update `state/backlog.md` — mark task done
-4. Human reviews and merges
+3. Write handoff note → Project Lead with benchmark report and validation results
+
+**Deliverables:** Benchmark report, handoff note
+
+### 4. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
+4. Update `state/backlog.md` — mark task done
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

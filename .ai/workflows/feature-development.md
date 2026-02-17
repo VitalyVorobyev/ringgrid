@@ -73,10 +73,25 @@ Use this workflow for: new pipeline stages, detection modes, API entry points, c
 
 ### 5. Finalize (Pipeline Architect)
 
-**Goal:** Close the loop.
+**Goal:** Verify integration and hand off.
 
 **Steps:**
 1. Review all handoff notes for the task
 2. Verify CI passes on feature branch
-3. Update `state/backlog.md` — mark task done
-4. Human reviews and merges
+3. Write handoff note → Project Lead with summary of all phases
+
+**Deliverables:** Integration summary, handoff note
+
+### 6. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
+4. Update `state/backlog.md` — mark task done
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

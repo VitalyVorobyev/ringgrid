@@ -24,7 +24,6 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| INFRA-003 | todo | P1 | infra | Replace stringly reject reasons with typed enums | Pipeline Architect | `String`-based reasons appear across `inner_fit`, `outer_fit`, `completion`, `decode`; move to typed error/reject enums and structured serialization |
 | BUG-001 | todo | P1 | bug | Fix decode config drift and expose hidden thresholds | Algorithm Engineer | `DecodeConfig` docs in `crates/ringgrid/src/marker/decode.rs` disagree with defaults; hardcoded decode constants (`low_contrast`, k-means iter/eps) should be explicit config or documented invariants |
 
 ## Backlog
@@ -42,6 +41,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| INFRA-003 | 2026-02-17 | infra | Replace stringly reject reasons with typed enums | Accepted: replaced string-based reject/failure channels in `decode`/`inner_fit`/`outer_fit`/`completion`/`fit_decode` with typed enums + structured context; aggregation now keyed by typed reason codes; reported `fmt`/`clippy -D warnings`/`test` pass and blur=3 eval delta is zero versus baseline |
 | ALGO-001 | 2026-02-16 | algo | Unify duplicated radial-estimator core (inner/outer) | Accepted: introduced shared `ring::radial_estimator` core and rewired both `inner_estimate` and `outer_estimate`; maintainability objective met with no material accuracy/perf regression in validation artifacts; local `fmt`/`clippy -D warnings`/`test` passed |
 | INFRA-002 | 2026-02-16 | infra | Decompose self-undistort into focused modules | Completed: split `pixelmap::self_undistort` into focused modules (`config`, `result`, `objective`, `optimizer`, `policy`, `estimator`, tests), preserved public entrypoint surface, and passed fmt/clippy/tests + required blur3/reference/distortion validation scripts |
 | PERF-003 | 2026-02-16 | perf | Standardize perf validation suite (blur=3 batch + reference/distortion scripts) | Completed: canonical runbook `.ai/workflows/perf-validation-suite-runbook.md` (session snapshot retained), blur gate shell wrapper `tools/run_blur3_benchmark.sh`, standardized report template `.ai/templates/accuracy-report.md`, PERF handoff contract updates, and dry-run report `.ai/state/sessions/2026-02-16-PERF-003-dry-run-accuracy-report.md` |

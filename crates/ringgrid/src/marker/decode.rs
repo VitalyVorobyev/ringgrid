@@ -83,6 +83,59 @@ pub struct DecodeResult {
     pub rotation: u8,
 }
 
+const MIN_DECODE_CONTRAST: f32 = 0.03;
+
+/// Stable reject code for a decode attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DecodeRejectReason {
+    InvalidEllipse,
+    LowContrast,
+    DistTooHigh,
+    ConfidenceTooLow,
+}
+
+impl DecodeRejectReason {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidEllipse => "invalid_ellipse",
+            Self::LowContrast => "low_contrast",
+            Self::DistTooHigh => "dist_too_high",
+            Self::ConfidenceTooLow => "confidence_too_low",
+        }
+    }
+}
+
+impl std::fmt::Display for DecodeRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// Structured reject context for decode diagnostics.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum DecodeRejectContext {
+    InvalidEllipse {
+        is_valid: bool,
+        semi_axis_a: f64,
+        semi_axis_b: f64,
+        min_allowed_semi_axis: f64,
+    },
+    LowContrast {
+        contrast: f32,
+        min_required_contrast: f32,
+    },
+    DistTooHigh {
+        observed_dist: u8,
+        max_allowed_dist: u8,
+    },
+    ConfidenceTooLow {
+        observed_confidence: f32,
+        min_required_confidence: f32,
+    },
+}
+
 /// Debug/diagnostic information about a decode attempt.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeDiagnostics {
@@ -104,8 +157,10 @@ pub struct DecodeDiagnostics {
     pub margin: u8,
     /// Decode confidence in `[0, 1]`.
     pub decode_confidence: f32,
-    /// If rejected, why.
-    pub reject_reason: Option<String>,
+    /// Stable reject code, if rejected.
+    pub reject_reason: Option<DecodeRejectReason>,
+    /// Structured reject diagnostics, if rejected.
+    pub reject_context: Option<DecodeRejectContext>,
 }
 
 /// Decode a marker and return `(accepted_result, diagnostics)`.
@@ -140,7 +195,13 @@ fn decode_marker_impl(
                 best_dist: u8::MAX,
                 margin: 0,
                 decode_confidence: 0.0,
-                reject_reason: Some("invalid_ellipse".to_string()),
+                reject_reason: Some(DecodeRejectReason::InvalidEllipse),
+                reject_context: Some(DecodeRejectContext::InvalidEllipse {
+                    is_valid: outer_ellipse.is_valid(),
+                    semi_axis_a: outer_ellipse.a,
+                    semi_axis_b: outer_ellipse.b,
+                    min_allowed_semi_axis: 2.0,
+                }),
             },
         );
     }
@@ -199,7 +260,7 @@ fn decode_marker_impl(
 
     // Check that there is reasonable contrast
     let contrast = sorted[15] - sorted[0];
-    if contrast < 0.03 {
+    if contrast < MIN_DECODE_CONTRAST {
         return (
             None,
             DecodeDiagnostics {
@@ -212,7 +273,11 @@ fn decode_marker_impl(
                 best_dist: u8::MAX,
                 margin: 0,
                 decode_confidence: 0.0,
-                reject_reason: Some("low_contrast".to_string()),
+                reject_reason: Some(DecodeRejectReason::LowContrast),
+                reject_context: Some(DecodeRejectContext::LowContrast {
+                    contrast,
+                    min_required_contrast: MIN_DECODE_CONTRAST,
+                }),
             },
         );
     }
@@ -265,15 +330,21 @@ fn decode_marker_impl(
     if best_match.dist > config.max_decode_dist
         || best_match.confidence < config.min_decode_confidence
     {
-        let reason = if best_match.dist > config.max_decode_dist {
-            format!(
-                "dist_too_high({}>{})",
-                best_match.dist, config.max_decode_dist
+        let (reason, context) = if best_match.dist > config.max_decode_dist {
+            (
+                DecodeRejectReason::DistTooHigh,
+                DecodeRejectContext::DistTooHigh {
+                    observed_dist: best_match.dist,
+                    max_allowed_dist: config.max_decode_dist,
+                },
             )
         } else {
-            format!(
-                "confidence_too_low({:.3}<{:.3})",
-                best_match.confidence, config.min_decode_confidence
+            (
+                DecodeRejectReason::ConfidenceTooLow,
+                DecodeRejectContext::ConfidenceTooLow {
+                    observed_confidence: best_match.confidence,
+                    min_required_confidence: config.min_decode_confidence,
+                },
             )
         };
         return (
@@ -289,6 +360,7 @@ fn decode_marker_impl(
                 margin: best_match.margin,
                 decode_confidence: best_match.confidence,
                 reject_reason: Some(reason),
+                reject_context: Some(context),
             },
         );
     }
@@ -313,6 +385,7 @@ fn decode_marker_impl(
         margin: best_match.margin,
         decode_confidence: best_match.confidence,
         reject_reason: None,
+        reject_context: None,
     };
 
     (Some(result), diag)
@@ -421,5 +494,73 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
         assert!(diag.inverted_used, "should use inverted polarity");
+    }
+
+    #[test]
+    fn decode_reject_reason_serialization_is_stable() {
+        let reason = DecodeRejectReason::LowContrast;
+        assert_eq!(reason.to_string(), "low_contrast");
+        let json = serde_json::to_string(&reason).expect("serialize reject reason");
+        assert_eq!(json, "\"low_contrast\"");
+    }
+
+    #[test]
+    fn decode_low_contrast_reports_typed_reason_with_context() {
+        let img = GrayImage::from_pixel(64, 64, image::Luma([128u8]));
+        let ellipse = Ellipse {
+            cx: 32.0,
+            cy: 32.0,
+            a: 14.0,
+            b: 14.0,
+            angle: 0.0,
+        };
+        let config = DecodeConfig::default();
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        assert!(result.is_none());
+        assert_eq!(diag.reject_reason, Some(DecodeRejectReason::LowContrast));
+        match diag.reject_context {
+            Some(DecodeRejectContext::LowContrast {
+                contrast,
+                min_required_contrast,
+            }) => {
+                assert!(contrast < min_required_contrast);
+            }
+            other => panic!("unexpected reject context: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_confidence_gate_reports_typed_reason_with_context() {
+        let cw = CODEBOOK[7];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
+        let config = DecodeConfig {
+            min_decode_confidence: 1.1,
+            ..DecodeConfig::default()
+        };
+
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        assert!(result.is_none(), "confidence gate should reject");
+        assert_eq!(
+            diag.reject_reason,
+            Some(DecodeRejectReason::ConfidenceTooLow)
+        );
+        match diag.reject_context {
+            Some(DecodeRejectContext::ConfidenceTooLow {
+                observed_confidence,
+                min_required_confidence,
+            }) => {
+                assert!(observed_confidence < min_required_confidence);
+            }
+            other => panic!("unexpected reject context: {other:?}"),
+        }
     }
 }

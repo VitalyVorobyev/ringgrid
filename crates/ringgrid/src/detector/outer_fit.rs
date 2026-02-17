@@ -14,10 +14,78 @@ use crate::DetectedMarker;
 
 use super::DetectConfig;
 
-pub(crate) fn fit_outer_ellipse_with_reason(
+/// Stable reject code for outer-fit candidate creation.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OuterFitRejectReason {
+    OuterEstimateInvalidSearchWindow,
+    OuterEstimateInsufficientThetaCoverage,
+    OuterEstimateNoPolarityCandidates,
+    OuterEstimateUnknownFailure,
+    OuterEstimateMissingPolarity,
+    NoValidHypothesis,
+}
+
+impl OuterFitRejectReason {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::OuterEstimateInvalidSearchWindow => "outer_estimate_invalid_search_window",
+            Self::OuterEstimateInsufficientThetaCoverage => {
+                "outer_estimate_insufficient_theta_coverage"
+            }
+            Self::OuterEstimateNoPolarityCandidates => "outer_estimate_no_polarity_candidates",
+            Self::OuterEstimateUnknownFailure => "outer_estimate_unknown_failure",
+            Self::OuterEstimateMissingPolarity => "outer_estimate_missing_polarity",
+            Self::NoValidHypothesis => "no_valid_hypothesis",
+        }
+    }
+}
+
+impl std::fmt::Display for OuterFitRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// Structured context attached to an outer-fit reject.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum OuterFitRejectContext {
+    ThetaCoverage {
+        observed_coverage: f32,
+        min_required_coverage: f32,
+    },
+    NoValidHypothesis {
+        hypothesis_count: usize,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct OuterFitReject {
+    pub(crate) reason: OuterFitRejectReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) context: Option<OuterFitRejectContext>,
+}
+
+impl OuterFitReject {
+    fn new(reason: OuterFitRejectReason, context: Option<OuterFitRejectContext>) -> Self {
+        Self { reason, context }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OuterEllipseFitReject {
+    TooFewPoints,
+    DirectFitFailed,
+    InvalidEllipse,
+}
+
+fn fit_outer_ellipse_with_reason(
     edge: &EdgeSampleResult,
     config: &DetectConfig,
-) -> Result<(Ellipse, Option<crate::conic::RansacResult>), String> {
+) -> Result<(Ellipse, Option<crate::conic::RansacResult>), OuterEllipseFitReject> {
     // Fit outer ellipse
     let ransac_config = RansacConfig {
         max_iters: 200,
@@ -33,17 +101,17 @@ pub(crate) fn fit_outer_ellipse_with_reason(
                 // Fall back to direct fit
                 match fit_ellipse_direct(&edge.outer_points) {
                     Some(e) => (e, None),
-                    None => return Err("fit_outer:direct_failed".to_string()),
+                    None => return Err(OuterEllipseFitReject::DirectFitFailed),
                 }
             }
         }
     } else if edge.outer_points.len() >= 6 {
         match fit_ellipse_direct(&edge.outer_points) {
             Some(e) => (e, None),
-            None => return Err("fit_outer:direct_failed".to_string()),
+            None => return Err(OuterEllipseFitReject::DirectFitFailed),
         }
     } else {
-        return Err("fit_outer:too_few_points".to_string());
+        return Err(OuterEllipseFitReject::TooFewPoints);
     };
 
     // Validate outer ellipse
@@ -54,7 +122,7 @@ pub(crate) fn fit_outer_ellipse_with_reason(
         || outer.aspect_ratio() > config.max_aspect_ratio
         || !outer.is_valid()
     {
-        return Err("fit_outer:invalid_ellipse".to_string());
+        return Err(OuterEllipseFitReject::InvalidEllipse);
     }
 
     Ok((outer, outer_ransac))
@@ -236,6 +304,41 @@ fn median_f32(values: &[f32]) -> f32 {
     sorted[sorted.len() / 2]
 }
 
+fn parse_theta_coverage_reason(reason: &str) -> Option<(f32, f32)> {
+    const PREFIX: &str = "insufficient_theta_coverage(";
+    let payload = reason.strip_prefix(PREFIX)?.strip_suffix(')')?;
+    let (observed, min_required) = payload.split_once('<')?;
+    let observed = observed.parse::<f32>().ok()?;
+    let min_required = min_required.parse::<f32>().ok()?;
+    Some((observed, min_required))
+}
+
+fn map_outer_estimate_reject(reason: Option<&str>) -> OuterFitReject {
+    match reason {
+        Some("invalid_search_window") => {
+            OuterFitReject::new(OuterFitRejectReason::OuterEstimateInvalidSearchWindow, None)
+        }
+        Some("no_polarity_candidates") => OuterFitReject::new(
+            OuterFitRejectReason::OuterEstimateNoPolarityCandidates,
+            None,
+        ),
+        Some(raw) => {
+            if let Some((observed, min_required)) = parse_theta_coverage_reason(raw) {
+                OuterFitReject::new(
+                    OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage,
+                    Some(OuterFitRejectContext::ThetaCoverage {
+                        observed_coverage: observed,
+                        min_required_coverage: min_required,
+                    }),
+                )
+            } else {
+                OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None)
+            }
+        }
+        None => OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None),
+    }
+}
+
 pub(crate) struct OuterFitCandidate {
     pub(crate) edge: EdgeSampleResult,
     pub(crate) outer: Ellipse,
@@ -366,7 +469,7 @@ pub(crate) fn fit_outer_candidate_from_prior(
     r_outer_expected_px: f32,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> Result<OuterFitCandidate, String> {
+) -> Result<OuterFitCandidate, OuterFitReject> {
     fit_outer_candidate_from_prior_with_edge_cfg(
         gray,
         center_prior,
@@ -383,7 +486,7 @@ pub(crate) fn fit_outer_candidate_from_prior_for_completion(
     r_outer_expected_px: f32,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> Result<OuterFitCandidate, String> {
+) -> Result<OuterFitCandidate, OuterFitReject> {
     let edge_cfg = completion_edge_cfg(config);
     fit_outer_candidate_from_prior_with_edge_cfg(
         gray,
@@ -402,7 +505,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     edge_cfg: &EdgeSampleConfig,
-) -> Result<OuterFitCandidate, String> {
+) -> Result<OuterFitCandidate, OuterFitReject> {
     let r_expected = r_outer_expected_px.max(2.0);
     let outer_cfg = build_outer_estimation_cfg(config, edge_cfg);
     let sampler = DistortionAwareSampler::new(gray, mapper);
@@ -416,18 +519,12 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         false,
     );
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
-        return Err(format!(
-            "outer_estimate:{}",
-            outer_estimate
-                .reason
-                .as_deref()
-                .unwrap_or("unknown_failure")
-        ));
+        return Err(map_outer_estimate_reject(outer_estimate.reason.as_deref()));
     }
 
-    let pol = outer_estimate
-        .polarity
-        .ok_or_else(|| "outer_estimate:no_polarity".to_string())?;
+    let pol = outer_estimate.polarity.ok_or_else(|| {
+        OuterFitReject::new(OuterFitRejectReason::OuterEstimateMissingPolarity, None)
+    })?;
 
     let ctx = OuterFitEvalContext {
         gray,
@@ -453,7 +550,14 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         }
     }
 
-    best.ok_or_else(|| "outer_fit:no_valid_hypothesis".to_string())
+    best.ok_or_else(|| {
+        OuterFitReject::new(
+            OuterFitRejectReason::NoValidHypothesis,
+            Some(OuterFitRejectContext::NoValidHypothesis {
+                hypothesis_count: outer_estimate.hypotheses.len(),
+            }),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -505,6 +609,33 @@ mod tests {
     fn baseline_edge_cfg_returns_config_field() {
         let cfg = DetectConfig::default();
         assert!(std::ptr::eq(baseline_edge_cfg(&cfg), &cfg.edge_sample));
+    }
+
+    #[test]
+    fn outer_fit_reject_reason_serialization_is_stable() {
+        let reason = OuterFitRejectReason::NoValidHypothesis;
+        assert_eq!(reason.to_string(), "no_valid_hypothesis");
+        let json = serde_json::to_string(&reason).expect("serialize outer fit reason");
+        assert_eq!(json, "\"no_valid_hypothesis\"");
+    }
+
+    #[test]
+    fn outer_estimate_reason_mapping_extracts_theta_coverage_context() {
+        let reject = map_outer_estimate_reject(Some("insufficient_theta_coverage(0.31<0.60)"));
+        assert_eq!(
+            reject.reason,
+            OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage
+        );
+        match reject.context {
+            Some(OuterFitRejectContext::ThetaCoverage {
+                observed_coverage,
+                min_required_coverage,
+            }) => {
+                assert!((observed_coverage - 0.31).abs() < 1e-6);
+                assert!((min_required_coverage - 0.60).abs() < 1e-6);
+            }
+            other => panic!("unexpected outer-estimate context: {other:?}"),
+        }
     }
 
     #[test]

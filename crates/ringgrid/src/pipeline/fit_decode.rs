@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::inner_fit;
 use super::marker_build::{decode_metrics_from_result, fit_metrics_with_inner};
-use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate};
+use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate, OuterFitRejectReason};
 use super::{dedup_by_id, dedup_markers, DetectConfig};
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
@@ -16,6 +16,27 @@ struct CandidateProcessContext<'a> {
     config: &'a DetectConfig,
     mapper: Option<&'a dyn PixelMapper>,
     sampler: DistortionAwareSampler<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum CandidateRejectReason {
+    ProposalUnmappable,
+    OuterFit(OuterFitRejectReason),
+}
+
+impl CandidateRejectReason {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ProposalUnmappable => "proposal_unmappable",
+            Self::OuterFit(reason) => reason.code(),
+        }
+    }
+}
+
+impl std::fmt::Display for CandidateRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
 }
 
 fn fallback_fit_confidence(
@@ -48,9 +69,9 @@ fn select_proposals_for_fit(
 fn process_candidate(
     proposal: Proposal,
     ctx: &CandidateProcessContext<'_>,
-) -> Result<DetectedMarker, String> {
+) -> Result<DetectedMarker, CandidateRejectReason> {
     let Some(center_prior) = ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) else {
-        return Err("proposal_unmappable".to_string());
+        return Err(CandidateRejectReason::ProposalUnmappable);
     };
 
     let fit = match fit_outer_candidate_from_prior(
@@ -61,7 +82,16 @@ fn process_candidate(
         ctx.mapper,
     ) {
         Ok(v) => v,
-        Err(reason) => return Err(format!("outer_fit:{reason}")),
+        Err(reject) => {
+            tracing::trace!(
+                "outer fit rejected at proposal ({:.1},{:.1}): reason={} context={:?}",
+                proposal.x,
+                proposal.y,
+                reject.reason,
+                reject.context
+            );
+            return Err(CandidateRejectReason::OuterFit(reject.reason));
+        }
     };
 
     let OuterFitCandidate {
@@ -82,12 +112,14 @@ fn process_candidate(
         false,
     );
     if inner_fit.status != inner_fit::InnerFitStatus::Ok {
+        let reason_code = inner_fit.reason.map(|reason| reason.code());
         tracing::trace!(
-            "inner fit rejected/failed at proposal ({:.1},{:.1}): status={:?}, reason={:?}",
+            "inner fit rejected/failed at proposal ({:.1},{:.1}): status={:?}, reason={:?}, context={:?}",
             proposal.x,
             proposal.y,
             inner_fit.status,
-            inner_fit.reason
+            reason_code,
+            inner_fit.reason_context
         );
     }
     let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
@@ -141,7 +173,7 @@ pub(super) fn run(
     };
 
     let mut markers: Vec<DetectedMarker> = Vec::new();
-    let mut reject_reasons: HashMap<String, usize> = HashMap::new();
+    let mut reject_reasons: HashMap<CandidateRejectReason, usize> = HashMap::new();
     for proposal in proposals {
         match process_candidate(proposal, &ctx) {
             Ok(marker) => markers.push(marker),
@@ -149,13 +181,13 @@ pub(super) fn run(
         }
     }
     if !reject_reasons.is_empty() {
-        let mut summary: Vec<(String, usize)> = reject_reasons.into_iter().collect();
-        summary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut summary: Vec<(CandidateRejectReason, usize)> = reject_reasons.into_iter().collect();
+        summary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.code().cmp(b.0.code())));
         let rejected_total: usize = summary.iter().map(|(_, n)| *n).sum();
         let top = summary
             .iter()
             .take(4)
-            .map(|(reason, n)| format!("{reason}={n}"))
+            .map(|(reason, n)| format!("{}={n}", reason.code()))
             .collect::<Vec<_>>()
             .join(", ");
         tracing::debug!(
@@ -292,6 +324,18 @@ mod tests {
         assert!(
             out.is_empty(),
             "expected no markers when proposal cap is zero"
+        );
+    }
+
+    #[test]
+    fn candidate_reject_reason_codes_are_stable() {
+        assert_eq!(
+            CandidateRejectReason::ProposalUnmappable.code(),
+            "proposal_unmappable"
+        );
+        assert_eq!(
+            CandidateRejectReason::OuterFit(OuterFitRejectReason::NoValidHypothesis).code(),
+            "no_valid_hypothesis"
         );
     }
 }

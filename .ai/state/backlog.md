@@ -18,13 +18,13 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| — | — | — | — | — | — | — |
+| BUG-001 | in-progress | P1 | bug | Fix decode config drift and expose hidden thresholds | Algorithm Engineer | Spec: `.ai/state/sessions/2026-02-17-BUG-001-spec.md`; dispatch: `.ai/state/sessions/2026-02-17-BUG-001-lead-algorithm-engineer.md` |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| BUG-001 | todo | P1 | bug | Fix decode config drift and expose hidden thresholds | Algorithm Engineer | `DecodeConfig` docs in `crates/ringgrid/src/marker/decode.rs` disagree with defaults; hardcoded decode constants (`low_contrast`, k-means iter/eps) should be explicit config or documented invariants |
+| — | — | — | — | — | — | — |
 
 ## Backlog
 

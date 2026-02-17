@@ -18,7 +18,7 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| BUG-001 | in-progress | P1 | bug | Fix decode config drift and expose hidden thresholds | Algorithm Engineer | Spec: `.ai/state/sessions/2026-02-17-BUG-001-spec.md`; dispatch: `.ai/state/sessions/2026-02-17-BUG-001-lead-algorithm-engineer.md` |
+| — | — | — | — | — | — | — |
 
 ## Up Next
 
@@ -41,6 +41,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| BUG-001 | 2026-02-17 | bug | Fix decode config drift and expose hidden thresholds | Accepted: aligned `DecodeConfig` rustdoc with runtime defaults via shared constants; promoted decode hidden thresholds to explicit config (`min_decode_contrast`, `threshold_max_iters`, `threshold_convergence_eps`) with serde-safe defaults; added deterministic threshold-loop and compatibility tests; reported fmt/clippy/tests pass and synth eval deltas within gate |
 | INFRA-003 | 2026-02-17 | infra | Replace stringly reject reasons with typed enums | Accepted: replaced string-based reject/failure channels in `decode`/`inner_fit`/`outer_fit`/`completion`/`fit_decode` with typed enums + structured context; aggregation now keyed by typed reason codes; reported `fmt`/`clippy -D warnings`/`test` pass and blur=3 eval delta is zero versus baseline |
 | ALGO-001 | 2026-02-16 | algo | Unify duplicated radial-estimator core (inner/outer) | Accepted: introduced shared `ring::radial_estimator` core and rewired both `inner_estimate` and `outer_estimate`; maintainability objective met with no material accuracy/perf regression in validation artifacts; local `fmt`/`clippy -D warnings`/`test` passed |
 | INFRA-002 | 2026-02-16 | infra | Decompose self-undistort into focused modules | Completed: split `pixelmap::self_undistort` into focused modules (`config`, `result`, `objective`, `optimizer`, `policy`, `estimator`, tests), preserved public entrypoint surface, and passed fmt/clippy/tests + required blur3/reference/distortion validation scripts |

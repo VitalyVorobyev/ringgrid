@@ -23,7 +23,6 @@ This pass handles cases where spatially separated proposals happen to decode to 
 The output of deduplication is a list of unique, high-confidence markers sorted by confidence. This ordering matters for downstream stages:
 
 - The **global filter** uses decoded markers to build homography correspondences
-- **H-guided refinement** iterates over inlier markers
 - **Completion** attempts fits for missing IDs
 
 Higher-confidence markers contribute more reliably to these stages.

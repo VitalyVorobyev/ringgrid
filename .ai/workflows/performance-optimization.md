@@ -49,46 +49,14 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
    ```
    [bench_name]: baseline_ns → optimized_ns (±X%)
    ```
-5. Write handoff note → Validation Engineer with benchmark results
+5. Run validation gates (see role spec) to verify accuracy is preserved
+6. Write handoff note → Pipeline Architect with benchmark results and validation gate results
 
-**Deliverables:** Optimized code, Criterion benchmarks, before/after numbers, handoff note
+**Deliverables:** Optimized code, Criterion benchmarks, before/after numbers, validation gate results, handoff note
 
-### 3. Accuracy Verification (Validation Engineer)
+### 3. Finalize (Performance Engineer)
 
-**Goal:** Confirm optimization preserves detection accuracy.
-
-**Steps:**
-1. Run the standardized blur=3.0 gate (`n=10`) script and snapshot baseline/after:
-   ```bash
-   bash tools/run_blur3_benchmark.sh
-   rm -rf tools/out/eval_<label>_blur3
-   cp -R tools/out/eval_blur3_post_pipeline tools/out/eval_<label>_blur3
-   ```
-2. Run reference benchmark script and preserve summary for each label:
-   ```bash
-   bash tools/run_reference_benchmark.sh
-   cp tools/out/reference_benchmark_post_pipeline/summary.json tools/out/reference_benchmark_post_pipeline_<label>.summary.json
-   ```
-3. Run distortion benchmark script and preserve summary for each label:
-   ```bash
-   bash tools/run_distortion_benchmark.sh
-   cp tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline_<label>.summary.json
-   ```
-4. Compare baseline vs after for all three gates:
-   - Mean, p50, p95, max center error
-   - Precision/recall deltas
-   - Homography self and vs-GT deltas
-   - Frame consistency (expected `image` frame in scorer output)
-5. **Flag any blur=3 mean center delta > +0.01 px** — requires Algorithm Engineer review.
-6. Flag any blur=3 homography mean delta (`self` or `vs-GT`) > `+0.02 px` for investigation/escalation.
-7. Fill `.ai/templates/accuracy-report.md` with the three gate tables and artifact paths.
-8. Write handoff note using `.ai/templates/handoff-note.md` including PERF gate artifact paths and deltas.
-
-**Deliverables:** Accuracy report, gate artifact bundle, standardized handoff note
-
-### 4. Finalize (Performance Engineer)
-
-**Goal:** Document results and close.
+**Goal:** Document results and hand off.
 
 **Steps:**
 1. Fill in benchmark report from `templates/benchmark-report.md`
@@ -99,5 +67,20 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
    proposal_1280x1024: 1.2ms → 0.9ms (-25%)
    Accuracy: unchanged (center error mean 0.054 px)
    ```
-3. Update `state/backlog.md` — mark task done
-4. Human reviews and merges
+3. Write handoff note → Project Lead with benchmark report and validation results
+
+**Deliverables:** Benchmark report, handoff note
+
+### 4. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
+4. Update `state/backlog.md` — mark task done
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

@@ -30,6 +30,88 @@ struct CandidateQuality {
     reproj_err: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CompletionGateRejectReason {
+    ArcCoverageLow,
+    FitConfidenceLow,
+    ReprojectionTooHigh,
+    ScaleOutOfRange,
+}
+
+impl CompletionGateRejectReason {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ArcCoverageLow => "arc_coverage_low",
+            Self::FitConfidenceLow => "fit_confidence_low",
+            Self::ReprojectionTooHigh => "reprojection_too_high",
+            Self::ScaleOutOfRange => "scale_out_of_range",
+        }
+    }
+}
+
+impl std::fmt::Display for CompletionGateRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum CompletionGateRejectContext {
+    ArcCoverageLow {
+        observed_arc_coverage: f32,
+        min_required_arc_coverage: f32,
+    },
+    FitConfidenceLow {
+        observed_fit_confidence: f32,
+        min_required_fit_confidence: f32,
+    },
+    ReprojectionTooHigh {
+        observed_reproj_error_px: f32,
+        max_allowed_reproj_error_px: f32,
+    },
+    ScaleOutOfRange {
+        observed_mean_axis_px: f32,
+        expected_radius_px: f32,
+        min_allowed_axis_px: f32,
+        max_allowed_axis_px: f32,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CompletionGateReject {
+    reason: CompletionGateRejectReason,
+    context: CompletionGateRejectContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CompletionDecodeNoticeReason {
+    DecodeMismatchAccepted,
+}
+
+impl CompletionDecodeNoticeReason {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::DecodeMismatchAccepted => "decode_mismatch_accepted",
+        }
+    }
+}
+
+impl std::fmt::Display for CompletionDecodeNoticeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CompletionDecodeNotice {
+    reason: CompletionDecodeNoticeReason,
+    expected_id: usize,
+    observed_id: usize,
+}
+
 fn compute_candidate_quality(
     edge: &EdgeSampleResult,
     outer: &Ellipse,
@@ -65,13 +147,14 @@ fn compute_candidate_quality(
 fn check_decode_gate(
     decode_result: Option<&crate::marker::decode::DecodeResult>,
     expected_id: usize,
-) -> Option<String> {
+) -> Option<CompletionDecodeNotice> {
     if let Some(d) = decode_result {
         if d.id != expected_id {
-            return Some(format!(
-                "decode_mismatch_accepted(expected={}, got={})",
-                expected_id, d.id
-            ));
+            return Some(CompletionDecodeNotice {
+                reason: CompletionDecodeNoticeReason::DecodeMismatchAccepted,
+                expected_id,
+                observed_id: d.id,
+            });
         }
     }
     None
@@ -81,30 +164,46 @@ fn check_quality_gates(
     quality: &CandidateQuality,
     params: &CompletionParams,
     r_expected: f32,
-) -> Result<(), String> {
+) -> Result<(), CompletionGateReject> {
     if quality.arc_cov < params.min_arc_coverage {
-        return Err(format!(
-            "arc_coverage({:.2}<{:.2})",
-            quality.arc_cov, params.min_arc_coverage
-        ));
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::ArcCoverageLow,
+            context: CompletionGateRejectContext::ArcCoverageLow {
+                observed_arc_coverage: quality.arc_cov,
+                min_required_arc_coverage: params.min_arc_coverage,
+            },
+        });
     }
     if quality.fit_confidence < params.min_fit_confidence {
-        return Err(format!(
-            "fit_confidence({:.2}<{:.2})",
-            quality.fit_confidence, params.min_fit_confidence
-        ));
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::FitConfidenceLow,
+            context: CompletionGateRejectContext::FitConfidenceLow {
+                observed_fit_confidence: quality.fit_confidence,
+                min_required_fit_confidence: params.min_fit_confidence,
+            },
+        });
     }
     if (quality.reproj_err as f64) > (params.reproj_gate_px as f64) {
-        return Err(format!(
-            "reproj_err({:.2}>{:.2})",
-            quality.reproj_err, params.reproj_gate_px
-        ));
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::ReprojectionTooHigh,
+            context: CompletionGateRejectContext::ReprojectionTooHigh {
+                observed_reproj_error_px: quality.reproj_err,
+                max_allowed_reproj_error_px: params.reproj_gate_px,
+            },
+        });
     }
     if !quality.scale_ok {
-        return Err(format!(
-            "scale_gate(mean_axis={:.2}, expected={:.2})",
-            quality.mean_axis, r_expected
-        ));
+        let min_allowed_axis_px = r_expected * 0.75;
+        let max_allowed_axis_px = r_expected * 1.33;
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::ScaleOutOfRange,
+            context: CompletionGateRejectContext::ScaleOutOfRange {
+                observed_mean_axis_px: quality.mean_axis,
+                expected_radius_px: r_expected,
+                min_allowed_axis_px,
+                max_allowed_axis_px,
+            },
+        });
     }
     Ok(())
 }
@@ -201,13 +300,25 @@ pub(crate) fn complete_with_h(
             r_expected,
         );
 
-        if check_quality_gates(&quality, params, r_expected).is_err() {
+        if let Err(reject) = check_quality_gates(&quality, params, r_expected) {
+            tracing::trace!(
+                "Completion id={} gate_reject={} context={:?}",
+                id,
+                reject.reason,
+                reject.context
+            );
             stats.n_failed_gate += 1;
             continue;
         }
 
-        if let Some(reason) = check_decode_gate(decode_result.as_ref(), id) {
-            tracing::debug!("Completion id={} {}", id, reason);
+        if let Some(notice) = check_decode_gate(decode_result.as_ref(), id) {
+            tracing::debug!(
+                "Completion id={} {} expected={} observed={}",
+                id,
+                notice.reason,
+                notice.expected_id,
+                notice.observed_id
+            );
         }
 
         let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
@@ -262,4 +373,41 @@ pub(crate) fn complete_with_h(
     }
 
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_gate_reason_serialization_is_stable() {
+        let reason = CompletionGateRejectReason::ScaleOutOfRange;
+        assert_eq!(reason.to_string(), "scale_out_of_range");
+        let json = serde_json::to_string(&reason).expect("serialize completion gate reason");
+        assert_eq!(json, "\"scale_out_of_range\"");
+    }
+
+    #[test]
+    fn completion_quality_gate_reports_typed_arc_coverage_context() {
+        let quality = CandidateQuality {
+            center: [0.0, 0.0],
+            arc_cov: 0.2,
+            fit_confidence: 0.9,
+            mean_axis: 20.0,
+            scale_ok: true,
+            reproj_err: 0.5,
+        };
+        let params = CompletionParams::default();
+        let reject = check_quality_gates(&quality, &params, 20.0).expect_err("expected gate fail");
+        assert_eq!(reject.reason, CompletionGateRejectReason::ArcCoverageLow);
+        match reject.context {
+            CompletionGateRejectContext::ArcCoverageLow {
+                observed_arc_coverage,
+                min_required_arc_coverage,
+            } => {
+                assert!(observed_arc_coverage < min_required_arc_coverage);
+            }
+            other => panic!("unexpected completion gate context: {other:?}"),
+        }
+    }
 }

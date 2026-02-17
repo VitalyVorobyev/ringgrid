@@ -21,13 +21,80 @@ pub(crate) enum InnerFitStatus {
     Failed,
 }
 
+/// Stable reject/failure code for inner fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum InnerFitReason {
+    EstimateNotOk,
+    EstimateMissingHint,
+    InsufficientPoints,
+    FitFailed,
+    InlierRatioLow,
+    CenterShiftTooLarge,
+    RatioMismatch,
+    RmsResidualHigh,
+}
+
+impl InnerFitReason {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::EstimateNotOk => "estimate_not_ok",
+            Self::EstimateMissingHint => "estimate_missing_hint",
+            Self::InsufficientPoints => "insufficient_points",
+            Self::FitFailed => "fit_failed",
+            Self::InlierRatioLow => "inlier_ratio_low",
+            Self::CenterShiftTooLarge => "center_shift_too_large",
+            Self::RatioMismatch => "ratio_mismatch",
+            Self::RmsResidualHigh => "rms_residual_high",
+        }
+    }
+}
+
+impl std::fmt::Display for InnerFitReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// Structured diagnostics for inner-fit reject/failure reasons.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum InnerFitReasonContext {
+    EstimateStatus {
+        status: InnerStatus,
+    },
+    InsufficientPoints {
+        observed_points: usize,
+        min_required_points: usize,
+    },
+    InlierRatioLow {
+        observed_inlier_ratio: f32,
+        min_required_inlier_ratio: f32,
+    },
+    CenterShiftTooLarge {
+        observed_shift_px: f64,
+        max_allowed_shift_px: f64,
+    },
+    RatioMismatch {
+        measured_ratio: f64,
+        hint_ratio: f32,
+        max_allowed_abs_error: f64,
+    },
+    RmsResidualHigh {
+        observed_rms_residual: f64,
+        max_allowed_rms_residual: f64,
+    },
+}
+
 /// Robust inner fit result.
 #[derive(Debug, Clone)]
 pub(crate) struct InnerFitResult {
     /// Final inner-ellipse fit status.
     pub status: InnerFitStatus,
     /// Optional reject/failure reason from fit stage.
-    pub reason: Option<String>,
+    pub reason: Option<InnerFitReason>,
+    /// Optional structured reject/failure context.
+    pub reason_context: Option<InnerFitReasonContext>,
     /// Fitted inner ellipse (present only when status is `Ok`).
     pub ellipse_inner: Option<Ellipse>,
     /// Candidate inner-edge points used for fitting.
@@ -158,7 +225,10 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     if estimate.status != InnerStatus::Ok {
         return InnerFitResult {
             status: InnerFitStatus::Failed,
-            reason: Some("inner_estimate_not_ok".to_string()),
+            reason: Some(InnerFitReason::EstimateNotOk),
+            reason_context: Some(InnerFitReasonContext::EstimateStatus {
+                status: estimate.status,
+            }),
             ellipse_inner: None,
             points_inner: Vec::new(),
             ransac_inlier_ratio_inner: None,
@@ -168,7 +238,8 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     if estimate.r_inner_found.is_none() || estimate.polarity.is_none() {
         return InnerFitResult {
             status: InnerFitStatus::Failed,
-            reason: Some("inner_estimate_missing_hint".to_string()),
+            reason: Some(InnerFitReason::EstimateMissingHint),
+            reason_context: None,
             ellipse_inner: None,
             points_inner: Vec::new(),
             ransac_inlier_ratio_inner: None,
@@ -180,11 +251,11 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     if points_inner.len() < cfg.min_points {
         return InnerFitResult {
             status: InnerFitStatus::Failed,
-            reason: Some(format!(
-                "insufficient_inner_points({}<{})",
-                points_inner.len(),
-                cfg.min_points
-            )),
+            reason: Some(InnerFitReason::InsufficientPoints),
+            reason_context: Some(InnerFitReasonContext::InsufficientPoints {
+                observed_points: points_inner.len(),
+                min_required_points: cfg.min_points,
+            }),
             ellipse_inner: None,
             points_inner,
             ransac_inlier_ratio_inner: None,
@@ -203,7 +274,8 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                 None => {
                     return InnerFitResult {
                         status: InnerFitStatus::Failed,
-                        reason: Some("inner_fit_failed".to_string()),
+                        reason: Some(InnerFitReason::FitFailed),
+                        reason_context: None,
                         ellipse_inner: None,
                         points_inner,
                         ransac_inlier_ratio_inner: None,
@@ -218,7 +290,8 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             None => {
                 return InnerFitResult {
                     status: InnerFitStatus::Failed,
-                    reason: Some("inner_fit_failed".to_string()),
+                    reason: Some(InnerFitReason::FitFailed),
+                    reason_context: None,
                     ellipse_inner: None,
                     points_inner,
                     ransac_inlier_ratio_inner: None,
@@ -228,13 +301,15 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         }
     };
 
-    let mut reject_reason: Option<String> = None;
+    let mut reject_reason: Option<InnerFitReason> = None;
+    let mut reject_context: Option<InnerFitReasonContext> = None;
     if let Some(ir) = inlier_ratio {
         if ir < cfg.min_inlier_ratio {
-            reject_reason = Some(format!(
-                "inlier_ratio_low({:.3}<{:.3})",
-                ir, cfg.min_inlier_ratio
-            ));
+            reject_reason = Some(InnerFitReason::InlierRatioLow);
+            reject_context = Some(InnerFitReasonContext::InlierRatioLow {
+                observed_inlier_ratio: ir,
+                min_required_inlier_ratio: cfg.min_inlier_ratio,
+            });
         }
     }
 
@@ -242,10 +317,11 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     let dy = ellipse_inner.cy - outer.cy;
     let center_shift = (dx * dx + dy * dy).sqrt();
     if reject_reason.is_none() && center_shift > cfg.max_center_shift_px {
-        reject_reason = Some(format!(
-            "center_shift_too_large({:.3}>{:.3})",
-            center_shift, cfg.max_center_shift_px
-        ));
+        reject_reason = Some(InnerFitReason::CenterShiftTooLarge);
+        reject_context = Some(InnerFitReasonContext::CenterShiftTooLarge {
+            observed_shift_px: center_shift,
+            max_allowed_shift_px: cfg.max_center_shift_px,
+        });
     }
 
     let mean_outer = ((outer.a + outer.b) * 0.5).max(1e-9);
@@ -254,10 +330,12 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     if reject_reason.is_none() {
         if let Some(r_hint) = estimate.r_inner_found {
             if (ratio_meas - r_hint as f64).abs() > cfg.max_ratio_abs_error {
-                reject_reason = Some(format!(
-                    "ratio_mismatch({:.3} vs {:.3})",
-                    ratio_meas, r_hint
-                ));
+                reject_reason = Some(InnerFitReason::RatioMismatch);
+                reject_context = Some(InnerFitReasonContext::RatioMismatch {
+                    measured_ratio: ratio_meas,
+                    hint_ratio: r_hint,
+                    max_allowed_abs_error: cfg.max_ratio_abs_error,
+                });
             }
         }
     }
@@ -266,16 +344,18 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     if reject_reason.is_none()
         && (!rms_residual_inner.is_finite() || rms_residual_inner > cfg.max_rms_residual)
     {
-        reject_reason = Some(format!(
-            "inner_rms_residual_high({:.3}>{:.3})",
-            rms_residual_inner, cfg.max_rms_residual
-        ));
+        reject_reason = Some(InnerFitReason::RmsResidualHigh);
+        reject_context = Some(InnerFitReasonContext::RmsResidualHigh {
+            observed_rms_residual: rms_residual_inner,
+            max_allowed_rms_residual: cfg.max_rms_residual,
+        });
     }
 
     if let Some(reason) = reject_reason {
         return InnerFitResult {
             status: InnerFitStatus::Rejected,
             reason: Some(reason),
+            reason_context: reject_context,
             ellipse_inner: None,
             points_inner,
             ransac_inlier_ratio_inner: inlier_ratio,
@@ -286,6 +366,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     InnerFitResult {
         status: InnerFitStatus::Ok,
         reason: None,
+        reason_context: None,
         ellipse_inner: Some(ellipse_inner),
         points_inner,
         ransac_inlier_ratio_inner: inlier_ratio,
@@ -352,11 +433,25 @@ mod tests {
             &InnerFitConfig::default(),
             false,
         );
-        assert_eq!(res.status, InnerFitStatus::Ok, "reason={:?}", res.reason);
+        assert_eq!(
+            res.status,
+            InnerFitStatus::Ok,
+            "reason={:?} context={:?}",
+            res.reason,
+            res.reason_context
+        );
         let e = res.ellipse_inner.expect("inner ellipse");
         assert!((e.cx - outer.cx).abs() < 1.2);
         assert!((e.cy - outer.cy).abs() < 1.2);
         let mean = (e.a + e.b) * 0.5;
         assert!((mean - r_in as f64).abs() < 1.5, "mean={:.3}", mean);
+    }
+
+    #[test]
+    fn inner_fit_reason_serialization_is_stable() {
+        let reason = InnerFitReason::RmsResidualHigh;
+        assert_eq!(reason.to_string(), "rms_residual_high");
+        let json = serde_json::to_string(&reason).expect("serialize inner fit reason");
+        assert_eq!(json, "\"rms_residual_high\"");
     }
 }

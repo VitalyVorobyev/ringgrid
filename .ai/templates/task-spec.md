@@ -11,21 +11,18 @@ What needs to change and why?
 
 ## Affected Pipeline Stages
 
-Which of the 13 stages are impacted? List by number and name.
+Which of the 10 stages are impacted? List by number and name.
 
 1. [ ] Proposal
 2. [ ] Outer Estimate
 3. [ ] Outer Fit
 4. [ ] Decode
-5. [ ] Inner Estimate
+5. [ ] Inner Fit
 6. [ ] Dedup
-7. [ ] Projective Center (1st pass)
+7. [ ] Projective Center (once per marker)
 8. [ ] Global Filter
-9. [ ] H-guided Refine
-10. [ ] Projective Center (2nd pass)
-11. [ ] Completion
-12. [ ] Projective Center (3rd pass)
-13. [ ] Final H Refit
+9. [ ] Completion (+ projective center for new markers)
+10. [ ] Final H Refit
 
 ## Affected Modules
 

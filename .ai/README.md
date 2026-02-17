@@ -10,7 +10,6 @@ Structured workflow for AI-assisted development of ringgrid.
 | **Algorithm Engineer** | `metrology-invariants`, `tests-synthetic-fixtures` | Math primitives: ellipse fitting, RANSAC, homography, projective center, decode. Owns `conic/`, `homography/`, `ring/`, `marker/` |
 | **Pipeline Architect** | `api-shaping` | Pipeline orchestration, public API, config design, module boundaries. Owns `pipeline/`, `api.rs`, `lib.rs`, `detector/config.rs` |
 | **Performance Engineer** | `hotpath-rust`, `criterion-bench` | Hot loop optimization, benchmarking, allocation profiling. Reviews any changed inner loop |
-| **Validation Engineer** | `tests-synthetic-fixtures`, `metrology-invariants` | End-to-end testing, synthetic eval, scoring, Python tooling. Owns `tools/`, CI verification |
 
 ## Quick Start
 
@@ -27,7 +26,7 @@ Structured workflow for AI-assisted development of ringgrid.
 |-----------|----------|--------------|
 | Discuss priorities, plan milestones, triage new work | [planning](workflows/planning.md) | Project Lead |
 | New pipeline stage, detection mode, or API entry point | [feature-development](workflows/feature-development.md) | Pipeline Architect |
-| Correctness regression or defect | [bug-fix](workflows/bug-fix.md) | Validation Engineer |
+| Correctness regression or defect | [bug-fix](workflows/bug-fix.md) | Algorithm Engineer |
 | Latency or throughput improvement | [performance-optimization](workflows/performance-optimization.md) | Performance Engineer |
 | Replace or enhance a math primitive | [algorithm-improvement](workflows/algorithm-improvement.md) | Algorithm Engineer |
 
@@ -71,4 +70,4 @@ cargo test --workspace --all-features
 ### Dual-Language Context
 - **Rust** (`crates/`): algorithms and library code
 - **Python** (`tools/`): synthetic data generation, scoring, visualization, benchmarking
-- Algorithm and performance changes are Rust-only; validation may involve both
+- Algorithm and performance changes are Rust-only; validation gates may involve both

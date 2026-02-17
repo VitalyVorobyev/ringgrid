@@ -29,7 +29,7 @@ This is the only workflow that involves direct human conversation. All other wor
 **Steps:**
 1. For each agreed item, fill in `templates/task-spec.md`:
    - Problem statement (what and why)
-   - Affected pipeline stages (check the 13-stage list)
+   - Affected pipeline stages (check the 10-stage list)
    - Affected modules (file paths under `crates/ringgrid/src/`)
    - Public API impact assessment
    - Acceptance criteria with measurable thresholds
@@ -47,7 +47,7 @@ This is the only workflow that involves direct human conversation. All other wor
    | Type | Workflow | Starting Role |
    |------|----------|--------------|
    | feature | `feature-development.md` | Pipeline Architect |
-   | bug | `bug-fix.md` | Validation Engineer |
+   | bug | `bug-fix.md` | Algorithm Engineer |
    | perf | `performance-optimization.md` | Performance Engineer |
    | algo | `algorithm-improvement.md` | Algorithm Engineer |
 2. Write initial handoff note from `templates/handoff-note.md`:

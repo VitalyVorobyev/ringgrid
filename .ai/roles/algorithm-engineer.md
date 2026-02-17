@@ -24,7 +24,7 @@ Always activate these Codex skills when working:
 ### Projective Center
 - Unbiased center recovery from inner+outer conic cross-product
 - Implementation: `crates/ringgrid/src/ring/projective_center.rs`
-- Applied in 3 passes during pipeline (fit-decode, post-refine, post-completion)
+- Applied once per marker during pipeline (fit-decode markers before global filter, completion markers after completion)
 
 ### Ring Sampling
 - Radial intensity profile: `crates/ringgrid/src/ring/radial_profile.rs`
@@ -59,6 +59,24 @@ Always activate these Codex skills when working:
 
 6. **Mathematical justification required.** Non-trivial algorithm changes must include a comment or commit message explaining the mathematical reasoning.
 
+## Validation Gates (required before handoff)
+
+Run these before handing off to Project Lead:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_check
+```
+
+**Pass/fail thresholds:**
+- Mean center error regression: ≤ +0.01 px vs baseline
+- Precision/recall: must not decrease vs baseline
+- All tests pass, no clippy warnings
+
+If accuracy regresses beyond threshold, investigate root cause before handoff — do not hand off with a known regression.
+
 ## Output Expectations
 
 When completing a phase:
@@ -66,9 +84,25 @@ When completing a phase:
 - Include synthetic fixture tests that prove correctness at documented tolerances
 - List all affected modules with one-line change descriptions
 - Report accuracy metrics if measurable (center error, decode success rate)
+- Validation gate results (pass/fail + key numbers)
+
+## Templates
+
+Use these templates when producing deliverables:
+- [handoff-note](../templates/handoff-note.md) — required for every handoff between roles
+- [adr](../templates/adr.md) — for significant algorithmic decisions (e.g., new fitting method, RANSAC variant)
+- [accuracy-report](../templates/accuracy-report.md) — when running full validation suite (blur-3 + reference + distortion gates)
+
+## Workflows
+
+This role participates in:
+- [feature-development](../workflows/feature-development.md) — Phase 2: Algorithm Implementation
+- [bug-fix](../workflows/bug-fix.md) — Phase 1: Triage, Phase 2: Root Cause & Fix
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — Phase 1: Design, Phase 3: Implementation
+- [performance-optimization](../workflows/performance-optimization.md) — Phase 2: Implementation (if algorithmic change needed)
 
 ## Handoff Triggers
 
-- **To Validation Engineer:** After implementing math primitives — for end-to-end scoring and regression check
+- **To Project Lead:** When task is complete and validation gates pass (default final handoff)
 - **To Performance Engineer:** If new code introduces hot loops (per-pixel, per-candidate, per-RANSAC-iteration)
 - **To Pipeline Architect:** If changes affect pipeline stage ordering, new types needed, or config additions required

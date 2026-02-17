@@ -40,7 +40,7 @@ Controls the homography-guided completion stage. After the global homography fil
 
 Controls projective center recovery from the inner/outer conic pencil. When enabled, the detector computes an unbiased center estimate from the intersection geometry of the inner and outer fitted ellipses, correcting for perspective bias in the naive ellipse-center estimate.
 
-Center correction is applied in three passes during the pipeline: before the global filter, after H-guided refinement, and after completion.
+Center correction is applied once per marker during the pipeline: before the global filter for fit-decode markers, and after completion for newly added markers.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -106,7 +106,7 @@ assert!(method.uses_projective_center());
 
 ## RansacHomographyConfig
 
-Controls the RANSAC homography estimation used for global filtering and H-guided refinement. The homography maps board-space marker positions (mm) to image-space pixel coordinates.
+Controls the RANSAC homography estimation used for global filtering and completion. The homography maps board-space marker positions (mm) to image-space pixel coordinates.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

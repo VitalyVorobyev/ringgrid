@@ -13,7 +13,7 @@ Use this workflow for: new pipeline stages, detection modes, API entry points, c
 **Goal:** Define scope, API impact, and pipeline integration plan.
 
 **Steps:**
-1. Identify which of the 13 pipeline stages are affected
+1. Identify which of the 10 pipeline stages are affected
 2. Assess public API impact:
    - New types needed? → define at construction site, re-export from `lib.rs`
    - New config fields? → extend `DetectConfig` sub-structs with `Default` values
@@ -48,38 +48,18 @@ Use this workflow for: new pipeline stages, detection modes, API entry points, c
 **Goal:** Wire the new capability into the detection pipeline.
 
 **Steps:**
-1. Add to `pipeline/fit_decode.rs` (stages 1-6) or `pipeline/finalize.rs` (stages 7-13)
+1. Add to `pipeline/fit_decode.rs` (stages 1-6) or `pipeline/finalize.rs` (stages 7-10)
 2. Update `pipeline/run.rs` if orchestration logic changes
 3. Add config fields to `DetectConfig` hierarchy in `detector/config.rs`
 4. Update `lib.rs` re-exports for any new public types
 5. Update CLI in `ringgrid-cli` if new flags needed
 6. Update `CLAUDE.md` pipeline documentation if stage flow changed
-7. Write handoff note → Validation Engineer
+7. Run validation gates (see role spec)
+8. Write handoff note → Performance Engineer (if perf-sensitive) or directly to Finalize
 
-**Deliverables:** Integrated pipeline, updated config, handoff note
+**Deliverables:** Integrated pipeline, updated config, validation gate results, handoff note
 
-### 4. Validation (Validation Engineer)
-
-**Goal:** Verify correctness end-to-end.
-
-**Steps:**
-1. Run CI checks:
-   ```bash
-   cargo fmt --all
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo test --workspace --all-features
-   ```
-2. Run synthetic eval:
-   ```bash
-   python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_feature
-   ```
-3. Compare scoring metrics against baseline
-4. Update Python tooling if needed (new viz, new scoring metrics)
-5. Write handoff note → Performance Engineer (if perf-sensitive) or Pipeline Architect (if not)
-
-**Deliverables:** CI results, scoring comparison, handoff note
-
-### 5. Performance Check (Performance Engineer) — conditional
+### 4. Performance Check (Performance Engineer) — conditional
 
 **Goal:** Ensure no performance regression; add benchmarks for new hot paths.
 
@@ -91,12 +71,27 @@ Use this workflow for: new pipeline stages, detection modes, API entry points, c
 
 **Deliverables:** Benchmark results, handoff note
 
-### 6. Finalize (Pipeline Architect)
+### 5. Finalize (Pipeline Architect)
 
-**Goal:** Close the loop.
+**Goal:** Verify integration and hand off.
 
 **Steps:**
 1. Review all handoff notes for the task
 2. Verify CI passes on feature branch
-3. Update `state/backlog.md` — mark task done
-4. Human reviews and merges
+3. Write handoff note → Project Lead with summary of all phases
+
+**Deliverables:** Integration summary, handoff note
+
+### 6. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
+4. Update `state/backlog.md` — mark task done
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

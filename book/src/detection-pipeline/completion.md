@@ -27,13 +27,13 @@ Completion uses stricter acceptance criteria than the initial detection to avoid
 
 The `reproj_gate_px` is the most important gate — it ensures that completed markers are geometrically consistent with the homography. A tight gate (default 3.0 px) prevents false detections from being added.
 
-## Third Projective Center Pass
+## Projective Center for Completion Markers
 
-After completion, projective center correction is applied a third and final time — but only to the newly completed markers. Previously corrected markers retain their corrections.
+After completion, projective center correction is applied to the newly completed markers only. Previously corrected markers retain their corrections. Each marker is corrected exactly once.
 
 ## Final Homography Refit
 
-With the expanded marker set (original + refined + completed), the homography is refit from all corrected centers. This final refit:
+With the expanded marker set (original + completed), the homography is refit from all corrected centers. This final refit:
 
 1. Uses all available markers for maximum accuracy
 2. Accepts the refit only if the mean reprojection error improves

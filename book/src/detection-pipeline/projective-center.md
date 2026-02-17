@@ -8,17 +8,16 @@ Under perspective projection, the center of a fitted ellipse is **biased** — i
 
 ringgrid corrects this bias using the **conic pencil approach**: when both inner and outer ellipses are available for a marker, the two conics constrain a pencil whose degenerate members intersect at the true projected center. See [Projective Center Recovery](../math/projective-center-recovery.md) for the full derivation.
 
-### Three-Pass Application
+### Once-Per-Marker Application
 
-Projective center correction is applied **three times** during the pipeline:
+Projective center correction is applied **once per marker** at two points in the pipeline:
 
-| Pass | When | Which markers |
-|---|---|---|
-| 1st | Before global filter | All markers from fit-decode stage |
-| 2nd | After H-guided refinement | Markers with newly fitted ellipses |
-| 3rd | After completion | Completion-added markers only |
+| When | Which markers |
+|---|---|
+| Before global filter (stage 7) | All markers from fit-decode stage |
+| After completion (stage 9) | Completion-added markers only |
 
-Each pass recomputes the corrected center from the current ellipse pair, since refinement and completion may produce different ellipse fits.
+Each marker is corrected exactly once — fit-decode markers before the global filter, and completion markers after they are added.
 
 ### Configuration
 
@@ -40,7 +39,7 @@ When correction is rejected (gates not met), the original ellipse-fit center is 
 Once enough markers are decoded and center-corrected, the detector estimates a board-to-image homography using RANSAC. This serves two purposes:
 
 1. **Outlier rejection**: markers that are inconsistent with the dominant planar mapping are discarded
-2. **Enable downstream stages**: H-guided refinement and completion require a valid homography
+2. **Enable downstream stages**: completion requires a valid homography
 
 ### Requirements
 
@@ -49,7 +48,7 @@ The global filter requires:
 - At least 4 decoded markers with known board positions (from `BoardLayout`)
 - `use_global_filter = true` in `DetectConfig`
 
-When fewer than 4 decoded markers are available, the global filter is skipped and stages 8–13 do not run.
+When fewer than 4 decoded markers are available, the global filter is skipped and stages 8–10 do not run.
 
 ### Algorithm
 
@@ -83,6 +82,6 @@ The global filter produces:
 
 ### Short-Circuit
 
-When `use_global_filter = false`, the entire finalization phase (stages 7–13) is skipped. The detector returns the markers from the fit-decode phase without any homography-based post-processing.
+When `use_global_filter = false`, the entire finalization phase (stages 7–10) is skipped. The detector returns the markers from the fit-decode phase without any homography-based post-processing.
 
 **Source**: `detector/center_correction.rs`, `detector/global_filter.rs`, `homography/core.rs`

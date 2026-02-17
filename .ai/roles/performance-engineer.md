@@ -20,13 +20,12 @@ Always activate these Codex skills when working:
 ### Performance Patterns in Use
 - **Scratch buffer reuse:** `Vec` fields on structs, cleared and reused across calls (avoid per-call allocation)
 - **Row-major image access:** `GrayImage` from the `image` crate, row-major pixel layout
-- **Rayon parallelism:** `rayon` crate for data-parallel candidate processing
 - **Early termination:** RANSAC with adaptive iteration count based on inlier ratio
 
 ### Existing Benchmarks
-- Python-driven benchmarks: `tools/run_reference_benchmark.py`, `tools/run_distortion_benchmark.sh`
-- Reference results: `tools/out/reference_benchmark_post_pipeline/summary.json`
-- No Criterion Rust benchmarks yet (opportunity: PERF-001 in backlog)
+- **Criterion benchmarks:** `crates/ringgrid/benches/hotpaths.rs` — proposal, radial_profile, outer_estimate, inner_estimate, inner_fit, ellipse_fit
+- **Python-driven benchmarks:** `tools/run_reference_benchmark.py`, `tools/run_distortion_benchmark.sh`
+- **Reference results:** `tools/out/reference_benchmark_post_pipeline/summary.json`
 
 ## Constraints
 
@@ -41,7 +40,25 @@ Always activate these Codex skills when working:
 
 4. **No heavy new dependencies for convenience.** Performance gains must come from better algorithms or tighter code, not large dependency additions.
 
-5. **Accuracy must be preserved.** Any optimization that changes numerical results requires validation-engineer sign-off. Flag changes > 0.01 px mean center error.
+5. **Accuracy must be preserved.** Any optimization that changes numerical results must be verified via synthetic eval before handoff. Flag changes > 0.01 px mean center error.
+
+## Validation Gates (required before handoff)
+
+Run these before handing off to Project Lead:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_check
+```
+
+**Pass/fail thresholds:**
+- Mean center error regression: ≤ +0.01 px vs baseline
+- Precision/recall: must not decrease vs baseline
+- All tests pass, no clippy warnings
+
+If accuracy regresses beyond threshold, investigate root cause before handoff — do not hand off with a known regression.
 
 ## Output Expectations
 
@@ -49,10 +66,28 @@ When completing a phase:
 - Before/after Criterion benchmark numbers with % change
 - Flamegraph or profiling observations (top hotspots, allocation counts)
 - Allocation profile changes (per-detect call)
-- Explicit statement on accuracy impact (preserved / changed / needs verification)
+- Accuracy impact: validation gate results (pass/fail + key numbers)
+
+## Templates
+
+Use these templates when producing deliverables:
+- [handoff-note](../templates/handoff-note.md) — required for every handoff between roles
+- [benchmark-report](../templates/benchmark-report.md) — required for every PERF task finalization
+- [accuracy-report](../templates/accuracy-report.md) — required when running the full validation suite
+
+Reference runbook for the standardized validation gates:
+- [perf-validation-suite-runbook](../workflows/perf-validation-suite-runbook.md) — step-by-step commands for blur-3, reference, and distortion gates
+
+## Workflows
+
+This role participates in:
+- [performance-optimization](../workflows/performance-optimization.md) — Phase 1: Baseline, Phase 2: Implementation, Phase 3: Finalize
+- [feature-development](../workflows/feature-development.md) — Phase 4: Performance Check (conditional)
+- [bug-fix](../workflows/bug-fix.md) — Phase 3: Performance Sanity (conditional)
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — Phase 4: Performance Comparison
 
 ## Handoff Triggers
 
+- **To Project Lead:** When task is complete and validation gates pass (default final handoff)
 - **To Algorithm Engineer:** If optimization requires changing the mathematical approach (e.g., coarser-to-finer search, approximate fitting)
-- **To Validation Engineer:** After any optimization — to verify accuracy is preserved via synthetic eval
 - **To Pipeline Architect:** If optimization changes function signatures or buffer ownership patterns

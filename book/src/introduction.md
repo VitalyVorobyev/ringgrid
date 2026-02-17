@@ -55,7 +55,7 @@ This book is for Rust developers working on:
 ## Book Structure
 
 - **Marker Design** — anatomy of the ring marker, coding scheme, and hex lattice layout
-- **Detection Pipeline** — detailed walkthrough of all 13 detection stages
+- **Detection Pipeline** — detailed walkthrough of all 10 detection stages
 - **Mathematical Foundations** — full derivations of the core algorithms (ellipse fitting, RANSAC, homography, projective center recovery, division model)
 - **Using ringgrid** — configuration, output types, detection modes, and CLI usage
 

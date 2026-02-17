@@ -51,37 +51,12 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
    - **Robustness:** success rate under noise sweep (blur 0.5, 1.0, 2.0, 3.0 px)
    - **Edge cases:** near-circular vs high-eccentricity ellipses, small marker count, image borders
 3. Keep old implementation accessible behind config toggle
-4. Write handoff note → Validation Engineer with A/B comparison data
+4. Run validation gates (see role spec) including A/B synthetic eval comparison
+5. Write handoff note → Performance Engineer with A/B comparison data
 
-**Deliverables:** New algorithm, comparison tests, A/B results, handoff note
+**Deliverables:** New algorithm, comparison tests, A/B results, validation gate results, handoff note
 
-### 4. End-to-End Validation (Validation Engineer)
-
-**Goal:** Full pipeline comparison: old algorithm vs new.
-
-**Steps:**
-1. Run full synthetic eval with old algorithm (baseline):
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_baseline
-   ```
-2. Run full synthetic eval with new algorithm:
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_new
-   ```
-3. Produce comparison report using `templates/accuracy-report.md`:
-   - Precision, recall, F1
-   - Center error (mean, p50, p95, max)
-   - Decode success rate
-   - Homography reprojection error
-4. Test under stress conditions (blur 3.0, noise):
-   ```bash
-   python3 tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_algo_stress
-   ```
-5. Write handoff note → Performance Engineer
-
-**Deliverables:** Accuracy report (baseline vs new), stress test results, handoff note
-
-### 5. Performance Comparison (Performance Engineer)
+### 4. Performance Comparison (Performance Engineer)
 
 **Goal:** Quantify the latency impact.
 
@@ -94,7 +69,7 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 
 **Deliverables:** Benchmark report, handoff note
 
-### 6. Decision & Integration (Pipeline Architect)
+### 5. Decision & Integration (Pipeline Architect)
 
 **Goal:** Make the adopt/reject decision and integrate.
 
@@ -110,5 +85,20 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 3. If adopted:
    - Update `CLAUDE.md` pipeline documentation if applicable
    - Update ADR with decision outcome and evidence summary
+4. Write handoff note → Project Lead with decision and evidence summary
+
+**Deliverables:** Decision, integration (if adopted), handoff note
+
+### 6. Close-Out (Project Lead)
+
+**Goal:** Verify acceptance criteria, update tracking, present to human.
+
+**Steps:**
+1. Review all handoff notes for the task
+2. Verify acceptance criteria from task spec are met
+3. Verify validation gates passed (check reported results)
 4. Update `state/backlog.md` — mark task done
-5. Human reviews and merges
+5. Write session summary
+6. Present to human for review and merge
+
+**Deliverables:** Updated backlog, session summary

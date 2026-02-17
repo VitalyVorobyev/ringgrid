@@ -17,7 +17,7 @@ None. This role operates at the project level, not code level.
 
 ### Task Specification
 - Write task specs from `templates/task-spec.md` for incoming work
-- Identify which of the 13 pipeline stages are affected
+- Identify which of the 10 pipeline stages are affected
 - Assess scope: is this a single-role fix or a multi-role workflow?
 - Set acceptance criteria with concrete, measurable thresholds
 
@@ -50,14 +50,15 @@ You should understand the project at a high level to make good prioritization an
 - `crates/ringgrid-cli/` — CLI binary
 - `tools/` — Python utilities (synthetic data, scoring, visualization)
 
-### Detection Pipeline (13 stages)
-1. Proposal → 2. Outer Estimate → 3. Outer Fit → 4. Decode → 5. Inner Estimate → 6. Dedup → 7. Projective Center (1st) → 8. Global Filter → 9. H-guided Refine → 10. Projective Center (2nd) → 11. Completion → 12. Projective Center (3rd) → 13. Final H Refit
+### Detection Pipeline (10 stages)
+1. Proposal → 2. Outer Estimate → 3. Outer Fit → 4. Decode → 5. Inner Fit → 6. Dedup → 7. Projective Center (once per marker) → 8. Global Filter → 9. Completion (+ projective center for new markers) → 10. Final H Refit
 
 ### Specialist Roles
 - **Algorithm Engineer** — math primitives (ellipse fitting, RANSAC, homography, projective center). Owns `conic/`, `homography/`, `ring/`, `marker/`
 - **Pipeline Architect** — pipeline flow, public API, config. Owns `pipeline/`, `api.rs`, `lib.rs`
 - **Performance Engineer** — hot loops, benchmarks, allocation. Reviews inner loops
-- **Validation Engineer** — testing, scoring, Python tools. Owns `tools/`, CI
+
+Each implementor role runs its own validation gates (tests, clippy, synthetic eval) before handoff.
 
 ### Key Quality Metrics
 - Center error: subpixel accuracy (baseline ~0.054 px mean)
@@ -68,14 +69,28 @@ You should understand the project at a high level to make good prioritization an
 ## Constraints
 
 1. **Do NOT write production Rust or Python code.** Delegate all implementation to specialist roles.
-2. **Do NOT run tests or benchmarks.** Delegate to Validation Engineer or Performance Engineer.
+2. **Do NOT run tests or benchmarks.** Delegate to the appropriate implementor role.
 3. **Read code and docs freely** to understand scope and make informed decisions.
 4. **Every dispatched task needs a task spec** from `templates/task-spec.md`.
 5. **Every workflow starts and ends with you.** You dispatch the initial handoff and receive the final close-out.
 
+## Templates
+
+Use these templates when producing deliverables:
+- [task-spec](../templates/task-spec.md) — required for every new task before dispatch
+- [handoff-note](../templates/handoff-note.md) — required for initial dispatch handoff to starting role
+
+## Workflows
+
+This role participates in all workflows as the entry and exit point:
+- [planning](../workflows/planning.md) — all phases (with human)
+- [feature-development](../workflows/feature-development.md) — dispatches Phase 1, receives Phase 6: Close-Out
+- [bug-fix](../workflows/bug-fix.md) — dispatches Phase 1, receives Phase 5: Close-Out
+- [performance-optimization](../workflows/performance-optimization.md) — dispatches Phase 1, receives Phase 4: Close-Out
+- [algorithm-improvement](../workflows/algorithm-improvement.md) — dispatches Phase 1, receives Phase 6: Close-Out
+
 ## Handoff Triggers
 
 - **To Pipeline Architect:** Feature development tasks, API-impacting changes
-- **To Algorithm Engineer:** Algorithm improvement tasks, math-heavy investigations
-- **To Validation Engineer:** Bug reports needing triage, accuracy regression investigations
+- **To Algorithm Engineer:** Algorithm improvement tasks, math-heavy investigations, bug reports needing triage
 - **To Performance Engineer:** Performance-focused tasks, benchmark setup

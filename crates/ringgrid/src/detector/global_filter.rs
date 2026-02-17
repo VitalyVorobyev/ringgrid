@@ -14,38 +14,37 @@ pub fn global_filter(
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
-    // Build correspondences from decoded markers.
-    let mut src_pts = Vec::new(); // board coords (mm)
-    let mut dst_pts = Vec::new(); // image coords (px)
-    let mut decoded_ids: Vec<usize> = Vec::new();
-    let mut candidate_indices: Vec<usize> = Vec::new();
-
-    for (i, m) in markers.iter().enumerate() {
-        if let Some(id) = m.id {
-            if let Some(xy) = board.xy_mm(id) {
-                src_pts.push([xy[0] as f64, xy[1] as f64]);
-                dst_pts.push(m.center);
-                decoded_ids.push(id);
-                candidate_indices.push(i);
-            }
-        }
-    }
+    let correspondences = homography::collect_marker_correspondences(
+        markers,
+        board,
+        homography::CorrespondenceDestinationFrame::Image,
+        homography::DuplicateIdPolicy::KeepAll,
+        |m| Some(m.center),
+    );
+    debug_assert_eq!(
+        correspondences.dst_frame,
+        homography::CorrespondenceDestinationFrame::Image
+    );
 
     tracing::info!(
         "Global filter: {} decoded candidates out of {} total detections",
-        candidate_indices.len(),
+        correspondences.len(),
         markers.len()
     );
 
-    if src_pts.len() < 4 {
+    if correspondences.len() < 4 {
         tracing::warn!(
             "Too few decoded candidates for homography ({} < 4)",
-            src_pts.len()
+            correspondences.len()
         );
         return (markers.to_vec(), None, None);
     }
 
-    let result = match homography::fit_homography_ransac(&src_pts, &dst_pts, config) {
+    let result = match homography::fit_homography_ransac(
+        &correspondences.src_board_mm,
+        &correspondences.dst_points,
+        config,
+    ) {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("Homography RANSAC failed: {}", e);
@@ -55,31 +54,19 @@ pub fn global_filter(
 
     // Collect inliers/outliers and per-id errors.
     let mut filtered: Vec<DetectedMarker> = Vec::new();
-    let mut inlier_errors: Vec<f64> = Vec::new();
-    for (j, _id) in decoded_ids.iter().enumerate() {
-        let err = result.errors[j];
-        if result.inlier_mask[j] {
-            inlier_errors.push(err);
-            filtered.push(markers[candidate_indices[j]].clone());
+    for (j, marker_index) in correspondences.marker_indices.iter().enumerate() {
+        if result.inlier_mask.get(j).copied().unwrap_or(false) {
+            filtered.push(markers[*marker_index].clone());
         }
     }
 
     // Compute stats.
-    inlier_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mean_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        inlier_errors.iter().sum::<f64>() / inlier_errors.len() as f64
-    };
-    let p95_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        let idx = ((inlier_errors.len() as f64 * 0.95) as usize).min(inlier_errors.len() - 1);
-        inlier_errors[idx]
-    };
+    let mut inlier_errors =
+        homography::collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
+    let (mean_err, p95_err) = homography::mean_and_p95(&mut inlier_errors);
 
     let stats = RansacStats {
-        n_candidates: src_pts.len(),
+        n_candidates: correspondences.len(),
         n_inliers: result.n_inliers,
         threshold_px: config.inlier_threshold,
         mean_err_px: mean_err,
@@ -89,7 +76,7 @@ pub fn global_filter(
     tracing::info!(
         "Homography RANSAC: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
         result.n_inliers,
-        src_pts.len(),
+        correspondences.len(),
         mean_err,
         p95_err,
     );

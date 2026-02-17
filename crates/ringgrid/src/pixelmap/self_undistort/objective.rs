@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::board_layout::BoardLayout;
 use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
 use crate::homography;
@@ -104,44 +102,24 @@ pub(super) fn homography_self_error_px(
     board: &BoardLayout,
     mapper: &dyn PixelMapper,
 ) -> Option<HomographySelfError> {
-    let mut by_id: BTreeMap<usize, (f32, [f64; 2])> = BTreeMap::new();
-
-    for m in markers {
-        let Some(id) = m.id else {
-            continue;
-        };
-        let Some(center_w) = mapper.image_to_working_pixel(m.center) else {
-            continue;
-        };
-        if !center_w[0].is_finite() || !center_w[1].is_finite() {
-            continue;
-        }
-
-        let conf = m.confidence;
-        match by_id.get_mut(&id) {
-            Some((best_conf, best_center)) => {
-                if conf > *best_conf {
-                    *best_conf = conf;
-                    *best_center = center_w;
-                }
-            }
-            None => {
-                by_id.insert(id, (conf, center_w));
-            }
-        }
-    }
-
-    let mut src = Vec::<[f64; 2]>::new();
-    let mut dst = Vec::<[f64; 2]>::new();
-    for (id, (_conf, center_w)) in by_id {
-        let Some(xy) = board.xy_mm(id) else {
-            continue;
-        };
-        src.push([xy[0] as f64, xy[1] as f64]);
-        dst.push(center_w);
-    }
-
-    if src.len() < 4 {
+    let correspondences = homography::collect_marker_correspondences(
+        markers,
+        board,
+        homography::CorrespondenceDestinationFrame::Working,
+        homography::DuplicateIdPolicy::KeepHighestConfidencePerIdSorted,
+        |m| {
+            mapper
+                .image_to_working_pixel(m.center)
+                .and_then(|center_w| {
+                    (center_w[0].is_finite() && center_w[1].is_finite()).then_some(center_w)
+                })
+        },
+    );
+    debug_assert_eq!(
+        correspondences.dst_frame,
+        homography::CorrespondenceDestinationFrame::Working
+    );
+    if correspondences.len() < 4 {
         return None;
     }
 
@@ -152,7 +130,11 @@ pub(super) fn homography_self_error_px(
         seed: 0,
     };
 
-    let Ok(res) = homography::fit_homography_ransac(&src, &dst, &ransac_cfg) else {
+    let Ok(res) = homography::fit_homography_ransac(
+        &correspondences.src_board_mm,
+        &correspondences.dst_points,
+        &ransac_cfg,
+    ) else {
         return None;
     };
 
@@ -160,21 +142,10 @@ pub(super) fn homography_self_error_px(
         return None;
     }
 
-    let mut sum = 0.0;
-    let mut n = 0usize;
-    for (i, e) in res.errors.iter().enumerate() {
-        if res.inlier_mask.get(i).copied().unwrap_or(false) && e.is_finite() {
-            sum += *e;
-            n += 1;
-        }
-    }
-
-    if n == 0 {
-        None
-    } else {
-        Some(HomographySelfError {
-            mean_error_px: sum / n as f64,
-            n_inliers: n,
-        })
-    }
+    let (mean_error_px, n_inliers) =
+        homography::mean_finite_masked_inlier_error(&res.errors, &res.inlier_mask)?;
+    Some(HomographySelfError {
+        mean_error_px,
+        n_inliers,
+    })
 }

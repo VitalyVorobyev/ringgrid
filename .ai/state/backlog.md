@@ -18,7 +18,7 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| INFRA-004 | in-progress | P2 | infra | Deduplicate homography correspondence/stats utilities | Pipeline Architect | Spec: `.ai/state/sessions/2026-02-17-INFRA-004-spec.md`; dispatch: `.ai/state/sessions/2026-02-17-INFRA-004-lead-pipeline-architect.md` |
+| — | — | — | — | — | — | — |
 
 ## Up Next
 
@@ -39,6 +39,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| INFRA-004 | 2026-02-17 | infra | Deduplicate homography correspondence/stats utilities | Accepted: added shared internal homography correspondence/stat utilities in `homography/correspondence.rs`; rewired `global_filter`, `homography::utils`, and self-undistort objective path; preserved behavior with explicit frame semantics and duplicate-ID policy controls; reported fmt/clippy/tests pass and synth eval deltas at zero versus baseline |
 | BUG-001 | 2026-02-17 | bug | Fix decode config drift and expose hidden thresholds | Accepted: aligned `DecodeConfig` rustdoc with runtime defaults via shared constants; promoted decode hidden thresholds to explicit config (`min_decode_contrast`, `threshold_max_iters`, `threshold_convergence_eps`) with serde-safe defaults; added deterministic threshold-loop and compatibility tests; reported fmt/clippy/tests pass and synth eval deltas within gate |
 | INFRA-003 | 2026-02-17 | infra | Replace stringly reject reasons with typed enums | Accepted: replaced string-based reject/failure channels in `decode`/`inner_fit`/`outer_fit`/`completion`/`fit_decode` with typed enums + structured context; aggregation now keyed by typed reason codes; reported `fmt`/`clippy -D warnings`/`test` pass and blur=3 eval delta is zero versus baseline |
 | ALGO-001 | 2026-02-16 | algo | Unify duplicated radial-estimator core (inner/outer) | Accepted: introduced shared `ring::radial_estimator` core and rewired both `inner_estimate` and `outer_estimate`; maintainability objective met with no material accuracy/perf regression in validation artifacts; local `fmt`/`clippy -D warnings`/`test` passed |
@@ -48,5 +49,3 @@
 | PERF-004 | 2026-02-16 | perf | Optimize outer-fit/outer-estimate hotspot group | Completed: `outer_estimate_64r_48t_nomapper` `34.365 us -> 16.996 us` (`-50.54%`), `outer_estimate_64r_48t_mapper` `40.082 us -> 23.310 us` (`-41.85%`); validation gates passed |
 | PERF-002 | 2026-02-16 | perf | Optimize proposal hotspot (`detector::proposal::find_proposals`) | Accepted: `proposal_1280x1024` `42.404 ms → 33.612 ms` (`-20.73%`), `proposal_1920x1080` `60.614 ms → 48.357 ms` (`-20.22%`); required validation gates passed |
 | PERF-001 | 2026-02-16 | perf | Establish comprehensive performance tracing baseline and benchmark harness | Completed baseline report + hotspot ranking + follow-up plan. Allocation counts documented via proxy (RSS) due `xctrace`/SIP tooling limits |
-| FEAT-001 | 2026-02-16 | feature | Normalize marker center API and simplify finalize flow | Closed by human decision: marginal regression accepted for now; follow-up perf/accuracy work tracked in PERF tasks |
-| INFRA-001 | 2026-02-15 | infra | Set up `.ai/` agent workflow | Bootstrap ADR-001 |

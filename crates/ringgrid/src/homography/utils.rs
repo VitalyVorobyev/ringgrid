@@ -3,8 +3,10 @@
 use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
 
-use super::core::{
-    fit_homography_ransac, homography_reprojection_error, RansacHomographyConfig, RansacStats,
+use super::core::{fit_homography_ransac, RansacHomographyConfig, RansacStats};
+use super::{
+    collect_marker_correspondences, collect_masked_inlier_errors, mean_and_p95,
+    reprojection_errors, CorrespondenceDestinationFrame, DuplicateIdPolicy,
 };
 
 pub(crate) fn refit_homography(
@@ -12,19 +14,18 @@ pub(crate) fn refit_homography(
     config: &RansacHomographyConfig,
     board: &BoardLayout,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
-    let mut src = Vec::new();
-    let mut dst = Vec::new();
-
-    for m in markers {
-        if let Some(id) = m.id {
-            if let Some(xy) = board.xy_mm(id) {
-                src.push([xy[0] as f64, xy[1] as f64]);
-                dst.push(m.center);
-            }
-        }
-    }
-
-    if src.len() < 4 {
+    let correspondences = collect_marker_correspondences(
+        markers,
+        board,
+        CorrespondenceDestinationFrame::Image,
+        DuplicateIdPolicy::KeepAll,
+        |m| Some(m.center),
+    );
+    debug_assert_eq!(
+        correspondences.dst_frame,
+        CorrespondenceDestinationFrame::Image
+    );
+    if correspondences.len() < 4 {
         return (None, None);
     }
 
@@ -36,31 +37,18 @@ pub(crate) fn refit_homography(
         seed: config.seed + 1,
     };
 
-    match fit_homography_ransac(&src, &dst, &light_config) {
+    match fit_homography_ransac(
+        &correspondences.src_board_mm,
+        &correspondences.dst_points,
+        &light_config,
+    ) {
         Ok(result) => {
-            let mut errors: Vec<f64> = result
-                .inlier_mask
-                .iter()
-                .zip(&result.errors)
-                .filter(|(&m, _)| m)
-                .map(|(_, &e)| e)
-                .collect();
-            errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-            let mean_err = if errors.is_empty() {
-                0.0
-            } else {
-                errors.iter().sum::<f64>() / errors.len() as f64
-            };
-            let p95_err = if errors.is_empty() {
-                0.0
-            } else {
-                let idx = ((errors.len() as f64 * 0.95) as usize).min(errors.len() - 1);
-                errors[idx]
-            };
+            let mut inlier_errors =
+                collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
+            let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
 
             let stats = RansacStats {
-                n_candidates: src.len(),
+                n_candidates: correspondences.len(),
                 n_inliers: result.n_inliers,
                 threshold_px: light_config.inlier_threshold,
                 mean_err_px: mean_err,
@@ -92,20 +80,24 @@ pub(crate) fn mean_reproj_error_px(
     markers: &[DetectedMarker],
     board: &BoardLayout,
 ) -> f64 {
+    let correspondences = collect_marker_correspondences(
+        markers,
+        board,
+        CorrespondenceDestinationFrame::Image,
+        DuplicateIdPolicy::KeepAll,
+        |m| Some(m.center),
+    );
+    debug_assert_eq!(
+        correspondences.dst_frame,
+        CorrespondenceDestinationFrame::Image
+    );
+    if correspondences.len() == 0 {
+        return f64::NAN;
+    }
+
     let mut sum = 0.0f64;
     let mut n = 0usize;
-    for m in markers {
-        let Some(id) = m.id else {
-            continue;
-        };
-        let Some(xy) = board.xy_mm(id) else {
-            continue;
-        };
-        let err = homography_reprojection_error(
-            h,
-            &[xy[0] as f64, xy[1] as f64],
-            &[m.center[0], m.center[1]],
-        );
+    for err in reprojection_errors(h, &correspondences) {
         if err.is_finite() {
             sum += err;
             n += 1;
@@ -124,41 +116,27 @@ pub(crate) fn compute_h_stats(
     thresh_px: f64,
     board: &BoardLayout,
 ) -> Option<RansacStats> {
-    let mut errors: Vec<f64> = Vec::new();
-    for m in markers {
-        let Some(id) = m.id else {
-            continue;
-        };
-        let Some(xy) = board.xy_mm(id) else {
-            continue;
-        };
-        let err = homography_reprojection_error(
-            h,
-            &[xy[0] as f64, xy[1] as f64],
-            &[m.center[0], m.center[1]],
-        );
-        if err.is_finite() {
-            errors.push(err);
-        }
-    }
+    let correspondences = collect_marker_correspondences(
+        markers,
+        board,
+        CorrespondenceDestinationFrame::Image,
+        DuplicateIdPolicy::KeepAll,
+        |m| Some(m.center),
+    );
+    debug_assert_eq!(
+        correspondences.dst_frame,
+        CorrespondenceDestinationFrame::Image
+    );
+    let errors: Vec<f64> = reprojection_errors(h, &correspondences)
+        .into_iter()
+        .filter(|e| e.is_finite())
+        .collect();
     if errors.len() < 4 {
         return None;
     }
 
     let mut inlier_errors: Vec<f64> = errors.iter().copied().filter(|&e| e <= thresh_px).collect();
-    inlier_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    let mean_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        inlier_errors.iter().sum::<f64>() / inlier_errors.len() as f64
-    };
-    let p95_err = if inlier_errors.is_empty() {
-        0.0
-    } else {
-        let idx = ((inlier_errors.len() as f64 * 0.95) as usize).min(inlier_errors.len() - 1);
-        inlier_errors[idx]
-    };
+    let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
 
     Some(RansacStats {
         n_candidates: errors.len(),

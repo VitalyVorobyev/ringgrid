@@ -74,6 +74,12 @@ Each implementor role runs its own validation gates (tests, clippy, synthetic ev
 4. **Every dispatched task needs a task spec** from `templates/task-spec.md`.
 5. **Every workflow starts and ends with you.** You dispatch the initial handoff and receive the final close-out.
 
+## Templates
+
+Use these templates when producing deliverables:
+- [task-spec](../templates/task-spec.md) — required for every new task before dispatch
+- [handoff-note](../templates/handoff-note.md) — required for initial dispatch handoff to starting role
+
 ## Workflows
 
 This role participates in all workflows as the entry and exit point:

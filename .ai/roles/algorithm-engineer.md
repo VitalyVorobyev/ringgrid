@@ -86,6 +86,13 @@ When completing a phase:
 - Report accuracy metrics if measurable (center error, decode success rate)
 - Validation gate results (pass/fail + key numbers)
 
+## Templates
+
+Use these templates when producing deliverables:
+- [handoff-note](../templates/handoff-note.md) — required for every handoff between roles
+- [adr](../templates/adr.md) — for significant algorithmic decisions (e.g., new fitting method, RANSAC variant)
+- [accuracy-report](../templates/accuracy-report.md) — when running full validation suite (blur-3 + reference + distortion gates)
+
 ## Workflows
 
 This role participates in:

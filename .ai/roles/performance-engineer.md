@@ -68,6 +68,16 @@ When completing a phase:
 - Allocation profile changes (per-detect call)
 - Accuracy impact: validation gate results (pass/fail + key numbers)
 
+## Templates
+
+Use these templates when producing deliverables:
+- [handoff-note](../templates/handoff-note.md) — required for every handoff between roles
+- [benchmark-report](../templates/benchmark-report.md) — required for every PERF task finalization
+- [accuracy-report](../templates/accuracy-report.md) — required when running the full validation suite
+
+Reference runbook for the standardized validation gates:
+- [perf-validation-suite-runbook](../workflows/perf-validation-suite-runbook.md) — step-by-step commands for blur-3, reference, and distortion gates
+
 ## Workflows
 
 This role participates in:

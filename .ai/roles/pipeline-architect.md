@@ -89,6 +89,12 @@ When completing a phase:
 - Updated pipeline stage documentation if flow changed
 - Validation gate results (pass/fail)
 
+## Templates
+
+Use these templates when producing deliverables:
+- [handoff-note](../templates/handoff-note.md) — required for every handoff between roles
+- [adr](../templates/adr.md) — for architectural decisions (pipeline changes, API shape, config design)
+
 ## Workflows
 
 This role participates in:

@@ -1,0 +1,33 @@
+{
+  "hot_module_prefixes": [
+    "crates/ringgrid/src/detector",
+    "crates/ringgrid/src/ring",
+    "crates/ringgrid/src/marker",
+    "crates/ringgrid/src/pipeline",
+    "crates/ringgrid/src/homography",
+    "crates/ringgrid/src/pixelmap"
+  ],
+  "function_line_guard": {
+    "line_threshold": 120,
+    "allowed_oversized_functions": {
+      "crates/ringgrid/src/detector/completion.rs::complete_with_h": 166,
+      "crates/ringgrid/src/detector/inner_fit.rs::fit_inner_ellipse_from_outer_hint": 162,
+      "crates/ringgrid/src/detector/proposal.rs::find_proposals": 148,
+      "crates/ringgrid/src/marker/decode.rs::decode_marker_impl": 200,
+      "crates/ringgrid/src/ring/inner_estimate.rs::estimate_inner_scale_from_outer_with_mapper": 201,
+      "crates/ringgrid/src/ring/outer_estimate.rs::estimate_outer_from_prior_with_mapper": 205
+    }
+  },
+  "dead_code_allow_guard": {
+    "allowed_occurrences": {
+      "crates/ringgrid/src/marker/codebook.rs::#[cfg_attr(not(test), allow(dead_code))]": 2,
+      "crates/ringgrid/src/marker/codec.rs::#[cfg_attr(not(test), allow(dead_code))]": 5,
+      "crates/ringgrid/src/ring/edge_sample.rs::#[allow(dead_code)]": 1,
+      "crates/ringgrid/src/ring/radial_profile.rs::#[allow(dead_code)]": 2
+    }
+  },
+  "rustdoc_missing_docs_guard": {
+    "crate": "ringgrid",
+    "max_warnings": 43
+  }
+}

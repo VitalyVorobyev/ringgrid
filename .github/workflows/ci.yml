@@ -25,6 +25,9 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Maintainability guardrails (static)
+        run: python3 tools/ci/maintainability_guardrails.py --check static
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -74,6 +77,9 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Maintainability guardrails (rustdoc coverage)
+        run: python3 tools/ci/maintainability_guardrails.py --check rustdoc
 
       - name: Install mdbook
         run: |

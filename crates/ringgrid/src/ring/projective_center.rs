@@ -93,6 +93,45 @@ struct Candidate {
     eig_separation: f64,
 }
 
+#[derive(Debug, Clone)]
+struct PreparedConics {
+    q1: Matrix3<f64>,
+    q2: Matrix3<f64>,
+    q1_inv_c: Matrix3<C64>,
+    ac: Matrix3<C64>,
+    eigvals: Vector3<C64>,
+    eig_sep: [f64; 3],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CandidateScoreContext<'a> {
+    q1: &'a Matrix3<f64>,
+    q2: &'a Matrix3<f64>,
+    eps: f64,
+    ratio_target: Option<f64>,
+    ratio_penalty_weight: f64,
+    imag_lambda_weight: f64,
+    imag_vec_weight: f64,
+}
+
+impl<'a> CandidateScoreContext<'a> {
+    fn from_opts(
+        q1: &'a Matrix3<f64>,
+        q2: &'a Matrix3<f64>,
+        opts: RingCenterProjectiveOptions,
+    ) -> Self {
+        Self {
+            q1,
+            q2,
+            eps: opts.eps.max(1e-15),
+            ratio_target: opts.expected_ratio.map(|k| k * k),
+            ratio_penalty_weight: opts.ratio_penalty_weight.max(0.0),
+            imag_lambda_weight: opts.imag_lambda_weight.max(0.0),
+            imag_vec_weight: opts.imag_vec_weight.max(0.0),
+        }
+    }
+}
+
 fn as_complex_matrix(m: &Matrix3<f64>) -> Matrix3<C64> {
     m.map(|v| C64::new(v, 0.0))
 }
@@ -159,16 +198,10 @@ fn normalize_line(line: Vector3<f64>, eps: f64) -> Option<Vector3<f64>> {
     None
 }
 
-/// Compute projective unbiased ring center and expose selection residual/debug.
-pub fn ring_center_projective_with_debug(
+fn prepare_conics(
     q_inner: &Matrix3<f64>,
     q_outer: &Matrix3<f64>,
-    opts: RingCenterProjectiveOptions,
-) -> Result<RingCenterProjectiveResult, ProjectiveCenterError> {
-    if !q_inner.iter().all(|v| v.is_finite()) || !q_outer.iter().all(|v| v.is_finite()) {
-        return Err(ProjectiveCenterError::NonFiniteInput);
-    }
-
+) -> Result<PreparedConics, ProjectiveCenterError> {
     let q1 = Conic2D { mat: *q_inner }
         .normalize_frobenius()
         .ok_or(ProjectiveCenterError::DegenerateConics)?
@@ -184,8 +217,20 @@ pub fn ring_center_projective_with_debug(
     let q1_inv_c = as_complex_matrix(&q1_inv);
     let a = q2 * q1_inv;
     let ac = as_complex_matrix(&a);
-
     let eigvals = a.complex_eigenvalues();
+    let eig_sep = compute_eigen_separation(&eigvals);
+
+    Ok(PreparedConics {
+        q1,
+        q2,
+        q1_inv_c,
+        ac,
+        eigvals,
+        eig_sep,
+    })
+}
+
+fn compute_eigen_separation(eigvals: &Vector3<C64>) -> [f64; 3] {
     let mut eig_sep = [0.0f64; 3];
     for i in 0..3 {
         let mut min_d = f64::INFINITY;
@@ -200,102 +245,166 @@ pub fn ring_center_projective_with_debug(
         }
         eig_sep[i] = min_d;
     }
-    let mut best: Option<Candidate> = None;
-    let eps = opts.eps.max(1e-15);
-    let ratio_target = opts.expected_ratio.map(|k| k * k);
+    eig_sep
+}
 
-    for i in 0..3 {
-        let lambda = eigvals[i];
-        if !lambda.re.is_finite() || !lambda.im.is_finite() {
-            continue;
-        }
-        let systems = [
-            ac - Matrix3::<C64>::identity() * lambda,
-            ac.transpose() - Matrix3::<C64>::identity() * lambda,
-        ];
-        for sys in &systems {
-            let Some(u) = complex_null_vector_3x3(sys) else {
-                continue;
-            };
-            let lambda_re = lambda.re;
-            let imag_u_norm = complex_imag_vec_norm(&u);
-            let mut p_candidates: Vec<Vector3<f64>> = Vec::new();
+fn systems_for_lambda(ac: &Matrix3<C64>, lambda: C64) -> [Matrix3<C64>; 2] {
+    [
+        ac - Matrix3::<C64>::identity() * lambda,
+        ac.transpose() - Matrix3::<C64>::identity() * lambda,
+    ]
+}
 
-            // Method A (Wang): p~ = inv(Q1) * u.
-            let p_h_c = q1_inv_c * u;
-            if complex_vec_norm(&p_h_c) > eps && p_h_c[2].norm() > eps {
-                let cx_c = p_h_c[0] / p_h_c[2];
-                let cy_c = p_h_c[1] / p_h_c[2];
-                if cx_c.re.is_finite()
-                    && cx_c.im.is_finite()
-                    && cy_c.re.is_finite()
-                    && cy_c.im.is_finite()
-                {
-                    p_candidates.push(Vector3::new(cx_c.re, cy_c.re, 1.0));
-                }
-            }
+fn generate_projective_point_candidates(
+    q1: &Matrix3<f64>,
+    q2: &Matrix3<f64>,
+    q1_inv_c: &Matrix3<C64>,
+    lambda_re: f64,
+    u: &Vector3<C64>,
+    eps: f64,
+) -> Vec<Vector3<f64>> {
+    let mut points = Vec::new();
 
-            // Method B (equivalent in exact arithmetic): (Q2 - lambda Q1) p = 0.
-            let m = q2 - q1 * lambda_re;
-            if let Some(p_h) = real_null_vector_3x3(&m) {
-                if p_h[2].abs() > eps {
-                    p_candidates.push(Vector3::new(p_h[0] / p_h[2], p_h[1] / p_h[2], 1.0));
-                }
-            }
-
-            for p in p_candidates {
-                if !p.iter().all(|v| v.is_finite()) {
-                    continue;
-                }
-
-                let q1p = q1 * p;
-                let q2p = q2 * p;
-                let denom = q1p.norm() * q2p.norm() + eps;
-                if !denom.is_finite() || denom <= eps {
-                    continue;
-                }
-                let residual = q1p.cross(&q2p).norm() / denom;
-
-                let imag_lambda = lambda.im.abs();
-                let ratio_penalty = ratio_target
-                    .map(|t| {
-                        let inv_t = if t.abs() > eps { 1.0 / t } else { t };
-                        let e = (lambda.re - t).abs().min((lambda.re - inv_t).abs());
-                        e * opts.ratio_penalty_weight.max(0.0)
-                    })
-                    .unwrap_or(0.0);
-                let score = residual
-                    + opts.imag_lambda_weight.max(0.0) * imag_lambda
-                    + opts.imag_vec_weight.max(0.0) * imag_u_norm
-                    + ratio_penalty;
-
-                if normalize_line(q1 * p, eps).is_none() {
-                    continue;
-                }
-                let cand = Candidate {
-                    center: Point2::new(p[0], p[1]),
-                    residual,
-                    score,
-                    eig_separation: eig_sep[i],
-                };
-
-                match best {
-                    Some(b) => {
-                        let sep_tol = 1e-12;
-                        if cand.eig_separation > b.eig_separation + sep_tol
-                            || ((cand.eig_separation - b.eig_separation).abs() <= sep_tol
-                                && cand.score < b.score)
-                        {
-                            best = Some(cand);
-                        }
-                    }
-                    None => best = Some(cand),
-                }
-            }
+    // Method A (Wang): p~ = inv(Q1) * u.
+    let p_h_c = q1_inv_c * u;
+    if complex_vec_norm(&p_h_c) > eps && p_h_c[2].norm() > eps {
+        let cx_c = p_h_c[0] / p_h_c[2];
+        let cy_c = p_h_c[1] / p_h_c[2];
+        if cx_c.re.is_finite() && cx_c.im.is_finite() && cy_c.re.is_finite() && cy_c.im.is_finite()
+        {
+            points.push(Vector3::new(cx_c.re, cy_c.re, 1.0));
         }
     }
 
-    let b = best.ok_or(ProjectiveCenterError::NoViableEigenpair)?;
+    // Method B (equivalent in exact arithmetic): (Q2 - lambda Q1) p = 0.
+    let m = q2 - q1 * lambda_re;
+    if let Some(p_h) = real_null_vector_3x3(&m) {
+        if p_h[2].abs() > eps {
+            points.push(Vector3::new(p_h[0] / p_h[2], p_h[1] / p_h[2], 1.0));
+        }
+    }
+
+    points
+}
+
+fn score_candidate(
+    p: Vector3<f64>,
+    lambda: C64,
+    imag_u_norm: f64,
+    eig_separation: f64,
+    score_ctx: CandidateScoreContext<'_>,
+) -> Option<Candidate> {
+    if !p.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+
+    let q1p = score_ctx.q1 * p;
+    let q2p = score_ctx.q2 * p;
+    let denom = q1p.norm() * q2p.norm() + score_ctx.eps;
+    if !denom.is_finite() || denom <= score_ctx.eps {
+        return None;
+    }
+    let residual = q1p.cross(&q2p).norm() / denom;
+
+    let ratio_penalty = score_ctx
+        .ratio_target
+        .map(|t| {
+            let inv_t = if t.abs() > score_ctx.eps { 1.0 / t } else { t };
+            (lambda.re - t).abs().min((lambda.re - inv_t).abs()) * score_ctx.ratio_penalty_weight
+        })
+        .unwrap_or(0.0);
+    let score = residual
+        + score_ctx.imag_lambda_weight * lambda.im.abs()
+        + score_ctx.imag_vec_weight * imag_u_norm
+        + ratio_penalty;
+
+    normalize_line(score_ctx.q1 * p, score_ctx.eps)?;
+
+    Some(Candidate {
+        center: Point2::new(p[0], p[1]),
+        residual,
+        score,
+        eig_separation,
+    })
+}
+
+fn generate_candidates_for_eigenvalue(
+    lambda: C64,
+    eig_separation: f64,
+    prepared: &PreparedConics,
+    score_ctx: CandidateScoreContext<'_>,
+) -> Vec<Candidate> {
+    if !lambda.re.is_finite() || !lambda.im.is_finite() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let systems = systems_for_lambda(&prepared.ac, lambda);
+    for sys in &systems {
+        let Some(u) = complex_null_vector_3x3(sys) else {
+            continue;
+        };
+        let imag_u_norm = complex_imag_vec_norm(&u);
+        let points = generate_projective_point_candidates(
+            &prepared.q1,
+            &prepared.q2,
+            &prepared.q1_inv_c,
+            lambda.re,
+            &u,
+            score_ctx.eps,
+        );
+        for p in points {
+            if let Some(cand) = score_candidate(p, lambda, imag_u_norm, eig_separation, score_ctx) {
+                candidates.push(cand);
+            }
+        }
+    }
+    candidates
+}
+
+fn is_better_candidate(candidate: Candidate, best: Candidate) -> bool {
+    let sep_tol = 1e-12;
+    candidate.eig_separation > best.eig_separation + sep_tol
+        || ((candidate.eig_separation - best.eig_separation).abs() <= sep_tol
+            && candidate.score < best.score)
+}
+
+fn select_best_candidate(candidates: impl IntoIterator<Item = Candidate>) -> Option<Candidate> {
+    let mut best: Option<Candidate> = None;
+    for cand in candidates {
+        match best {
+            Some(prev) if !is_better_candidate(cand, prev) => {}
+            _ => best = Some(cand),
+        }
+    }
+    best
+}
+
+/// Compute projective unbiased ring center and expose selection residual/debug.
+pub fn ring_center_projective_with_debug(
+    q_inner: &Matrix3<f64>,
+    q_outer: &Matrix3<f64>,
+    opts: RingCenterProjectiveOptions,
+) -> Result<RingCenterProjectiveResult, ProjectiveCenterError> {
+    if !q_inner.iter().all(|v| v.is_finite()) || !q_outer.iter().all(|v| v.is_finite()) {
+        return Err(ProjectiveCenterError::NonFiniteInput);
+    }
+
+    let prepared = prepare_conics(q_inner, q_outer)?;
+    let score_ctx = CandidateScoreContext::from_opts(&prepared.q1, &prepared.q2, opts);
+    let mut all_candidates = Vec::new();
+
+    for i in 0..3 {
+        all_candidates.extend(generate_candidates_for_eigenvalue(
+            prepared.eigvals[i],
+            prepared.eig_sep[i],
+            &prepared,
+            score_ctx,
+        ));
+    }
+
+    let b =
+        select_best_candidate(all_candidates).ok_or(ProjectiveCenterError::NoViableEigenpair)?;
     if !b.center.x.is_finite() || !b.center.y.is_finite() {
         return Err(ProjectiveCenterError::InvalidCenter);
     }

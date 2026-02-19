@@ -399,8 +399,10 @@ fn run_board_info() -> CliResult<()> {
     }
 
     if board.n_markers() > 0 {
-        let first = &board.markers[0];
-        let last = &board.markers[board.n_markers() - 1];
+        let first = board.marker_by_index(0).expect("marker 0 must exist");
+        let last = board
+            .marker_by_index(board.n_markers() - 1)
+            .expect("last marker must exist");
         println!(
             "  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
             first.xy_mm[0],

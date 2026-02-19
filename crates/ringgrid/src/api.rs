@@ -7,7 +7,7 @@
 use image::GrayImage;
 use std::path::Path;
 
-use crate::board_layout::BoardLayout;
+use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
@@ -61,7 +61,7 @@ impl Detector {
 
     /// Load target JSON and create a detector in one step using default
     /// marker-scale search prior.
-    pub fn from_target_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_target_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         Ok(Self::new(BoardLayout::from_json_file(path)?))
     }
 
@@ -69,7 +69,7 @@ impl Detector {
     pub fn from_target_json_file_with_scale(
         path: &Path,
         marker_scale: MarkerScalePrior,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, BoardLayoutLoadError> {
         Ok(Self::with_marker_scale(
             BoardLayout::from_json_file(path)?,
             marker_scale,
@@ -80,7 +80,7 @@ impl Detector {
     pub fn from_target_json_file_with_marker_diameter(
         path: &Path,
         marker_diameter_px: f32,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, BoardLayoutLoadError> {
         Ok(Self::with_marker_diameter_hint(
             BoardLayout::from_json_file(path)?,
             marker_diameter_px,

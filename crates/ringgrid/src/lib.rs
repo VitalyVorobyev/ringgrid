@@ -76,7 +76,9 @@ pub use detector::{
 pub use homography::RansacHomographyConfig;
 
 // Geometry
-pub use board_layout::{BoardLayout, BoardMarker};
+pub use board_layout::{
+    BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
+};
 pub use conic::Ellipse;
 pub use marker::MarkerSpec;
 

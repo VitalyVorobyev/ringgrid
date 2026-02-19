@@ -15,6 +15,160 @@ const DEFAULT_ROWS: usize = 15;
 const DEFAULT_LONG_ROW_COLS: usize = 14;
 const DEFAULT_OUTER_RADIUS_MM: f32 = 4.8;
 const DEFAULT_INNER_RADIUS_MM: f32 = 3.2;
+
+/// Validation failures for a board layout specification.
+#[derive(Debug, Clone)]
+pub enum BoardLayoutValidationError {
+    UnsupportedSchema {
+        found: String,
+        expected: &'static str,
+    },
+    EmptyName,
+    InvalidPitch {
+        pitch_mm: f32,
+    },
+    InvalidRows {
+        rows: usize,
+    },
+    InvalidLongRowCols {
+        long_row_cols: usize,
+    },
+    InvalidLongRowColsForRows {
+        rows: usize,
+        long_row_cols: usize,
+    },
+    InvalidOuterRadius {
+        marker_outer_radius_mm: f32,
+    },
+    InvalidInnerRadius {
+        marker_inner_radius_mm: f32,
+    },
+    InnerRadiusNotSmallerThanOuter {
+        marker_inner_radius_mm: f32,
+        marker_outer_radius_mm: f32,
+    },
+    OuterDiameterExceedsMinCenterSpacing {
+        marker_outer_diameter_mm: f32,
+        min_center_spacing_mm: f32,
+    },
+    DerivedZeroColumns {
+        row_index: usize,
+        rows: usize,
+        long_row_cols: usize,
+    },
+}
+
+impl std::fmt::Display for BoardLayoutValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedSchema { found, expected } => write!(
+                f,
+                "unsupported target schema '{}' (expected '{}')",
+                found, expected
+            ),
+            Self::EmptyName => f.write_str("target name must not be empty"),
+            Self::InvalidPitch { pitch_mm } => {
+                write!(f, "pitch_mm must be finite and > 0 (got {pitch_mm})")
+            }
+            Self::InvalidRows { rows } => write!(f, "rows must be >= 1 (got {rows})"),
+            Self::InvalidLongRowCols { long_row_cols } => {
+                write!(f, "long_row_cols must be >= 1 (got {long_row_cols})")
+            }
+            Self::InvalidLongRowColsForRows {
+                rows,
+                long_row_cols,
+            } => write!(
+                f,
+                "long_row_cols must be >= 2 when rows > 1 (got rows={}, long_row_cols={})",
+                rows, long_row_cols
+            ),
+            Self::InvalidOuterRadius {
+                marker_outer_radius_mm,
+            } => write!(
+                f,
+                "marker_outer_radius_mm must be finite and > 0 (got {marker_outer_radius_mm})"
+            ),
+            Self::InvalidInnerRadius {
+                marker_inner_radius_mm,
+            } => write!(
+                f,
+                "marker_inner_radius_mm must be finite and > 0 (got {marker_inner_radius_mm})"
+            ),
+            Self::InnerRadiusNotSmallerThanOuter {
+                marker_inner_radius_mm,
+                marker_outer_radius_mm,
+            } => write!(
+                f,
+                "marker_inner_radius_mm must be < marker_outer_radius_mm (inner={}, outer={})",
+                marker_inner_radius_mm, marker_outer_radius_mm
+            ),
+            Self::OuterDiameterExceedsMinCenterSpacing {
+                marker_outer_diameter_mm,
+                min_center_spacing_mm,
+            } => write!(
+                f,
+                "marker outer diameter ({marker_outer_diameter_mm:.4}mm) must be smaller than minimum center spacing ({min_center_spacing_mm:.4}mm)"
+            ),
+            Self::DerivedZeroColumns {
+                row_index,
+                rows,
+                long_row_cols,
+            } => write!(
+                f,
+                "derived row has zero columns at row {} (rows={}, long_row_cols={})",
+                row_index, rows, long_row_cols
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoardLayoutValidationError {}
+
+/// Load-time failures for board layout JSON.
+#[derive(Debug)]
+pub enum BoardLayoutLoadError {
+    Io(std::io::Error),
+    JsonParse(serde_json::Error),
+    Validation(BoardLayoutValidationError),
+}
+
+impl std::fmt::Display for BoardLayoutLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "failed to read target JSON: {err}"),
+            Self::JsonParse(err) => write!(f, "failed to parse target JSON: {err}"),
+            Self::Validation(err) => write!(f, "invalid target spec: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for BoardLayoutLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::JsonParse(err) => Some(err),
+            Self::Validation(err) => Some(err),
+        }
+    }
+}
+
+impl From<std::io::Error> for BoardLayoutLoadError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<serde_json::Error> for BoardLayoutLoadError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::JsonParse(value)
+    }
+}
+
+impl From<BoardLayoutValidationError> for BoardLayoutLoadError {
+    fn from(value: BoardLayoutValidationError) -> Self {
+        Self::Validation(value)
+    }
+}
 /// A single marker's position on the calibration board.
 ///
 /// Each marker has a unique `id` (codebook index 0–892), a physical position
@@ -57,7 +211,7 @@ pub struct BoardLayout {
     pub long_row_cols: usize,
     pub marker_outer_radius_mm: f32,
     pub marker_inner_radius_mm: f32,
-    pub markers: Vec<BoardMarker>,
+    markers: Vec<BoardMarker>,
 
     /// Fast lookup: marker ID -> index into `markers`.
     id_to_idx: HashMap<usize, usize>,
@@ -76,20 +230,24 @@ struct BoardLayoutSpecV3 {
 }
 
 impl BoardLayout {
-    /// Build the internal ID->index lookup table.
-    /// Must be called after manual marker modifications.
-    pub fn build_index(&mut self) {
-        self.id_to_idx = self
-            .markers
-            .iter()
-            .enumerate()
-            .map(|(i, m)| (m.id, i))
-            .collect();
-    }
-
     /// Look up board coordinates (x, y) in mm for a given marker ID.
     pub fn xy_mm(&self, id: usize) -> Option<[f32; 2]> {
         self.id_to_idx.get(&id).map(|&idx| self.markers[idx].xy_mm)
+    }
+
+    /// Look up a marker by ID.
+    pub fn marker(&self, id: usize) -> Option<&BoardMarker> {
+        self.id_to_idx.get(&id).map(|&idx| &self.markers[idx])
+    }
+
+    /// Borrow all markers as a read-only slice.
+    pub fn markers(&self) -> &[BoardMarker] {
+        &self.markers
+    }
+
+    /// Look up a marker by storage index.
+    pub fn marker_by_index(&self, index: usize) -> Option<&BoardMarker> {
+        self.markers.get(index)
     }
 
     /// Total number of markers on the board.
@@ -144,18 +302,18 @@ impl BoardLayout {
     }
 
     /// Load a board layout from a JSON file.
-    pub fn from_json_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         let data = std::fs::read_to_string(path)?;
         let spec: BoardLayoutSpecV3 = serde_json::from_str(&data)?;
         Self::from_layout_spec(spec).map_err(Into::into)
     }
 
-    fn from_layout_spec(spec: BoardLayoutSpecV3) -> Result<Self, String> {
+    fn from_layout_spec(spec: BoardLayoutSpecV3) -> Result<Self, BoardLayoutValidationError> {
         if spec.schema != TARGET_SCHEMA_V3 {
-            return Err(format!(
-                "unsupported target schema '{}' (expected '{}')",
-                spec.schema, TARGET_SCHEMA_V3
-            ));
+            return Err(BoardLayoutValidationError::UnsupportedSchema {
+                found: spec.schema,
+                expected: TARGET_SCHEMA_V3,
+            });
         }
 
         validate_layout_spec(&spec)?;
@@ -191,46 +349,61 @@ impl Default for BoardLayout {
     }
 }
 
-fn validate_layout_spec(spec: &BoardLayoutSpecV3) -> Result<(), String> {
+fn validate_layout_spec(spec: &BoardLayoutSpecV3) -> Result<(), BoardLayoutValidationError> {
     if spec.name.trim().is_empty() {
-        return Err("target name must not be empty".to_string());
+        return Err(BoardLayoutValidationError::EmptyName);
     }
 
     if !spec.pitch_mm.is_finite() || spec.pitch_mm <= 0.0 {
-        return Err("pitch_mm must be finite and > 0".to_string());
+        return Err(BoardLayoutValidationError::InvalidPitch {
+            pitch_mm: spec.pitch_mm,
+        });
     }
 
     if spec.rows == 0 {
-        return Err("rows must be >= 1".to_string());
+        return Err(BoardLayoutValidationError::InvalidRows { rows: spec.rows });
     }
 
     if spec.long_row_cols == 0 {
-        return Err("long_row_cols must be >= 1".to_string());
+        return Err(BoardLayoutValidationError::InvalidLongRowCols {
+            long_row_cols: spec.long_row_cols,
+        });
     }
 
     if spec.rows > 1 && spec.long_row_cols < 2 {
-        return Err("long_row_cols must be >= 2 when rows > 1".to_string());
+        return Err(BoardLayoutValidationError::InvalidLongRowColsForRows {
+            rows: spec.rows,
+            long_row_cols: spec.long_row_cols,
+        });
     }
 
     if !spec.marker_outer_radius_mm.is_finite() || spec.marker_outer_radius_mm <= 0.0 {
-        return Err("marker_outer_radius_mm must be finite and > 0".to_string());
+        return Err(BoardLayoutValidationError::InvalidOuterRadius {
+            marker_outer_radius_mm: spec.marker_outer_radius_mm,
+        });
     }
 
     if !spec.marker_inner_radius_mm.is_finite() || spec.marker_inner_radius_mm <= 0.0 {
-        return Err("marker_inner_radius_mm must be finite and > 0".to_string());
+        return Err(BoardLayoutValidationError::InvalidInnerRadius {
+            marker_inner_radius_mm: spec.marker_inner_radius_mm,
+        });
     }
 
     if spec.marker_inner_radius_mm >= spec.marker_outer_radius_mm {
-        return Err("marker_inner_radius_mm must be < marker_outer_radius_mm".to_string());
+        return Err(BoardLayoutValidationError::InnerRadiusNotSmallerThanOuter {
+            marker_inner_radius_mm: spec.marker_inner_radius_mm,
+            marker_outer_radius_mm: spec.marker_outer_radius_mm,
+        });
     }
 
     let min_center_spacing = hex_row_spacing_mm(spec.pitch_mm);
     if spec.marker_outer_radius_mm * 2.0 >= min_center_spacing {
-        return Err(format!(
-            "marker outer diameter ({:.4}mm) must be smaller than minimum center spacing ({:.4}mm)",
-            spec.marker_outer_radius_mm * 2.0,
-            min_center_spacing
-        ));
+        return Err(
+            BoardLayoutValidationError::OuterDiameterExceedsMinCenterSpacing {
+                marker_outer_diameter_mm: spec.marker_outer_radius_mm * 2.0,
+                min_center_spacing_mm: min_center_spacing,
+            },
+        );
     }
 
     Ok(())
@@ -240,7 +413,7 @@ fn generate_markers(
     rows: usize,
     long_row_cols: usize,
     pitch_mm: f32,
-) -> Result<Vec<BoardMarker>, String> {
+) -> Result<Vec<BoardMarker>, BoardLayoutValidationError> {
     let short_row_cols = long_row_cols.saturating_sub(1);
     let mut markers = Vec::new();
     let row_mid = (rows as i32) / 2;
@@ -254,7 +427,11 @@ fn generate_markers(
         };
 
         if n_cols == 0 {
-            return Err("derived row has zero columns; increase long_row_cols".to_string());
+            return Err(BoardLayoutValidationError::DerivedZeroColumns {
+                row_index: row_idx,
+                rows,
+                long_row_cols,
+            });
         }
 
         let q_start = -((r + n_cols as i32 - 1) / 2);
@@ -301,6 +478,19 @@ fn hex_row_spacing_mm(pitch_mm: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_json_path(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ringgrid_{prefix}_{}_{}.json",
+            std::process::id(),
+            nanos
+        ))
+    }
 
     #[test]
     fn default_board_has_expected_shape() {
@@ -317,7 +507,7 @@ mod tests {
         let board = BoardLayout::default();
         for id in 0..board.n_markers() {
             let xy = board.xy_mm(id).expect("valid id");
-            let marker = &board.markers[id];
+            let marker = board.marker_by_index(id).expect("marker index");
             assert_eq!(xy, marker.xy_mm);
         }
         assert_eq!(board.xy_mm(999), None);
@@ -327,14 +517,14 @@ mod tests {
     fn default_board_anchor_is_top_left_marker() {
         let board = BoardLayout::default();
         assert_eq!(board.xy_mm(0), Some([0.0, 0.0]));
-        let anchor = board.markers[0].xy_mm;
+        let anchor = board.marker_by_index(0).expect("marker 0").xy_mm;
         let min_y = board
-            .markers
+            .markers()
             .iter()
             .map(|m| m.xy_mm[1])
             .fold(f32::INFINITY, f32::min);
         let min_x_at_min_y = board
-            .markers
+            .markers()
             .iter()
             .filter(|m| (m.xy_mm[1] - min_y).abs() < 1e-6)
             .map(|m| m.xy_mm[0])
@@ -356,7 +546,10 @@ mod tests {
         }"#;
         let spec: BoardLayoutSpecV3 = serde_json::from_str(raw).expect("valid json");
         let err = BoardLayout::from_layout_spec(spec).expect_err("expected error");
-        assert!(err.contains("unsupported target schema"));
+        assert!(matches!(
+            err,
+            BoardLayoutValidationError::UnsupportedSchema { .. }
+        ));
     }
 
     #[test]
@@ -400,5 +593,46 @@ mod tests {
         let span = board.marker_span_mm().expect("span");
         assert!(span[0] > 0.0);
         assert!(span[1] > 0.0);
+    }
+
+    #[test]
+    fn from_json_file_maps_io_error_to_typed_variant() {
+        let missing = temp_json_path("missing_board");
+        let err = BoardLayout::from_json_file(&missing).expect_err("expected io error");
+        assert!(matches!(err, BoardLayoutLoadError::Io(_)));
+    }
+
+    #[test]
+    fn from_json_file_maps_parse_error_to_typed_variant() {
+        let path = temp_json_path("bad_json");
+        std::fs::write(&path, "{ this is not valid json").expect("write temp json");
+
+        let err = BoardLayout::from_json_file(&path).expect_err("expected parse error");
+        assert!(matches!(err, BoardLayoutLoadError::JsonParse(_)));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_json_file_maps_validation_error_to_typed_variant() {
+        let path = temp_json_path("bad_schema");
+        let raw = r#"{
+            "schema":"ringgrid.target.v2",
+            "name":"x",
+            "pitch_mm":8.0,
+            "rows":1,
+            "long_row_cols":1,
+            "marker_outer_radius_mm":4.8,
+            "marker_inner_radius_mm":3.2
+        }"#;
+        std::fs::write(&path, raw).expect("write temp json");
+
+        let err = BoardLayout::from_json_file(&path).expect_err("expected validation error");
+        assert!(matches!(
+            err,
+            BoardLayoutLoadError::Validation(BoardLayoutValidationError::UnsupportedSchema { .. })
+        ));
+
+        let _ = std::fs::remove_file(path);
     }
 }

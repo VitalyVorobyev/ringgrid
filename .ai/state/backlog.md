@@ -18,19 +18,18 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| — | — | — | — | — | — | — |
+| BUG-002 | in-progress | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Algorithm Engineer | Dispatched for bug-fix triage/implementation; make `DetectionResult::seed_proposals` explicitly confidence-ranked with deterministic tie-breaking before `max_seeds` truncation |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| BUG-002 | todo | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Pipeline Architect | `DetectionResult::seed_proposals` currently takes first markers in iteration order; rank by confidence and define tie-breaking for stable pass-2 seeds |
+| ALGO-002 | todo | P2 | algo | Decompose projective-center solver into testable stages | Algorithm Engineer | `ring_center_projective_with_debug` in `crates/ringgrid/src/ring/projective_center.rs` is a large mixed-responsibility routine; split candidate generation/scoring/selection for clarity and safer evolution |
 
 ## Backlog
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| ALGO-002 | todo | P2 | algo | Decompose projective-center solver into testable stages | Algorithm Engineer | `ring_center_projective_with_debug` in `crates/ringgrid/src/ring/projective_center.rs` is a large mixed-responsibility routine; split candidate generation/scoring/selection for clarity and safer evolution |
 | INFRA-007 | todo | P2 | infra | Add maintainability guardrails to CI | Pipeline Architect | Add lint/doc complexity policy (function-size hotspots, rustdoc coverage, forbid new `allow(dead_code)` in hot modules) to prevent quality regressions |
 
 ## Done

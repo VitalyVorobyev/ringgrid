@@ -18,19 +18,18 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| — | — | — | — | — | — | — |
+| INFRA-006 | in-progress | P2 | infra | Split outer-fit responsibilities and remove hardcoded solver knobs | Pipeline Architect | Spec: `.ai/state/sessions/2026-02-19-INFRA-006-spec.md`; dispatch: `.ai/state/sessions/2026-02-19-INFRA-006-lead-pipeline-architect.md` |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| INFRA-006 | todo | P2 | infra | Split outer-fit responsibilities and remove hardcoded solver knobs | Pipeline Architect | `crates/ringgrid/src/detector/outer_fit.rs` mixes sampling, fitting, decode, and scoring; contains local hardcoded RANSAC config instead of shared config source |
+| BUG-002 | todo | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Pipeline Architect | `DetectionResult::seed_proposals` currently takes first markers in iteration order; rank by confidence and define tie-breaking for stable pass-2 seeds |
 
 ## Backlog
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| BUG-002 | todo | P2 | bug | Make seed proposal selection confidence-ordered and deterministic | Pipeline Architect | `DetectionResult::seed_proposals` currently takes first markers in iteration order; rank by confidence and define tie-breaking for stable pass-2 seeds |
 | ALGO-002 | todo | P2 | algo | Decompose projective-center solver into testable stages | Algorithm Engineer | `ring_center_projective_with_debug` in `crates/ringgrid/src/ring/projective_center.rs` is a large mixed-responsibility routine; split candidate generation/scoring/selection for clarity and safer evolution |
 | INFRA-007 | todo | P2 | infra | Add maintainability guardrails to CI | Pipeline Architect | Add lint/doc complexity policy (function-size hotspots, rustdoc coverage, forbid new `allow(dead_code)` in hot modules) to prevent quality regressions |
 

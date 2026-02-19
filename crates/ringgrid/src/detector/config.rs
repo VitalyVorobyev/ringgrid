@@ -136,6 +136,32 @@ impl Default for InnerFitConfig {
     }
 }
 
+/// Configuration for robust outer ellipse fitting from sampled edge points.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OuterFitConfig {
+    /// Minimum number of sampled points required to attempt direct LS fit.
+    pub min_direct_fit_points: usize,
+    /// Minimum sampled points required before attempting RANSAC.
+    pub min_ransac_points: usize,
+    /// RANSAC configuration for robust outer ellipse fitting.
+    pub ransac: crate::conic::RansacConfig,
+}
+
+impl Default for OuterFitConfig {
+    fn default() -> Self {
+        Self {
+            min_direct_fit_points: 6,
+            min_ransac_points: 8,
+            ransac: crate::conic::RansacConfig {
+                max_iters: 200,
+                inlier_threshold: 1.5,
+                min_inliers: 6,
+                seed: 42,
+            },
+        }
+    }
+}
+
 /// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CircleRefinementMethod {
@@ -274,6 +300,8 @@ pub struct DetectConfig {
     pub marker_spec: MarkerSpec,
     /// Robust inner ellipse fitting controls shared across pipeline stages.
     pub inner_fit: InnerFitConfig,
+    /// Robust outer ellipse fitting controls shared across pipeline stages.
+    pub outer_fit: OuterFitConfig,
     /// Post-fit circle refinement method selector.
     pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
@@ -353,6 +381,7 @@ impl Default for DetectConfig {
             decode: DecodeConfig::default(),
             marker_spec: MarkerSpec::default(),
             inner_fit: InnerFitConfig::default(),
+            outer_fit: OuterFitConfig::default(),
             circle_refinement: CircleRefinementMethod::default(),
             projective_center: ProjectiveCenterParams::default(),
             completion: CompletionParams::default(),
@@ -440,9 +469,22 @@ mod tests {
     }
 
     #[test]
-    fn detect_config_includes_inner_fit_config() {
+    fn outer_fit_config_defaults_are_stable() {
+        let core = OuterFitConfig::default();
+        assert_eq!(core.min_direct_fit_points, 6);
+        assert_eq!(core.min_ransac_points, 8);
+        assert_eq!(core.ransac.max_iters, 200);
+        assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
+        assert_eq!(core.ransac.min_inliers, 6);
+        assert_eq!(core.ransac.seed, 42);
+    }
+
+    #[test]
+    fn detect_config_includes_fit_configs() {
         let cfg = DetectConfig::default();
         assert_eq!(cfg.inner_fit.min_points, 20);
         assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
+        assert_eq!(cfg.outer_fit.min_direct_fit_points, 6);
+        assert_eq!(cfg.outer_fit.ransac.min_inliers, 6);
     }
 }

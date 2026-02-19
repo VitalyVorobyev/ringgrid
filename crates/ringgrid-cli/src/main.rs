@@ -97,6 +97,14 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
+    /// Require a perfect decode (dist=0, margin≥2) for completion markers.
+    ///
+    /// Recommended for high-distortion setups without a calibrated camera model
+    /// (e.g. Scheimpflug cameras), where H-projected seeds may be inaccurate and
+    /// geometry gates alone are insufficient to reject bad fits.
+    #[arg(long)]
+    complete_require_perfect_decode: bool,
+
     /// Circle refinement method after local fits are accepted.
     #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
@@ -233,6 +241,7 @@ struct DetectOverrides {
     completion_reproj_gate_px: f32,
     completion_min_fit_confidence: f32,
     completion_roi_radius_px: Option<f32>,
+    completion_require_perfect_decode: bool,
     camera: Option<ringgrid::CameraModel>,
     circle_refinement: ringgrid::CircleRefinementMethod,
     projective_center_max_shift_px: Option<f64>,
@@ -267,6 +276,7 @@ impl CliDetectArgs {
             completion_reproj_gate_px: self.complete_reproj_gate as f32,
             completion_min_fit_confidence: self.complete_min_conf,
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
+            completion_require_perfect_decode: self.complete_require_perfect_decode,
             camera: self.camera.to_core()?,
             circle_refinement,
             projective_center_max_shift_px: self.proj_center_max_shift_px,
@@ -302,6 +312,7 @@ fn build_detect_config(
     if let Some(roi) = overrides.completion_roi_radius_px {
         config.completion.roi_radius_px = roi;
     }
+    config.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
@@ -553,6 +564,7 @@ mod tests {
             completion_reproj_gate_px: 3.0,
             completion_min_fit_confidence: 0.45,
             completion_roi_radius_px: None,
+            completion_require_perfect_decode: false,
             camera: None,
             circle_refinement: ringgrid::CircleRefinementMethod::ProjectiveCenter,
             projective_center_max_shift_px: None,

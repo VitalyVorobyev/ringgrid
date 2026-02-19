@@ -34,6 +34,11 @@ pub struct DecodeMetrics {
     /// a more reliable decode. A margin of 3 or more is typically very confident.
     pub margin: u8,
     /// Combined confidence heuristic in \[0, 1\].
+    ///
+    /// Equals `clamp(1 - dist/6) * clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)`.
+    /// A margin equal to `CODEBOOK_MIN_CYCLIC_DIST` (the minimum attainable for
+    /// a correct decode) yields `conf_margin = 1.0`, so a perfect decode scores
+    /// 1.0 regardless of the codebook density.
     pub decode_confidence: f32,
 }
 
@@ -57,6 +62,17 @@ pub struct DecodeConfig {
     /// Minimum confidence for a valid decode.
     /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_CONFIDENCE`].
     pub min_decode_confidence: f32,
+    /// Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.
+    ///
+    /// A margin of 0 means the two closest codewords are equidistant from the
+    /// observed word — genuinely ambiguous. Default rejects ties (margin = 0).
+    /// For setups without homography validation (e.g. no camera intrinsics),
+    /// setting this to `CODEBOOK_MIN_CYCLIC_DIST` (= 2) accepts only matches
+    /// that are unambiguous within the codebook's minimum distance guarantee.
+    ///
+    /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_MARGIN`].
+    #[serde(default = "DecodeConfig::default_min_decode_margin")]
+    pub min_decode_margin: u8,
     /// Minimum accepted sector-intensity contrast (`max - min`) before decode.
     /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST`].
     #[serde(default = "DecodeConfig::default_min_decode_contrast")]
@@ -77,13 +93,26 @@ impl DecodeConfig {
     pub const DEFAULT_SAMPLES_PER_SECTOR: usize = 5;
     pub const DEFAULT_N_RADIAL_RINGS: usize = 3;
     pub const DEFAULT_MAX_DECODE_DIST: u8 = 3;
-    pub const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.15;
+    /// Minimum decode confidence with the corrected formula
+    /// `clamp(1-dist/6) * clamp(margin/CODEBOOK_MIN_CYCLIC_DIST)`.
+    /// A perfect decode (dist=0, margin≥2) scores 1.0; this threshold accepts
+    /// matches down to dist=2 with margin≥1.
+    pub const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.3;
+    /// Minimum Hamming margin required for a valid decode.
+    ///
+    /// A margin of 0 means two codewords are equidistant from the observed word
+    /// (genuinely ambiguous). Setting this to 1 (default) rejects such ties.
+    pub const DEFAULT_MIN_DECODE_MARGIN: u8 = 1;
     pub const DEFAULT_MIN_DECODE_CONTRAST: f32 = 0.03;
     pub const DEFAULT_THRESHOLD_MAX_ITERS: usize = 10;
     pub const DEFAULT_THRESHOLD_CONVERGENCE_EPS: f32 = 1e-4;
 
     fn default_min_decode_contrast() -> f32 {
         Self::DEFAULT_MIN_DECODE_CONTRAST
+    }
+
+    fn default_min_decode_margin() -> u8 {
+        Self::DEFAULT_MIN_DECODE_MARGIN
     }
 
     fn default_threshold_max_iters() -> usize {
@@ -103,6 +132,7 @@ impl Default for DecodeConfig {
             n_radial_rings: Self::DEFAULT_N_RADIAL_RINGS,
             max_decode_dist: Self::DEFAULT_MAX_DECODE_DIST,
             min_decode_confidence: Self::DEFAULT_MIN_DECODE_CONFIDENCE,
+            min_decode_margin: Self::DEFAULT_MIN_DECODE_MARGIN,
             min_decode_contrast: Self::DEFAULT_MIN_DECODE_CONTRAST,
             threshold_max_iters: Self::DEFAULT_THRESHOLD_MAX_ITERS,
             threshold_convergence_eps: Self::DEFAULT_THRESHOLD_CONVERGENCE_EPS,
@@ -134,6 +164,7 @@ pub(crate) enum DecodeRejectReason {
     InvalidEllipse,
     LowContrast,
     DistTooHigh,
+    MarginTooLow,
     ConfidenceTooLow,
 }
 
@@ -143,6 +174,7 @@ impl DecodeRejectReason {
             Self::InvalidEllipse => "invalid_ellipse",
             Self::LowContrast => "low_contrast",
             Self::DistTooHigh => "dist_too_high",
+            Self::MarginTooLow => "margin_too_low",
             Self::ConfidenceTooLow => "confidence_too_low",
         }
     }
@@ -171,6 +203,10 @@ pub(crate) enum DecodeRejectContext {
     DistTooHigh {
         observed_dist: u8,
         max_allowed_dist: u8,
+    },
+    MarginTooLow {
+        observed_margin: u8,
+        min_required_margin: u8,
     },
     ConfidenceTooLow {
         observed_confidence: f32,
@@ -410,6 +446,7 @@ fn decode_marker_impl(
 
     // Reject if quality too low
     if best_match.dist > config.max_decode_dist
+        || best_match.margin < config.min_decode_margin
         || best_match.confidence < config.min_decode_confidence
     {
         let (reason, context) = if best_match.dist > config.max_decode_dist {
@@ -418,6 +455,14 @@ fn decode_marker_impl(
                 DecodeRejectContext::DistTooHigh {
                     observed_dist: best_match.dist,
                     max_allowed_dist: config.max_decode_dist,
+                },
+            )
+        } else if best_match.margin < config.min_decode_margin {
+            (
+                DecodeRejectReason::MarginTooLow,
+                DecodeRejectContext::MarginTooLow {
+                    observed_margin: best_match.margin,
+                    min_required_margin: config.min_decode_margin,
                 },
             )
         } else {
@@ -552,6 +597,7 @@ mod tests {
             DecodeConfig::DEFAULT_MIN_DECODE_CONFIDENCE,
             epsilon = 1e-6
         );
+        assert_eq!(cfg.min_decode_margin, DecodeConfig::DEFAULT_MIN_DECODE_MARGIN);
         assert_abs_diff_eq!(
             cfg.min_decode_contrast,
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
@@ -585,6 +631,7 @@ mod tests {
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
             epsilon = 1e-6
         );
+        assert_eq!(cfg.min_decode_margin, DecodeConfig::DEFAULT_MIN_DECODE_MARGIN);
         assert_eq!(
             cfg.threshold_max_iters,
             DecodeConfig::DEFAULT_THRESHOLD_MAX_ITERS

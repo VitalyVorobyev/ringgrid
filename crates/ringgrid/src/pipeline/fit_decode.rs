@@ -123,10 +123,30 @@ fn process_candidate(
         );
     }
     let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
+
+    // Base confidence: decode confidence when available, else geometric fallback.
     let confidence = decode_result
         .as_ref()
         .map(|d| d.confidence)
         .unwrap_or_else(|| fallback_fit_confidence(&edge, outer_ransac.as_ref()));
+
+    // Penalty 1: inner fit failure is a strong signal of poor image quality.
+    // Apply a configurable discount when the inner ring cannot be fitted.
+    let confidence = if inner_fit.ellipse_inner.is_none() {
+        confidence * ctx.config.inner_fit.miss_confidence_factor
+    } else {
+        confidence
+    };
+
+    // Penalty 2: soft discount for high outer-ellipse Sampson residual.
+    // residual_factor = 1 / (1 + rms_px): 1.0 at rms=0, 0.5 at rms=1, 0.33 at rms=2.
+    let confidence = match fit_metrics.rms_residual_outer {
+        Some(rms) if rms > 0.0 => {
+            let residual_factor = 1.0_f32 / (1.0 + rms as f32);
+            (confidence * residual_factor).clamp(0.0, 1.0)
+        }
+        _ => confidence,
+    };
     let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
     let marker_id = decode_result.as_ref().map(|d| d.id);
     let outer_points = edge.outer_points;

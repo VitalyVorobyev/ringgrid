@@ -2,6 +2,7 @@ use image::GrayImage;
 
 use crate::conic::Ellipse;
 use crate::homography::homography_project as project;
+use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
 use crate::ring::edge_sample::EdgeSampleResult;
 use crate::DetectedMarker;
 
@@ -37,6 +38,7 @@ enum CompletionGateRejectReason {
     FitConfidenceLow,
     ReprojectionTooHigh,
     ScaleOutOfRange,
+    PerfectDecodeRequired,
 }
 
 impl CompletionGateRejectReason {
@@ -46,6 +48,7 @@ impl CompletionGateRejectReason {
             Self::FitConfidenceLow => "fit_confidence_low",
             Self::ReprojectionTooHigh => "reprojection_too_high",
             Self::ScaleOutOfRange => "scale_out_of_range",
+            Self::PerfectDecodeRequired => "perfect_decode_required",
         }
     }
 }
@@ -309,6 +312,25 @@ pub(crate) fn complete_with_h(
             );
             stats.n_failed_gate += 1;
             continue;
+        }
+
+        // Optional gate: require dist=0 and margin >= codebook min distance.
+        // Recommended when homography accuracy is low (no calibrated camera model).
+        if params.require_perfect_decode {
+            let is_perfect = decode_result.as_ref().is_some_and(|d| {
+                d.dist == 0 && d.margin >= CODEBOOK_MIN_CYCLIC_DIST as u8
+            });
+            if !is_perfect {
+                tracing::trace!(
+                    "Completion id={} gate_reject={} (dist={:?}, margin={:?})",
+                    id,
+                    CompletionGateRejectReason::PerfectDecodeRequired.code(),
+                    decode_result.as_ref().map(|d| d.dist),
+                    decode_result.as_ref().map(|d| d.margin),
+                );
+                stats.n_failed_gate += 1;
+                continue;
+            }
         }
 
         if let Some(notice) = check_decode_gate(decode_result.as_ref(), id) {

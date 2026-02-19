@@ -46,6 +46,24 @@ pub struct CompletionParams {
     pub max_attempts: Option<usize>,
     /// Skip attempts whose projected center is too close to the image boundary.
     pub image_margin_px: f32,
+    /// Require a perfect decode (dist=0 and margin ≥ CODEBOOK_MIN_CYCLIC_DIST) for
+    /// a completion marker to be accepted.
+    ///
+    /// When homography prediction accuracy is low (e.g. significant lens distortion
+    /// without a calibrated mapper), the H-projected seed can be several pixels off.
+    /// Under those conditions, the geometry gates alone are insufficient; requiring a
+    /// perfect decode provides an independent quality signal that does not depend on H.
+    ///
+    /// Default: `false` (backward-compatible). Set to `true` for Scheimpflug / high-
+    /// distortion setups where no calibrated camera model is available.
+    #[serde(default = "CompletionParams::default_require_perfect_decode")]
+    pub require_perfect_decode: bool,
+}
+
+impl CompletionParams {
+    fn default_require_perfect_decode() -> bool {
+        false
+    }
 }
 
 impl Default for CompletionParams {
@@ -58,6 +76,7 @@ impl Default for CompletionParams {
             min_arc_coverage: 0.35,
             max_attempts: None,
             image_margin_px: 10.0,
+            require_perfect_decode: false,
         }
     }
 }
@@ -115,6 +134,22 @@ pub struct InnerFitConfig {
     pub local_peak_halfwidth_idx: usize,
     /// RANSAC configuration for robust inner ellipse fitting.
     pub ransac: crate::conic::RansacConfig,
+    /// Confidence multiplier applied when inner ellipse fit fails or is absent.
+    ///
+    /// Inner fit failure is a reliable signal of poor image quality (heavy blur,
+    /// distortion, or edge contamination). Setting this below 1.0 discounts the
+    /// decode confidence when the inner ring cannot be fitted, making true markers
+    /// in clear regions easier to separate from false detections.
+    ///
+    /// Default: 0.7 (30 % confidence reduction on inner-fit miss).
+    #[serde(default = "InnerFitConfig::default_miss_confidence_factor")]
+    pub miss_confidence_factor: f32,
+}
+
+impl InnerFitConfig {
+    fn default_miss_confidence_factor() -> f32 {
+        0.7
+    }
 }
 
 impl Default for InnerFitConfig {
@@ -132,6 +167,7 @@ impl Default for InnerFitConfig {
                 min_inliers: 8,
                 seed: 43,
             },
+            miss_confidence_factor: 0.7,
         }
     }
 }
@@ -466,6 +502,7 @@ mod tests {
         assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
         assert_eq!(core.ransac.min_inliers, 8);
         assert_eq!(core.ransac.seed, 43);
+        assert!((core.miss_confidence_factor - 0.7).abs() < 1e-6);
     }
 
     #[test]

@@ -180,6 +180,7 @@ mod config {
         pub max_center_shift_px: f64,
         pub max_ratio_abs_error: f64,
         pub local_peak_halfwidth_idx: usize,
+        pub max_angular_gap_rad: f64,
         pub ransac: crate::conic::RansacConfig,
     }
 
@@ -192,6 +193,7 @@ mod config {
                 max_center_shift_px: 12.0,
                 max_ratio_abs_error: 0.15,
                 local_peak_halfwidth_idx: 3,
+                max_angular_gap_rad: std::f64::consts::FRAC_PI_2,
                 ransac: crate::conic::RansacConfig {
                     max_iters: 200,
                     inlier_threshold: 1.5,
@@ -199,6 +201,28 @@ mod config {
                     seed: 43,
                 },
             }
+        }
+    }
+}
+
+mod detector {
+    pub mod outer_fit {
+        pub fn max_angular_gap(center: [f64; 2], points: &[[f64; 2]]) -> f64 {
+            let tau = 2.0 * std::f64::consts::PI;
+            if points.len() < 2 {
+                return tau;
+            }
+            let mut angles: Vec<f64> = points
+                .iter()
+                .map(|p| (p[1] - center[1]).atan2(p[0] - center[0]))
+                .collect();
+            angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mut gap = 0.0f64;
+            for i in 1..angles.len() {
+                gap = gap.max(angles[i] - angles[i - 1]);
+            }
+            let wrap = tau - (angles.last().unwrap() - angles.first().unwrap());
+            gap.max(wrap)
         }
     }
 }

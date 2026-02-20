@@ -32,6 +32,12 @@ pub struct FitMetrics {
     /// RMS Sampson residual for inner ellipse fit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rms_residual_inner: Option<f64>,
+    /// Maximum angular gap (radians) between consecutive outer edge points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_angular_gap_outer: Option<f64>,
+    /// Maximum angular gap (radians) between consecutive inner edge points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_angular_gap_inner: Option<f64>,
 }
 
 /// A detected marker with its refined center and optional ID.
@@ -80,7 +86,14 @@ fn fit_metrics_from_outer(
     n_points_inner: usize,
     ransac_inlier_ratio_inner: Option<f32>,
     rms_residual_inner: Option<f64>,
+    max_angular_gap_inner: Option<f64>,
 ) -> FitMetrics {
+    use super::outer_fit::max_angular_gap;
+    let gap_outer = if edge.outer_points.is_empty() {
+        None
+    } else {
+        Some(max_angular_gap(outer.center(), &edge.outer_points))
+    };
     FitMetrics {
         n_angles_total: edge.n_total_rays,
         n_angles_with_both_edges: edge.n_good_rays,
@@ -91,6 +104,8 @@ fn fit_metrics_from_outer(
         ransac_inlier_ratio_inner,
         rms_residual_outer: Some(conic::rms_sampson_distance(outer, &edge.outer_points)),
         rms_residual_inner,
+        max_angular_gap_outer: gap_outer,
+        max_angular_gap_inner,
     }
 }
 
@@ -109,6 +124,7 @@ pub(crate) fn fit_metrics_with_inner(
         inner.points_inner.len(),
         inner.ransac_inlier_ratio_inner,
         inner.rms_residual_inner,
+        inner.max_angular_gap,
     )
 }
 

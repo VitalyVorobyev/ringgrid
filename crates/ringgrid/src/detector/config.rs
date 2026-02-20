@@ -144,11 +144,29 @@ pub struct InnerFitConfig {
     /// Default: 0.7 (30 % confidence reduction on inner-fit miss).
     #[serde(default = "InnerFitConfig::default_miss_confidence_factor")]
     pub miss_confidence_factor: f32,
+    /// Maximum allowed angular gap (radians) between consecutive inner edge
+    /// points. Fits where the largest gap exceeds this are rejected.
+    ///
+    /// Default: π/2 (90 degrees).
+    #[serde(default = "InnerFitConfig::default_max_angular_gap_rad")]
+    pub max_angular_gap_rad: f64,
+    /// When true, markers are hard-rejected (not just penalized) if the inner
+    /// ellipse cannot be fitted. Requires two good ellipses per marker.
+    ///
+    /// Default: false (backward-compatible).
+    #[serde(default = "InnerFitConfig::default_require_inner_fit")]
+    pub require_inner_fit: bool,
 }
 
 impl InnerFitConfig {
     fn default_miss_confidence_factor() -> f32 {
         0.7
+    }
+    fn default_max_angular_gap_rad() -> f64 {
+        std::f64::consts::FRAC_PI_2
+    }
+    fn default_require_inner_fit() -> bool {
+        false
     }
 }
 
@@ -168,6 +186,8 @@ impl Default for InnerFitConfig {
                 seed: 43,
             },
             miss_confidence_factor: 0.7,
+            max_angular_gap_rad: Self::default_max_angular_gap_rad(),
+            require_inner_fit: false,
         }
     }
 }
@@ -181,6 +201,18 @@ pub struct OuterFitConfig {
     pub min_ransac_points: usize,
     /// RANSAC configuration for robust outer ellipse fitting.
     pub ransac: crate::conic::RansacConfig,
+    /// Maximum allowed angular gap (radians) between consecutive outer edge
+    /// points. Fits where the largest gap exceeds this are rejected.
+    ///
+    /// Default: π/2 (90 degrees).
+    #[serde(default = "OuterFitConfig::default_max_angular_gap_rad")]
+    pub max_angular_gap_rad: f64,
+}
+
+impl OuterFitConfig {
+    fn default_max_angular_gap_rad() -> f64 {
+        std::f64::consts::FRAC_PI_2
+    }
 }
 
 impl Default for OuterFitConfig {
@@ -194,6 +226,7 @@ impl Default for OuterFitConfig {
                 min_inliers: 6,
                 seed: 42,
             },
+            max_angular_gap_rad: Self::default_max_angular_gap_rad(),
         }
     }
 }
@@ -503,6 +536,11 @@ mod tests {
         assert_eq!(core.ransac.min_inliers, 8);
         assert_eq!(core.ransac.seed, 43);
         assert!((core.miss_confidence_factor - 0.7).abs() < 1e-6);
+        assert!(
+            (core.max_angular_gap_rad - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+            "inner max_angular_gap_rad"
+        );
+        assert!(!core.require_inner_fit);
     }
 
     #[test]
@@ -514,6 +552,10 @@ mod tests {
         assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
         assert_eq!(core.ransac.min_inliers, 6);
         assert_eq!(core.ransac.seed, 42);
+        assert!(
+            (core.max_angular_gap_rad - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+            "outer max_angular_gap_rad"
+        );
     }
 
     #[test]

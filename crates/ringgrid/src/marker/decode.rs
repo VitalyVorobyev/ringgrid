@@ -597,7 +597,10 @@ mod tests {
             DecodeConfig::DEFAULT_MIN_DECODE_CONFIDENCE,
             epsilon = 1e-6
         );
-        assert_eq!(cfg.min_decode_margin, DecodeConfig::DEFAULT_MIN_DECODE_MARGIN);
+        assert_eq!(
+            cfg.min_decode_margin,
+            DecodeConfig::DEFAULT_MIN_DECODE_MARGIN
+        );
         assert_abs_diff_eq!(
             cfg.min_decode_contrast,
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
@@ -631,7 +634,10 @@ mod tests {
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
             epsilon = 1e-6
         );
-        assert_eq!(cfg.min_decode_margin, DecodeConfig::DEFAULT_MIN_DECODE_MARGIN);
+        assert_eq!(
+            cfg.min_decode_margin,
+            DecodeConfig::DEFAULT_MIN_DECODE_MARGIN
+        );
         assert_eq!(
             cfg.threshold_max_iters,
             DecodeConfig::DEFAULT_THRESHOLD_MAX_ITERS

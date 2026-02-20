@@ -123,6 +123,17 @@ struct CliDetectArgs {
     #[arg(long, default_value = "1e-6")]
     proj_center_min_eig_sep: f64,
 
+    /// Maximum angular gap (degrees) allowed between consecutive edge points
+    /// for both outer and inner ellipse fits. Fits with larger gaps are rejected.
+    /// Default: 90 degrees.
+    #[arg(long)]
+    max_angular_gap_deg: Option<f64>,
+
+    /// Require both inner and outer ellipses for every detected marker.
+    /// When set, markers without a valid inner ellipse are rejected entirely.
+    #[arg(long)]
+    require_inner_fit: bool,
+
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
@@ -247,6 +258,8 @@ struct DetectOverrides {
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
     projective_center_min_eig_sep: f64,
+    max_angular_gap_rad: Option<f64>,
+    require_inner_fit: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
@@ -282,6 +295,8 @@ impl CliDetectArgs {
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
+            max_angular_gap_rad: self.max_angular_gap_deg.map(|deg| deg.to_radians()),
+            require_inner_fit: self.require_inner_fit,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -321,6 +336,13 @@ fn build_detect_config(
     }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
+
+    // Angular gap and two-ellipse gates
+    if let Some(gap) = overrides.max_angular_gap_rad {
+        config.outer_fit.max_angular_gap_rad = gap;
+        config.inner_fit.max_angular_gap_rad = gap;
+    }
+    config.inner_fit.require_inner_fit = overrides.require_inner_fit;
 
     // Self-undistort options
     config.self_undistort.enable = overrides.self_undistort_enable;
@@ -570,6 +592,8 @@ mod tests {
             projective_center_max_shift_px: None,
             projective_center_max_residual: 0.25,
             projective_center_min_eig_sep: 1e-6,
+            max_angular_gap_rad: None,
+            require_inner_fit: false,
             self_undistort_enable: false,
             self_undistort_lambda_range: [-8e-7, 8e-7],
             self_undistort_min_markers: 6,

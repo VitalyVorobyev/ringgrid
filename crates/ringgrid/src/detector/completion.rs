@@ -29,6 +29,7 @@ struct CandidateQuality {
     mean_axis: f32,
     scale_ok: bool,
     reproj_err: f32,
+    max_angular_gap_outer: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -39,6 +40,7 @@ enum CompletionGateRejectReason {
     ReprojectionTooHigh,
     ScaleOutOfRange,
     PerfectDecodeRequired,
+    AngularGapTooLarge,
 }
 
 impl CompletionGateRejectReason {
@@ -49,6 +51,7 @@ impl CompletionGateRejectReason {
             Self::ReprojectionTooHigh => "reprojection_too_high",
             Self::ScaleOutOfRange => "scale_out_of_range",
             Self::PerfectDecodeRequired => "perfect_decode_required",
+            Self::AngularGapTooLarge => "angular_gap_too_large",
         }
     }
 }
@@ -79,6 +82,10 @@ enum CompletionGateRejectContext {
         expected_radius_px: f32,
         min_allowed_axis_px: f32,
         max_allowed_axis_px: f32,
+    },
+    AngularGapTooLarge {
+        observed_gap_rad: f64,
+        max_allowed_gap_rad: f64,
     },
 }
 
@@ -137,6 +144,7 @@ fn compute_candidate_quality(
         let dy = center[1] - projected_center[1];
         (dx * dx + dy * dy).sqrt() as f32
     };
+    let max_angular_gap_outer = super::outer_fit::max_angular_gap(center, &edge.outer_points);
     CandidateQuality {
         center,
         arc_cov,
@@ -144,6 +152,7 @@ fn compute_candidate_quality(
         mean_axis,
         scale_ok,
         reproj_err,
+        max_angular_gap_outer,
     }
 }
 
@@ -167,6 +176,7 @@ fn check_quality_gates(
     quality: &CandidateQuality,
     params: &CompletionParams,
     r_expected: f32,
+    max_angular_gap_rad: f64,
 ) -> Result<(), CompletionGateReject> {
     if quality.arc_cov < params.min_arc_coverage {
         return Err(CompletionGateReject {
@@ -205,6 +215,15 @@ fn check_quality_gates(
                 expected_radius_px: r_expected,
                 min_allowed_axis_px,
                 max_allowed_axis_px,
+            },
+        });
+    }
+    if quality.max_angular_gap_outer > max_angular_gap_rad {
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::AngularGapTooLarge,
+            context: CompletionGateRejectContext::AngularGapTooLarge {
+                observed_gap_rad: quality.max_angular_gap_outer,
+                max_allowed_gap_rad: max_angular_gap_rad,
             },
         });
     }
@@ -303,7 +322,12 @@ pub(crate) fn complete_with_h(
             r_expected,
         );
 
-        if let Err(reject) = check_quality_gates(&quality, params, r_expected) {
+        if let Err(reject) = check_quality_gates(
+            &quality,
+            params,
+            r_expected,
+            config.outer_fit.max_angular_gap_rad,
+        ) {
             tracing::trace!(
                 "Completion id={} gate_reject={} context={:?}",
                 id,
@@ -317,9 +341,9 @@ pub(crate) fn complete_with_h(
         // Optional gate: require dist=0 and margin >= codebook min distance.
         // Recommended when homography accuracy is low (no calibrated camera model).
         if params.require_perfect_decode {
-            let is_perfect = decode_result.as_ref().is_some_and(|d| {
-                d.dist == 0 && d.margin >= CODEBOOK_MIN_CYCLIC_DIST as u8
-            });
+            let is_perfect = decode_result
+                .as_ref()
+                .is_some_and(|d| d.dist == 0 && d.margin >= CODEBOOK_MIN_CYCLIC_DIST as u8);
             if !is_perfect {
                 tracing::trace!(
                     "Completion id={} gate_reject={} (dist={:?}, margin={:?})",
@@ -418,9 +442,11 @@ mod tests {
             mean_axis: 20.0,
             scale_ok: true,
             reproj_err: 0.5,
+            max_angular_gap_outer: 0.1,
         };
         let params = CompletionParams::default();
-        let reject = check_quality_gates(&quality, &params, 20.0).expect_err("expected gate fail");
+        let reject = check_quality_gates(&quality, &params, 20.0, std::f64::consts::FRAC_PI_2)
+            .expect_err("expected gate fail");
         assert_eq!(reject.reason, CompletionGateRejectReason::ArcCoverageLow);
         match reject.context {
             CompletionGateRejectContext::ArcCoverageLow {

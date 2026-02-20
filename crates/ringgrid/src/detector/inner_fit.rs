@@ -33,6 +33,7 @@ pub(crate) enum InnerFitReason {
     CenterShiftTooLarge,
     RatioMismatch,
     RmsResidualHigh,
+    AngularGapTooLarge,
 }
 
 impl InnerFitReason {
@@ -46,6 +47,7 @@ impl InnerFitReason {
             Self::CenterShiftTooLarge => "center_shift_too_large",
             Self::RatioMismatch => "ratio_mismatch",
             Self::RmsResidualHigh => "rms_residual_high",
+            Self::AngularGapTooLarge => "angular_gap_too_large",
         }
     }
 }
@@ -84,6 +86,10 @@ pub(crate) enum InnerFitReasonContext {
         observed_rms_residual: f64,
         max_allowed_rms_residual: f64,
     },
+    AngularGapTooLarge {
+        observed_gap_rad: f64,
+        max_allowed_gap_rad: f64,
+    },
 }
 
 /// Robust inner fit result.
@@ -103,6 +109,8 @@ pub(crate) struct InnerFitResult {
     pub ransac_inlier_ratio_inner: Option<f32>,
     /// RMS Sampson residual of the fitted inner ellipse.
     pub rms_residual_inner: Option<f64>,
+    /// Maximum angular gap (radians) between consecutive inner edge points.
+    pub max_angular_gap: Option<f64>,
 }
 
 fn signed_peak_value(v: f32, pol: Polarity) -> f32 {
@@ -233,6 +241,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             points_inner: Vec::new(),
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
+            max_angular_gap: None,
         };
     }
     if estimate.r_inner_found.is_none() || estimate.polarity.is_none() {
@@ -244,6 +253,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             points_inner: Vec::new(),
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
+            max_angular_gap: None,
         };
     }
 
@@ -260,6 +270,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             points_inner,
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
+            max_angular_gap: None,
         };
     }
 
@@ -280,6 +291,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                         points_inner,
                         ransac_inlier_ratio_inner: None,
                         rms_residual_inner: None,
+                        max_angular_gap: None,
                     };
                 }
             },
@@ -296,6 +308,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                     points_inner,
                     ransac_inlier_ratio_inner: None,
                     rms_residual_inner: None,
+                    max_angular_gap: None,
                 };
             }
         }
@@ -341,6 +354,11 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     }
 
     let rms_residual_inner = conic::rms_sampson_distance(&ellipse_inner, &points_inner);
+    let inner_angular_gap = crate::detector::outer_fit::max_angular_gap(
+        [ellipse_inner.cx, ellipse_inner.cy],
+        &points_inner,
+    );
+
     if reject_reason.is_none()
         && (!rms_residual_inner.is_finite() || rms_residual_inner > cfg.max_rms_residual)
     {
@@ -348,6 +366,14 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         reject_context = Some(InnerFitReasonContext::RmsResidualHigh {
             observed_rms_residual: rms_residual_inner,
             max_allowed_rms_residual: cfg.max_rms_residual,
+        });
+    }
+
+    if reject_reason.is_none() && inner_angular_gap > cfg.max_angular_gap_rad {
+        reject_reason = Some(InnerFitReason::AngularGapTooLarge);
+        reject_context = Some(InnerFitReasonContext::AngularGapTooLarge {
+            observed_gap_rad: inner_angular_gap,
+            max_allowed_gap_rad: cfg.max_angular_gap_rad,
         });
     }
 
@@ -360,6 +386,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             points_inner,
             ransac_inlier_ratio_inner: inlier_ratio,
             rms_residual_inner: Some(rms_residual_inner),
+            max_angular_gap: Some(inner_angular_gap),
         };
     }
 
@@ -371,6 +398,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         points_inner,
         ransac_inlier_ratio_inner: inlier_ratio,
         rms_residual_inner: Some(rms_residual_inner),
+        max_angular_gap: Some(inner_angular_gap),
     }
 }
 

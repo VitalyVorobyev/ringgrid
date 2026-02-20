@@ -8,6 +8,7 @@ use super::proposal::ProposalConfig;
 
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SeedProposalParams {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
@@ -30,6 +31,7 @@ impl Default for SeedProposalParams {
 /// Configuration for homography-guided completion: attempt local fits for
 /// missing IDs at H-projected board locations.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct CompletionParams {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
@@ -83,6 +85,7 @@ impl Default for CompletionParams {
 
 /// Projective-only unbiased center recovery from inner/outer conics.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ProjectiveCenterParams {
     /// Enable projective unbiased center estimation.
     pub enable: bool,
@@ -119,6 +122,7 @@ impl Default for ProjectiveCenterParams {
 
 /// Configuration for robust inner ellipse fitting from outer-fit hints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct InnerFitConfig {
     /// Minimum number of sampled points required to attempt a fit.
     pub min_points: usize,
@@ -194,6 +198,7 @@ impl Default for InnerFitConfig {
 
 /// Configuration for robust outer ellipse fitting from sampled edge points.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct OuterFitConfig {
     /// Minimum number of sampled points required to attempt direct LS fit.
     pub min_direct_fit_points: usize,
@@ -201,6 +206,15 @@ pub struct OuterFitConfig {
     pub min_ransac_points: usize,
     /// RANSAC configuration for robust outer ellipse fitting.
     pub ransac: crate::conic::RansacConfig,
+    /// Relative weight of size agreement in outer-hypothesis scoring.
+    ///
+    /// The score combines decode quality, fit support, size agreement, and
+    /// residual quality. This weight controls the size-agreement term and is
+    /// normalized with the other terms at runtime.
+    ///
+    /// Default: `0.15` (preserves legacy behavior).
+    #[serde(default = "OuterFitConfig::default_size_score_weight")]
+    pub size_score_weight: f32,
     /// Maximum allowed angular gap (radians) between consecutive outer edge
     /// points. Fits where the largest gap exceeds this are rejected.
     ///
@@ -210,6 +224,10 @@ pub struct OuterFitConfig {
 }
 
 impl OuterFitConfig {
+    fn default_size_score_weight() -> f32 {
+        0.15
+    }
+
     fn default_max_angular_gap_rad() -> f64 {
         std::f64::consts::FRAC_PI_2
     }
@@ -226,6 +244,7 @@ impl Default for OuterFitConfig {
                 min_inliers: 6,
                 seed: 42,
             },
+            size_score_weight: Self::default_size_score_weight(),
             max_angular_gap_rad: Self::default_max_angular_gap_rad(),
         }
     }
@@ -259,6 +278,7 @@ impl CircleRefinementMethod {
 /// [`MarkerScalePrior::from_nominal_diameter_px`]. For scenes where markers
 /// vary in apparent size, use [`MarkerScalePrior::new`] with a range.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct MarkerScalePrior {
     /// Minimum expected marker outer diameter in pixels.
     pub diameter_min_px: f32,
@@ -552,10 +572,27 @@ mod tests {
         assert!((core.ransac.inlier_threshold - 1.5).abs() < 1e-9);
         assert_eq!(core.ransac.min_inliers, 6);
         assert_eq!(core.ransac.seed, 42);
+        assert!((core.size_score_weight - 0.15).abs() < 1e-6);
         assert!(
             (core.max_angular_gap_rad - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
             "outer max_angular_gap_rad"
         );
+    }
+
+    #[test]
+    fn outer_fit_config_deserialize_missing_size_weight_uses_default() {
+        let json = r#"{
+            "min_direct_fit_points": 6,
+            "min_ransac_points": 8,
+            "ransac": {
+                "max_iters": 200,
+                "inlier_threshold": 1.5,
+                "min_inliers": 6,
+                "seed": 42
+            }
+        }"#;
+        let cfg: OuterFitConfig = serde_json::from_str(json).expect("deserialize outer fit config");
+        assert!((cfg.size_score_weight - 0.15).abs() < 1e-6);
     }
 
     #[test]

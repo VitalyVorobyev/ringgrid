@@ -204,6 +204,7 @@ pub fn estimate_homography_dlt(
 
 /// RANSAC configuration for homography fitting.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct RansacHomographyConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,

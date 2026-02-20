@@ -44,6 +44,7 @@ pub struct DecodeMetrics {
 
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct DecodeConfig {
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the

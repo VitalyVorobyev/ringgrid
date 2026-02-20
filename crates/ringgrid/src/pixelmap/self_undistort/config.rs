@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for self-undistort estimation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SelfUndistortConfig {
     /// Enable self-undistort refinement.
     pub enable: bool,

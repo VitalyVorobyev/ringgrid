@@ -208,6 +208,7 @@ fn evaluate_hypothesis(
         outer_ransac.as_ref(),
         diagnostics.decode_confidence,
         ctx.r_expected,
+        ctx.config.outer_fit.size_score_weight,
     );
 
     Some(OuterFitCandidate {

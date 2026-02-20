@@ -63,6 +63,7 @@ mod ring;
 pub use api::Detector;
 
 // Result types
+pub use detector::Proposal;
 pub use detector::{DetectedMarker, FitMetrics};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
@@ -74,6 +75,11 @@ pub use detector::{
     OuterFitConfig, ProjectiveCenterParams, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
+
+// Sub-configs not re-exported from detector::config
+pub use detector::ProposalConfig;
+pub use marker::DecodeConfig;
+pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 // Geometry
 pub use board_layout::{

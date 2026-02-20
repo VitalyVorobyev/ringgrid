@@ -9,6 +9,7 @@ use image::GrayImage;
 
 /// Configuration for center proposal detection.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ProposalConfig {
     /// Minimum voting radius (pixels).
     pub r_min: f32,

@@ -58,6 +58,7 @@ pub struct OuterEstimate {
 
 /// Configuration for outer-radius estimation around a center prior.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
     pub search_halfwidth_px: f32,

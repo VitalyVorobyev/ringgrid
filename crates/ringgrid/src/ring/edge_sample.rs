@@ -6,6 +6,7 @@ use crate::pixelmap::PixelMapper;
 
 /// Configuration for radial edge sampling.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct EdgeSampleConfig {
     /// Number of radial rays to cast.
     pub n_rays: usize,

@@ -66,12 +66,18 @@ struct CliDetectArgs {
     marker_diameter: Option<f64>,
 
     /// Minimum marker outer diameter in pixels for scale search.
-    #[arg(long, default_value = "20.0")]
-    marker_diameter_min: f64,
+    ///
+    /// Default: 20.0 (built-in). Can also be set via `--config`
+    /// (`marker_scale.diameter_min_px`). CLI takes precedence over config file.
+    #[arg(long)]
+    marker_diameter_min: Option<f64>,
 
     /// Maximum marker outer diameter in pixels for scale search.
-    #[arg(long, default_value = "56.0")]
-    marker_diameter_max: f64,
+    ///
+    /// Default: 56.0 (built-in). Can also be set via `--config`
+    /// (`marker_scale.diameter_max_px`). CLI takes precedence over config file.
+    #[arg(long)]
+    marker_diameter_max: Option<f64>,
 
     /// RANSAC inlier threshold in pixels for homography fitting.
     #[arg(long, default_value = "5.0")]
@@ -305,6 +311,7 @@ impl CircleRefineMethodArg {
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
 struct DetectConfigFile {
+    marker_scale: Option<ringgrid::MarkerScalePrior>,
     inner_fit: Option<ringgrid::InnerFitConfig>,
     outer_fit: Option<ringgrid::OuterFitConfig>,
     completion: Option<ringgrid::CompletionParams>,
@@ -328,6 +335,7 @@ struct DetectConfigFile {
 /// Used for `--dump-config` output.
 #[derive(serde::Serialize)]
 struct DetectConfigDump {
+    marker_scale: ringgrid::MarkerScalePrior,
     inner_fit: ringgrid::InnerFitConfig,
     outer_fit: ringgrid::OuterFitConfig,
     completion: ringgrid::CompletionParams,
@@ -381,14 +389,23 @@ struct DetectOverrides {
 }
 
 impl CliDetectArgs {
-    fn to_preset(&self) -> DetectPreset {
+    /// Resolve marker scale prior.
+    ///
+    /// Precedence (highest to lowest):
+    /// 1. `--marker-diameter` (fixed single value)
+    /// 2. `--marker-diameter-min` / `--marker-diameter-max` (explicitly set)
+    /// 3. `marker_scale` section in the JSON config file
+    /// 4. Built-in defaults (20 – 56 px)
+    fn to_preset(&self, config_file: Option<&DetectConfigFile>) -> DetectPreset {
         let marker_scale = if let Some(d) = self.marker_diameter {
             ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32)
-        } else {
+        } else if self.marker_diameter_min.is_some() || self.marker_diameter_max.is_some() {
             ringgrid::MarkerScalePrior::new(
-                self.marker_diameter_min as f32,
-                self.marker_diameter_max as f32,
+                self.marker_diameter_min.unwrap_or(20.0) as f32,
+                self.marker_diameter_max.unwrap_or(56.0) as f32,
             )
+        } else {
+            config_file.and_then(|f| f.marker_scale).unwrap_or_default()
         };
         DetectPreset { marker_scale }
     }
@@ -707,17 +724,33 @@ fn run_decode_test(word_str: &str) -> CliResult<()> {
 
 // ── detect ─────────────────────────────────────────────────────────────
 
-/// Dump default detection configuration as JSON.
+fn load_config_file(args: &CliDetectArgs) -> CliResult<Option<DetectConfigFile>> {
+    if let Some(path) = &args.config {
+        let text = std::fs::read_to_string(path).map_err(|e| -> CliError {
+            format!("Failed to read config file {}: {}", path.display(), e).into()
+        })?;
+        let cfg: DetectConfigFile = serde_json::from_str(&text).map_err(|e| -> CliError {
+            format!("Failed to parse config file {}: {}", path.display(), e).into()
+        })?;
+        tracing::info!("Loaded detection config from {}", path.display());
+        Ok(Some(cfg))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Dump the effective default detection configuration as JSON.
 ///
-/// The output uses the scale-derived defaults for the CLI's current
-/// `--marker-diameter-*` settings (or the built-in defaults when those are
-/// not passed). It is a valid `--config` template; sections or fields can be
-/// removed to revert to defaults.
+/// Reflects `--marker-diameter-*` and `--config marker_scale` if provided.
+/// The output is a valid `--config` template; remove sections or fields to
+/// revert to built-in defaults.
 fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
-    let preset = args.to_preset();
+    let config_file = load_config_file(args)?;
+    let preset = args.to_preset(config_file.as_ref());
     let board = ringgrid::BoardLayout::default();
     let config = ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
     let dump = DetectConfigDump {
+        marker_scale: config.marker_scale,
         inner_fit: config.inner_fit,
         outer_fit: config.outer_fit,
         completion: config.completion,
@@ -744,28 +777,18 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         return run_dump_config(args);
     }
 
-    let preset = args.to_preset();
     if args.marker_diameter.is_some() {
         tracing::warn!(
             "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
         );
     }
+
+    // Load config file first: marker scale resolution depends on it.
+    let config_file = load_config_file(args)?;
+    let preset = args.to_preset(config_file.as_ref());
+
     let overrides = args.to_overrides()?;
     validate_correction_compat(&overrides)?;
-
-    // Load JSON config file if provided.
-    let config_file: Option<DetectConfigFile> = if let Some(path) = &args.config {
-        let text = std::fs::read_to_string(path).map_err(|e| -> CliError {
-            format!("Failed to read config file {}: {}", path.display(), e).into()
-        })?;
-        let cfg: DetectConfigFile = serde_json::from_str(&text).map_err(|e| -> CliError {
-            format!("Failed to parse config file {}: {}", path.display(), e).into()
-        })?;
-        tracing::info!("Loaded detection config from {}", path.display());
-        Some(cfg)
-    } else {
-        None
-    };
 
     tracing::info!("Loading image: {}", args.image.display());
 

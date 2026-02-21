@@ -359,6 +359,100 @@ impl Default for MarkerScalePrior {
     }
 }
 
+/// Structural ID verification and correction using hex neighborhood consensus.
+///
+/// Runs after fit-decode and deduplication, before the global RANSAC filter.
+/// Uses the board's hex lattice geometry to detect wrong IDs (misidentified by
+/// the codebook decoder) and recover missing ones. Each marker's correct ID is
+/// implied by its decoded neighbors' positions: neighbors vote on the expected
+/// board position of the query marker using a local affine transform (or scale
+/// estimate when fewer than 3 neighbors are available).
+///
+/// Markers that cannot be verified or corrected have their IDs cleared
+/// (`id = None`) or are removed entirely depending on `remove_unverified`.
+/// This guarantees no wrong IDs reach the global filter or completion stages.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct IdCorrectionConfig {
+    /// Enable structural ID verification and correction.
+    pub enable: bool,
+    /// Local-scale staged search multipliers (one per recovery pass, sorted ascending).
+    ///
+    /// The neighbor gate for pair `(i, j)` in each pass is:
+    /// `dist_px(i,j) <= mul * 0.5 * (outer_radius_px_i + outer_radius_px_j)`.
+    ///
+    /// Multiple multipliers produce a staged sweep from tight to loose. A single-element
+    /// Vec produces one pass (equivalent to the old `search_radius_outer_mul`).
+    pub auto_search_radius_outer_muls: Vec<f64>,
+    /// Local-scale neighborhood multiplier for consistency checks.
+    pub consistency_outer_mul: f64,
+    /// Minimum number of local neighbors required to run consistency checks.
+    /// Default: 1 (any single neighbor provides enough evidence).
+    pub consistency_min_neighbors: usize,
+    /// Minimum number of one-hop board-neighbor support edges required for a
+    /// non-soft-locked ID to remain assigned. Default: 1.
+    pub consistency_min_support_edges: usize,
+    /// Maximum allowed contradiction fraction in local consistency checks.
+    pub consistency_max_contradiction_frac: f32,
+    /// When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:
+    /// they are not overridden during normal recovery and only cleared on
+    /// strict structural contradiction.
+    pub soft_lock_exact_decode: bool,
+    /// Minimum number of independent neighbor votes required to accept a
+    /// candidate ID for a marker that already has an id. Default: 2.
+    pub min_votes: usize,
+    /// Minimum votes to assign an ID to a marker that currently has `id = None`.
+    ///
+    /// A single high-confidence trusted neighbor is sufficient evidence when
+    /// there is no existing wrong ID to protect. Default: 1.
+    pub min_votes_recover: usize,
+    /// Minimum fraction of total weighted votes the winning candidate must
+    /// receive. Default: 0.55 (slight majority).
+    pub min_vote_weight_frac: f32,
+    /// H-reprojection gate (pixels) used by rough-homography fallback
+    /// assignments. Intentionally loose to tolerate significant distortion.
+    pub h_reproj_gate_px: f64,
+    /// Enable rough-homography fallback for unresolved markers.
+    pub homography_fallback_enable: bool,
+    /// Minimum trusted markers required before attempting homography fallback.
+    pub homography_min_trusted: usize,
+    /// Minimum inliers required for fallback homography RANSAC acceptance.
+    pub homography_min_inliers: usize,
+    /// Maximum number of iterative correction passes. Default: 5.
+    pub max_iters: usize,
+    /// When `true`, remove markers that cannot be verified or corrected.
+    /// When `false` (default), clear their ID (set to `None`) and keep the
+    /// detection so its geometry is available for debugging.
+    pub remove_unverified: bool,
+    /// Minimum decode confidence for bootstrapping trusted seeds when no
+    /// homography is available. Default: 0.7.
+    pub seed_min_decode_confidence: f32,
+}
+
+impl Default for IdCorrectionConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            auto_search_radius_outer_muls: vec![2.4, 2.9, 3.5, 4.2, 5.0],
+            consistency_outer_mul: 3.2,
+            consistency_min_neighbors: 1,
+            consistency_min_support_edges: 1,
+            consistency_max_contradiction_frac: 0.5,
+            soft_lock_exact_decode: true,
+            min_votes: 2,
+            min_votes_recover: 1,
+            min_vote_weight_frac: 0.55,
+            h_reproj_gate_px: 30.0,
+            homography_fallback_enable: true,
+            homography_min_trusted: 24,
+            homography_min_inliers: 12,
+            max_iters: 5,
+            remove_unverified: false,
+            seed_min_decode_confidence: 0.7,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 ///
 /// Contains all parameters that control the detection pipeline. Use one of the
@@ -413,6 +507,8 @@ pub struct DetectConfig {
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
     pub self_undistort: SelfUndistortConfig,
+    /// Structural ID verification and correction using hex neighborhood consensus.
+    pub id_correction: IdCorrectionConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -482,6 +578,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
+            id_correction: IdCorrectionConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -602,5 +699,62 @@ mod tests {
         assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
         assert_eq!(cfg.outer_fit.min_direct_fit_points, 6);
         assert_eq!(cfg.outer_fit.ransac.min_inliers, 6);
+    }
+
+    #[test]
+    fn id_correction_config_defaults_are_stable() {
+        let cfg = IdCorrectionConfig::default();
+        assert!(cfg.enable);
+        assert_eq!(
+            cfg.auto_search_radius_outer_muls,
+            vec![2.4, 2.9, 3.5, 4.2, 5.0]
+        );
+        assert!((cfg.consistency_outer_mul - 3.2).abs() < 1e-9);
+        assert_eq!(cfg.consistency_min_neighbors, 1);
+        assert_eq!(cfg.consistency_min_support_edges, 1);
+        assert!((cfg.consistency_max_contradiction_frac - 0.5).abs() < 1e-6);
+        assert!(cfg.soft_lock_exact_decode);
+        assert_eq!(cfg.min_votes, 2);
+        assert_eq!(cfg.min_votes_recover, 1);
+        assert!((cfg.min_vote_weight_frac - 0.55).abs() < 1e-6);
+        assert!((cfg.h_reproj_gate_px - 30.0).abs() < 1e-9);
+        assert!(cfg.homography_fallback_enable);
+        assert_eq!(cfg.homography_min_trusted, 24);
+        assert_eq!(cfg.homography_min_inliers, 12);
+        assert_eq!(cfg.max_iters, 5);
+        assert!(!cfg.remove_unverified);
+        assert!((cfg.seed_min_decode_confidence - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn id_correction_config_unknown_fields_are_silently_ignored() {
+        // Old config JSON with fields that no longer exist — serde should ignore them
+        // and fill in current defaults for the missing new fields.
+        let json = r#"{
+            "enable": true,
+            "neighbor_search_radius_px": null,
+            "homography_ransac_max_iters": 1200,
+            "homography_use_recovered_seeds": false,
+            "homography_candidate_top_k": 19,
+            "min_votes": 2,
+            "min_votes_recover": 1,
+            "min_vote_weight_frac": 0.55,
+            "h_reproj_gate_px": 30.0,
+            "max_iters": 5,
+            "remove_unverified": false,
+            "seed_min_decode_confidence": 0.7
+        }"#;
+        let cfg: IdCorrectionConfig =
+            serde_json::from_str(json).expect("deserialize old id correction config");
+        assert_eq!(
+            cfg.auto_search_radius_outer_muls,
+            vec![2.4, 2.9, 3.5, 4.2, 5.0]
+        );
+        assert!((cfg.consistency_outer_mul - 3.2).abs() < 1e-9);
+        assert_eq!(cfg.consistency_min_neighbors, 1);
+        assert_eq!(cfg.consistency_min_support_edges, 1);
+        assert!(cfg.homography_fallback_enable);
+        assert_eq!(cfg.homography_min_trusted, 24);
+        assert_eq!(cfg.homography_min_inliers, 12);
     }
 }

@@ -36,6 +36,34 @@ Controls the homography-guided completion stage. After the global homography fil
 
 ---
 
+## IdCorrectionConfig
+
+Controls structural ID verification/recovery that runs in finalize after projective center correction and before optional global filtering.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enable` | `bool` | `true` | Master switch for ID correction. |
+| `auto_search_radius_outer_muls` | `Vec<f64>` | `[2.4, 2.9, 3.5, 4.2, 5.0]` | Local-scale staged neighborhood multipliers (derived from pairwise outer ellipse radii). |
+| `consistency_outer_mul` | `f64` | `3.2` | Neighborhood multiplier for consistency checks. |
+| `consistency_min_neighbors` | `usize` | `1` | Minimum neighbors required to evaluate consistency evidence. |
+| `consistency_min_support_edges` | `usize` | `1` | Minimum board-neighbor support edges required for non-soft-locked IDs. |
+| `consistency_max_contradiction_frac` | `f32` | `0.5` | Maximum contradiction fraction allowed by consistency checks. |
+| `soft_lock_exact_decode` | `bool` | `true` | Soft-lock exact decodes: do not normally override them. |
+| `min_votes` | `usize` | `2` | Minimum votes for candidate acceptance when marker already has an ID. |
+| `min_votes_recover` | `usize` | `1` | Minimum votes for recovering `id=None` markers. |
+| `min_vote_weight_frac` | `f32` | `0.55` | Winner weighted-vote fraction gate. |
+| `h_reproj_gate_px` | `f64` | `30.0` | Reprojection gate for rough-homography fallback assignments. |
+| `homography_fallback_enable` | `bool` | `true` | Enable rough-homography fallback seeding for unresolved markers. |
+| `homography_min_trusted` | `usize` | `24` | Minimum trusted markers before fallback can run. |
+| `homography_min_inliers` | `usize` | `12` | Minimum inliers for fallback homography acceptance. |
+| `max_iters` | `usize` | `5` | Max local iterative passes per local-stage multiplier. |
+| `remove_unverified` | `bool` | `false` | Remove unresolved markers instead of clearing their IDs. |
+| `seed_min_decode_confidence` | `f32` | `0.7` | Confidence threshold for weak anchor bootstrap. |
+
+**Source:** `crates/ringgrid/src/detector/config.rs`, `crates/ringgrid/src/detector/id_correction/`
+
+---
+
 ## ProjectiveCenterParams
 
 Controls projective center recovery from the inner/outer conic pencil. When enabled, the detector computes an unbiased center estimate from the intersection geometry of the inner and outer fitted ellipses, correcting for perspective bias in the naive ellipse-center estimate.

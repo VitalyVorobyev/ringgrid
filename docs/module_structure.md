@@ -32,10 +32,25 @@ Public detection entrypoints (`detect_rings*`) are implemented in this module an
 - completion logic
 - dedup/global filtering
 - center correction
+- id correction (local-scale consistency scrub/recovery + constrained homography fallback)
 - proposal detector
 - shared detection config types
 
 `detector` does not define high-level stage ordering.
+
+### `detector/id_correction/` internal split
+
+The `id_correction` implementation is pipeline-oriented and internally modularized:
+
+- `engine.rs` orchestrates stage order.
+- `workspace.rs` stores shared run state/context.
+- `bootstrap.rs` seeds trusted anchors.
+- `consistency.rs` computes local structural evidence and scrub decisions.
+- `local.rs` performs local iterative recovery/refill.
+- `homography.rs` handles constrained fallback seeding.
+- `cleanup.rs` resolves unresolved markers/conflicts and final stats.
+- `diagnostics.rs` reports unverified reasons and consistency residuals.
+- `index.rs`, `vote.rs`, `math.rs`, `types.rs` provide shared utilities/types.
 
 ### `api.rs` (public facade)
 

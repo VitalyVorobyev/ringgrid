@@ -1,6 +1,6 @@
 # Completion & Final Refit
 
-The completion stage attempts to detect markers that the initial pipeline missed — typically markers at the image periphery, under heavy blur, or with low contrast. It uses the homography to predict where missing markers should be and attempts conservative local fits at those locations.
+The completion stage attempts to detect markers that the initial pipeline missed — typically markers at the image periphery, under heavy blur, or with low contrast. It runs after projective-center correction, structural ID correction, and global homography filtering. It uses the homography to predict where missing markers should be and attempts conservative local fits at those locations.
 
 ## Completion Algorithm
 

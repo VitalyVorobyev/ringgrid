@@ -3,8 +3,9 @@
 
 Checks:
 1) No new `allow(dead_code)` in configured hot modules.
-2) No new oversized functions in hot modules (baseline-locked).
-3) Rustdoc missing-docs warning count does not increase.
+2) No new `allow(clippy::too_many_arguments)` in configured hot modules.
+3) No new oversized functions in hot modules (baseline-locked).
+4) Rustdoc missing-docs warning count does not increase.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ FUNCTION_START_RE = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
 ALLOW_DEAD_CODE_RE = re.compile(r"allow\s*\(\s*dead_code\s*\)")
+ALLOW_TOO_MANY_ARGS_RE = re.compile(r"allow\s*\(\s*clippy::too_many_arguments\s*\)")
 MISSING_DOCS_WARNING_RE = re.compile(r"warning: missing documentation")
 STRING_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 CHAR_LITERAL_RE = re.compile(r"'(?:\\.|[^'\\])'")
@@ -165,6 +167,17 @@ def collect_dead_code_allow_occurrences(prefixes: Iterable[str]) -> Counter[str]
     return out
 
 
+def collect_too_many_args_allow_occurrences(prefixes: Iterable[str]) -> Counter[str]:
+    out: Counter[str] = Counter()
+    for rel_path, abs_path in _iter_hot_rust_files(prefixes):
+        for line in abs_path.read_text(encoding="utf-8").splitlines():
+            if not ALLOW_TOO_MANY_ARGS_RE.search(line):
+                continue
+            key = f"{rel_path}::{_normalize_ws(line)}"
+            out[key] += 1
+    return out
+
+
 def run_static_guardrails(baseline: dict) -> bool:
     ok = True
     hot_prefixes = baseline["hot_module_prefixes"]
@@ -214,10 +227,28 @@ def run_static_guardrails(baseline: dict) -> bool:
             extra = current_count - allowed_count
             print(f"  - {key} (count {current_count}, baseline {allowed_count}, +{extra})")
 
+    too_many_cfg = baseline["too_many_arguments_allow_guard"]
+    allowed_occurrences = Counter(
+        {str(k): int(v) for k, v in too_many_cfg["allowed_occurrences"].items()}
+    )
+    current_occurrences = collect_too_many_args_allow_occurrences(hot_prefixes)
+    too_many_regressions: list[tuple[str, int, int]] = []
+    for key, current_count in sorted(current_occurrences.items()):
+        allowed_count = allowed_occurrences.get(key, 0)
+        if current_count > allowed_count:
+            too_many_regressions.append((key, current_count, allowed_count))
+
+    if too_many_regressions:
+        ok = False
+        print("ERROR: new `allow(clippy::too_many_arguments)` occurrences in hot modules:")
+        for key, current_count, allowed_count in too_many_regressions:
+            extra = current_count - allowed_count
+            print(f"  - {key} (count {current_count}, baseline {allowed_count}, +{extra})")
+
     if ok:
         print(
             "OK: static maintainability guardrails passed "
-            f"(oversized threshold={threshold}, dead_code baseline locked)."
+            f"(oversized threshold={threshold}, allow baselines locked)."
         )
     return ok
 

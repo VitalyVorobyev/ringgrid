@@ -181,6 +181,15 @@ struct CliDetectArgs {
     #[arg(long)]
     outer_size_score_weight: Option<f32>,
 
+    /// Enable structural ID verification and correction using hex neighborhood consensus.
+    ///
+    /// After fit-decode, each marker's ID is checked against its detected neighbors.
+    /// Wrong IDs are corrected; unverified IDs are cleared (or the marker removed if
+    /// `id_correction.remove_unverified = true` in the config file).
+    /// Fine-tuning via `--config` section `"id_correction"`.
+    #[arg(long)]
+    id_correct: bool,
+
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
@@ -324,6 +333,7 @@ struct DetectConfigFile {
     outer_estimation: Option<ringgrid::OuterEstimationConfig>,
     ransac_homography: Option<ringgrid::RansacHomographyConfig>,
     self_undistort: Option<ringgrid::SelfUndistortConfig>,
+    id_correction: Option<ringgrid::IdCorrectionConfig>,
     dedup_radius: Option<f64>,
     max_aspect_ratio: Option<f64>,
     use_global_filter: Option<bool>,
@@ -348,6 +358,7 @@ struct DetectConfigDump {
     outer_estimation: ringgrid::OuterEstimationConfig,
     ransac_homography: ringgrid::RansacHomographyConfig,
     self_undistort: ringgrid::SelfUndistortConfig,
+    id_correction: ringgrid::IdCorrectionConfig,
     dedup_radius: f64,
     max_aspect_ratio: f64,
     use_global_filter: bool,
@@ -383,6 +394,7 @@ struct DetectOverrides {
     decode_max_dist: Option<u8>,
     decode_min_confidence: Option<f32>,
     outer_size_score_weight: Option<f32>,
+    id_correct_enable: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
@@ -437,6 +449,7 @@ impl CliDetectArgs {
             decode_max_dist: self.decode_max_dist,
             decode_min_confidence: self.decode_min_confidence,
             outer_size_score_weight: self.outer_size_score_weight,
+            id_correct_enable: self.id_correct,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -501,6 +514,9 @@ fn build_detect_config(
         }
         if let Some(v) = file.max_aspect_ratio {
             config.max_aspect_ratio = v;
+        }
+        if let Some(v) = file.id_correction.clone() {
+            config.id_correction = v;
         }
         if let Some(v) = file.use_global_filter {
             config.use_global_filter = v;
@@ -568,6 +584,11 @@ fn build_detect_config(
         if v.is_finite() {
             config.outer_fit.size_score_weight = v.clamp(0.0, 1.0);
         }
+    }
+
+    // ID correction: CLI --id-correct enables it on top of whatever the config file set.
+    if overrides.id_correct_enable {
+        config.id_correction.enable = true;
     }
 
     // Self-undistort options
@@ -763,6 +784,7 @@ fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
         outer_estimation: config.outer_estimation,
         ransac_homography: config.ransac_homography,
         self_undistort: config.self_undistort,
+        id_correction: config.id_correction,
         dedup_radius: config.dedup_radius,
         max_aspect_ratio: config.max_aspect_ratio,
         use_global_filter: config.use_global_filter,
@@ -907,6 +929,7 @@ mod tests {
             decode_max_dist: None,
             decode_min_confidence: None,
             outer_size_score_weight: None,
+            id_correct_enable: false,
             self_undistort_enable: false,
             self_undistort_lambda_range: [-8e-7, 8e-7],
             self_undistort_min_markers: 6,

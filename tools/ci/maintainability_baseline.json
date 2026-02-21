@@ -26,6 +26,9 @@
       "crates/ringgrid/src/ring/radial_profile.rs::#[allow(dead_code)]": 2
     }
   },
+  "too_many_arguments_allow_guard": {
+    "allowed_occurrences": {}
+  },
   "rustdoc_missing_docs_guard": {
     "crate": "ringgrid",
     "max_warnings": 43

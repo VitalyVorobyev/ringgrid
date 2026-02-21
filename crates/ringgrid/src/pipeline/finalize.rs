@@ -2,9 +2,10 @@ use image::GrayImage;
 
 use super::{
     apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
-    mean_reproj_error_px, refit_homography_matrix, warn_center_correction_without_intrinsics,
-    CompletionStats, DetectConfig,
+    mean_reproj_error_px, refit_homography_matrix, verify_and_correct_ids,
+    warn_center_correction_without_intrinsics, CompletionStats, DetectConfig,
 };
+use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
@@ -119,49 +120,91 @@ fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper
     }
 }
 
-pub(super) fn run(
-    gray: &GrayImage,
-    fit_markers: Vec<DetectedMarker>,
+fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &BoardLayout) -> usize {
+    let mut cleared_invalid_ids = 0usize;
+    for marker in markers.iter_mut() {
+        match marker.id {
+            Some(id) => {
+                if let Some(board_xy) = board.xy_mm(id) {
+                    marker.board_xy_mm = Some([board_xy[0] as f64, board_xy[1] as f64]);
+                } else {
+                    marker.id = None;
+                    marker.board_xy_mm = None;
+                    cleared_invalid_ids += 1;
+                }
+            }
+            None => {
+                marker.board_xy_mm = None;
+            }
+        }
+    }
+    cleared_invalid_ids
+}
+
+fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
+    tracing::info!(
+        n_ids_corrected = stats.n_ids_corrected,
+        n_ids_recovered = stats.n_ids_recovered,
+        n_recovered_local = stats.n_recovered_local,
+        n_recovered_homography = stats.n_recovered_homography,
+        n_homography_seeded = stats.n_homography_seeded,
+        n_ids_cleared = stats.n_ids_cleared,
+        n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
+        n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
+        n_soft_locked_cleared = stats.n_soft_locked_cleared,
+        n_verified = stats.n_verified,
+        n_inconsistent_remaining = stats.n_inconsistent_remaining,
+        n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
+        n_unverified_no_votes = stats.n_unverified_no_votes,
+        n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
+        n_iterations = stats.n_iterations,
+        pitch_px = stats.pitch_px_estimated,
+        "id_correction complete"
+    );
+}
+
+fn finalize_no_global_filter_result(
+    mut corrected_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
+    homography_frame: DetectionFrame,
+    image_size: [u32; 2],
 ) -> DetectionResult {
-    let (w, h) = gray.dimensions();
-    let image_size = [w, h];
-    let homography_frame = if mapper.is_some() {
-        DetectionFrame::Working
-    } else {
-        DetectionFrame::Image
-    };
-
-    warn_center_correction_without_intrinsics(config, mapper.is_some());
-
-    let mut corrected_markers = fit_markers;
-    if config.projective_center.enable {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
-
-    if !config.use_global_filter {
-        if let Some(mapper) = mapper {
-            let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
-            if dropped > 0 {
-                tracing::warn!(
-                    dropped,
-                    "dropping markers whose mapped centers cannot be converted to image frame"
-                );
-            }
-            map_centers_to_image(&mut corrected_markers, mapper);
+    if let Some(mapper) = mapper {
+        let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
+        if dropped > 0 {
+            tracing::warn!(
+                dropped,
+                "dropping markers whose mapped centers cannot be converted to image frame"
+            );
         }
-        return DetectionResult {
-            detected_markers: corrected_markers,
-            center_frame: DetectionFrame::Image,
-            homography_frame,
-            image_size,
-            ..DetectionResult::default()
-        };
+        map_centers_to_image(&mut corrected_markers, mapper);
     }
+    let cleared_invalid_ids =
+        sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+    tracing::debug!(
+        cleared_invalid_ids,
+        n_markers = corrected_markers.len(),
+        "synchronized marker id/board correspondence"
+    );
+    DetectionResult {
+        detected_markers: corrected_markers,
+        center_frame: DetectionFrame::Image,
+        homography_frame,
+        image_size,
+        ..DetectionResult::default()
+    }
+}
 
+fn finalize_global_filter_result(
+    gray: &GrayImage,
+    corrected_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    homography_frame: DetectionFrame,
+    image_size: [u32; 2],
+) -> DetectionResult {
     let mut filter_phase = filter_with_h(corrected_markers, config);
-
     let mut final_markers = filter_phase.markers;
     let h_current = filter_phase.h_current;
     let n_before_completion = final_markers.len();
@@ -171,7 +214,6 @@ pub(super) fn run(
     if config.projective_center.enable && final_markers.len() > n_before_completion {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
-
     if let Some(mapper) = mapper {
         let dropped = drop_unmappable_markers(&mut final_markers, mapper);
         if dropped > 0 {
@@ -188,10 +230,15 @@ pub(super) fn run(
         filter_phase.ransac_stats.take(),
         config,
     );
-
     if let Some(mapper) = mapper {
         map_centers_to_image(&mut final_markers, mapper);
     }
+    let cleared_invalid_ids = sync_marker_board_correspondence(&mut final_markers, &config.board);
+    tracing::debug!(
+        cleared_invalid_ids,
+        n_markers = final_markers.len(),
+        "synchronized marker id/board correspondence"
+    );
 
     tracing::info!(
         "{} markers after global filter/completion",
@@ -214,6 +261,52 @@ pub(super) fn run(
         ransac: final_ransac,
         ..DetectionResult::default()
     }
+}
+
+pub(super) fn run(
+    gray: &GrayImage,
+    fit_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    let (w, h) = gray.dimensions();
+    let image_size = [w, h];
+    let homography_frame = if mapper.is_some() {
+        DetectionFrame::Working
+    } else {
+        DetectionFrame::Image
+    };
+
+    warn_center_correction_without_intrinsics(config, mapper.is_some());
+
+    let mut corrected_markers = fit_markers;
+    if config.projective_center.enable {
+        apply_projective_centers(&mut corrected_markers, config);
+    }
+
+    if config.id_correction.enable {
+        let stats =
+            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        log_id_correction_summary(&stats);
+    }
+
+    if !config.use_global_filter {
+        return finalize_no_global_filter_result(
+            corrected_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        );
+    }
+    finalize_global_filter_result(
+        gray,
+        corrected_markers,
+        config,
+        mapper,
+        homography_frame,
+        image_size,
+    )
 }
 
 #[cfg(test)]
@@ -256,6 +349,15 @@ mod tests {
         }
     }
 
+    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
+        DetectedMarker {
+            id: Some(id),
+            confidence: 1.0,
+            center,
+            ..DetectedMarker::default()
+        }
+    }
+
     fn no_global_filter_config() -> DetectConfig {
         DetectConfig {
             use_global_filter: false,
@@ -278,20 +380,44 @@ mod tests {
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [12.0, 22.0]);
         assert!(result.detected_markers[0].center_mapped.is_none());
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn no_mapper_populates_board_xy_for_valid_id() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let expected = config.board.xy_mm(0).expect("board marker 0");
+        let markers = vec![marker_with_id(0, [12.0, 22.0])];
+        let result = run(&img, markers, &config, None);
+
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].id, Some(0));
+        assert_eq!(
+            result.detected_markers[0].board_xy_mm,
+            Some([expected[0] as f64, expected[1] as f64])
+        );
     }
 
     #[test]
     fn mapper_outputs_image_center_and_preserves_mapped_center() {
         let img = GrayImage::new(100, 80);
-        let markers = vec![marker([20.0, 30.0])];
+        let config = no_global_filter_config();
+        let expected = config.board.xy_mm(1).expect("board marker 1");
+        let markers = vec![marker_with_id(1, [20.0, 30.0])];
         let mapper = OffsetMapper;
-        let result = run(&img, markers, &no_global_filter_config(), Some(&mapper));
+        let result = run(&img, markers, &config, Some(&mapper));
 
         assert_eq!(result.center_frame, DetectionFrame::Image);
         assert_eq!(result.homography_frame, DetectionFrame::Working);
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [15.0, 23.0]);
         assert_eq!(result.detected_markers[0].center_mapped, Some([20.0, 30.0]));
+        assert_eq!(result.detected_markers[0].id, Some(1));
+        assert_eq!(
+            result.detected_markers[0].board_xy_mm,
+            Some([expected[0] as f64, expected[1] as f64])
+        );
     }
 
     #[test]
@@ -304,5 +430,42 @@ mod tests {
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [10.0, 10.0]);
         assert_eq!(result.detected_markers[0].center_mapped, Some([10.0, 10.0]));
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn invalid_id_is_cleared_and_board_xy_is_none() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let invalid_id = config.board.max_marker_id() + 1;
+        let markers = vec![marker_with_id(invalid_id, [12.0, 22.0])];
+        let result = run(&img, markers, &config, None);
+
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].id, None);
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn serialization_omits_none_board_xy_and_includes_finite_when_present() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let markers = vec![marker([12.0, 22.0]), marker_with_id(0, [20.0, 30.0])];
+        let result = run(&img, markers, &config, None);
+        let json = serde_json::to_value(&result).expect("serialize detection result");
+        let detected = json
+            .get("detected_markers")
+            .and_then(|v| v.as_array())
+            .expect("detected markers array");
+
+        assert!(detected[0].get("board_xy_mm").is_none());
+        let board_xy = detected[1]
+            .get("board_xy_mm")
+            .and_then(|v| v.as_array())
+            .expect("board_xy_mm must be present for valid id");
+        assert_eq!(board_xy.len(), 2);
+        assert!(board_xy
+            .iter()
+            .all(|v| v.as_f64().is_some_and(|x| x.is_finite())));
     }
 }

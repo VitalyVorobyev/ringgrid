@@ -45,7 +45,9 @@ pub struct FitMetrics {
 /// The `center` field is always in image-pixel coordinates, regardless of
 /// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is
 /// active, `center_mapped` provides the working-frame (undistorted)
-/// coordinates. Ellipses are in the working frame when a mapper is active.
+/// coordinates. `board_xy_mm` provides board-space marker coordinates in
+/// millimeters when the decoded `id` is valid for the active [`BoardLayout`](crate::BoardLayout).
+/// Ellipses are in the working frame when a mapper is active.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DetectedMarker {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
@@ -60,6 +62,11 @@ pub struct DetectedMarker {
     /// Marker center in mapper working coordinates, when a mapper is active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_mapped: Option<[f64; 2]>,
+    /// Marker center on the physical board in millimeters `[x_mm, y_mm]`.
+    ///
+    /// Populated when `id` is present and valid for the active board layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_xy_mm: Option<[f64; 2]>,
     /// Outer ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_outer: Option<Ellipse>,

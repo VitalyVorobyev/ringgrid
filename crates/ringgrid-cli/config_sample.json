@@ -1,0 +1,67 @@
+{
+  "marker_scale": {
+    "diameter_min_px": 20.0,
+    "diameter_max_px": 60.0
+  },
+
+  "inner_fit": {
+    "min_points": 20,
+    "min_inlier_ratio": 0.2,
+    "max_rms_residual": 1.0,
+    "max_center_shift_px": 12.0,
+    "max_ratio_abs_error": 0.15,
+    "max_angular_gap_rad": 0.5,
+    "miss_confidence_factor": 0.7,
+    "require_inner_fit": false,
+    "local_peak_halfwidth_idx": 3,
+    "ransac": {
+      "max_iters": 200,
+      "inlier_threshold": 1.5,
+      "min_inliers": 12,
+      "seed": 43
+    }
+  },
+
+  "outer_fit": {
+    "min_direct_fit_points": 6,
+    "min_ransac_points": 8,
+    "size_score_weight": 0.15,
+    "max_angular_gap_rad": 1.5707963267948966,
+    "ransac": {
+      "max_iters": 200,
+      "inlier_threshold": 1.5,
+      "min_inliers": 6,
+      "seed": 42
+    }
+  },
+
+  "decode": {
+    "max_decode_dist": 3,
+    "min_decode_margin": 1,
+    "min_decode_confidence": 0.3,
+    "min_decode_contrast": 0.03,
+    "code_band_ratio": 0.74404764,
+    "samples_per_sector": 5,
+    "n_radial_rings": 3,
+    "threshold_max_iters": 10,
+    "threshold_convergence_eps": 0.0001
+  },
+
+  "completion": {
+    "enable": false,
+    "reproj_gate_px": 3.0,
+    "min_fit_confidence": 0.45,
+    "min_arc_coverage": 0.35,
+    "roi_radius_px": 28.5,
+    "image_margin_px": 10.0,
+    "require_perfect_decode": false,
+    "max_attempts": null
+  },
+
+  "ransac_homography": {
+    "max_iters": 2000,
+    "inlier_threshold": 5.0,
+    "min_inliers": 6,
+    "seed": 0
+  }
+}

@@ -63,12 +63,35 @@ def compute_zoom_window(
     return x0, x1, y0, y1
 
 
+def marker_confidence(marker: dict[str, Any]) -> float | None:
+    confidence = marker.get("confidence")
+    if confidence is None:
+        return None
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return max(0.0, min(1.0, value))
+
+
+def confidence_color(confidence: float | None) -> tuple[float, float, float]:
+    if confidence is None:
+        return (0.0, 1.0, 0.0)
+    # Linearly blend low-confidence red to high-confidence green.
+    r = 1.0 - 0.9 * confidence
+    g = 0.1 + 0.9 * confidence
+    return (r, g, 0.1)
+
+
 def plot_detection(
     ax,
     marker: dict[str, Any],
     *,
     alpha: float,
     show_ellipses: bool,
+    show_confidence: bool,
 ) -> None:
     import matplotlib.patheffects as pe
 
@@ -76,14 +99,24 @@ def plot_detection(
     if cx is None or cy is None:
         return
 
-    ax.plot(float(cx), float(cy), "o", color="lime", markersize=4, alpha=alpha)
+    confidence = marker_confidence(marker) if show_confidence else None
+    point_color = confidence_color(confidence)
+    ax.plot(float(cx), float(cy), "o", color=point_color, markersize=4, alpha=alpha)
 
     marker_id = marker.get("id")
-    if marker_id is not None:
+    label = None
+    if marker_id is not None and confidence is not None:
+        label = f"{marker_id} ({confidence:.2f})"
+    elif marker_id is not None:
+        label = str(marker_id)
+    elif confidence is not None:
+        label = f"{confidence:.2f}"
+
+    if label is not None:
         ax.text(
             float(cx) + 4.0,
             float(cy) - 4.0,
-            str(marker_id),
+            label,
             fontsize=6,
             color="white",
             ha="left",
@@ -116,6 +149,19 @@ def main() -> None:
     parser.add_argument("--zoom", type=float, default=None, help="Zoom factor when --id is set")
     parser.add_argument("--show-ellipses", dest="show_ellipses", action="store_true", default=True)
     parser.add_argument("--no-ellipses", dest="show_ellipses", action="store_false")
+    parser.add_argument(
+        "--show-confidence",
+        dest="show_confidence",
+        action="store_true",
+        default=True,
+        help="Show marker confidence in labels and center colors",
+    )
+    parser.add_argument(
+        "--no-confidence",
+        dest="show_confidence",
+        action="store_false",
+        help="Disable confidence indication",
+    )
     parser.add_argument("--alpha", type=float, default=0.8)
     args = parser.parse_args()
 
@@ -151,7 +197,13 @@ def main() -> None:
         marker_id = marker.get("id")
         if args.id is not None and marker_id != args.id:
             continue
-        plot_detection(ax, marker, alpha=args.alpha, show_ellipses=args.show_ellipses)
+        plot_detection(
+            ax,
+            marker,
+            alpha=args.alpha,
+            show_ellipses=args.show_ellipses,
+            show_confidence=args.show_confidence,
+        )
 
     ax.set_xlim(0, img_w)
     ax.set_ylim(img_h, 0)

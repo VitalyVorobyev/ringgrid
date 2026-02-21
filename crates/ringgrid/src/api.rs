@@ -8,10 +8,11 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
+use crate::detector::proposal::find_proposals;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
-use crate::DetectionResult;
+use crate::{DetectionResult, Proposal};
 
 /// Primary detection interface.
 ///
@@ -118,6 +119,13 @@ impl Detector {
         }
     }
 
+    /// Generate pass-1 center proposals in image coordinates.
+    ///
+    /// This exposes the same proposal stage used by single-pass detection.
+    pub fn propose(&self, image: &GrayImage) -> Vec<Proposal> {
+        find_proposals(image, &self.config.proposal)
+    }
+
     /// Detect with a custom pixel mapper (two-pass pipeline).
     ///
     /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
@@ -193,5 +201,49 @@ mod tests {
         let mut det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
         det.config_mut().completion.enable = false;
         assert!(!det.config().completion.enable);
+    }
+
+    fn draw_ring_image(
+        w: u32,
+        h: u32,
+        center: [f32; 2],
+        outer_radius: f32,
+        inner_radius: f32,
+    ) -> GrayImage {
+        use image::Luma;
+
+        let mut img = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - center[0];
+                let dy = y as f32 - center[1];
+                let d = (dx * dx + dy * dy).sqrt();
+                let pix = if d >= inner_radius && d <= outer_radius {
+                    30u8
+                } else {
+                    220u8
+                };
+                img.put_pixel(x, y, Luma([pix]));
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn detector_propose_is_deterministic() {
+        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let det = Detector::with_config(cfg);
+        let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
+
+        let p1 = det.propose(&img);
+        let p2 = det.propose(&img);
+
+        assert!(!p1.is_empty(), "expected at least one proposal");
+        assert_eq!(p1.len(), p2.len(), "proposal counts should match");
+        for (a, b) in p1.iter().zip(p2.iter()) {
+            assert_eq!(a.x.to_bits(), b.x.to_bits());
+            assert_eq!(a.y.to_bits(), b.y.to_bits());
+            assert_eq!(a.score.to_bits(), b.score.to_bits());
+        }
     }
 }

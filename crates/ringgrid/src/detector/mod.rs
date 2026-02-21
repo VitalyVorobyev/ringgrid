@@ -29,3 +29,4 @@ pub(crate) use outer_fit::{
     fit_outer_candidate_from_prior_for_completion, median_outer_radius_from_neighbors_px,
     OuterFitCandidate,
 };
+pub use proposal::{Proposal, ProposalConfig};

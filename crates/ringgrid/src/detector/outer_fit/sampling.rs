@@ -169,6 +169,27 @@ pub(super) fn collect_outer_edge_points_near_radius(
     (outer_points, outer_radii)
 }
 
+/// Compute the largest angular gap (radians) between consecutive edge points
+/// around a center. Returns `2*PI` if fewer than 2 points are provided.
+pub(crate) fn max_angular_gap(center: [f64; 2], points: &[[f64; 2]]) -> f64 {
+    let tau = 2.0 * std::f64::consts::PI;
+    if points.len() < 2 {
+        return tau;
+    }
+    let mut angles: Vec<f64> = points
+        .iter()
+        .map(|p| (p[1] - center[1]).atan2(p[0] - center[0]))
+        .collect();
+    angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut gap = 0.0f64;
+    for i in 1..angles.len() {
+        gap = gap.max(angles[i] - angles[i - 1]);
+    }
+    // Wrap-around gap
+    let wrap = tau - (angles.last().unwrap() - angles.first().unwrap());
+    gap.max(wrap)
+}
+
 fn median_f32(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
@@ -256,5 +277,58 @@ mod tests {
             Polarity::Pos,
             0.01,
         ));
+    }
+
+    #[test]
+    fn max_angular_gap_full_circle() {
+        let center = [0.0, 0.0];
+        let n = 48;
+        let points: Vec<[f64; 2]> = (0..n)
+            .map(|i| {
+                let theta = i as f64 * 2.0 * std::f64::consts::PI / n as f64;
+                [theta.cos() * 10.0, theta.sin() * 10.0]
+            })
+            .collect();
+        let gap = max_angular_gap(center, &points);
+        let expected = 2.0 * std::f64::consts::PI / n as f64;
+        assert!(
+            (gap - expected).abs() < 1e-10,
+            "full circle gap={gap:.6} expected={expected:.6}"
+        );
+    }
+
+    #[test]
+    fn max_angular_gap_half_circle() {
+        let center = [0.0, 0.0];
+        let n = 24;
+        let points: Vec<[f64; 2]> = (0..n)
+            .map(|i| {
+                let theta = i as f64 * std::f64::consts::PI / (n - 1) as f64;
+                [theta.cos() * 10.0, theta.sin() * 10.0]
+            })
+            .collect();
+        let gap = max_angular_gap(center, &points);
+        assert!(
+            gap > std::f64::consts::PI - 0.2,
+            "half circle gap={gap:.4} should be ~PI"
+        );
+    }
+
+    #[test]
+    fn max_angular_gap_single_point() {
+        let gap = max_angular_gap([0.0, 0.0], &[[1.0, 0.0]]);
+        assert!(
+            (gap - 2.0 * std::f64::consts::PI).abs() < 1e-10,
+            "single point gap={gap:.6}"
+        );
+    }
+
+    #[test]
+    fn max_angular_gap_empty() {
+        let gap = max_angular_gap([0.0, 0.0], &[]);
+        assert!(
+            (gap - 2.0 * std::f64::consts::PI).abs() < 1e-10,
+            "empty gap={gap:.6}"
+        );
     }
 }

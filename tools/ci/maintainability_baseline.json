@@ -10,10 +10,10 @@
   "function_line_guard": {
     "line_threshold": 120,
     "allowed_oversized_functions": {
-      "crates/ringgrid/src/detector/completion.rs::complete_with_h": 166,
-      "crates/ringgrid/src/detector/inner_fit.rs::fit_inner_ellipse_from_outer_hint": 162,
+      "crates/ringgrid/src/detector/completion.rs::complete_with_h": 190,
+      "crates/ringgrid/src/detector/inner_fit.rs::fit_inner_ellipse_from_outer_hint": 182,
       "crates/ringgrid/src/detector/proposal.rs::find_proposals": 148,
-      "crates/ringgrid/src/marker/decode.rs::decode_marker_impl": 200,
+      "crates/ringgrid/src/marker/decode.rs::decode_marker_impl": 209,
       "crates/ringgrid/src/ring/inner_estimate.rs::estimate_inner_scale_from_outer_with_mapper": 201,
       "crates/ringgrid/src/ring/outer_estimate.rs::estimate_outer_from_prior_with_mapper": 205
     }

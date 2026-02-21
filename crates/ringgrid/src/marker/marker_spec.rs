@@ -45,6 +45,7 @@ pub enum AngularAggregator {
 /// the expected (inner_edge / outer_edge) ratio in *outer-normalized* units is:
 ///   r_inner_expected = (inner_radius - ring_width) / (outer_radius + ring_width)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct MarkerSpec {
     /// Expected inner radius as fraction of outer radius.
     pub r_inner_expected: f32,

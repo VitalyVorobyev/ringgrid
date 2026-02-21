@@ -15,7 +15,7 @@ mod sampling;
 mod scoring;
 mod solver;
 
-pub(crate) use sampling::median_outer_radius_from_neighbors_px;
+pub(crate) use sampling::{max_angular_gap, median_outer_radius_from_neighbors_px};
 
 /// Stable reject code for outer-fit candidate creation.
 #[derive(
@@ -29,6 +29,7 @@ pub(crate) enum OuterFitRejectReason {
     OuterEstimateUnknownFailure,
     OuterEstimateMissingPolarity,
     NoValidHypothesis,
+    AngularGapTooLarge,
 }
 
 impl OuterFitRejectReason {
@@ -42,6 +43,7 @@ impl OuterFitRejectReason {
             Self::OuterEstimateUnknownFailure => "outer_estimate_unknown_failure",
             Self::OuterEstimateMissingPolarity => "outer_estimate_missing_polarity",
             Self::NoValidHypothesis => "no_valid_hypothesis",
+            Self::AngularGapTooLarge => "angular_gap_too_large",
         }
     }
 }
@@ -62,6 +64,10 @@ pub(crate) enum OuterFitRejectContext {
     },
     NoValidHypothesis {
         hypothesis_count: usize,
+    },
+    AngularGapTooLarge {
+        observed_gap_rad: f64,
+        max_allowed_gap_rad: f64,
     },
 }
 
@@ -188,6 +194,11 @@ fn evaluate_hypothesis(
 
     let (outer, outer_ransac) = solver::fit_outer_ellipse_with_reason(&edge, ctx.config).ok()?;
 
+    let gap = sampling::max_angular_gap(outer.center(), &edge.outer_points);
+    if gap > ctx.config.outer_fit.max_angular_gap_rad {
+        return None;
+    }
+
     let (decode_result, diagnostics) =
         decode_marker_with_diagnostics_and_mapper(ctx.gray, &outer, &ctx.config.decode, ctx.mapper);
 
@@ -197,6 +208,7 @@ fn evaluate_hypothesis(
         outer_ransac.as_ref(),
         diagnostics.decode_confidence,
         ctx.r_expected,
+        ctx.config.outer_fit.size_score_weight,
     );
 
     Some(OuterFitCandidate {

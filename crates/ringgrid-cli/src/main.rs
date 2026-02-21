@@ -52,6 +52,12 @@ struct CliDetectArgs {
     #[arg(long)]
     out: PathBuf,
 
+    /// Include pass-1 proposal diagnostics in output JSON.
+    ///
+    /// Adds `proposals`, `proposal_frame`, and `proposal_count` fields.
+    #[arg(long)]
+    include_proposals: bool,
+
     /// Fixed marker outer diameter in pixels (legacy compatibility path).
     ///
     /// When set, this overrides `--marker-diameter-min` / `--marker-diameter-max`
@@ -60,12 +66,18 @@ struct CliDetectArgs {
     marker_diameter: Option<f64>,
 
     /// Minimum marker outer diameter in pixels for scale search.
-    #[arg(long, default_value = "20.0")]
-    marker_diameter_min: f64,
+    ///
+    /// Default: 20.0 (built-in). Can also be set via `--config`
+    /// (`marker_scale.diameter_min_px`). CLI takes precedence over config file.
+    #[arg(long)]
+    marker_diameter_min: Option<f64>,
 
     /// Maximum marker outer diameter in pixels for scale search.
-    #[arg(long, default_value = "56.0")]
-    marker_diameter_max: f64,
+    ///
+    /// Default: 56.0 (built-in). Can also be set via `--config`
+    /// (`marker_scale.diameter_max_px`). CLI takes precedence over config file.
+    #[arg(long)]
+    marker_diameter_max: Option<f64>,
 
     /// RANSAC inlier threshold in pixels for homography fitting.
     #[arg(long, default_value = "5.0")]
@@ -97,6 +109,14 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
+    /// Require a perfect decode (dist=0, margin≥2) for completion markers.
+    ///
+    /// Recommended for high-distortion setups without a calibrated camera model
+    /// (e.g. Scheimpflug cameras), where H-projected seeds may be inaccurate and
+    /// geometry gates alone are insufficient to reject bad fits.
+    #[arg(long)]
+    complete_require_perfect_decode: bool,
+
     /// Circle refinement method after local fits are accepted.
     #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
     circle_refine_method: CircleRefineMethodArg,
@@ -115,6 +135,52 @@ struct CliDetectArgs {
     #[arg(long, default_value = "1e-6")]
     proj_center_min_eig_sep: f64,
 
+    /// Maximum angular gap (degrees) allowed between consecutive edge points
+    /// for both outer and inner ellipse fits. Fits with larger gaps are rejected.
+    /// Default: 90 degrees.
+    #[arg(long)]
+    max_angular_gap_deg: Option<f64>,
+
+    /// Require both inner and outer ellipses for every detected marker.
+    /// When set, markers without a valid inner ellipse are rejected entirely.
+    #[arg(long)]
+    require_inner_fit: bool,
+
+    /// Minimum number of outer edge points required for RANSAC ellipse fitting.
+    /// Below this threshold, direct fit is attempted; below 6 points the fit
+    /// is rejected entirely. Default: 8.
+    #[arg(long)]
+    min_outer_edge_points: Option<usize>,
+
+    /// Minimum number of inner edge points required to attempt inner ellipse
+    /// fitting. Default: 20.
+    #[arg(long)]
+    min_inner_edge_points: Option<usize>,
+
+    /// Minimum theta consistency required for outer-radius hypothesis selection.
+    #[arg(long)]
+    outer_min_theta_consistency: Option<f32>,
+
+    /// Relative threshold for accepting a second outer-radius hypothesis.
+    #[arg(long)]
+    outer_second_peak_min_rel: Option<f32>,
+
+    /// Minimum decode margin for accepted marker IDs.
+    #[arg(long)]
+    decode_min_margin: Option<u8>,
+
+    /// Maximum decode Hamming distance for accepted marker IDs.
+    #[arg(long)]
+    decode_max_dist: Option<u8>,
+
+    /// Minimum decode confidence for accepted marker IDs.
+    #[arg(long)]
+    decode_min_confidence: Option<f32>,
+
+    /// Size-term weight in outer-hypothesis scoring.
+    #[arg(long)]
+    outer_size_score_weight: Option<f32>,
+
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
@@ -131,6 +197,21 @@ struct CliDetectArgs {
     /// Self-undistort: minimum number of markers with inner+outer edge points.
     #[arg(long, default_value = "6")]
     self_undistort_min_markers: usize,
+
+    /// Path to a JSON configuration file with detection parameters.
+    ///
+    /// Present sections replace the defaults for that sub-config. CLI flags
+    /// always take precedence over values in the file. Use `--dump-config` to
+    /// print a complete template with all current defaults.
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Print the default detection configuration as JSON and exit.
+    ///
+    /// The output is a valid `--config` template. Sections or individual
+    /// fields can be removed; missing fields revert to built-in defaults.
+    #[arg(long)]
+    dump_config: bool,
 
     #[command(flatten)]
     camera: CliCameraArgs,
@@ -219,6 +300,59 @@ impl CircleRefineMethodArg {
     }
 }
 
+/// JSON-loadable detection configuration overlay.
+///
+/// Each section is optional. When present, the entire sub-config is replaced
+/// with the provided value; missing fields within the section revert to the
+/// sub-config's own defaults (all sub-configs carry `#[serde(default)]`).
+/// CLI flags are always applied on top and take precedence.
+///
+/// Use `--dump-config` to print a complete template.
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct DetectConfigFile {
+    marker_scale: Option<ringgrid::MarkerScalePrior>,
+    inner_fit: Option<ringgrid::InnerFitConfig>,
+    outer_fit: Option<ringgrid::OuterFitConfig>,
+    completion: Option<ringgrid::CompletionParams>,
+    projective_center: Option<ringgrid::ProjectiveCenterParams>,
+    seed_proposals: Option<ringgrid::SeedProposalParams>,
+    proposal: Option<ringgrid::ProposalConfig>,
+    edge_sample: Option<ringgrid::EdgeSampleConfig>,
+    decode: Option<ringgrid::DecodeConfig>,
+    marker_spec: Option<ringgrid::MarkerSpec>,
+    outer_estimation: Option<ringgrid::OuterEstimationConfig>,
+    ransac_homography: Option<ringgrid::RansacHomographyConfig>,
+    self_undistort: Option<ringgrid::SelfUndistortConfig>,
+    dedup_radius: Option<f64>,
+    max_aspect_ratio: Option<f64>,
+    use_global_filter: Option<bool>,
+}
+
+/// Serializable snapshot of all tunable detection parameters, excluding
+/// board layout and marker scale (which are set via CLI or board JSON).
+///
+/// Used for `--dump-config` output.
+#[derive(serde::Serialize)]
+struct DetectConfigDump {
+    marker_scale: ringgrid::MarkerScalePrior,
+    inner_fit: ringgrid::InnerFitConfig,
+    outer_fit: ringgrid::OuterFitConfig,
+    completion: ringgrid::CompletionParams,
+    projective_center: ringgrid::ProjectiveCenterParams,
+    seed_proposals: ringgrid::SeedProposalParams,
+    proposal: ringgrid::ProposalConfig,
+    edge_sample: ringgrid::EdgeSampleConfig,
+    decode: ringgrid::DecodeConfig,
+    marker_spec: ringgrid::MarkerSpec,
+    outer_estimation: ringgrid::OuterEstimationConfig,
+    ransac_homography: ringgrid::RansacHomographyConfig,
+    self_undistort: ringgrid::SelfUndistortConfig,
+    dedup_radius: f64,
+    max_aspect_ratio: f64,
+    use_global_filter: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DetectPreset {
     marker_scale: ringgrid::MarkerScalePrior,
@@ -233,25 +367,45 @@ struct DetectOverrides {
     completion_reproj_gate_px: f32,
     completion_min_fit_confidence: f32,
     completion_roi_radius_px: Option<f32>,
+    completion_require_perfect_decode: bool,
     camera: Option<ringgrid::CameraModel>,
     circle_refinement: ringgrid::CircleRefinementMethod,
     projective_center_max_shift_px: Option<f64>,
     projective_center_max_residual: f64,
     projective_center_min_eig_sep: f64,
+    max_angular_gap_rad: Option<f64>,
+    require_inner_fit: bool,
+    min_outer_edge_points: Option<usize>,
+    min_inner_edge_points: Option<usize>,
+    outer_min_theta_consistency: Option<f32>,
+    outer_second_peak_min_rel: Option<f32>,
+    decode_min_margin: Option<u8>,
+    decode_max_dist: Option<u8>,
+    decode_min_confidence: Option<f32>,
+    outer_size_score_weight: Option<f32>,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
 }
 
 impl CliDetectArgs {
-    fn to_preset(&self) -> DetectPreset {
+    /// Resolve marker scale prior.
+    ///
+    /// Precedence (highest to lowest):
+    /// 1. `--marker-diameter` (fixed single value)
+    /// 2. `--marker-diameter-min` / `--marker-diameter-max` (explicitly set)
+    /// 3. `marker_scale` section in the JSON config file
+    /// 4. Built-in defaults (20 – 56 px)
+    fn to_preset(&self, config_file: Option<&DetectConfigFile>) -> DetectPreset {
         let marker_scale = if let Some(d) = self.marker_diameter {
             ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32)
-        } else {
+        } else if self.marker_diameter_min.is_some() || self.marker_diameter_max.is_some() {
             ringgrid::MarkerScalePrior::new(
-                self.marker_diameter_min as f32,
-                self.marker_diameter_max as f32,
+                self.marker_diameter_min.unwrap_or(20.0) as f32,
+                self.marker_diameter_max.unwrap_or(56.0) as f32,
             )
+        } else {
+            config_file.and_then(|f| f.marker_scale).unwrap_or_default()
         };
         DetectPreset { marker_scale }
     }
@@ -267,11 +421,22 @@ impl CliDetectArgs {
             completion_reproj_gate_px: self.complete_reproj_gate as f32,
             completion_min_fit_confidence: self.complete_min_conf,
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
+            completion_require_perfect_decode: self.complete_require_perfect_decode,
             camera: self.camera.to_core()?,
             circle_refinement,
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
+            max_angular_gap_rad: self.max_angular_gap_deg.map(|deg| deg.to_radians()),
+            require_inner_fit: self.require_inner_fit,
+            min_outer_edge_points: self.min_outer_edge_points,
+            min_inner_edge_points: self.min_inner_edge_points,
+            outer_min_theta_consistency: self.outer_min_theta_consistency,
+            outer_second_peak_min_rel: self.outer_second_peak_min_rel,
+            decode_min_margin: self.decode_min_margin,
+            decode_max_dist: self.decode_max_dist,
+            decode_min_confidence: self.decode_min_confidence,
+            outer_size_score_weight: self.outer_size_score_weight,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -285,10 +450,62 @@ impl CliDetectArgs {
 fn build_detect_config(
     board: ringgrid::BoardLayout,
     preset: DetectPreset,
+    config_file: Option<&DetectConfigFile>,
     overrides: &DetectOverrides,
 ) -> ringgrid::DetectConfig {
     let mut config =
         ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
+
+    // Apply JSON config file sections. Each present section replaces the
+    // corresponding sub-config that was derived from the scale prior. CLI
+    // flags applied below always take precedence.
+    if let Some(file) = config_file {
+        if let Some(v) = file.inner_fit.clone() {
+            config.inner_fit = v;
+        }
+        if let Some(v) = file.outer_fit.clone() {
+            config.outer_fit = v;
+        }
+        if let Some(v) = file.completion.clone() {
+            config.completion = v;
+        }
+        if let Some(v) = file.projective_center.clone() {
+            config.projective_center = v;
+        }
+        if let Some(v) = file.seed_proposals.clone() {
+            config.seed_proposals = v;
+        }
+        if let Some(v) = file.proposal.clone() {
+            config.proposal = v;
+        }
+        if let Some(v) = file.edge_sample.clone() {
+            config.edge_sample = v;
+        }
+        if let Some(v) = file.decode.clone() {
+            config.decode = v;
+        }
+        if let Some(v) = file.marker_spec.clone() {
+            config.marker_spec = v;
+        }
+        if let Some(v) = file.outer_estimation.clone() {
+            config.outer_estimation = v;
+        }
+        if let Some(v) = file.ransac_homography.clone() {
+            config.ransac_homography = v;
+        }
+        if let Some(v) = file.self_undistort.clone() {
+            config.self_undistort = v;
+        }
+        if let Some(v) = file.dedup_radius {
+            config.dedup_radius = v;
+        }
+        if let Some(v) = file.max_aspect_ratio {
+            config.max_aspect_ratio = v;
+        }
+        if let Some(v) = file.use_global_filter {
+            config.use_global_filter = v;
+        }
+    }
 
     // Global filter options
     config.use_global_filter = overrides.use_global_filter;
@@ -302,6 +519,7 @@ fn build_detect_config(
     if let Some(roi) = overrides.completion_roi_radius_px {
         config.completion.roi_radius_px = roi;
     }
+    config.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
     config.projective_center.enable = config.circle_refinement.uses_projective_center();
@@ -310,6 +528,47 @@ fn build_detect_config(
     }
     config.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     config.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
+
+    // Angular gap and two-ellipse gates
+    if let Some(gap) = overrides.max_angular_gap_rad {
+        config.outer_fit.max_angular_gap_rad = gap;
+        config.inner_fit.max_angular_gap_rad = gap;
+    }
+    config.inner_fit.require_inner_fit = overrides.require_inner_fit;
+    if let Some(n) = overrides.min_outer_edge_points {
+        config.outer_fit.min_ransac_points = n;
+    }
+    if let Some(n) = overrides.min_inner_edge_points {
+        config.inner_fit.min_points = n;
+    }
+
+    // Outer estimator / decode / scoring tuning options.
+    if let Some(v) = overrides.outer_min_theta_consistency {
+        if v.is_finite() {
+            config.outer_estimation.min_theta_consistency = v.clamp(0.0, 1.0);
+        }
+    }
+    if let Some(v) = overrides.outer_second_peak_min_rel {
+        if v.is_finite() {
+            config.outer_estimation.second_peak_min_rel = v.clamp(0.0, 1.0);
+        }
+    }
+    if let Some(v) = overrides.decode_min_margin {
+        config.decode.min_decode_margin = v;
+    }
+    if let Some(v) = overrides.decode_max_dist {
+        config.decode.max_decode_dist = v;
+    }
+    if let Some(v) = overrides.decode_min_confidence {
+        if v.is_finite() {
+            config.decode.min_decode_confidence = v.clamp(0.0, 1.0);
+        }
+    }
+    if let Some(v) = overrides.outer_size_score_weight {
+        if v.is_finite() {
+            config.outer_fit.size_score_weight = v.clamp(0.0, 1.0);
+        }
+    }
 
     // Self-undistort options
     config.self_undistort.enable = overrides.self_undistort_enable;
@@ -335,13 +594,26 @@ struct DetectionJsonOutput<'a> {
     result: &'a ringgrid::DetectionResult,
     #[serde(skip_serializing_if = "Option::is_none")]
     camera: Option<ringgrid::CameraModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_frame: Option<ringgrid::DetectionFrame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposals: Option<&'a [ringgrid::Proposal]>,
 }
 
 fn serialize_detection_output(
     result: &ringgrid::DetectionResult,
     camera: Option<ringgrid::CameraModel>,
+    proposals: Option<&[ringgrid::Proposal]>,
 ) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&DetectionJsonOutput { result, camera })
+    serde_json::to_string_pretty(&DetectionJsonOutput {
+        result,
+        camera,
+        proposal_frame: proposals.map(|_| ringgrid::DetectionFrame::Image),
+        proposal_count: proposals.map(|p| p.len()),
+        proposals,
+    })
 }
 
 fn main() -> CliResult<()> {
@@ -452,13 +724,69 @@ fn run_decode_test(word_str: &str) -> CliResult<()> {
 
 // ── detect ─────────────────────────────────────────────────────────────
 
+fn load_config_file(args: &CliDetectArgs) -> CliResult<Option<DetectConfigFile>> {
+    if let Some(path) = &args.config {
+        let text = std::fs::read_to_string(path).map_err(|e| -> CliError {
+            format!("Failed to read config file {}: {}", path.display(), e).into()
+        })?;
+        let cfg: DetectConfigFile = serde_json::from_str(&text).map_err(|e| -> CliError {
+            format!("Failed to parse config file {}: {}", path.display(), e).into()
+        })?;
+        tracing::info!("Loaded detection config from {}", path.display());
+        Ok(Some(cfg))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Dump the effective default detection configuration as JSON.
+///
+/// Reflects `--marker-diameter-*` and `--config marker_scale` if provided.
+/// The output is a valid `--config` template; remove sections or fields to
+/// revert to built-in defaults.
+fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
+    let config_file = load_config_file(args)?;
+    let preset = args.to_preset(config_file.as_ref());
+    let board = ringgrid::BoardLayout::default();
+    let config = ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
+    let dump = DetectConfigDump {
+        marker_scale: config.marker_scale,
+        inner_fit: config.inner_fit,
+        outer_fit: config.outer_fit,
+        completion: config.completion,
+        projective_center: config.projective_center,
+        seed_proposals: config.seed_proposals,
+        proposal: config.proposal,
+        edge_sample: config.edge_sample,
+        decode: config.decode,
+        marker_spec: config.marker_spec,
+        outer_estimation: config.outer_estimation,
+        ransac_homography: config.ransac_homography,
+        self_undistort: config.self_undistort,
+        dedup_radius: config.dedup_radius,
+        max_aspect_ratio: config.max_aspect_ratio,
+        use_global_filter: config.use_global_filter,
+    };
+    println!("{}", serde_json::to_string_pretty(&dump)?);
+    Ok(())
+}
+
 fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
-    let preset = args.to_preset();
+    // Handle --dump-config before any I/O.
+    if args.dump_config {
+        return run_dump_config(args);
+    }
+
     if args.marker_diameter.is_some() {
         tracing::warn!(
             "--marker-diameter is legacy fixed-size mode; prefer --marker-diameter-min/--marker-diameter-max"
         );
     }
+
+    // Load config file first: marker scale resolution depends on it.
+    let config_file = load_config_file(args)?;
+    let preset = args.to_preset(config_file.as_ref());
+
     let overrides = args.to_overrides()?;
     validate_correction_compat(&overrides)?;
 
@@ -492,9 +820,19 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         ringgrid::BoardLayout::default()
     };
 
-    let config = build_detect_config(board, preset, &overrides);
+    let config = build_detect_config(board, preset, config_file.as_ref(), &overrides);
 
     let detector = ringgrid::Detector::with_config(config);
+    let proposals = if args.include_proposals {
+        let proposals = detector.propose(&gray);
+        tracing::info!(
+            "Proposal diagnostics enabled: {} proposals recorded",
+            proposals.len()
+        );
+        Some(proposals)
+    } else {
+        None
+    };
     let result = match overrides.camera.as_ref() {
         Some(camera) => detector.detect_with_mapper(&gray, camera),
         None => detector.detect(&gray),
@@ -533,7 +871,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     // Write results
-    let json = serialize_detection_output(&result, overrides.camera)?;
+    let json = serialize_detection_output(&result, overrides.camera, proposals.as_deref())?;
     std::fs::write(&args.out, &json)?;
     tracing::info!("Results written to {}", args.out.display());
 
@@ -553,11 +891,22 @@ mod tests {
             completion_reproj_gate_px: 3.0,
             completion_min_fit_confidence: 0.45,
             completion_roi_radius_px: None,
+            completion_require_perfect_decode: false,
             camera: None,
             circle_refinement: ringgrid::CircleRefinementMethod::ProjectiveCenter,
             projective_center_max_shift_px: None,
             projective_center_max_residual: 0.25,
             projective_center_min_eig_sep: 1e-6,
+            max_angular_gap_rad: None,
+            require_inner_fit: false,
+            min_outer_edge_points: None,
+            min_inner_edge_points: None,
+            outer_min_theta_consistency: None,
+            outer_second_peak_min_rel: None,
+            decode_min_margin: None,
+            decode_max_dist: None,
+            decode_min_confidence: None,
+            outer_size_score_weight: None,
             self_undistort_enable: false,
             self_undistort_lambda_range: [-8e-7, 8e-7],
             self_undistort_min_markers: 6,
@@ -604,7 +953,8 @@ mod tests {
     #[test]
     fn serialize_detection_output_includes_camera_when_present() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let json = serialize_detection_output(&result, Some(sample_camera())).expect("serialize");
+        let json =
+            serialize_detection_output(&result, Some(sample_camera()), None).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert!(value.get("camera").is_some());
     }
@@ -612,8 +962,58 @@ mod tests {
     #[test]
     fn serialize_detection_output_omits_camera_when_absent() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let json = serialize_detection_output(&result, None).expect("serialize");
+        let json = serialize_detection_output(&result, None, None).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert!(value.get("camera").is_none());
+    }
+
+    #[test]
+    fn serialize_detection_output_includes_proposals_when_present() {
+        let result = ringgrid::DetectionResult::empty(1280, 960);
+        let proposals = vec![ringgrid::Proposal {
+            x: 10.0,
+            y: 20.0,
+            score: 30.0,
+        }];
+        let json = serialize_detection_output(&result, None, Some(&proposals)).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert_eq!(
+            value.get("proposal_frame").and_then(|v| v.as_str()),
+            Some("image")
+        );
+        assert_eq!(
+            value.get("proposal_count").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            value
+                .get("proposals")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn build_detect_config_applies_tuning_overrides() {
+        let mut overrides = base_overrides();
+        overrides.outer_min_theta_consistency = Some(0.61);
+        overrides.outer_second_peak_min_rel = Some(0.77);
+        overrides.decode_min_margin = Some(2);
+        overrides.decode_max_dist = Some(1);
+        overrides.decode_min_confidence = Some(0.5);
+        overrides.outer_size_score_weight = Some(0.33);
+
+        let preset = DetectPreset {
+            marker_scale: ringgrid::MarkerScalePrior::new(20.0, 56.0),
+        };
+        let cfg = build_detect_config(ringgrid::BoardLayout::default(), preset, None, &overrides);
+
+        assert!((cfg.outer_estimation.min_theta_consistency - 0.61).abs() < 1e-6);
+        assert!((cfg.outer_estimation.second_peak_min_rel - 0.77).abs() < 1e-6);
+        assert_eq!(cfg.decode.min_decode_margin, 2);
+        assert_eq!(cfg.decode.max_decode_dist, 1);
+        assert!((cfg.decode.min_decode_confidence - 0.5).abs() < 1e-6);
+        assert!((cfg.outer_fit.size_score_weight - 0.33).abs() < 1e-6);
     }
 }

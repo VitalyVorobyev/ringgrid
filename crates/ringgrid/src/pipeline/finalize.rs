@@ -168,8 +168,18 @@ pub(super) fn run(
         tracing::info!(
             n_ids_corrected = stats.n_ids_corrected,
             n_ids_recovered = stats.n_ids_recovered,
+            n_recovered_local = stats.n_recovered_local,
+            n_recovered_homography = stats.n_recovered_homography,
+            n_homography_seeded = stats.n_homography_seeded,
             n_ids_cleared = stats.n_ids_cleared,
+            n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
+            n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
+            n_soft_locked_cleared = stats.n_soft_locked_cleared,
             n_verified = stats.n_verified,
+            n_inconsistent_remaining = stats.n_inconsistent_remaining,
+            n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
+            n_unverified_no_votes = stats.n_unverified_no_votes,
+            n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
             n_iterations = stats.n_iterations,
             pitch_px = stats.pitch_px_estimated,
             "id_correction complete"

@@ -62,6 +62,32 @@ impl BoardIndex {
         }
         best_id
     }
+
+    /// True if `id_b` is a one-hop hex neighbor of `id_a`.
+    pub(super) fn are_neighbors(&self, id_a: usize, id_b: usize) -> bool {
+        self.board_neighbors
+            .get(&id_a)
+            .is_some_and(|nbrs| nbrs.contains(&id_b))
+    }
+
+    /// Return `k` nearest board IDs to `xy_mm`, sorted by distance then ID.
+    pub(super) fn nearest_k_ids(&self, xy_mm: [f64; 2], k: usize) -> Vec<(usize, f64)> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let mut ranked: Vec<(usize, f64)> = self
+            .id_to_xy
+            .iter()
+            .map(|(&id, &bxy)| {
+                let dx = xy_mm[0] - f64::from(bxy[0]);
+                let dy = xy_mm[1] - f64::from(bxy[1]);
+                (id, dx * dx + dy * dy)
+            })
+            .collect();
+        ranked.sort_by(|(ida, d2a), (idb, d2b)| d2a.total_cmp(d2b).then_with(|| ida.cmp(idb)));
+        ranked.truncate(k);
+        ranked
+    }
 }
 
 #[inline]

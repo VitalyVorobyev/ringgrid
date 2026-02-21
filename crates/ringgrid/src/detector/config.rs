@@ -376,11 +376,47 @@ impl Default for MarkerScalePrior {
 pub struct IdCorrectionConfig {
     /// Enable structural ID verification and correction.
     pub enable: bool,
+    /// Local-scale search radius multiplier for a fixed single-stage pass.
+    ///
+    /// The search gate for pair `(i, j)` is:
+    /// `dist_px(i,j) <= mul * 0.5 * (outer_radius_px_i + outer_radius_px_j)`.
+    ///
+    /// When `Some`, this single multiplier is used.
+    /// When `None`, `auto_search_radius_outer_muls` is used.
+    pub search_radius_outer_mul: Option<f64>,
+    /// Local-scale staged search multipliers used when
+    /// `search_radius_outer_mul` is `None`.
+    pub auto_search_radius_outer_muls: Vec<f64>,
+    /// Local-scale neighborhood multiplier for consistency checks.
+    pub consistency_outer_mul: f64,
+    /// Minimum number of local neighbors required to run consistency checks.
+    pub consistency_min_neighbors: usize,
+    /// Minimum number of one-hop board-neighbor support edges required for a
+    /// non-soft-locked ID to remain assigned.
+    pub consistency_min_support_edges: usize,
+    /// Maximum allowed contradiction fraction in local consistency checks.
+    pub consistency_max_contradiction_frac: f32,
+    /// When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:
+    /// they are not overridden during normal recovery and only cleared on
+    /// strict structural contradiction.
+    pub soft_lock_exact_decode: bool,
     /// Maximum image-space radius for spatial neighbor search (pixels).
     ///
-    /// When `None`, auto-derived as `2.5 × estimated_pitch_px`. Setting an
-    /// explicit value overrides auto-derivation.
+    /// Legacy compatibility field.
+    ///
+    /// New local-scale path does not use this field unless legacy mode is
+    /// requested (by setting `auto_search_radius_outer_muls=[]` and
+    /// `search_radius_outer_mul=None`).
     pub neighbor_search_radius_px: Option<f64>,
+    /// Multipliers used to build the adaptive local-radius schedule when
+    /// `neighbor_search_radius_px` is `None`.
+    ///
+    /// Each multiplier is applied to an estimated `pitch_px` to produce one
+    /// local neighbor-search radius. Legacy compatibility field.
+    pub auto_neighbor_radius_muls: Vec<f64>,
+    /// Optional cap (pixels) applied to every auto-derived neighbor radius.
+    /// Legacy compatibility field.
+    pub max_auto_neighbor_radius_px: Option<f64>,
     /// Minimum number of independent neighbor votes required to accept a
     /// candidate ID for a marker that already has an id. Default: 2.
     pub min_votes: usize,
@@ -392,10 +428,22 @@ pub struct IdCorrectionConfig {
     /// Minimum fraction of total weighted votes the winning candidate must
     /// receive. Default: 0.55 (slight majority).
     pub min_vote_weight_frac: f32,
-    /// H-reprojection gate (pixels) used when a rough homography is available
-    /// to decide whether a seed marker is trustworthy. Intentionally loose to
-    /// tolerate significant lens distortion. Default: 30.0.
+    /// H-reprojection gate (pixels) used by rough-homography fallback
+    /// assignments. Intentionally loose to tolerate significant distortion.
     pub h_reproj_gate_px: f64,
+    /// Enable rough-homography fallback for unresolved markers.
+    pub homography_fallback_enable: bool,
+    /// Minimum trusted markers required before attempting homography fallback.
+    pub homography_min_trusted: usize,
+    /// Minimum inliers required for fallback homography RANSAC acceptance.
+    pub homography_min_inliers: usize,
+    /// Maximum RANSAC iterations for fallback homography fitting.
+    pub homography_ransac_max_iters: usize,
+    /// Allow homography fallback to use recovered (non-anchor) trusted seeds.
+    pub homography_use_recovered_seeds: bool,
+    /// Number of nearest board IDs to evaluate per unresolved marker during
+    /// homography fallback.
+    pub homography_candidate_top_k: usize,
     /// Maximum number of iterative correction passes. Default: 5.
     pub max_iters: usize,
     /// When `true`, remove markers that cannot be verified or corrected.
@@ -411,11 +459,26 @@ impl Default for IdCorrectionConfig {
     fn default() -> Self {
         Self {
             enable: true,
+            search_radius_outer_mul: None,
+            auto_search_radius_outer_muls: vec![2.4, 2.9, 3.5, 4.2, 5.0],
+            consistency_outer_mul: 3.2,
+            consistency_min_neighbors: 3,
+            consistency_min_support_edges: 2,
+            consistency_max_contradiction_frac: 0.5,
+            soft_lock_exact_decode: true,
             neighbor_search_radius_px: None,
+            auto_neighbor_radius_muls: vec![2.5, 4.0, 6.0, 9.0, 13.5, 18.0],
+            max_auto_neighbor_radius_px: Some(120.0),
             min_votes: 2,
             min_votes_recover: 1,
             min_vote_weight_frac: 0.55,
             h_reproj_gate_px: 30.0,
+            homography_fallback_enable: true,
+            homography_min_trusted: 24,
+            homography_min_inliers: 12,
+            homography_ransac_max_iters: 1200,
+            homography_use_recovered_seeds: false,
+            homography_candidate_top_k: 19,
             max_iters: 5,
             remove_unverified: false,
             seed_min_decode_confidence: 0.7,
@@ -669,5 +732,78 @@ mod tests {
         assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
         assert_eq!(cfg.outer_fit.min_direct_fit_points, 6);
         assert_eq!(cfg.outer_fit.ransac.min_inliers, 6);
+    }
+
+    #[test]
+    fn id_correction_config_defaults_are_stable() {
+        let cfg = IdCorrectionConfig::default();
+        assert!(cfg.enable);
+        assert!(cfg.search_radius_outer_mul.is_none());
+        assert_eq!(
+            cfg.auto_search_radius_outer_muls,
+            vec![2.4, 2.9, 3.5, 4.2, 5.0]
+        );
+        assert!((cfg.consistency_outer_mul - 3.2).abs() < 1e-9);
+        assert_eq!(cfg.consistency_min_neighbors, 3);
+        assert_eq!(cfg.consistency_min_support_edges, 2);
+        assert!((cfg.consistency_max_contradiction_frac - 0.5).abs() < 1e-6);
+        assert!(cfg.soft_lock_exact_decode);
+        assert!(cfg.neighbor_search_radius_px.is_none());
+        assert_eq!(
+            cfg.auto_neighbor_radius_muls,
+            vec![2.5, 4.0, 6.0, 9.0, 13.5, 18.0]
+        );
+        assert_eq!(cfg.max_auto_neighbor_radius_px, Some(120.0));
+        assert_eq!(cfg.min_votes, 2);
+        assert_eq!(cfg.min_votes_recover, 1);
+        assert!((cfg.min_vote_weight_frac - 0.55).abs() < 1e-6);
+        assert!((cfg.h_reproj_gate_px - 30.0).abs() < 1e-9);
+        assert!(cfg.homography_fallback_enable);
+        assert_eq!(cfg.homography_min_trusted, 24);
+        assert_eq!(cfg.homography_min_inliers, 12);
+        assert_eq!(cfg.homography_ransac_max_iters, 1200);
+        assert!(!cfg.homography_use_recovered_seeds);
+        assert_eq!(cfg.homography_candidate_top_k, 19);
+        assert_eq!(cfg.max_iters, 5);
+        assert!(!cfg.remove_unverified);
+        assert!((cfg.seed_min_decode_confidence - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn id_correction_config_deserialize_legacy_fields_uses_new_defaults() {
+        let json = r#"{
+            "enable": true,
+            "neighbor_search_radius_px": null,
+            "min_votes": 2,
+            "min_votes_recover": 1,
+            "min_vote_weight_frac": 0.55,
+            "h_reproj_gate_px": 30.0,
+            "max_iters": 5,
+            "remove_unverified": false,
+            "seed_min_decode_confidence": 0.7
+        }"#;
+        let cfg: IdCorrectionConfig =
+            serde_json::from_str(json).expect("deserialize legacy id correction config");
+        assert!(cfg.search_radius_outer_mul.is_none());
+        assert_eq!(
+            cfg.auto_search_radius_outer_muls,
+            vec![2.4, 2.9, 3.5, 4.2, 5.0]
+        );
+        assert!((cfg.consistency_outer_mul - 3.2).abs() < 1e-9);
+        assert_eq!(cfg.consistency_min_neighbors, 3);
+        assert_eq!(cfg.consistency_min_support_edges, 2);
+        assert!((cfg.consistency_max_contradiction_frac - 0.5).abs() < 1e-6);
+        assert!(cfg.soft_lock_exact_decode);
+        assert_eq!(
+            cfg.auto_neighbor_radius_muls,
+            vec![2.5, 4.0, 6.0, 9.0, 13.5, 18.0]
+        );
+        assert_eq!(cfg.max_auto_neighbor_radius_px, Some(120.0));
+        assert!(cfg.homography_fallback_enable);
+        assert_eq!(cfg.homography_min_trusted, 24);
+        assert_eq!(cfg.homography_min_inliers, 12);
+        assert_eq!(cfg.homography_ransac_max_iters, 1200);
+        assert!(!cfg.homography_use_recovered_seeds);
+        assert_eq!(cfg.homography_candidate_top_k, 19);
     }
 }

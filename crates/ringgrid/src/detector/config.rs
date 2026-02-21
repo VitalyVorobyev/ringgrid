@@ -359,6 +359,70 @@ impl Default for MarkerScalePrior {
     }
 }
 
+/// Structural ID verification and correction using hex neighborhood consensus.
+///
+/// Runs after fit-decode and deduplication, before the global RANSAC filter.
+/// Uses the board's hex lattice geometry to detect wrong IDs (misidentified by
+/// the codebook decoder) and recover missing ones. Each marker's correct ID is
+/// implied by its decoded neighbors' positions: neighbors vote on the expected
+/// board position of the query marker using a local affine transform (or scale
+/// estimate when fewer than 3 neighbors are available).
+///
+/// Markers that cannot be verified or corrected have their IDs cleared
+/// (`id = None`) or are removed entirely depending on `remove_unverified`.
+/// This guarantees no wrong IDs reach the global filter or completion stages.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct IdCorrectionConfig {
+    /// Enable structural ID verification and correction.
+    pub enable: bool,
+    /// Maximum image-space radius for spatial neighbor search (pixels).
+    ///
+    /// When `None`, auto-derived as `2.5 × estimated_pitch_px`. Setting an
+    /// explicit value overrides auto-derivation.
+    pub neighbor_search_radius_px: Option<f64>,
+    /// Minimum number of independent neighbor votes required to accept a
+    /// candidate ID for a marker that already has an id. Default: 2.
+    pub min_votes: usize,
+    /// Minimum votes to assign an ID to a marker that currently has `id = None`.
+    ///
+    /// A single high-confidence trusted neighbor is sufficient evidence when
+    /// there is no existing wrong ID to protect. Default: 1.
+    pub min_votes_recover: usize,
+    /// Minimum fraction of total weighted votes the winning candidate must
+    /// receive. Default: 0.55 (slight majority).
+    pub min_vote_weight_frac: f32,
+    /// H-reprojection gate (pixels) used when a rough homography is available
+    /// to decide whether a seed marker is trustworthy. Intentionally loose to
+    /// tolerate significant lens distortion. Default: 30.0.
+    pub h_reproj_gate_px: f64,
+    /// Maximum number of iterative correction passes. Default: 5.
+    pub max_iters: usize,
+    /// When `true`, remove markers that cannot be verified or corrected.
+    /// When `false` (default), clear their ID (set to `None`) and keep the
+    /// detection so its geometry is available for debugging.
+    pub remove_unverified: bool,
+    /// Minimum decode confidence for bootstrapping trusted seeds when no
+    /// homography is available. Default: 0.7.
+    pub seed_min_decode_confidence: f32,
+}
+
+impl Default for IdCorrectionConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            neighbor_search_radius_px: None,
+            min_votes: 2,
+            min_votes_recover: 1,
+            min_vote_weight_frac: 0.55,
+            h_reproj_gate_px: 30.0,
+            max_iters: 5,
+            remove_unverified: false,
+            seed_min_decode_confidence: 0.7,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 ///
 /// Contains all parameters that control the detection pipeline. Use one of the
@@ -413,6 +477,8 @@ pub struct DetectConfig {
     pub board: BoardLayout,
     /// Self-undistort estimation controls.
     pub self_undistort: SelfUndistortConfig,
+    /// Structural ID verification and correction using hex neighborhood consensus.
+    pub id_correction: IdCorrectionConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -482,6 +548,7 @@ impl Default for DetectConfig {
             ransac_homography: RansacHomographyConfig::default(),
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
+            id_correction: IdCorrectionConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);

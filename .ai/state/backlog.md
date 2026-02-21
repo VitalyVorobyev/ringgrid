@@ -18,7 +18,7 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| — | — | — | — | — | — | — |
+| ALGO-013 | done | P0 | algo | Structural ID verification and correction | algo | Iterative BFS from high-confidence seeds; hex-neighbor consensus voting with local 2D affine (≥3 neighbors) or per-neighbor scale fallback; wrong IDs corrected, unverified IDs cleared; `IdCorrectionConfig` in `detector/config.rs`; stage in `pipeline/finalize.rs` after projective center, before global filter; `--id-correct` CLI flag; `"id_correction"` JSON config section |
 
 ## Up Next
 
@@ -35,7 +35,7 @@
 |----|--------|----------|------|-------|------|-------|
 | ALGO-007 | todo | P2 | algo | Expose outer_radii std dev in FitMetrics | algo | Add `radii_std_outer_px: Option<f32>` to `FitMetrics` in `detector/marker_build.rs`; compute `std_dev(outer_radii)` from `EdgeSampleResult.outer_radii`; high std dev (>30% of mean) fingerprints inner/outer edge contamination |
 | ALGO-008 | todo | P2 | algo | Log and count completion decode mismatches in CompletionStats | algo | Add `n_decode_mismatch: usize` to `CompletionStats`; increment when `check_decode_gate` returns `Some`; promote existing `tracing::debug!` to `tracing::info!` |
-| ALGO-009 | todo | P2 | algo | Local affine seed prediction for completion | algo | For each missing board ID, find 3-4 nearest decoded neighbors in board-mm space, fit local affine (2×6 least-squares, ≥3 correspondences), use affine-projected position as seed instead of global H; fall back to global H if fewer than 3 neighbors; absorbs non-radial Scheimpflug residuals |
+| ALGO-009 | todo | P2 | algo | Local affine seed for completion (share affine from ALGO-013) | algo | For each missing board ID, reuse `fit_local_affine` from `detector/id_correction.rs`; find 3-4 nearest decoded neighbors in board-mm space, use affine-projected position as seed; fall back to global H with fewer than 3 neighbors; absorbs non-radial Scheimpflug residuals |
 | INFRA-008 | todo | P2 | infra | CLI flag to load Brown-Conrady calibration JSON as mapper | infra | Add `--calibration <file.json>` to ringgrid-cli; deserialize `RadialTangentialDistortion` from JSON; construct `CameraModel`-based `PixelMapper`; `RadialTangentialDistortion` struct already exists in `pixelmap/distortion.rs` |
 | ALGO-010 | todo | P3 | algo | Pre-screen contaminated outer rays before RANSAC | algo | In outer edge collection, filter rays where `\|r_ray - r_expected\| > 0.4 * r_expected` before RANSAC; discards rays that landed on wrong ring, complementing RANSAC's Sampson-distance inlier gate |
 | ALGO-011 | todo | P3 | algo | Enforce inner/outer axis ratio consistency as post-filter | algo | After all markers collected, compute global median `(inner.mean_axis / outer.mean_axis)` from fit-decoded markers; flag or reject markers where ratio deviates >25%; catches cases where "outer" fit anchored to inner ring |
@@ -44,6 +44,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| ALGO-013 | 2026-02-20 | algo | Structural ID verification and correction | `detector/id_correction.rs` (new); `IdCorrectionConfig` added to `detector/config.rs` + `DetectConfig`; stage wired in `pipeline/finalize.rs` after projective center, before global filter; `--id-correct` CLI flag; `"id_correction"` JSON config section; 7 unit tests covering hex neighbors, affine fit, pitch estimation, wrong-ID correction |
 | ALGO-012 | 2026-02-19 | algo | Fix confidence formula ceiling and harden decode gates | Fixed `conf_margin = margin / 3.0` → `/ CODEBOOK_MIN_CYCLIC_DIST` in `marker/codec.rs` (perfect decode now scores 1.0); raised `DEFAULT_MIN_DECODE_CONFIDENCE` 0.15 → 0.30; added `min_decode_margin: u8 = 1` hard gate with `MarginTooLow` reject reason in `marker/decode.rs`; added `miss_confidence_factor: f32 = 0.7` (inner-fit miss penalty) to `InnerFitConfig`; added RMS Sampson soft penalty `1/(1+rms)` in `pipeline/fit_decode.rs`; added `require_perfect_decode` gate to `CompletionParams` and `--complete-require-perfect-decode` CLI flag |
 | INFRA-007 | 2026-02-19 | infra | Add maintainability guardrails to CI | Accepted: added CI guardrail runner (`tools/ci/maintainability_guardrails.py`) with baseline policy (`tools/ci/maintainability_baseline.json`) enforcing no new dead-code allowances in hot modules, no growth/new oversized hotspot functions (threshold 120, baseline-locked), and rustdoc missing-docs warning non-regression; wired static + rustdoc guardrails into `.github/workflows/ci.yml`; reported fmt/clippy/tests and guardrail checks pass |
 | ALGO-002 | 2026-02-19 | algo | Decompose projective-center solver into testable stages | Accepted: decomposed `ring_center_projective_with_debug` in `ring/projective_center.rs` into explicit stages (conic preparation, eigenvalue separation, projective point candidate generation, candidate scoring, and best-candidate selection) while preserving solver policy and output semantics; reported fmt/clippy/tests pass and synth eval aggregate identical to baseline |

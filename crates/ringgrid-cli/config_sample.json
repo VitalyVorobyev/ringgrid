@@ -63,5 +63,17 @@
     "inlier_threshold": 5.0,
     "min_inliers": 6,
     "seed": 0
+  },
+
+  "id_correction": {
+    "enable": false,
+    "neighbor_search_radius_px": null,
+    "min_votes": 2,
+    "min_votes_recover": 1,
+    "min_vote_weight_frac": 0.55,
+    "h_reproj_gate_px": 30.0,
+    "max_iters": 5,
+    "remove_unverified": false,
+    "seed_min_decode_confidence": 0.7
   }
 }

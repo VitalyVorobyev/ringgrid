@@ -2,8 +2,8 @@ use image::GrayImage;
 
 use super::{
     apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
-    mean_reproj_error_px, refit_homography_matrix, warn_center_correction_without_intrinsics,
-    CompletionStats, DetectConfig,
+    mean_reproj_error_px, refit_homography_matrix, verify_and_correct_ids,
+    warn_center_correction_without_intrinsics, CompletionStats, DetectConfig,
 };
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
@@ -138,6 +138,20 @@ pub(super) fn run(
     let mut corrected_markers = fit_markers;
     if config.projective_center.enable {
         apply_projective_centers(&mut corrected_markers, config);
+    }
+
+    if config.id_correction.enable {
+        let stats =
+            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        tracing::info!(
+            n_ids_corrected = stats.n_ids_corrected,
+            n_ids_recovered = stats.n_ids_recovered,
+            n_ids_cleared = stats.n_ids_cleared,
+            n_verified = stats.n_verified,
+            n_iterations = stats.n_iterations,
+            pitch_px = stats.pitch_px_estimated,
+            "id_correction complete"
+        );
     }
 
     if !config.use_global_filter {

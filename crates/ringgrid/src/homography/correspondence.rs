@@ -233,6 +233,7 @@ mod tests {
             confidence,
             center,
             center_mapped: None,
+            board_xy_mm: None,
             ellipse_outer: None,
             ellipse_inner: None,
             edge_points_outer: None,

@@ -135,6 +135,7 @@ Then use it with `detector.detect_with_mapper(&image, &mapper)`.
 
 - `DetectedMarker.center` — always raw image pixel coordinates
 - `DetectedMarker.center_mapped` — working-frame (undistorted) coordinates when a mapper is active
+- `DetectedMarker.board_xy_mm` — board-space marker coordinates in millimeters for valid decoded IDs
 - `DetectionResult.center_frame` / `homography_frame` — explicit frame metadata
 
 ## Documentation

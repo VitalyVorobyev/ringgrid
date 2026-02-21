@@ -5,6 +5,7 @@ use super::{
     mean_reproj_error_px, refit_homography_matrix, verify_and_correct_ids,
     warn_center_correction_without_intrinsics, CompletionStats, DetectConfig,
 };
+use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
@@ -119,6 +120,27 @@ fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper
     }
 }
 
+fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &BoardLayout) -> usize {
+    let mut cleared_invalid_ids = 0usize;
+    for marker in markers.iter_mut() {
+        match marker.id {
+            Some(id) => {
+                if let Some(board_xy) = board.xy_mm(id) {
+                    marker.board_xy_mm = Some([board_xy[0] as f64, board_xy[1] as f64]);
+                } else {
+                    marker.id = None;
+                    marker.board_xy_mm = None;
+                    cleared_invalid_ids += 1;
+                }
+            }
+            None => {
+                marker.board_xy_mm = None;
+            }
+        }
+    }
+    cleared_invalid_ids
+}
+
 pub(super) fn run(
     gray: &GrayImage,
     fit_markers: Vec<DetectedMarker>,
@@ -165,6 +187,13 @@ pub(super) fn run(
             }
             map_centers_to_image(&mut corrected_markers, mapper);
         }
+        let cleared_invalid_ids =
+            sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+        tracing::debug!(
+            cleared_invalid_ids,
+            n_markers = corrected_markers.len(),
+            "synchronized marker id/board correspondence"
+        );
         return DetectionResult {
             detected_markers: corrected_markers,
             center_frame: DetectionFrame::Image,
@@ -206,6 +235,12 @@ pub(super) fn run(
     if let Some(mapper) = mapper {
         map_centers_to_image(&mut final_markers, mapper);
     }
+    let cleared_invalid_ids = sync_marker_board_correspondence(&mut final_markers, &config.board);
+    tracing::debug!(
+        cleared_invalid_ids,
+        n_markers = final_markers.len(),
+        "synchronized marker id/board correspondence"
+    );
 
     tracing::info!(
         "{} markers after global filter/completion",
@@ -270,6 +305,15 @@ mod tests {
         }
     }
 
+    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
+        DetectedMarker {
+            id: Some(id),
+            confidence: 1.0,
+            center,
+            ..DetectedMarker::default()
+        }
+    }
+
     fn no_global_filter_config() -> DetectConfig {
         DetectConfig {
             use_global_filter: false,
@@ -292,20 +336,44 @@ mod tests {
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [12.0, 22.0]);
         assert!(result.detected_markers[0].center_mapped.is_none());
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn no_mapper_populates_board_xy_for_valid_id() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let expected = config.board.xy_mm(0).expect("board marker 0");
+        let markers = vec![marker_with_id(0, [12.0, 22.0])];
+        let result = run(&img, markers, &config, None);
+
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].id, Some(0));
+        assert_eq!(
+            result.detected_markers[0].board_xy_mm,
+            Some([expected[0] as f64, expected[1] as f64])
+        );
     }
 
     #[test]
     fn mapper_outputs_image_center_and_preserves_mapped_center() {
         let img = GrayImage::new(100, 80);
-        let markers = vec![marker([20.0, 30.0])];
+        let config = no_global_filter_config();
+        let expected = config.board.xy_mm(1).expect("board marker 1");
+        let markers = vec![marker_with_id(1, [20.0, 30.0])];
         let mapper = OffsetMapper;
-        let result = run(&img, markers, &no_global_filter_config(), Some(&mapper));
+        let result = run(&img, markers, &config, Some(&mapper));
 
         assert_eq!(result.center_frame, DetectionFrame::Image);
         assert_eq!(result.homography_frame, DetectionFrame::Working);
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [15.0, 23.0]);
         assert_eq!(result.detected_markers[0].center_mapped, Some([20.0, 30.0]));
+        assert_eq!(result.detected_markers[0].id, Some(1));
+        assert_eq!(
+            result.detected_markers[0].board_xy_mm,
+            Some([expected[0] as f64, expected[1] as f64])
+        );
     }
 
     #[test]
@@ -318,5 +386,42 @@ mod tests {
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [10.0, 10.0]);
         assert_eq!(result.detected_markers[0].center_mapped, Some([10.0, 10.0]));
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn invalid_id_is_cleared_and_board_xy_is_none() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let invalid_id = config.board.max_marker_id() + 1;
+        let markers = vec![marker_with_id(invalid_id, [12.0, 22.0])];
+        let result = run(&img, markers, &config, None);
+
+        assert_eq!(result.detected_markers.len(), 1);
+        assert_eq!(result.detected_markers[0].id, None);
+        assert!(result.detected_markers[0].board_xy_mm.is_none());
+    }
+
+    #[test]
+    fn serialization_omits_none_board_xy_and_includes_finite_when_present() {
+        let img = GrayImage::new(100, 80);
+        let config = no_global_filter_config();
+        let markers = vec![marker([12.0, 22.0]), marker_with_id(0, [20.0, 30.0])];
+        let result = run(&img, markers, &config, None);
+        let json = serde_json::to_value(&result).expect("serialize detection result");
+        let detected = json
+            .get("detected_markers")
+            .and_then(|v| v.as_array())
+            .expect("detected markers array");
+
+        assert!(detected[0].get("board_xy_mm").is_none());
+        let board_xy = detected[1]
+            .get("board_xy_mm")
+            .and_then(|v| v.as_array())
+            .expect("board_xy_mm must be present for valid id");
+        assert_eq!(board_xy.len(), 2);
+        assert!(board_xy
+            .iter()
+            .all(|v| v.as_f64().is_some_and(|x| x.is_finite())));
     }
 }

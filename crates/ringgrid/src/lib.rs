@@ -43,6 +43,8 @@
 //! coordinates, regardless of mapper usage. When a [`PixelMapper`] is active,
 //! [`DetectedMarker::center_mapped`] provides the working-frame (undistorted)
 //! coordinates, and the homography maps board coordinates to the working frame.
+//! [`DetectedMarker::board_xy_mm`] provides board-space marker coordinates in
+//! millimeters when a valid decoded ID is available on the active board.
 //!
 //! See [`DetectionResult::center_frame`] and [`DetectionResult::homography_frame`]
 //! for the frame metadata on each result.

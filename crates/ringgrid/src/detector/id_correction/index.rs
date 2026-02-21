@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::board_layout::BoardLayout;
-use crate::detector::marker_build::DetectedMarker;
 
 /// Six axial neighbor direction offsets for a hex lattice.
 pub(super) const HEX_NEIGHBORS: [(i16, i16); 6] =
@@ -95,53 +94,4 @@ pub(super) fn dist2(a: [f64; 2], b: [f64; 2]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     dx * dx + dy * dy
-}
-
-/// Median of a mutable slice.
-fn median_f64(v: &mut [f64]) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let n = v.len();
-    if n.is_multiple_of(2) {
-        0.5 * (v[n / 2 - 1] + v[n / 2])
-    } else {
-        v[n / 2]
-    }
-}
-
-/// Estimate board pitch in image pixels from pairs of board-adjacent decoded markers.
-pub(super) fn estimate_pitch_px(
-    markers: &[DetectedMarker],
-    board_index: &BoardIndex,
-) -> Option<f64> {
-    let pitch_mm = board_index.pitch_mm;
-    let mut samples: Vec<f64> = Vec::new();
-
-    for (i, m1) in markers.iter().enumerate() {
-        let id1 = match m1.id {
-            Some(id) if board_index.id_to_xy.contains_key(&id) => id,
-            _ => continue,
-        };
-        let neighbors = match board_index.board_neighbors.get(&id1) {
-            Some(n) => n,
-            None => continue,
-        };
-        for m2 in &markers[i + 1..] {
-            let id2 = match m2.id {
-                Some(id) => id,
-                None => continue,
-            };
-            if !neighbors.contains(&id2) {
-                continue;
-            }
-            let img_dist = dist2(m1.center, m2.center).sqrt();
-            if img_dist > 1.0 {
-                samples.push(img_dist / pitch_mm);
-            }
-        }
-    }
-
-    if samples.is_empty() {
-        return None;
-    }
-    Some(median_f64(&mut samples))
 }

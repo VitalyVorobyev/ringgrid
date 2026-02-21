@@ -26,10 +26,9 @@ use crate::detector::marker_build::DetectedMarker;
 use crate::homography::{fit_homography_ransac, homography_project, RansacHomographyConfig};
 use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
 
-use index::{dist2, estimate_pitch_px, BoardIndex};
+use index::{dist2, BoardIndex};
 use vote::{
-    gather_trusted_neighbors_local_scale, resolve_id_conflicts, vote_for_candidate, NeighborInfo,
-    VoteOutcome,
+    gather_trusted_neighbors_local_scale, resolve_id_conflicts, vote_for_candidate, VoteOutcome,
 };
 
 const HOMOGRAPHY_FALLBACK_SEED: u64 = 0x1DC0_11D0;
@@ -56,12 +55,6 @@ impl Trust {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum NeighborGate {
-    LocalOuterMul(f64),
-    LegacyRadiusPx(f64),
-}
-
-#[derive(Debug, Clone, Copy)]
 struct HomographyAssignment {
     marker_index: usize,
     id: usize,
@@ -74,7 +67,7 @@ struct LocalStageSpec<'a> {
     config: &'a IdCorrectionConfig,
     outer_radii_px: &'a [f64],
     anchor_h: Option<&'a nalgebra::Matrix3<f64>>,
-    gate: NeighborGate,
+    outer_mul: f64,
     max_iters: usize,
     stage_name: &'a str,
 }
@@ -241,28 +234,7 @@ fn estimate_adjacent_spacing_px(
     })
 }
 
-fn should_use_legacy_radius_schedule(config: &IdCorrectionConfig) -> bool {
-    if config.search_radius_outer_mul.is_some() {
-        return false;
-    }
-    if config.auto_search_radius_outer_muls.is_empty() {
-        return true;
-    }
-    let defaults = IdCorrectionConfig::default();
-    let using_default_new =
-        config.auto_search_radius_outer_muls == defaults.auto_search_radius_outer_muls;
-    let legacy_customized = config.neighbor_search_radius_px != defaults.neighbor_search_radius_px
-        || config.auto_neighbor_radius_muls != defaults.auto_neighbor_radius_muls
-        || config.max_auto_neighbor_radius_px != defaults.max_auto_neighbor_radius_px;
-    using_default_new && legacy_customized
-}
-
-fn build_local_outer_mul_schedule(config: &IdCorrectionConfig) -> Vec<f64> {
-    if let Some(mul) = config.search_radius_outer_mul {
-        if mul.is_finite() && mul > 0.0 {
-            return vec![mul];
-        }
-    }
+fn build_outer_mul_schedule(config: &IdCorrectionConfig) -> Vec<f64> {
     let mut out: Vec<f64> = config
         .auto_search_radius_outer_muls
         .iter()
@@ -275,155 +247,6 @@ fn build_local_outer_mul_schedule(config: &IdCorrectionConfig) -> Vec<f64> {
     out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     out.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
     out
-}
-
-fn build_legacy_radius_schedule(
-    config: &IdCorrectionConfig,
-    pitch_px_estimated: Option<f64>,
-    pitch_mm: f64,
-) -> Vec<f64> {
-    if let Some(radius) = config.neighbor_search_radius_px {
-        if radius.is_finite() && radius > 0.0 {
-            return vec![radius];
-        }
-    }
-
-    let base_pitch_px = pitch_px_estimated
-        .filter(|p| p.is_finite() && *p > 0.0)
-        .unwrap_or_else(|| (pitch_mm * 2.0).max(1.0));
-    let cap = config
-        .max_auto_neighbor_radius_px
-        .filter(|c| c.is_finite() && *c > 0.0);
-
-    let mut radii = Vec::<f64>::new();
-    for &mul in &config.auto_neighbor_radius_muls {
-        if !mul.is_finite() || mul <= 0.0 {
-            continue;
-        }
-        let mut radius = mul * base_pitch_px;
-        if let Some(limit) = cap {
-            radius = radius.min(limit);
-        }
-        if radius.is_finite() && radius > 0.0 {
-            radii.push(radius);
-        }
-    }
-
-    if radii.is_empty() {
-        let mut fallback = 2.5 * base_pitch_px;
-        if let Some(limit) = cap {
-            fallback = fallback.min(limit);
-        }
-        if fallback.is_finite() && fallback > 0.0 {
-            radii.push(fallback);
-        }
-    }
-
-    radii.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    radii.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
-    radii
-}
-
-fn build_neighbor_gates(
-    config: &IdCorrectionConfig,
-    pitch_px_estimated: Option<f64>,
-    pitch_mm: f64,
-) -> Vec<NeighborGate> {
-    if should_use_legacy_radius_schedule(config) {
-        tracing::debug!(
-            "id_correction: using legacy pixel-radius schedule (deprecated, set local-scale fields to migrate)",
-        );
-        return build_legacy_radius_schedule(config, pitch_px_estimated, pitch_mm)
-            .into_iter()
-            .map(NeighborGate::LegacyRadiusPx)
-            .collect();
-    }
-
-    build_local_outer_mul_schedule(config)
-        .into_iter()
-        .map(NeighborGate::LocalOuterMul)
-        .collect()
-}
-
-fn neighbor_gate_label(gate: NeighborGate) -> &'static str {
-    match gate {
-        NeighborGate::LocalOuterMul(_) => "local_outer_mul",
-        NeighborGate::LegacyRadiusPx(_) => "legacy_radius_px",
-    }
-}
-
-fn neighbor_gate_value(gate: NeighborGate) -> f64 {
-    match gate {
-        NeighborGate::LocalOuterMul(v) | NeighborGate::LegacyRadiusPx(v) => v,
-    }
-}
-
-fn gather_trusted_neighbors_legacy_px(
-    i: usize,
-    markers: &[DetectedMarker],
-    trust: &[Trust],
-    board_index: &BoardIndex,
-    outer_radii_px: &[f64],
-    radius_px: f64,
-) -> Vec<NeighborInfo> {
-    if !radius_px.is_finite() || radius_px <= 0.0 {
-        return Vec::new();
-    }
-    let center_i = markers[i].center;
-    let radius_sq = radius_px * radius_px;
-    let mut out = Vec::new();
-    for (j, m) in markers.iter().enumerate() {
-        if i == j || !trust[j].is_trusted() {
-            continue;
-        }
-        if !(m.center[0].is_finite() && m.center[1].is_finite()) {
-            continue;
-        }
-        let id_j = match m.id {
-            Some(id) if board_index.id_to_xy.contains_key(&id) => id,
-            _ => continue,
-        };
-        if dist2(center_i, m.center) > radius_sq {
-            continue;
-        }
-        let bxy = board_index.id_to_xy[&id_j];
-        out.push(NeighborInfo {
-            id: id_j,
-            center: m.center,
-            board_xy: [f64::from(bxy[0]), f64::from(bxy[1])],
-            outer_radius_px: outer_radii_px[j],
-            confidence: f64::from(m.confidence),
-        });
-    }
-    out
-}
-
-fn gather_trusted_neighbors_for_gate(
-    i: usize,
-    markers: &[DetectedMarker],
-    trust: &[Trust],
-    board_index: &BoardIndex,
-    outer_radii_px: &[f64],
-    gate: NeighborGate,
-) -> Vec<NeighborInfo> {
-    match gate {
-        NeighborGate::LocalOuterMul(outer_mul) => gather_trusted_neighbors_local_scale(
-            i,
-            markers,
-            trust,
-            board_index,
-            outer_radii_px,
-            outer_mul,
-        ),
-        NeighborGate::LegacyRadiusPx(radius_px) => gather_trusted_neighbors_legacy_px(
-            i,
-            markers,
-            trust,
-            board_index,
-            outer_radii_px,
-            radius_px,
-        ),
-    }
 }
 
 fn should_block_by_trusted_confidence(
@@ -646,8 +469,9 @@ fn should_clear_by_consistency(
         return false;
     }
     if soft_locked {
-        let strong_vote_mismatch = evidence.vote_mismatch && evidence.vote_winner_frac >= 0.70;
-        evidence.support_edges == 0 && evidence.contradiction_edges >= 3 && strong_vote_mismatch
+        // An exact decode with zero supporting neighbors and ≥ 2 contradictions
+        // is almost certainly wrong — the edge evidence alone is sufficient.
+        evidence.support_edges == 0 && evidence.contradiction_edges >= 2
     } else {
         let strong_vote_mismatch = evidence.vote_mismatch && evidence.vote_winner_frac >= 0.60;
         evidence.support_edges < config.consistency_min_support_edges
@@ -666,22 +490,15 @@ fn scrub_inconsistent_ids(
     stats: &mut IdCorrectionStats,
     stage: ScrubStage,
 ) -> usize {
-    let mut cleared = 0usize;
+    // Phase 1: collect indices to clear (order-independent — evidence is computed
+    // against the unmodified marker state so no clearing order bias).
+    let mut to_clear = Vec::<usize>::new();
     for i in 0..markers.len() {
         let Some(id) = markers[i].id else {
             continue;
         };
         if !board_index.id_to_xy.contains_key(&id) {
-            if clear_marker_id(
-                i,
-                markers,
-                trust,
-                stats,
-                config.soft_lock_exact_decode,
-                stage,
-            ) {
-                cleared += 1;
-            }
+            to_clear.push(i);
             continue;
         }
         let evidence =
@@ -695,37 +512,33 @@ fn scrub_inconsistent_ids(
                 && evidence.vote_mismatch
                 && evidence.vote_winner_frac >= 0.60)
                 || (contradiction_anchor >= 1 && support_anchor == 0));
-        if recovered_two_neighbor_contradiction
-            && clear_marker_id(
-                i,
-                markers,
-                trust,
-                stats,
-                config.soft_lock_exact_decode,
-                stage,
-            )
-        {
-            cleared += 1;
+        if recovered_two_neighbor_contradiction {
+            to_clear.push(i);
             continue;
         }
         let is_soft_locked = is_soft_locked_assignment(&markers[i], config.soft_lock_exact_decode);
-        if should_clear_by_consistency(evidence, is_soft_locked, config)
-            && clear_marker_id(
-                i,
-                markers,
-                trust,
-                stats,
-                config.soft_lock_exact_decode,
-                stage,
-            )
-        {
+        if should_clear_by_consistency(evidence, is_soft_locked, config) {
+            to_clear.push(i);
+        }
+    }
+
+    // Phase 2: apply clearings.
+    let mut cleared = 0usize;
+    for i in to_clear {
+        if clear_marker_id(
+            i,
+            markers,
+            trust,
+            stats,
+            config.soft_lock_exact_decode,
+            stage,
+        ) {
             cleared += 1;
         }
     }
     cleared
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_local_stage(
     markers: &mut [DetectedMarker],
     trust: &mut [Trust],
@@ -742,13 +555,13 @@ fn run_local_stage(
             if !marker_center_is_finite(&markers[i]) || trust[i].is_trusted() {
                 continue;
             }
-            let neighbors = gather_trusted_neighbors_for_gate(
+            let neighbors = gather_trusted_neighbors_local_scale(
                 i,
                 markers,
                 trust,
                 spec.board_index,
                 spec.outer_radii_px,
-                spec.gate,
+                spec.outer_mul,
             );
             if neighbors.is_empty() {
                 continue;
@@ -793,6 +606,16 @@ fn run_local_stage(
             if should_block_by_trusted_confidence(i, candidate_id, markers, trust) {
                 continue;
             }
+            if !candidate_passes_local_consistency_gate(
+                i,
+                candidate_id,
+                markers,
+                spec.board_index,
+                spec.config,
+                spec.outer_radii_px,
+            ) {
+                continue;
+            }
             corrections.push((i, candidate_id));
         }
 
@@ -807,8 +630,7 @@ fn run_local_stage(
 
         tracing::debug!(
             stage = spec.stage_name,
-            gate = neighbor_gate_label(spec.gate),
-            gate_value = neighbor_gate_value(spec.gate),
+            outer_mul = spec.outer_mul,
             iter = iter + 1,
             promoted,
             "id_correction local stage pass",
@@ -867,8 +689,8 @@ fn candidate_passes_local_consistency_gate(
     contradiction_frac <= f64::from(config.consistency_max_contradiction_frac)
 }
 
-fn seed_allowed_for_homography(trust: Trust, config: &IdCorrectionConfig) -> bool {
-    trust.is_anchor() || (config.homography_use_recovered_seeds && trust.is_trusted())
+fn seed_allowed_for_homography(trust: Trust) -> bool {
+    trust.is_anchor()
 }
 
 fn run_topology_refinement(
@@ -1044,7 +866,7 @@ fn fit_anchor_homography_for_local_stage(
         dst.push(markers[idx].center);
     }
     let cfg = RansacHomographyConfig {
-        max_iters: config.homography_ransac_max_iters,
+        max_iters: 1200,
         inlier_threshold: config.h_reproj_gate_px,
         min_inliers: config.homography_min_inliers.min(src.len()).max(4),
         seed: HOMOGRAPHY_FALLBACK_SEED,
@@ -1077,7 +899,7 @@ fn run_homography_fallback(
     // Keep one trusted marker per ID (highest confidence), deterministic by ID.
     let mut trusted_by_id: BTreeMap<usize, usize> = BTreeMap::new();
     for (i, m) in markers.iter().enumerate() {
-        if !seed_allowed_for_homography(trust[i], config) || !marker_center_is_finite(m) {
+        if !seed_allowed_for_homography(trust[i]) || !marker_center_is_finite(m) {
             continue;
         }
         let Some(id) = m.id else {
@@ -1116,7 +938,7 @@ fn run_homography_fallback(
     }
 
     let ransac_cfg = RansacHomographyConfig {
-        max_iters: config.homography_ransac_max_iters,
+        max_iters: 1200,
         inlier_threshold: config.h_reproj_gate_px,
         min_inliers: config.homography_min_inliers,
         seed: HOMOGRAPHY_FALLBACK_SEED,
@@ -1143,7 +965,7 @@ fn run_homography_fallback(
     }
 
     let mut assignments = Vec::<HomographyAssignment>::new();
-    let top_k = config.homography_candidate_top_k.max(1);
+    let top_k = 19usize;
     for (i, m) in markers.iter().enumerate() {
         let eligible = !matches!(trust[i], Trust::AnchorStrong | Trust::AnchorWeak);
         if !eligible || !marker_center_is_finite(m) {
@@ -1266,7 +1088,7 @@ fn diagnose_unverified_reasons(
     board_index: &BoardIndex,
     config: &IdCorrectionConfig,
     outer_radii_px: &[f64],
-    final_gate: NeighborGate,
+    final_outer_mul: f64,
     stats: &mut IdCorrectionStats,
 ) {
     let tolerance_mm = board_index.pitch_mm * 0.6;
@@ -1274,13 +1096,13 @@ fn diagnose_unverified_reasons(
         if trust[i].is_trusted() || !marker_center_is_finite(&markers[i]) {
             continue;
         }
-        let neighbors = gather_trusted_neighbors_for_gate(
+        let neighbors = gather_trusted_neighbors_local_scale(
             i,
             markers,
             trust,
             board_index,
             outer_radii_px,
-            final_gate,
+            final_outer_mul,
         );
         if neighbors.is_empty() {
             stats.n_unverified_no_neighbors += 1;
@@ -1355,12 +1177,8 @@ pub(crate) fn verify_and_correct_ids(
 
     // 1) Build index + diagnostics.
     let board_index = BoardIndex::build(board);
-    let legacy_pitch_scale = estimate_pitch_px(markers, &board_index);
-    let gates = build_neighbor_gates(config, legacy_pitch_scale, board_index.pitch_mm);
-    let final_gate = gates
-        .last()
-        .copied()
-        .unwrap_or(NeighborGate::LocalOuterMul(3.2));
+    let outer_muls = build_outer_mul_schedule(config);
+    let final_outer_mul = outer_muls.last().copied().unwrap_or(3.2);
     let outer_radii_px = compute_outer_radii_px(markers);
 
     // 2) Bootstrap trust anchors.
@@ -1395,8 +1213,7 @@ pub(crate) fn verify_and_correct_ids(
     tracing::debug!(
         n_seeds,
         n_markers = markers.len(),
-        legacy_pitch_scale,
-        gates = ?gates.iter().map(|g| (neighbor_gate_label(*g), neighbor_gate_value(*g))).collect::<Vec<_>>(),
+        outer_muls = ?outer_muls,
         "id_correction: starting local-scale consistency-first correction",
     );
 
@@ -1416,8 +1233,8 @@ pub(crate) fn verify_and_correct_ids(
     );
     let anchor_h = fit_anchor_homography_for_local_stage(markers, &trust, &board_index, config);
 
-    // 4) Local iterative recovery (staged gates).
-    for gate in &gates {
+    // 4) Local iterative recovery (staged multipliers).
+    for &mul in &outer_muls {
         run_local_stage(
             markers,
             &mut trust,
@@ -1427,7 +1244,7 @@ pub(crate) fn verify_and_correct_ids(
                 config,
                 outer_radii_px: &outer_radii_px,
                 anchor_h: anchor_h.as_ref(),
-                gate: *gate,
+                outer_mul: mul,
                 max_iters: config.max_iters,
                 stage_name: "adaptive_local",
             },
@@ -1456,10 +1273,7 @@ pub(crate) fn verify_and_correct_ids(
     }
 
     // 6) Post-recovery consistency sweep + short refill.
-    let first_gate = gates
-        .first()
-        .copied()
-        .unwrap_or(NeighborGate::LocalOuterMul(3.2));
+    let first_outer_mul = outer_muls.first().copied().unwrap_or(3.2);
     for _ in 0..2 {
         let _ = scrub_inconsistent_ids(
             markers,
@@ -1479,7 +1293,7 @@ pub(crate) fn verify_and_correct_ids(
                 config,
                 outer_radii_px: &outer_radii_px,
                 anchor_h: anchor_h.as_ref(),
-                gate: first_gate,
+                outer_mul: first_outer_mul,
                 max_iters: 1,
                 stage_name: "post_consistency_refill",
             },
@@ -1501,7 +1315,7 @@ pub(crate) fn verify_and_correct_ids(
         &board_index,
         config,
         &outer_radii_px,
-        final_gate,
+        final_outer_mul,
         &mut stats,
     );
 
@@ -1851,33 +1665,24 @@ mod tests {
             0.5,
         ));
 
-        let tight_cfg = IdCorrectionConfig {
-            search_radius_outer_mul: Some(2.5),
+        let cfg = IdCorrectionConfig {
             auto_search_radius_outer_muls: vec![2.5],
             homography_fallback_enable: true,
             homography_min_trusted: 4,
             homography_min_inliers: 4,
-            homography_candidate_top_k: 1,
             h_reproj_gate_px: 15.0,
             max_iters: 1,
             ..IdCorrectionConfig::default()
         };
-        let mut with_topk_1 = markers.clone();
-        let mut with_topk_19 = markers.clone();
-        let loose_cfg = IdCorrectionConfig {
-            homography_candidate_top_k: 19,
-            ..tight_cfg.clone()
-        };
+        let mut result = markers.clone();
+        let stats = verify_and_correct_ids(&mut result, &board, &cfg);
 
-        let stats_topk_1 = verify_and_correct_ids(&mut with_topk_1, &board, &tight_cfg);
-        let stats_topk_19 = verify_and_correct_ids(&mut with_topk_19, &board, &loose_cfg);
-
-        let got_topk_1 = with_topk_1.last().and_then(|m| m.id);
+        let got = result.last().and_then(|m| m.id);
         assert!(
-            got_topk_1 != Some(occupied_id),
+            got != Some(occupied_id),
             "fallback must not assign an ID already occupied by stronger trusted marker",
         );
-        assert!(stats_topk_19.n_recovered_homography >= stats_topk_1.n_recovered_homography);
+        let _ = stats;
     }
 
     #[test]

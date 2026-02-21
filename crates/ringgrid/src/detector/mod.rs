@@ -20,12 +20,14 @@ pub(crate) use center_correction::{
 };
 pub(crate) use completion::{complete_with_h, CompletionStats};
 pub use config::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig, InnerFitConfig,
-    MarkerScalePrior, OuterFitConfig, ProjectiveCenterParams, SeedProposalParams,
+    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
+    InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
+    ProjectiveCenterParams, SeedProposalParams,
 };
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::global_filter;
 pub(crate) use id_correction::verify_and_correct_ids;
+pub use inner_fit::{InnerFitReason, InnerFitStatus};
 pub use marker_build::{DetectedMarker, FitMetrics};
 pub(crate) use outer_fit::{
     fit_outer_candidate_from_prior_for_completion, median_outer_radius_from_neighbors_px,

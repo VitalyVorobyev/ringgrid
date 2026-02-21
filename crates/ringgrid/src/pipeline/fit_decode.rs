@@ -3,7 +3,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::inner_fit;
-use super::marker_build::{decode_metrics_from_result, fit_metrics_with_inner};
+use super::marker_build::{
+    compute_marker_confidence, decode_metrics_from_result, fit_metrics_with_inner,
+};
 use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate, OuterFitRejectReason};
 use super::{dedup_by_id, dedup_markers, DetectConfig};
 use crate::detector::proposal::Proposal;
@@ -39,64 +41,6 @@ impl std::fmt::Display for CandidateRejectReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.code())
     }
-}
-
-fn fallback_fit_confidence(
-    edge: &crate::ring::edge_sample::EdgeSampleResult,
-    outer_ransac: Option<&crate::conic::RansacResult>,
-) -> f32 {
-    let arc_cov = edge.n_good_rays as f32 / edge.n_total_rays.max(1) as f32;
-    let inlier_ratio = outer_ransac
-        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-        .unwrap_or(1.0);
-    (arc_cov * inlier_ratio).clamp(0.0, 1.0)
-}
-
-/// Composite confidence score incorporating decode quality, angular coverage,
-/// RANSAC inlier ratio, inner fit quality, and RMS residual. Each factor is
-/// in [0, 1]; multiplicative composition ensures any single failing dimension
-/// pulls confidence toward zero.
-fn compute_marker_confidence(
-    decode_result: Option<&crate::marker::decode::DecodeResult>,
-    edge: &crate::ring::edge_sample::EdgeSampleResult,
-    outer_ransac: Option<&crate::conic::RansacResult>,
-    inner_fit: &inner_fit::InnerFitResult,
-    fit_metrics: &crate::detector::marker_build::FitMetrics,
-    config: &DetectConfig,
-) -> f32 {
-    // 1. Decode signal (base)
-    let decode_conf = decode_result
-        .map(|d| d.confidence)
-        .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));
-
-    // 2. Outer angular coverage: linear map gap -> [0, 1]
-    //    gap=0 -> 1.0, gap=PI/2 -> 0.75, gap=PI -> 0.5, gap=2PI -> 0.0
-    let outer_gap = fit_metrics
-        .max_angular_gap_outer
-        .unwrap_or(std::f64::consts::TAU);
-    let angular_outer = (1.0 - outer_gap / std::f64::consts::TAU).clamp(0.0, 1.0) as f32;
-
-    // 3. RANSAC inlier ratio
-    let inlier_factor = outer_ransac
-        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0);
-
-    // 4. Inner fit quality: angular coverage when present, miss penalty otherwise
-    let inner_factor = if inner_fit.ellipse_inner.is_some() {
-        let inner_gap = fit_metrics.max_angular_gap_inner.unwrap_or(0.0);
-        (1.0 - inner_gap / std::f64::consts::TAU).clamp(0.5, 1.0) as f32
-    } else {
-        config.inner_fit.miss_confidence_factor
-    };
-
-    // 5. RMS residual penalty: 1/(1+rms)
-    let rms_factor = match fit_metrics.rms_residual_outer {
-        Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32),
-        _ => 1.0,
-    };
-
-    (decode_conf * angular_outer * inlier_factor * inner_factor * rms_factor).clamp(0.0, 1.0)
 }
 
 fn select_proposals_for_fit(
@@ -183,7 +127,7 @@ fn process_candidate(
         outer_ransac.as_ref(),
         &inner_fit,
         &fit_metrics,
-        ctx.config,
+        &ctx.config.inner_fit,
     );
     let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
     let marker_id = decode_result.as_ref().map(|d| d.id);

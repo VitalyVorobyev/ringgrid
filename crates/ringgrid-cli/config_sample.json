@@ -5,7 +5,7 @@
   },
 
   "inner_fit": {
-    "min_points": 20,
+    "min_points": 12,
     "min_inlier_ratio": 0.2,
     "max_rms_residual": 1.0,
     "max_center_shift_px": 12.0,
@@ -13,13 +13,24 @@
     "max_angular_gap_rad": 0.5,
     "miss_confidence_factor": 0.7,
     "require_inner_fit": false,
-    "local_peak_halfwidth_idx": 3,
+    "local_peak_halfwidth_idx": 5,
     "ransac": {
       "max_iters": 200,
-      "inlier_threshold": 1.5,
-      "min_inliers": 12,
+      "inlier_threshold": 2.0,
+      "min_inliers": 8,
       "seed": 43
     }
+  },
+
+  "marker_spec": {
+    "min_theta_consistency": 0.25,
+    "min_theta_coverage": 0.6
+  },
+
+  "inner_as_outer_recovery": {
+    "enable": true,
+    "ratio_threshold": 0.75,
+    "k_neighbors": 6
   },
 
   "outer_fit": {

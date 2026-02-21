@@ -66,15 +66,16 @@ pub use api::Detector;
 
 // Result types
 pub use detector::Proposal;
-pub use detector::{DetectedMarker, FitMetrics};
+pub use detector::{DetectedMarker, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
 pub use pipeline::{DetectionFrame, DetectionResult};
 
 // Configuration
 pub use detector::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig, InnerFitConfig,
-    MarkerScalePrior, OuterFitConfig, ProjectiveCenterParams, SeedProposalParams,
+    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
+    InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
+    ProjectiveCenterParams, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
 

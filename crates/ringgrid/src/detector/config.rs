@@ -453,6 +453,44 @@ impl Default for IdCorrectionConfig {
     }
 }
 
+/// Configuration for automatic recovery of markers where the inner edge was
+/// incorrectly fitted as the outer ellipse.
+///
+/// After all markers are finalized, each marker's outer radius is compared to
+/// the median outer radius of its k nearest neighbors. A ratio well below 1.0
+/// (see `ratio_threshold`) indicates the outer fit locked onto the inner ring
+/// edge. When enabled, the detector re-attempts the outer fit for flagged
+/// markers using the neighbor median radius as the corrected expected radius.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InnerAsOuterRecoveryConfig {
+    /// Enable inner-as-outer recovery (default: `true`).
+    pub enable: bool,
+    /// Neighbor-radius ratio below which a marker is considered anomalous and
+    /// a re-fit is attempted.
+    ///
+    /// Default: `0.75`. Markers with `own_radius / neighbor_median < 0.75` are
+    /// flagged. A value of ~0.64 is expected for an inner-as-outer confusion
+    /// (inner radius ≈ 0.49 × outer radius → ratio = 0.49 / 0.77 ≈ 0.64 when
+    /// inner accounts for the inner/outer ratio of the ring marker geometry).
+    pub ratio_threshold: f32,
+    /// Number of nearest neighbors used to compute the median outer radius.
+    ///
+    /// Default: `6` (matching the hex-lattice neighbor count). Self is always
+    /// excluded by passing k+1 to the neighbor function.
+    pub k_neighbors: usize,
+}
+
+impl Default for InnerAsOuterRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            ratio_threshold: 0.75,
+            k_neighbors: 6,
+        }
+    }
+}
+
 /// Top-level detection configuration.
 ///
 /// Contains all parameters that control the detection pipeline. Use one of the
@@ -509,6 +547,9 @@ pub struct DetectConfig {
     pub self_undistort: SelfUndistortConfig,
     /// Structural ID verification and correction using hex neighborhood consensus.
     pub id_correction: IdCorrectionConfig,
+    /// Automatic recovery for markers where the inner edge was incorrectly
+    /// fitted as the outer ellipse.
+    pub inner_as_outer_recovery: InnerAsOuterRecoveryConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -579,6 +620,7 @@ impl Default for DetectConfig {
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
             id_correction: IdCorrectionConfig::default(),
+            inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);

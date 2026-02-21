@@ -1,15 +1,17 @@
 use image::GrayImage;
 
 use super::{
-    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
-    mean_reproj_error_px, refit_homography_matrix, verify_and_correct_ids,
-    warn_center_correction_without_intrinsics, CompletionStats, DetectConfig,
+    apply_projective_centers, complete_with_h, compute_h_stats, compute_marker_confidence,
+    global_filter, inner_fit, marker_build, matrix3_to_array, mean_reproj_error_px, outer_fit,
+    refit_homography_matrix, verify_and_correct_ids, warn_center_correction_without_intrinsics,
+    CompletionStats, DetectConfig,
 };
 use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
 use crate::pixelmap::PixelMapper;
+use crate::ring::OuterEstimationConfig;
 
 struct FilterPhaseOutput {
     markers: Vec<DetectedMarker>,
@@ -141,6 +143,205 @@ fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &Boar
     cleared_invalid_ids
 }
 
+/// Annotates each marker with the ratio of its outer radius to the median
+/// outer radius of its k nearest neighbors. Values well below 1.0 (< 0.75)
+/// indicate a potential inner-as-outer substitution.
+fn annotate_neighbor_radius_ratios(markers: &mut [DetectedMarker], k: usize) {
+    use crate::detector::median_outer_radius_from_neighbors_px;
+    const WARN_THRESHOLD: f32 = 0.75;
+
+    // Compute ratios in a separate immutable pass to satisfy the borrow checker.
+    let ratios: Vec<Option<f32>> = {
+        let m_ref: &[DetectedMarker] = markers;
+        m_ref
+            .iter()
+            .map(|m| {
+                let own_radius = m.ellipse_outer.as_ref()?.mean_axis() as f32;
+                let median = median_outer_radius_from_neighbors_px(m.center, m_ref, k + 1)?;
+                if median > 0.0 {
+                    Some(own_radius / median)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    for (marker, ratio) in markers.iter_mut().zip(ratios) {
+        marker.fit.neighbor_radius_ratio = ratio;
+        if let Some(r) = ratio {
+            if r < WARN_THRESHOLD {
+                tracing::warn!(
+                    ratio = r,
+                    center_x = marker.center[0],
+                    center_y = marker.center[1],
+                    id = ?marker.id,
+                    "marker outer radius anomalous vs neighbors (possible inner-as-outer)"
+                );
+            }
+        }
+    }
+}
+
+/// Attempts to recover markers where the outer fit locked onto the inner ring
+/// edge. For each marker whose `neighbor_radius_ratio` is below the configured
+/// threshold, re-attempts the outer fit using the neighbor-median radius as the
+/// corrected expected radius. If the new fit succeeds (with a valid decode), the
+/// marker is replaced in-place; otherwise the original is kept.
+///
+/// After this function the caller should re-run `annotate_neighbor_radius_ratios`
+/// so the ratios reflect the recovered markers.
+fn try_recover_inner_as_outer(
+    gray: &GrayImage,
+    markers: &mut [DetectedMarker],
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) {
+    use crate::detector::median_outer_radius_from_neighbors_px;
+    let cfg = &config.inner_as_outer_recovery;
+
+    // Collect indices that need recovery — must not borrow markers mutably yet.
+    let flagged: Vec<usize> = markers
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let ratio = m.fit.neighbor_radius_ratio?;
+            if ratio < cfg.ratio_threshold {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if flagged.is_empty() {
+        return;
+    }
+
+    tracing::info!(
+        n_flagged = flagged.len(),
+        "attempting inner-as-outer recovery for flagged markers"
+    );
+
+    let mut n_recovered = 0usize;
+    for idx in flagged {
+        // Determine working-frame center: if map_centers_to_image has already run,
+        // center_mapped holds the working-frame center; otherwise use center directly.
+        let center_wf: [f64; 2] = markers[idx]
+            .center_mapped
+            .unwrap_or(markers[idx].center);
+        let center_f32 = [center_wf[0] as f32, center_wf[1] as f32];
+
+        // Compute corrected expected radius from neighbors (excluding self with k+1).
+        let Some(r_corrected) =
+            median_outer_radius_from_neighbors_px(markers[idx].center, markers, cfg.k_neighbors + 1)
+        else {
+            tracing::debug!(idx, "recovery skipped: could not compute neighbor median radius");
+            continue;
+        };
+
+        // Attempt outer fit with corrected radius, using a tight search window so
+        // the estimator does not wander back to the inner ring edge.
+        let mut recovery_config = config.clone();
+        recovery_config.outer_estimation.search_halfwidth_px =
+            OuterEstimationConfig::default().search_halfwidth_px;
+        let fit_result = outer_fit::fit_outer_candidate_from_prior(
+            gray,
+            center_f32,
+            r_corrected,
+            &recovery_config,
+            mapper,
+        );
+
+        let candidate = match fit_result {
+            Ok(c) => c,
+            Err(reject) => {
+                tracing::debug!(
+                    idx,
+                    reject_reason = %reject.reason,
+                    "inner-as-outer recovery: outer fit failed"
+                );
+                continue;
+            }
+        };
+
+        // Only replace if the re-fit produced a valid decode.
+        if candidate.decode_result.is_none() {
+            tracing::debug!(idx, "inner-as-outer recovery: re-fit produced no decode");
+            continue;
+        }
+
+        // Run inner fit on the recovered outer.
+        let outer_fit::OuterFitCandidate {
+            edge,
+            outer,
+            outer_ransac,
+            decode_result,
+            ..
+        } = candidate;
+
+        let inner = inner_fit::fit_inner_ellipse_from_outer_hint(
+            gray,
+            &outer,
+            &config.marker_spec,
+            mapper,
+            &config.inner_fit,
+            false,
+        );
+
+        let fit_metrics = marker_build::fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
+        let confidence = compute_marker_confidence(
+            decode_result.as_ref(),
+            &edge,
+            outer_ransac.as_ref(),
+            &inner,
+            &fit_metrics,
+            &config.inner_fit,
+        );
+        let decode_metrics = marker_build::decode_metrics_from_result(decode_result.as_ref());
+        let marker_id = decode_result.as_ref().map(|d| d.id);
+        let new_center_wf = outer.center();
+
+        // Build image-frame center.
+        let new_center_image = if let Some(m) = mapper {
+            m.working_to_image_pixel(new_center_wf)
+                .unwrap_or(new_center_wf)
+        } else {
+            new_center_wf
+        };
+        let new_center_mapped = mapper.map(|_| new_center_wf);
+        let outer_points = edge.outer_points;
+        let inner_points = inner.points_inner;
+
+        let recovered = DetectedMarker {
+            id: marker_id,
+            confidence,
+            center: new_center_image,
+            center_mapped: new_center_mapped,
+            board_xy_mm: None, // will be populated by sync_marker_board_correspondence later
+            ellipse_outer: Some(outer),
+            ellipse_inner: inner.ellipse_inner,
+            edge_points_outer: Some(outer_points),
+            edge_points_inner: Some(inner_points),
+            fit: fit_metrics,
+            decode: decode_metrics,
+        };
+
+        tracing::info!(
+            idx,
+            old_id = ?markers[idx].id,
+            new_id = ?recovered.id,
+            old_radius = markers[idx].ellipse_outer.as_ref().map(|e| e.mean_axis()),
+            new_radius = recovered.ellipse_outer.as_ref().map(|e| e.mean_axis()),
+            "inner-as-outer recovery: replaced marker"
+        );
+        markers[idx] = recovered;
+        n_recovered += 1;
+    }
+
+    tracing::info!(n_recovered, "inner-as-outer recovery complete");
+}
+
 fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
     tracing::info!(
         n_ids_corrected = stats.n_ids_corrected,
@@ -164,6 +365,7 @@ fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectio
 }
 
 fn finalize_no_global_filter_result(
+    gray: &GrayImage,
     mut corrected_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
@@ -187,6 +389,12 @@ fn finalize_no_global_filter_result(
         n_markers = corrected_markers.len(),
         "synchronized marker id/board correspondence"
     );
+    annotate_neighbor_radius_ratios(&mut corrected_markers, 6);
+    if config.inner_as_outer_recovery.enable {
+        try_recover_inner_as_outer(gray, &mut corrected_markers, config, mapper);
+        sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+        annotate_neighbor_radius_ratios(&mut corrected_markers, 6);
+    }
     DetectionResult {
         detected_markers: corrected_markers,
         center_frame: DetectionFrame::Image,
@@ -252,6 +460,13 @@ fn finalize_global_filter_result(
         completion_stats.n_failed_gate
     );
 
+    annotate_neighbor_radius_ratios(&mut final_markers, 6);
+    if config.inner_as_outer_recovery.enable {
+        try_recover_inner_as_outer(gray, &mut final_markers, config, mapper);
+        sync_marker_board_correspondence(&mut final_markers, &config.board);
+        annotate_neighbor_radius_ratios(&mut final_markers, 6);
+    }
+
     DetectionResult {
         detected_markers: final_markers,
         center_frame: DetectionFrame::Image,
@@ -292,6 +507,7 @@ pub(super) fn run(
 
     if !config.use_global_filter {
         return finalize_no_global_filter_result(
+            gray,
             corrected_markers,
             config,
             mapper,

@@ -1,7 +1,7 @@
 pub(crate) use image::GrayImage;
 
 pub(crate) use crate::detector::inner_fit;
-pub(crate) use crate::detector::marker_build;
+pub(crate) use crate::detector::marker_build::{self, compute_marker_confidence};
 pub(crate) use crate::detector::outer_fit;
 pub(crate) use crate::detector::{CompletionStats, DetectConfig};
 

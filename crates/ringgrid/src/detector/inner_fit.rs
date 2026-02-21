@@ -11,8 +11,9 @@ use crate::ring::inner_estimate::{
 use crate::ring::radial_profile;
 
 /// Outcome category for robust inner ellipse fitting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InnerFitStatus {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InnerFitStatus {
     /// Inner ellipse fit is valid and accepted by quality gates.
     Ok,
     /// A candidate was fitted but rejected by quality gates.
@@ -24,7 +25,7 @@ pub(crate) enum InnerFitStatus {
 /// Stable reject/failure code for inner fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum InnerFitReason {
+pub enum InnerFitReason {
     EstimateNotOk,
     EstimateMissingHint,
     InsufficientPoints,

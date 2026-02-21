@@ -61,6 +61,14 @@ struct HomographyAssignment {
     reproj_err_px: f64,
 }
 
+#[derive(Debug, Clone)]
+struct HomographyFallbackModel {
+    trusted_by_id: BTreeMap<usize, usize>,
+    h: nalgebra::Matrix3<f64>,
+    h_inv: nalgebra::Matrix3<f64>,
+    n_inliers: usize,
+}
+
 #[derive(Clone, Copy)]
 struct LocalStageSpec<'a> {
     board_index: &'a BoardIndex,
@@ -693,6 +701,150 @@ fn seed_allowed_for_homography(trust: Trust) -> bool {
     trust.is_anchor()
 }
 
+fn candidate_reprojection_error(
+    anchor_h: Option<&nalgebra::Matrix3<f64>>,
+    board_index: &BoardIndex,
+    id: usize,
+    center: [f64; 2],
+) -> Option<f64> {
+    let h = anchor_h?;
+    let bxy = board_index.id_to_xy.get(&id)?;
+    let proj = homography_project(h, f64::from(bxy[0]), f64::from(bxy[1]));
+    Some(dist2(proj, center).sqrt())
+}
+
+fn topology_support_counts(
+    neighbor_ids: &[usize],
+    board_index: &BoardIndex,
+    current_id: Option<usize>,
+) -> HashMap<usize, usize> {
+    let mut support = HashMap::<usize, usize>::new();
+    for neighbor_id in neighbor_ids {
+        if let Some(board_nbrs) = board_index.board_neighbors.get(neighbor_id) {
+            for &cand in board_nbrs {
+                *support.entry(cand).or_insert(0) += 1;
+            }
+        }
+    }
+    if let Some(id) = current_id {
+        support.entry(id).or_insert(0);
+    }
+    support
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_topology_candidate(
+    marker_index: usize,
+    markers: &[DetectedMarker],
+    trust: &[Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    support: &HashMap<usize, usize>,
+    neighbor_count: usize,
+    anchor_h: Option<&nalgebra::Matrix3<f64>>,
+) -> Option<(usize, usize, f64)> {
+    let mut best: Option<(usize, usize, usize, f64)> = None;
+    for (&cand_id, &cand_support) in support {
+        if cand_support < 2 {
+            continue;
+        }
+        let contradiction = neighbor_count.saturating_sub(cand_support);
+        if contradiction > cand_support {
+            continue;
+        }
+        if config_soft_lock_blocks_override(
+            &markers[marker_index],
+            config.soft_lock_exact_decode,
+            cand_id,
+        ) {
+            continue;
+        }
+        if should_block_by_trusted_confidence(marker_index, cand_id, markers, trust) {
+            continue;
+        }
+        let err = candidate_reprojection_error(
+            anchor_h,
+            board_index,
+            cand_id,
+            markers[marker_index].center,
+        )
+        .unwrap_or(0.0);
+        match best {
+            Some((best_id, best_support, best_contradiction, best_err)) => {
+                let better = cand_support > best_support
+                    || (cand_support == best_support && contradiction < best_contradiction)
+                    || (cand_support == best_support
+                        && contradiction == best_contradiction
+                        && err < best_err)
+                    || (cand_support == best_support
+                        && contradiction == best_contradiction
+                        && err == best_err
+                        && cand_id < best_id);
+                if better {
+                    best = Some((cand_id, cand_support, contradiction, err));
+                }
+            }
+            None => best = Some((cand_id, cand_support, contradiction, err)),
+        }
+    }
+    best.map(|(id, support, _, err)| (id, support, err))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_topology_update_for_marker(
+    marker_index: usize,
+    markers: &[DetectedMarker],
+    trust: &[Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    anchor_h: Option<&nalgebra::Matrix3<f64>>,
+) -> Option<(usize, usize)> {
+    if !marker_center_is_finite(&markers[marker_index])
+        || matches!(trust[marker_index], Trust::AnchorStrong | Trust::AnchorWeak)
+    {
+        return None;
+    }
+    let neighbor_ids = local_edge_neighbor_ids(
+        marker_index,
+        markers,
+        board_index,
+        outer_radii_px,
+        config.consistency_outer_mul,
+    );
+    if neighbor_ids.len() < 2 {
+        return None;
+    }
+    let current_id = markers[marker_index].id;
+    let support = topology_support_counts(&neighbor_ids, board_index, current_id);
+    let (best_id, best_support, best_err) = select_topology_candidate(
+        marker_index,
+        markers,
+        trust,
+        board_index,
+        config,
+        &support,
+        neighbor_ids.len(),
+        anchor_h,
+    )?;
+    let current_support = current_id
+        .and_then(|id| support.get(&id).copied())
+        .unwrap_or(0);
+    let current_err = current_id.and_then(|id| {
+        candidate_reprojection_error(anchor_h, board_index, id, markers[marker_index].center)
+    });
+    let should_apply = match current_id {
+        None => true,
+        Some(id) if id == best_id => false,
+        Some(_) => {
+            best_support > current_support
+                || (best_support == current_support
+                    && current_err.is_some_and(|cur| best_err + 1.0 < cur))
+        }
+    };
+    should_apply.then_some((marker_index, best_id))
+}
+
 fn run_topology_refinement(
     markers: &mut [DetectedMarker],
     trust: &mut [Trust],
@@ -703,111 +855,19 @@ fn run_topology_refinement(
     stats: &mut IdCorrectionStats,
 ) {
     for pass in 0..2 {
-        let mut updates = Vec::<(usize, usize)>::new();
-        for i in 0..markers.len() {
-            if !marker_center_is_finite(&markers[i])
-                || matches!(trust[i], Trust::AnchorStrong | Trust::AnchorWeak)
-            {
-                continue;
-            }
-            let neighbor_ids = local_edge_neighbor_ids(
-                i,
-                markers,
-                board_index,
-                outer_radii_px,
-                config.consistency_outer_mul,
-            );
-            if neighbor_ids.len() < 2 {
-                continue;
-            }
-
-            let mut support = HashMap::<usize, usize>::new();
-            for neighbor_id in &neighbor_ids {
-                if let Some(board_nbrs) = board_index.board_neighbors.get(neighbor_id) {
-                    for &cand in board_nbrs {
-                        *support.entry(cand).or_insert(0) += 1;
-                    }
-                }
-            }
-            if let Some(current_id) = markers[i].id {
-                support.entry(current_id).or_insert(0);
-            }
-
-            let current_id = markers[i].id;
-            let current_support = current_id
-                .and_then(|id| support.get(&id).copied())
-                .unwrap_or(0);
-            let current_err = current_id.and_then(|id| {
-                let h = anchor_h?;
-                let bxy = board_index.id_to_xy.get(&id)?;
-                let proj = homography_project(h, f64::from(bxy[0]), f64::from(bxy[1]));
-                Some(dist2(proj, markers[i].center).sqrt())
-            });
-
-            let mut best: Option<(usize, usize, usize, f64)> = None;
-            for (&cand_id, &cand_support) in &support {
-                if cand_support < 2 {
-                    continue;
-                }
-                let contradiction = neighbor_ids.len().saturating_sub(cand_support);
-                if contradiction > cand_support {
-                    continue;
-                }
-                if config_soft_lock_blocks_override(
-                    &markers[i],
-                    config.soft_lock_exact_decode,
-                    cand_id,
-                ) {
-                    continue;
-                }
-                if should_block_by_trusted_confidence(i, cand_id, markers, trust) {
-                    continue;
-                }
-
-                let err =
-                    if let (Some(h), Some(bxy)) = (anchor_h, board_index.id_to_xy.get(&cand_id)) {
-                        let proj = homography_project(h, f64::from(bxy[0]), f64::from(bxy[1]));
-                        dist2(proj, markers[i].center).sqrt()
-                    } else {
-                        0.0
-                    };
-
-                match best {
-                    Some((best_id, best_support, best_contradiction, best_err)) => {
-                        let better = cand_support > best_support
-                            || (cand_support == best_support && contradiction < best_contradiction)
-                            || (cand_support == best_support
-                                && contradiction == best_contradiction
-                                && err < best_err)
-                            || (cand_support == best_support
-                                && contradiction == best_contradiction
-                                && err == best_err
-                                && cand_id < best_id);
-                        if better {
-                            best = Some((cand_id, cand_support, contradiction, err));
-                        }
-                    }
-                    None => best = Some((cand_id, cand_support, contradiction, err)),
-                }
-            }
-
-            let Some((best_id, best_support, _, best_err)) = best else {
-                continue;
-            };
-            let should_apply = match current_id {
-                None => true,
-                Some(id) if id == best_id => false,
-                Some(_) => {
-                    best_support > current_support
-                        || (best_support == current_support
-                            && current_err.is_some_and(|cur| best_err + 1.0 < cur))
-                }
-            };
-            if should_apply {
-                updates.push((i, best_id));
-            }
-        }
-
+        let updates = (0..markers.len())
+            .filter_map(|i| {
+                collect_topology_update_for_marker(
+                    i,
+                    markers,
+                    trust,
+                    board_index,
+                    config,
+                    outer_radii_px,
+                    anchor_h,
+                )
+            })
+            .collect::<Vec<_>>();
         if updates.is_empty() {
             break;
         }
@@ -874,30 +934,12 @@ fn fit_anchor_homography_for_local_stage(
     fit_homography_ransac(&src, &dst, &cfg).ok().map(|r| r.h)
 }
 
-fn run_homography_fallback(
-    markers: &mut [DetectedMarker],
-    trust: &mut [Trust],
+fn collect_trusted_by_id_for_homography(
+    markers: &[DetectedMarker],
+    trust: &[Trust],
     board_index: &BoardIndex,
-    config: &IdCorrectionConfig,
-    outer_radii_px: &[f64],
-    stats: &mut IdCorrectionStats,
-) {
-    if !config.homography_fallback_enable {
-        return;
-    }
-
-    let n_trusted = trust.iter().filter(|&&t| t.is_trusted()).count();
-    if n_trusted < config.homography_min_trusted {
-        tracing::debug!(
-            n_trusted,
-            min_required = config.homography_min_trusted,
-            "id_correction homography fallback skipped: insufficient trusted markers",
-        );
-        return;
-    }
-
-    // Keep one trusted marker per ID (highest confidence), deterministic by ID.
-    let mut trusted_by_id: BTreeMap<usize, usize> = BTreeMap::new();
+) -> BTreeMap<usize, usize> {
+    let mut trusted_by_id = BTreeMap::<usize, usize>::new();
     for (i, m) in markers.iter().enumerate() {
         if !seed_allowed_for_homography(trust[i]) || !marker_center_is_finite(m) {
             continue;
@@ -919,14 +961,23 @@ fn run_homography_fallback(
             }
         }
     }
+    trusted_by_id
+}
+
+fn fit_fallback_homography_model(
+    markers: &[DetectedMarker],
+    trust: &[Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+) -> Option<HomographyFallbackModel> {
+    let trusted_by_id = collect_trusted_by_id_for_homography(markers, trust, board_index);
     if trusted_by_id.len() < 4 {
         tracing::debug!(
             n_unique_ids = trusted_by_id.len(),
             "id_correction homography fallback skipped: too few unique trusted IDs",
         );
-        return;
+        return None;
     }
-
     let mut src_board_mm = Vec::<[f64; 2]>::with_capacity(trusted_by_id.len());
     let mut dst_image_px = Vec::<[f64; 2]>::with_capacity(trusted_by_id.len());
     for (&id, &idx) in &trusted_by_id {
@@ -936,11 +987,10 @@ fn run_homography_fallback(
         src_board_mm.push([f64::from(bxy[0]), f64::from(bxy[1])]);
         dst_image_px.push(markers[idx].center);
     }
-
     let ransac_cfg = RansacHomographyConfig {
         max_iters: 1200,
         inlier_threshold: config.h_reproj_gate_px,
-        min_inliers: config.homography_min_inliers,
+        min_inliers: config.homography_min_inliers.min(src_board_mm.len()).max(4),
         seed: HOMOGRAPHY_FALLBACK_SEED,
     };
     let h_result = match fit_homography_ransac(&src_board_mm, &dst_image_px, &ransac_cfg) {
@@ -951,21 +1001,33 @@ fn run_homography_fallback(
                 "id_correction homography fallback fit failed: {}",
                 err
             );
-            return;
+            return None;
         }
     };
     let Some(h_inv) = h_result.h.try_inverse() else {
         tracing::debug!("id_correction homography fallback skipped: non-invertible H");
-        return;
+        return None;
     };
+    Some(HomographyFallbackModel {
+        trusted_by_id,
+        h: h_result.h,
+        h_inv,
+        n_inliers: h_result.n_inliers,
+    })
+}
 
-    let mut trusted_conf_by_id = HashMap::<usize, f32>::new();
-    for (&id, &idx) in &trusted_by_id {
-        trusted_conf_by_id.insert(id, markers[idx].confidence);
-    }
-
+#[allow(clippy::too_many_arguments)]
+fn collect_homography_assignments(
+    markers: &[DetectedMarker],
+    trust: &[Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    trusted_conf_by_id: &HashMap<usize, f32>,
+    model: &HomographyFallbackModel,
+    top_k: usize,
+) -> Vec<HomographyAssignment> {
     let mut assignments = Vec::<HomographyAssignment>::new();
-    let top_k = 19usize;
     for (i, m) in markers.iter().enumerate() {
         let eligible = !matches!(trust[i], Trust::AnchorStrong | Trust::AnchorWeak);
         if !eligible || !marker_center_is_finite(m) {
@@ -974,12 +1036,10 @@ fn run_homography_fallback(
         if m.id.is_some() && is_soft_locked_assignment(m, config.soft_lock_exact_decode) {
             continue;
         }
-
-        let board_hint = homography_project(&h_inv, m.center[0], m.center[1]);
+        let board_hint = homography_project(&model.h_inv, m.center[0], m.center[1]);
         if !(board_hint[0].is_finite() && board_hint[1].is_finite()) {
             continue;
         }
-
         let mut best: Option<(usize, f64)> = None;
         for (candidate_id, _) in board_index.nearest_k_ids(board_hint, top_k) {
             if let Some(&trusted_conf) = trusted_conf_by_id.get(&candidate_id) {
@@ -997,64 +1057,61 @@ fn run_homography_fallback(
             ) {
                 continue;
             }
-
-            let Some(board_xy) = board_index.id_to_xy.get(&candidate_id) else {
+            let Some(err) =
+                candidate_reprojection_error(Some(&model.h), board_index, candidate_id, m.center)
+            else {
                 continue;
             };
-            let proj =
-                homography_project(&h_result.h, f64::from(board_xy[0]), f64::from(board_xy[1]));
-            if !(proj[0].is_finite() && proj[1].is_finite()) {
-                continue;
-            }
-            let err = dist2(proj, m.center).sqrt();
             match best {
                 Some((best_id, best_err)) => {
                     if err < best_err || (err == best_err && candidate_id < best_id) {
                         best = Some((candidate_id, err));
                     }
                 }
-                None => {
-                    best = Some((candidate_id, err));
-                }
+                None => best = Some((candidate_id, err)),
             }
         }
-
-        if let Some((id, reproj_err_px)) = best {
-            if reproj_err_px <= config.h_reproj_gate_px {
-                let current_err = m.id.and_then(|cur_id| {
-                    board_index.id_to_xy.get(&cur_id).map(|xy| {
-                        let proj =
-                            homography_project(&h_result.h, f64::from(xy[0]), f64::from(xy[1]));
-                        dist2(proj, m.center).sqrt()
-                    })
-                });
-                let should_apply = match m.id {
-                    None => true,
-                    Some(cur_id) if cur_id == id => false,
-                    Some(_) => current_err.is_none_or(|cur| reproj_err_px + 1.0 < cur),
-                };
-                if !should_apply {
-                    continue;
-                }
-                assignments.push(HomographyAssignment {
-                    marker_index: i,
-                    id,
-                    reproj_err_px,
-                });
-            }
+        let Some((id, reproj_err_px)) = best else {
+            continue;
+        };
+        if reproj_err_px > config.h_reproj_gate_px {
+            continue;
+        }
+        let current_err = m.id.and_then(|cur_id| {
+            candidate_reprojection_error(Some(&model.h), board_index, cur_id, m.center)
+        });
+        let should_apply = match m.id {
+            None => true,
+            Some(cur_id) if cur_id == id => false,
+            Some(_) => current_err.is_none_or(|cur| reproj_err_px + 1.0 < cur),
+        };
+        if should_apply {
+            assignments.push(HomographyAssignment {
+                marker_index: i,
+                id,
+                reproj_err_px,
+            });
         }
     }
+    assignments
+}
 
+fn apply_homography_assignments(
+    assignments: &mut [HomographyAssignment],
+    markers: &mut [DetectedMarker],
+    trust: &mut [Trust],
+    config: &IdCorrectionConfig,
+    claimed_ids: &mut HashSet<usize>,
+    stats: &mut IdCorrectionStats,
+) -> usize {
     assignments.sort_by(|a, b| {
         a.reproj_err_px
             .total_cmp(&b.reproj_err_px)
             .then_with(|| a.marker_index.cmp(&b.marker_index))
             .then_with(|| a.id.cmp(&b.id))
     });
-
-    let mut claimed_ids = trusted_by_id.keys().copied().collect::<HashSet<_>>();
     let mut seeded = 0usize;
-    for a in assignments {
+    for a in assignments.iter().copied() {
         if claimed_ids.contains(&a.id) {
             continue;
         }
@@ -1071,10 +1128,61 @@ fn run_homography_fallback(
             seeded += 1;
         }
     }
+    seeded
+}
 
+fn run_homography_fallback(
+    markers: &mut [DetectedMarker],
+    trust: &mut [Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    stats: &mut IdCorrectionStats,
+) {
+    if !config.homography_fallback_enable {
+        return;
+    }
+    let n_trusted = trust.iter().filter(|&&t| t.is_trusted()).count();
+    if n_trusted < config.homography_min_trusted {
+        tracing::debug!(
+            n_trusted,
+            min_required = config.homography_min_trusted,
+            "id_correction homography fallback skipped: insufficient trusted markers",
+        );
+        return;
+    }
+    let Some(model) = fit_fallback_homography_model(markers, trust, board_index, config) else {
+        return;
+    };
+
+    let top_k = 19usize;
+    let trusted_conf_by_id = model
+        .trusted_by_id
+        .iter()
+        .map(|(&id, &idx)| (id, markers[idx].confidence))
+        .collect::<HashMap<_, _>>();
+    let mut assignments = collect_homography_assignments(
+        markers,
+        trust,
+        board_index,
+        config,
+        outer_radii_px,
+        &trusted_conf_by_id,
+        &model,
+        top_k,
+    );
+    let mut claimed_ids = model.trusted_by_id.keys().copied().collect::<HashSet<_>>();
+    let seeded = apply_homography_assignments(
+        &mut assignments,
+        markers,
+        trust,
+        config,
+        &mut claimed_ids,
+        stats,
+    );
     tracing::debug!(
-        n_unique_trusted = trusted_by_id.len(),
-        n_inliers = h_result.n_inliers,
+        n_unique_trusted = model.trusted_by_id.len(),
+        n_inliers = model.n_inliers,
         n_seeded = seeded,
         gate_px = config.h_reproj_gate_px,
         top_k,
@@ -1162,27 +1270,12 @@ fn count_inconsistent_remaining(
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
-/// Verify and correct marker IDs using the board's hex neighborhood structure.
-///
-/// Mutates `markers` in-place. Returns statistics about the corrections made.
-pub(crate) fn verify_and_correct_ids(
-    markers: &mut Vec<DetectedMarker>,
-    board: &BoardLayout,
+fn bootstrap_trust_anchors(
+    markers: &[DetectedMarker],
+    board_index: &BoardIndex,
     config: &IdCorrectionConfig,
-) -> IdCorrectionStats {
-    let mut stats = IdCorrectionStats::default();
-    if markers.is_empty() {
-        return stats;
-    }
-
-    // 1) Build index + diagnostics.
-    let board_index = BoardIndex::build(board);
-    let outer_muls = build_outer_mul_schedule(config);
-    let final_outer_mul = outer_muls.last().copied().unwrap_or(3.2);
-    let outer_radii_px = compute_outer_radii_px(markers);
-
-    // 2) Bootstrap trust anchors.
-    let mut trust = vec![Trust::Untrusted; markers.len()];
+    trust: &mut [Trust],
+) -> usize {
     let mut n_seeds = 0usize;
     for i in 0..markers.len() {
         let Some(id) = markers[i].id else {
@@ -1205,45 +1298,30 @@ pub(crate) fn verify_and_correct_ids(
             n_seeds += 1;
         }
     }
-    if n_seeds < 2 {
-        tracing::debug!(n_seeds, "id_correction: too few seeds, skipping");
-        return stats;
-    }
+    n_seeds
+}
 
-    tracing::debug!(
-        n_seeds,
-        n_markers = markers.len(),
-        outer_muls = ?outer_muls,
-        "id_correction: starting local-scale consistency-first correction",
-    );
-
-    // 3) Pre-recovery consistency scrub.
-    let n_pre_cleared = scrub_inconsistent_ids(
-        markers,
-        &mut trust,
-        &board_index,
-        config,
-        &outer_radii_px,
-        &mut stats,
-        ScrubStage::Pre,
-    );
-    tracing::debug!(
-        n_pre_cleared,
-        "id_correction pre-consistency scrub complete",
-    );
-    let anchor_h = fit_anchor_homography_for_local_stage(markers, &trust, &board_index, config);
-
-    // 4) Local iterative recovery (staged multipliers).
-    for &mul in &outer_muls {
+#[allow(clippy::too_many_arguments)]
+fn run_adaptive_local_recovery(
+    markers: &mut [DetectedMarker],
+    trust: &mut [Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    outer_muls: &[f64],
+    anchor_h: Option<&nalgebra::Matrix3<f64>>,
+    stats: &mut IdCorrectionStats,
+) {
+    for &mul in outer_muls {
         run_local_stage(
             markers,
-            &mut trust,
-            &mut stats,
+            trust,
+            stats,
             LocalStageSpec {
-                board_index: &board_index,
+                board_index,
                 config,
-                outer_radii_px: &outer_radii_px,
-                anchor_h: anchor_h.as_ref(),
+                outer_radii_px,
+                anchor_h,
                 outer_mul: mul,
                 max_iters: config.max_iters,
                 stage_name: "adaptive_local",
@@ -1252,47 +1330,45 @@ pub(crate) fn verify_and_correct_ids(
     }
     run_topology_refinement(
         markers,
-        &mut trust,
-        &board_index,
+        trust,
+        board_index,
         config,
-        &outer_radii_px,
-        anchor_h.as_ref(),
-        &mut stats,
+        outer_radii_px,
+        anchor_h,
+        stats,
     );
+}
 
-    // 5) Constrained homography fallback.
-    if trust.iter().any(|t| !t.is_trusted()) {
-        run_homography_fallback(
-            markers,
-            &mut trust,
-            &board_index,
-            config,
-            &outer_radii_px,
-            &mut stats,
-        );
-    }
-
-    // 6) Post-recovery consistency sweep + short refill.
-    let first_outer_mul = outer_muls.first().copied().unwrap_or(3.2);
+#[allow(clippy::too_many_arguments)]
+fn run_post_consistency_refill(
+    markers: &mut [DetectedMarker],
+    trust: &mut [Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    first_outer_mul: f64,
+    anchor_h: Option<&nalgebra::Matrix3<f64>>,
+    stats: &mut IdCorrectionStats,
+) {
     for _ in 0..2 {
         let _ = scrub_inconsistent_ids(
             markers,
-            &mut trust,
-            &board_index,
+            trust,
+            board_index,
             config,
-            &outer_radii_px,
-            &mut stats,
+            outer_radii_px,
+            stats,
             ScrubStage::Post,
         );
         run_local_stage(
             markers,
-            &mut trust,
-            &mut stats,
+            trust,
+            stats,
             LocalStageSpec {
-                board_index: &board_index,
+                board_index,
                 config,
-                outer_radii_px: &outer_radii_px,
-                anchor_h: anchor_h.as_ref(),
+                outer_radii_px,
+                anchor_h,
                 outer_mul: first_outer_mul,
                 max_iters: 1,
                 stage_name: "post_consistency_refill",
@@ -1300,26 +1376,22 @@ pub(crate) fn verify_and_correct_ids(
         );
         run_topology_refinement(
             markers,
-            &mut trust,
-            &board_index,
+            trust,
+            board_index,
             config,
-            &outer_radii_px,
-            anchor_h.as_ref(),
-            &mut stats,
+            outer_radii_px,
+            anchor_h,
+            stats,
         );
     }
+}
 
-    diagnose_unverified_reasons(
-        markers,
-        &trust,
-        &board_index,
-        config,
-        &outer_radii_px,
-        final_outer_mul,
-        &mut stats,
-    );
-
-    // 7) Final cleanup of unresolved.
+fn cleanup_unverified_markers(
+    markers: &mut Vec<DetectedMarker>,
+    trust: &mut Vec<Trust>,
+    config: &IdCorrectionConfig,
+    stats: &mut IdCorrectionStats,
+) {
     if config.remove_unverified {
         let mut i = 0usize;
         while i < markers.len() {
@@ -1339,7 +1411,16 @@ pub(crate) fn verify_and_correct_ids(
             }
         }
     }
+}
 
+fn finalize_correction_stats(
+    markers: &mut [DetectedMarker],
+    trust: &mut [Trust],
+    board_index: &BoardIndex,
+    config: &IdCorrectionConfig,
+    outer_radii_px: &[f64],
+    stats: &mut IdCorrectionStats,
+) {
     let n_conflicts_cleared = resolve_id_conflicts(markers);
     stats.n_ids_cleared += n_conflicts_cleared;
     for i in 0..markers.len() {
@@ -1347,17 +1428,108 @@ pub(crate) fn verify_and_correct_ids(
             trust[i] = Trust::Untrusted;
         }
     }
-
     stats.n_verified = markers
         .iter()
         .enumerate()
         .filter(|(i, m)| m.id.is_some() && trust[*i].is_trusted())
         .count();
     stats.n_inconsistent_remaining =
-        count_inconsistent_remaining(markers, &trust, &board_index, config, &outer_radii_px);
-    // Diagnostic field now reports robust post-correction one-hop image spacing.
-    stats.pitch_px_estimated = estimate_adjacent_spacing_px(markers, &board_index);
+        count_inconsistent_remaining(markers, trust, board_index, config, outer_radii_px);
+    stats.pitch_px_estimated = estimate_adjacent_spacing_px(markers, board_index);
+}
 
+/// Verify and correct marker IDs using the board's hex neighborhood structure.
+///
+/// Mutates `markers` in-place. Returns statistics about the corrections made.
+pub(crate) fn verify_and_correct_ids(
+    markers: &mut Vec<DetectedMarker>,
+    board: &BoardLayout,
+    config: &IdCorrectionConfig,
+) -> IdCorrectionStats {
+    let mut stats = IdCorrectionStats::default();
+    if markers.is_empty() {
+        return stats;
+    }
+
+    let board_index = BoardIndex::build(board);
+    let outer_muls = build_outer_mul_schedule(config);
+    let final_outer_mul = outer_muls.last().copied().unwrap_or(3.2);
+    let outer_radii_px = compute_outer_radii_px(markers);
+    let mut trust = vec![Trust::Untrusted; markers.len()];
+    let n_seeds = bootstrap_trust_anchors(markers, &board_index, config, &mut trust);
+    if n_seeds < 2 {
+        tracing::debug!(n_seeds, "id_correction: too few seeds, skipping");
+        return stats;
+    }
+    tracing::debug!(
+        n_seeds,
+        n_markers = markers.len(),
+        outer_muls = ?outer_muls,
+        "id_correction: starting local-scale consistency-first correction",
+    );
+    let n_pre_cleared = scrub_inconsistent_ids(
+        markers,
+        &mut trust,
+        &board_index,
+        config,
+        &outer_radii_px,
+        &mut stats,
+        ScrubStage::Pre,
+    );
+    tracing::debug!(
+        n_pre_cleared,
+        "id_correction pre-consistency scrub complete",
+    );
+    let anchor_h = fit_anchor_homography_for_local_stage(markers, &trust, &board_index, config);
+    run_adaptive_local_recovery(
+        markers,
+        &mut trust,
+        &board_index,
+        config,
+        &outer_radii_px,
+        &outer_muls,
+        anchor_h.as_ref(),
+        &mut stats,
+    );
+    if trust.iter().any(|t| !t.is_trusted()) {
+        run_homography_fallback(
+            markers,
+            &mut trust,
+            &board_index,
+            config,
+            &outer_radii_px,
+            &mut stats,
+        );
+    }
+    let first_outer_mul = outer_muls.first().copied().unwrap_or(3.2);
+    run_post_consistency_refill(
+        markers,
+        &mut trust,
+        &board_index,
+        config,
+        &outer_radii_px,
+        first_outer_mul,
+        anchor_h.as_ref(),
+        &mut stats,
+    );
+    diagnose_unverified_reasons(
+        markers,
+        &trust,
+        &board_index,
+        config,
+        &outer_radii_px,
+        final_outer_mul,
+        &mut stats,
+    );
+    cleanup_unverified_markers(markers, &mut trust, config, &mut stats);
+    finalize_correction_stats(
+        markers,
+        &mut trust,
+        &board_index,
+        config,
+        &outer_radii_px,
+        &mut stats,
+    );
     stats
 }
 

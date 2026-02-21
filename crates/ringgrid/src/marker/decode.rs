@@ -90,9 +90,13 @@ pub struct DecodeConfig {
 }
 
 impl DecodeConfig {
+    /// Default radial location of the code band as a fraction of outer radius.
     pub const DEFAULT_CODE_BAND_RATIO: f32 = 0.76;
+    /// Default number of angular intensity samples per bit sector.
     pub const DEFAULT_SAMPLES_PER_SECTOR: usize = 5;
+    /// Default number of concentric rings used for radial sampling.
     pub const DEFAULT_N_RADIAL_RINGS: usize = 3;
+    /// Default maximum Hamming distance accepted by decode.
     pub const DEFAULT_MAX_DECODE_DIST: u8 = 3;
     /// Minimum decode confidence with the corrected formula
     /// `clamp(1-dist/6) * clamp(margin/CODEBOOK_MIN_CYCLIC_DIST)`.
@@ -104,8 +108,11 @@ impl DecodeConfig {
     /// A margin of 0 means two codewords are equidistant from the observed word
     /// (genuinely ambiguous). Setting this to 1 (default) rejects such ties.
     pub const DEFAULT_MIN_DECODE_MARGIN: u8 = 1;
+    /// Default minimum sector-intensity contrast (`max - min`) before decode.
     pub const DEFAULT_MIN_DECODE_CONTRAST: f32 = 0.03;
+    /// Default iteration cap for iterative 2-means threshold refinement.
     pub const DEFAULT_THRESHOLD_MAX_ITERS: usize = 10;
+    /// Default convergence epsilon for iterative 2-means threshold refinement.
     pub const DEFAULT_THRESHOLD_CONVERGENCE_EPS: f32 = 1e-4;
 
     fn default_min_decode_contrast() -> f32 {

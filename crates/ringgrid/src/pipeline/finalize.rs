@@ -141,80 +141,70 @@ fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &Boar
     cleared_invalid_ids
 }
 
-pub(super) fn run(
-    gray: &GrayImage,
-    fit_markers: Vec<DetectedMarker>,
+fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
+    tracing::info!(
+        n_ids_corrected = stats.n_ids_corrected,
+        n_ids_recovered = stats.n_ids_recovered,
+        n_recovered_local = stats.n_recovered_local,
+        n_recovered_homography = stats.n_recovered_homography,
+        n_homography_seeded = stats.n_homography_seeded,
+        n_ids_cleared = stats.n_ids_cleared,
+        n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
+        n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
+        n_soft_locked_cleared = stats.n_soft_locked_cleared,
+        n_verified = stats.n_verified,
+        n_inconsistent_remaining = stats.n_inconsistent_remaining,
+        n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
+        n_unverified_no_votes = stats.n_unverified_no_votes,
+        n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
+        n_iterations = stats.n_iterations,
+        pitch_px = stats.pitch_px_estimated,
+        "id_correction complete"
+    );
+}
+
+fn finalize_no_global_filter_result(
+    mut corrected_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
+    homography_frame: DetectionFrame,
+    image_size: [u32; 2],
 ) -> DetectionResult {
-    let (w, h) = gray.dimensions();
-    let image_size = [w, h];
-    let homography_frame = if mapper.is_some() {
-        DetectionFrame::Working
-    } else {
-        DetectionFrame::Image
-    };
-
-    warn_center_correction_without_intrinsics(config, mapper.is_some());
-
-    let mut corrected_markers = fit_markers;
-    if config.projective_center.enable {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
-
-    if config.id_correction.enable {
-        let stats =
-            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
-        tracing::info!(
-            n_ids_corrected = stats.n_ids_corrected,
-            n_ids_recovered = stats.n_ids_recovered,
-            n_recovered_local = stats.n_recovered_local,
-            n_recovered_homography = stats.n_recovered_homography,
-            n_homography_seeded = stats.n_homography_seeded,
-            n_ids_cleared = stats.n_ids_cleared,
-            n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
-            n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
-            n_soft_locked_cleared = stats.n_soft_locked_cleared,
-            n_verified = stats.n_verified,
-            n_inconsistent_remaining = stats.n_inconsistent_remaining,
-            n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
-            n_unverified_no_votes = stats.n_unverified_no_votes,
-            n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
-            n_iterations = stats.n_iterations,
-            pitch_px = stats.pitch_px_estimated,
-            "id_correction complete"
-        );
-    }
-
-    if !config.use_global_filter {
-        if let Some(mapper) = mapper {
-            let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
-            if dropped > 0 {
-                tracing::warn!(
-                    dropped,
-                    "dropping markers whose mapped centers cannot be converted to image frame"
-                );
-            }
-            map_centers_to_image(&mut corrected_markers, mapper);
+    if let Some(mapper) = mapper {
+        let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
+        if dropped > 0 {
+            tracing::warn!(
+                dropped,
+                "dropping markers whose mapped centers cannot be converted to image frame"
+            );
         }
-        let cleared_invalid_ids =
-            sync_marker_board_correspondence(&mut corrected_markers, &config.board);
-        tracing::debug!(
-            cleared_invalid_ids,
-            n_markers = corrected_markers.len(),
-            "synchronized marker id/board correspondence"
-        );
-        return DetectionResult {
-            detected_markers: corrected_markers,
-            center_frame: DetectionFrame::Image,
-            homography_frame,
-            image_size,
-            ..DetectionResult::default()
-        };
+        map_centers_to_image(&mut corrected_markers, mapper);
     }
+    let cleared_invalid_ids =
+        sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+    tracing::debug!(
+        cleared_invalid_ids,
+        n_markers = corrected_markers.len(),
+        "synchronized marker id/board correspondence"
+    );
+    DetectionResult {
+        detected_markers: corrected_markers,
+        center_frame: DetectionFrame::Image,
+        homography_frame,
+        image_size,
+        ..DetectionResult::default()
+    }
+}
 
+fn finalize_global_filter_result(
+    gray: &GrayImage,
+    corrected_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    homography_frame: DetectionFrame,
+    image_size: [u32; 2],
+) -> DetectionResult {
     let mut filter_phase = filter_with_h(corrected_markers, config);
-
     let mut final_markers = filter_phase.markers;
     let h_current = filter_phase.h_current;
     let n_before_completion = final_markers.len();
@@ -224,7 +214,6 @@ pub(super) fn run(
     if config.projective_center.enable && final_markers.len() > n_before_completion {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
-
     if let Some(mapper) = mapper {
         let dropped = drop_unmappable_markers(&mut final_markers, mapper);
         if dropped > 0 {
@@ -241,7 +230,6 @@ pub(super) fn run(
         filter_phase.ransac_stats.take(),
         config,
     );
-
     if let Some(mapper) = mapper {
         map_centers_to_image(&mut final_markers, mapper);
     }
@@ -273,6 +261,52 @@ pub(super) fn run(
         ransac: final_ransac,
         ..DetectionResult::default()
     }
+}
+
+pub(super) fn run(
+    gray: &GrayImage,
+    fit_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    let (w, h) = gray.dimensions();
+    let image_size = [w, h];
+    let homography_frame = if mapper.is_some() {
+        DetectionFrame::Working
+    } else {
+        DetectionFrame::Image
+    };
+
+    warn_center_correction_without_intrinsics(config, mapper.is_some());
+
+    let mut corrected_markers = fit_markers;
+    if config.projective_center.enable {
+        apply_projective_centers(&mut corrected_markers, config);
+    }
+
+    if config.id_correction.enable {
+        let stats =
+            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        log_id_correction_summary(&stats);
+    }
+
+    if !config.use_global_filter {
+        return finalize_no_global_filter_result(
+            corrected_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        );
+    }
+    finalize_global_filter_result(
+        gray,
+        corrected_markers,
+        config,
+        mapper,
+        homography_frame,
+        image_size,
+    )
 }
 
 #[cfg(test)]

@@ -525,6 +525,22 @@ fn scrub_inconsistent_ids(
             continue;
         }
         let is_soft_locked = is_soft_locked_assignment(&markers[i], config.soft_lock_exact_decode);
+        let soft_locked_anchor_contradiction = matches!(stage, ScrubStage::Post)
+            && is_soft_locked
+            && support_anchor == 0
+            && contradiction_anchor >= 2;
+        let soft_locked_contradiction_dominated = matches!(stage, ScrubStage::Post)
+            && is_soft_locked
+            && evidence.contradiction_edges >= 2
+            && evidence.contradiction_frac > f64::from(config.consistency_max_contradiction_frac);
+        if soft_locked_anchor_contradiction {
+            to_clear.push(i);
+            continue;
+        }
+        if soft_locked_contradiction_dominated {
+            to_clear.push(i);
+            continue;
+        }
         if should_clear_by_consistency(evidence, is_soft_locked, config) {
             to_clear.push(i);
         }
@@ -1728,6 +1744,80 @@ mod tests {
 
         // Exact decode anchor should not be overridden in mild contradiction.
         assert!(markers[0].id.is_some());
+    }
+
+    #[test]
+    fn soft_locked_decode_clears_when_contradiction_dominates_locally() {
+        let board = BoardLayout::default();
+        let board_index = BoardIndex::build(&board);
+
+        // Find a configuration where a wrong soft-locked id has exactly one
+        // support neighbor and at least two contradiction neighbors.
+        let mut case: Option<(usize, usize, usize, usize, usize)> = None;
+        'outer: for (&true_id, nbrs) in &board_index.board_neighbors {
+            if nbrs.len() < 3 {
+                continue;
+            }
+            for wrong_id in board_index.id_to_xy.keys().copied() {
+                if wrong_id == true_id {
+                    continue;
+                }
+                for &support_id in nbrs {
+                    if !board_index.are_neighbors(wrong_id, support_id) {
+                        continue;
+                    }
+                    let contradictions = nbrs
+                        .iter()
+                        .copied()
+                        .filter(|nid| {
+                            *nid != support_id && !board_index.are_neighbors(wrong_id, *nid)
+                        })
+                        .take(2)
+                        .collect::<Vec<_>>();
+                    if contradictions.len() == 2 {
+                        case = Some((
+                            true_id,
+                            wrong_id,
+                            support_id,
+                            contradictions[0],
+                            contradictions[1],
+                        ));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let (true_id, wrong_id, support_id, contra_a, contra_b) =
+            case.expect("must find contradiction-dominated soft-lock scenario");
+
+        let scale = 4.0f64;
+        let mut markers = Vec::<DetectedMarker>::new();
+        for &id in &[support_id, contra_a, contra_b] {
+            let xy = board_index.id_to_xy[&id];
+            markers.push(marker_with_id(
+                id,
+                [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale],
+                0.95,
+                0,
+                CODEBOOK_MIN_CYCLIC_DIST as u8,
+            ));
+        }
+        let txy = board_index.id_to_xy[&true_id];
+        markers.push(marker_with_id(
+            wrong_id,
+            [f64::from(txy[0]) * scale, f64::from(txy[1]) * scale],
+            0.9,
+            0,
+            CODEBOOK_MIN_CYCLIC_DIST as u8,
+        ));
+
+        let cfg = IdCorrectionConfig {
+            homography_fallback_enable: false,
+            max_iters: 2,
+            ..IdCorrectionConfig::default()
+        };
+        let _stats = verify_and_correct_ids(&mut markers, &board, &cfg);
+        assert_ne!(markers[3].id, Some(wrong_id));
     }
 
     #[test]

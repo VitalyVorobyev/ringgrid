@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
+      - name: Marker ID regression
+        run: python3 tools/ci/marker_id_regression.py
+
   synth-smoke:
     name: Synthetic Smoke Eval (ubuntu)
     runs-on: ubuntu-latest

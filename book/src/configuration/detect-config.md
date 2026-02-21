@@ -90,6 +90,7 @@ Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `Detect
 | `use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |
 | `ransac_homography` | `RansacHomographyConfig` | iters=2000, thresh=5.0 | RANSAC parameters for homography estimation. |
 | `board` | `BoardLayout` | empty | Board layout defining marker positions and geometry. |
+| `id_correction` | `IdCorrectionConfig` | enabled | Structural consistency verification/recovery of decoded IDs before global filter. |
 | `self_undistort` | `SelfUndistortConfig` | disabled | Self-undistort estimation from conic consistency of detected ring edges. |
 
 Fields marked "auto-derived" are overwritten by the constructors. If you modify `marker_scale` after construction, call `set_marker_scale_prior()` to re-derive them.

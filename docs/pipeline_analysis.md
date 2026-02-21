@@ -12,7 +12,7 @@ Detector (api.rs)
         v
 pipeline/run.rs
   +-- fit_decode::run()         -- proposals -> fit/decode -> dedup
-  +-- finalize::run()           -- projective-center -> filter -> completion -> final H
+  +-- finalize::run()           -- projective-center -> id_correction -> filter -> completion -> final H
 ```
 
 Single-pass entry points build proposals and call `run::run()` directly.
@@ -56,14 +56,28 @@ File: `detector/dedup.rs`
 - Dedup by proximity (`dedup_radius`)
 - Dedup by decoded ID (keep highest confidence)
 
-### Stage 3: Global filter
+### Stage 3: Projective center correction
+Files: `detector/center_correction.rs`, `pipeline/finalize.rs`
+
+- Correct marker centers from inner/outer ellipse pair geometry.
+- Applied once per marker: fit-decode markers before filtering, completion-added markers after completion.
+
+### Stage 4: Structural ID correction
+Files: `detector/id_correction/*.rs`, `pipeline/finalize.rs`
+
+- Runs after center correction, before global filter.
+- Verifies decoded IDs against the board's local hex-neighbor structure.
+- Clears contradictory IDs and recovers structurally supported missing IDs.
+- Runs even when `use_global_filter=false`.
+
+### Stage 5: Global filter
 Files: `detector/global_filter.rs`, `pipeline/finalize.rs`
 
 - Build board/image correspondences from decoded markers
 - Fit homography via RANSAC
 - Keep inliers only
 
-### Stage 4: Completion
+### Stage 6: Completion
 File: `detector/completion.rs`
 
 - Requires `completion.enable=true` and valid homography
@@ -71,7 +85,7 @@ File: `detector/completion.rs`
 - Apply gates: arc coverage, fit confidence, reprojection error, scale
 - Add accepted markers conservatively
 
-### Stage 5: Final H refit
+### Stage 7: Final H refit
 File: `pipeline/finalize.rs`
 
 - Refit homography from final marker set
@@ -100,7 +114,11 @@ Public result contract:
 
 ## 6. Short-circuit Behavior
 
-When `use_global_filter=false`, finalization short-circuits after projective-center correction:
+When `use_global_filter=false`, finalization still runs:
+- projective-center correction
+- structural `id_correction`
+
+Then it short-circuits and skips homography-dependent stages:
 - no homography-based completion
 - no final homography refit
 

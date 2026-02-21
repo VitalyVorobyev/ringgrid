@@ -9,7 +9,7 @@
 | Field | Type | Description |
 |-------|------|-------------|
 | `detected_markers` | `Vec<DetectedMarker>` | All detected markers in the image. See [DetectedMarker](detected-marker.md). |
-| `center_frame` | `DetectionFrame` | Coordinate frame of each marker's `center` field (`Image` or `Working`). |
+| `center_frame` | `DetectionFrame` | Coordinate frame of each marker's `center` field. Current contract: always `Image`. |
 | `homography_frame` | `DetectionFrame` | Coordinate frame of the `homography` matrix (`Image` or `Working`). |
 | `image_size` | `[u32; 2]` | Image dimensions as `[width, height]`. |
 | `homography` | `Option<[[f64; 3]; 3]>` | 3x3 row-major board-to-output-frame homography. Present when 4 or more markers were decoded. |

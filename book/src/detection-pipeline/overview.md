@@ -1,10 +1,10 @@
 # Pipeline Overview
 
-The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs, and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction applied once per marker.
+The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs, and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction and structural ID correction in finalize.
 
 ## Two-Phase Architecture
 
-### Phase 1: Fit-Decode (Stages 1--6)
+### Phase 1: Fit-Decode
 
 Orchestrated by `pipeline/fit_decode.rs`, this phase takes raw proposals and produces individually decoded markers:
 
@@ -19,25 +19,26 @@ Orchestrated by `pipeline/fit_decode.rs`, this phase takes raw proposals and pro
 
 Stages 2--5 are executed per-proposal inside `process_candidate()`. A proposal that fails at any stage is rejected with a diagnostic reason string. Successfully built markers are collected, then deduplicated in stage 6.
 
-### Phase 2: Finalize (Stages 7--10)
+### Phase 2: Finalize
 
 Orchestrated by `pipeline/finalize.rs`, this phase applies global geometric reasoning to improve and extend the detection set:
 
-| Stage | Name | Description |
+| Order | Name | Description |
 |-------|------|-------------|
-| 7 | [Projective Center](projective-center.md) | Correct fit-decode marker centers (once per marker) |
-| 8 | [Global Filter](projective-center.md#global-filter) | RANSAC homography from decoded markers with known board positions |
-| 9 | [Completion](completion.md) | Conservative fits at missing H-projected IDs (+ projective center for new markers) |
-| 10 | [Final H Refit](completion.md#final-homography-refit) | Refit homography from all corrected centers |
+| 1 | [Projective Center](projective-center.md) | Correct fit-decode marker centers (once per marker) |
+| 2 | [ID Correction](id-correction.md) | Structural consistency scrub/recovery of decoded IDs |
+| 3 | [Global Filter](projective-center.md#global-filter) | Optional RANSAC homography from decoded markers with known board positions |
+| 4 | [Completion](completion.md) | Optional conservative fits at missing H-projected IDs (+ projective center for new markers) |
+| 5 | [Final H Refit](completion.md#final-homography-refit) | Optional refit homography from all corrected centers |
 
-When `use_global_filter` is `false`, stages 7--10 are short-circuited: the finalize phase applies projective center correction (if enabled) and returns the fit-decode markers directly, skipping the homography-dependent stages entirely.
+When `use_global_filter` is `false`, finalize still runs projective center + ID correction, then returns immediately, skipping the homography-dependent stages (global filter/completion/final refit).
 
 ## Projective Center Correction
 
 Projective center correction recovers the true projected center of a ring marker from its inner and outer ellipse pair, compensating for the perspective bias inherent in ellipse center estimation. It is applied **once per marker** at two points in the pipeline:
 
-1. **Before global filter (stage 7):** Corrects all fit-decode markers so that the homography RANSAC in stage 8 operates on unbiased centers.
-2. **After completion (stage 9):** Newly added completion markers receive their own correction. Only the slice of markers added since the last correction is processed.
+1. **Before global filter:** Corrects all fit-decode markers so that downstream geometric stages operate on unbiased centers.
+2. **After completion:** Newly added completion markers receive their own correction. Only the slice of markers added since the last correction is processed.
 
 Each marker is corrected exactly once. `apply_projective_centers()` from `detector/center_correction.rs` requires both inner and outer ellipses. Markers without a valid inner ellipse are skipped.
 

@@ -9,6 +9,7 @@
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `Option<usize>` | Codebook index (0--892). `None` if decoding was rejected due to insufficient confidence or Hamming distance. |
+| `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters (`BoardLayout::xy_mm` semantics). Present only when `id` is valid for the active board layout. |
 | `confidence` | `f32` | Combined detection and decode confidence in `[0, 1]`. |
 | `center` | `[f64; 2]` | Marker center in raw image pixel coordinates `[x, y]`. |
 | `center_mapped` | `Option<[f64; 2]>` | Marker center in working-frame coordinates. Present only when a `PixelMapper` is active. |
@@ -40,13 +41,22 @@ When no mapper is active, the ellipse coordinates are in image space. When a map
 
 ## Markers without decoded IDs
 
-Markers with `id: None` were detected (ellipse fitted successfully) but failed the codebook matching step. Possible reasons include:
+Markers with `id: None` were detected (ellipse fitted successfully) but failed the codebook matching or structural verification stage. Possible reasons include:
 
 - Hamming distance to the nearest codeword exceeded the threshold.
 - Decode confidence fell below the minimum.
+- ID contradicted board-local structural consistency in `id_correction`.
 - Insufficient contrast in the code band.
 
 These markers still have valid `center`, `ellipse_outer`, and `fit` fields. They can be useful for distortion estimation or as candidate positions, but they do not contribute to the homography fit.
+
+## ID/board consistency contract
+
+Final emitted markers enforce strict ID/layout consistency:
+
+- if `id` is `Some(i)`, then `board_xy_mm` is present and equals the active board layout coordinate of `i`
+- if `id` is `None`, then `board_xy_mm` is omitted
+- if a decoded ID is not found in the active board layout, it is cleared before output (`id=None`, `board_xy_mm=None`)
 
 ## Serialization
 

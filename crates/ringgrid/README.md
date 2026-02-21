@@ -10,9 +10,15 @@ homography. No OpenCV dependency.
 
 - **Subpixel edge detection** — gradient-based radial sampling produces edge points fed to a direct ellipse fit, yielding subpixel-accurate marker localization
 - **Projective center correction** — recovers the true projected center from inner/outer conic pencil geometry, correcting the systematic bias of ellipse-fit centers
+- **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **893 unique IDs** — 16-sector binary codebook with minimum cyclic Hamming distance of 5, enabling reliable identification under noise and partial occlusion
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
+
+## Pipeline Stages
+
+Named stage order:
+proposal -> local fit/decode -> dedup -> projective center -> `id_correction` -> optional global filter -> optional completion -> final homography refit.
 
 ## Installation
 

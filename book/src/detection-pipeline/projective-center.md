@@ -14,8 +14,8 @@ Projective center correction is applied **once per marker** at two points in the
 
 | When | Which markers |
 |---|---|
-| Before global filter (stage 7) | All markers from fit-decode stage |
-| After completion (stage 9) | Completion-added markers only |
+| Before global filter | All markers from fit-decode stage |
+| After completion | Completion-added markers only |
 
 Each marker is corrected exactly once — fit-decode markers before the global filter, and completion markers after they are added.
 
@@ -48,7 +48,7 @@ The global filter requires:
 - At least 4 decoded markers with known board positions (from `BoardLayout`)
 - `use_global_filter = true` in `DetectConfig`
 
-When fewer than 4 decoded markers are available, the global filter is skipped and stages 8–10 do not run.
+When fewer than 4 decoded markers are available, the global filter is skipped and homography-dependent finalize stages do not run.
 
 ### Algorithm
 
@@ -82,6 +82,6 @@ The global filter produces:
 
 ### Short-Circuit
 
-When `use_global_filter = false`, the entire finalization phase (stages 7–10) is skipped. The detector returns the markers from the fit-decode phase without any homography-based post-processing.
+When `use_global_filter = false`, finalization still applies projective center correction and structural ID correction, then returns without homography-based post-processing (no global filter/completion/final refit).
 
 **Source**: `detector/center_correction.rs`, `detector/global_filter.rs`, `homography/core.rs`

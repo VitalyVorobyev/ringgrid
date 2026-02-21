@@ -5,7 +5,7 @@ use crate::detector::marker_build::DetectedMarker;
 
 use super::index::{dist2, BoardIndex};
 use super::math::{affine_to_board, fit_local_affine};
-use super::Trust;
+use super::types::Trust;
 
 /// Detailed voting outcome for a query marker.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,3 +1,15 @@
+"""Public Python API for the ringgrid detector.
+
+This module exposes a native detector backed by Rust (`PyO3` extension) and a
+typed Python surface that feels idiomatic in notebooks and applications.
+
+Typical flow:
+1. Build/load a :class:`BoardLayout`.
+2. Construct :class:`DetectConfig` and :class:`Detector`.
+3. Call :meth:`Detector.detect` (or :meth:`Detector.detect_with_mapper`).
+4. Consume :class:`DetectionResult` in memory, JSON, or via plotting.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -5,7 +17,7 @@ from enum import Enum
 import copy
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -95,7 +107,12 @@ class BoardMarker:
 
 @dataclass(slots=True)
 class BoardLayout:
-    """Board layout specification and generated marker list."""
+    """Board layout specification and generated marker list.
+
+    The board object carries both:
+    - the compact board spec (`schema`, `rows`, `pitch_mm`, radii), and
+    - the generated marker list (`markers`) with board coordinates.
+    """
 
     schema: str
     name: str
@@ -109,18 +126,21 @@ class BoardLayout:
 
     @classmethod
     def default(cls) -> "BoardLayout":
+        """Construct the built-in default board layout."""
         spec_json = _default_board_spec_json()
         snapshot = json.loads(_board_snapshot_json(spec_json))
         return cls._from_snapshot(snapshot, spec_json)
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> "BoardLayout":
+        """Load a board layout from a `ringgrid.target.v3` JSON file."""
         spec_json = _load_board_spec_json(_coerce_path(path))
         snapshot = json.loads(_board_snapshot_json(spec_json))
         return cls._from_snapshot(snapshot, spec_json)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BoardLayout":
+        """Construct a board layout from a board-spec mapping."""
         data = _require_mapping(data, name="data")
         spec = {
             "schema": str(data["schema"]),
@@ -151,6 +171,7 @@ class BoardLayout:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the full board payload including generated marker list."""
         return {
             "schema": self.schema,
             "name": self.name,
@@ -163,6 +184,7 @@ class BoardLayout:
         }
 
     def to_spec_dict(self) -> dict[str, Any]:
+        """Serialize only the board spec fields (no expanded marker list)."""
         return {
             "schema": self.schema,
             "name": self.name,
@@ -183,6 +205,7 @@ class MarkerScalePrior:
 
     @classmethod
     def from_nominal_diameter_px(cls, diameter_px: float) -> "MarkerScalePrior":
+        """Build a fixed-size prior from one diameter hint."""
         d = float(diameter_px)
         return cls(diameter_min_px=d, diameter_max_px=d)
 
@@ -565,7 +588,11 @@ class SelfUndistortResult:
 
 @dataclass(slots=True)
 class DetectionResult:
-    """Full detector output for one image."""
+    """Full detector output for one image.
+
+    All geometry and quality fields match the Rust `DetectionResult` schema.
+    Use :meth:`to_dict`, :meth:`to_json`, and :meth:`plot` for downstream tasks.
+    """
 
     detected_markers: list[DetectedMarker]
     center_frame: DetectionFrame
@@ -592,6 +619,7 @@ class DetectionResult:
 
     @classmethod
     def from_json(cls, path_or_json: str | Path) -> "DetectionResult":
+        """Load from JSON text or a JSON file path."""
         return cls.from_dict(_json_loads_path_or_text(path_or_json))
 
     def to_dict(self) -> dict[str, Any]:
@@ -611,6 +639,7 @@ class DetectionResult:
         return out
 
     def to_json(self, path: str | Path | None = None) -> str | None:
+        """Serialize to pretty JSON text or write JSON to `path`."""
         text = json.dumps(self.to_dict(), indent=2)
         if path is None:
             return text
@@ -628,6 +657,7 @@ class DetectionResult:
         show_confidence: bool = True,
         alpha: float = 0.8,
     ) -> None:
+        """Plot this result over `image` using :mod:`ringgrid.viz`."""
         from .viz import plot_detection
 
         plot_detection(
@@ -643,7 +673,21 @@ class DetectionResult:
 
 
 class DetectConfig:
-    """High-level detector configuration with curated properties and dict escape hatch."""
+    """High-level detector configuration with curated properties and dict escape hatch.
+
+    Parameters
+    ----------
+    board:
+        Board layout used to derive default scale-coupled settings.
+    data:
+        Optional config overlay mapping. Any omitted fields keep defaults.
+
+    Notes
+    -----
+    For advanced tuning beyond curated properties, use:
+    - :meth:`to_dict` to inspect the full resolved config
+    - :meth:`update_from_dict` to patch nested settings
+    """
 
     def __init__(self, board: BoardLayout, data: Mapping[str, Any] | None = None) -> None:
         self._board = board
@@ -652,12 +696,15 @@ class DetectConfig:
 
     @classmethod
     def from_dict(cls, board: BoardLayout, data: Mapping[str, Any]) -> "DetectConfig":
+        """Construct config from an overlay mapping."""
         return cls(board=board, data=data)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a deep copy of the fully resolved config dictionary."""
         return _deepcopy_jsonable(self._resolved)
 
     def update_from_dict(self, data: Mapping[str, Any]) -> None:
+        """Apply an overlay mapping onto the current resolved config."""
         data = _require_mapping(data, name="data")
         updated = _update_config_json(
             self._board._spec_json,
@@ -792,6 +839,12 @@ class Detector:
         return self._config
 
     def detect(self, image: np.ndarray | str | Path) -> DetectionResult:
+        """Run detection on a NumPy image or image path.
+
+        Accepted array inputs:
+        - grayscale: `(H, W)`, `dtype=uint8`
+        - RGB/RGBA: `(H, W, 3|4)`, `dtype=uint8`
+        """
         result_json = self._detect_impl(image=image, mapper_payload=None)
         return DetectionResult.from_dict(json.loads(result_json))
 
@@ -800,6 +853,7 @@ class Detector:
         image: np.ndarray | str | Path,
         mapper: CameraModel | DivisionModel,
     ) -> DetectionResult:
+        """Run two-pass detection with an explicit pixel mapper."""
         if isinstance(mapper, CameraModel):
             payload = mapper._to_mapper_payload()
         elif isinstance(mapper, DivisionModel):

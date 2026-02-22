@@ -1,4 +1,8 @@
-"""Visualization helpers for ringgrid detections."""
+"""Visualization helpers for ringgrid detections.
+
+This module is imported lazily from :meth:`ringgrid.DetectionResult.plot`.
+It requires `matplotlib` (install with `ringgrid[viz]`).
+"""
 
 from __future__ import annotations
 
@@ -124,6 +128,12 @@ def plot_detection(
         Optional marker id filter.
     zoom:
         Optional zoom factor (used when `marker_id` is set).
+    show_ellipses:
+        Draw fitted outer/inner ellipses when available.
+    show_confidence:
+        Color marker centers by confidence and include confidence in labels.
+    alpha:
+        Overlay alpha for points/ellipses.
     """
 
     plt = _load_matplotlib(out)

@@ -1,6 +1,7 @@
 """ringgrid Python bindings.
 
-High-level API for dense coded ring marker detection.
+High-level, typed API for dense coded ring marker detection backed by the
+native Rust detector.
 """
 
 from ._api import (

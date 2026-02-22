@@ -58,6 +58,8 @@ mod marker;
 mod pipeline;
 mod pixelmap;
 mod ring;
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 // ── Public API ──────────────────────────────────────────────────────────
 

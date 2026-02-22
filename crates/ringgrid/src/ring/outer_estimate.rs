@@ -347,22 +347,7 @@ mod tests {
     use image::{GrayImage, Luma};
 
     fn blur_gray(img: &GrayImage, sigma: f32) -> GrayImage {
-        let (w, h) = img.dimensions();
-        let mut f = image::ImageBuffer::<Luma<f32>, Vec<f32>>::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                f.put_pixel(x, y, Luma([img.get_pixel(x, y)[0] as f32 / 255.0]));
-            }
-        }
-        let blurred = imageproc::filter::gaussian_blur_f32(&f, sigma);
-        let mut out = GrayImage::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let v = blurred.get_pixel(x, y)[0].clamp(0.0, 1.0);
-                out.put_pixel(x, y, Luma([(v * 255.0).round() as u8]));
-            }
-        }
-        out
+        crate::test_utils::blur_gray(img, sigma)
     }
 
     #[test]

@@ -140,6 +140,10 @@ mod pixelmap {
     }
 }
 
+#[cfg(test)]
+#[path = "../src/test_utils.rs"]
+mod test_utils;
+
 #[allow(dead_code, unused_imports)]
 #[path = "../src/conic/mod.rs"]
 mod conic_impl;

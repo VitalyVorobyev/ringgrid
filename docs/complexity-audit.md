@@ -28,8 +28,8 @@ Total config parameters counted: **72 across all nested structs** in `DetectConf
 | A4 | `detector/marker_build.rs:191-195`, `detector/completion.rs:133-137`, `detector/outer_fit/scoring.rs:13-18` | `arc_cov * inlier_ratio` formula duplicated three times | Medium | **RESOLVED** (pending commit) |
 | A5 | `detector/config.rs:567-569` (`min_semi_axis`, `max_semi_axis`) | Derived fields exposed as writable public config | Medium | **RESOLVED** (pending commit) |
 | A6 | `detector/id_correction/local.rs:68-79`, `detector/id_correction/diagnostics.rs:69-80` | `effective_min_votes` logic duplicated verbatim | Low | **RESOLVED** (pending commit) |
-| A7 | `ring/inner_estimate.rs:264`, `ring/outer_estimate.rs:329`, `ring/radial_estimator.rs:168` | `blur_gray` test helper copied three times | Low |
-| A8 | `pipeline/fit_decode.rs:215`, `detector/outer_fit/mod.rs:325`, `detector/outer_fit/sampling.rs:207`, `detector/inner_fit.rs:422`, `api.rs:206`, `pipeline/fit_decode.rs:215` | `draw_ring_image` test helper copied six times | Low |
+| A7 | `ring/inner_estimate.rs:264`, `ring/outer_estimate.rs:329`, `ring/radial_estimator.rs:168` | `blur_gray` test helper copied three times | Low | **RESOLVED** (pending commit) |
+| A8 | `pipeline/fit_decode.rs:215`, `detector/outer_fit/mod.rs:325`, `detector/outer_fit/sampling.rs:207`, `detector/inner_fit.rs:422`, `api.rs:206`, `pipeline/fit_decode.rs:215` | `draw_ring_image` test helper copied six times | Low | **RESOLVED** (pending commit) |
 | A9 | `lib.rs:95-96` | `codebook` and `codec` raw modules publicly re-exported | Low | **RESOLVED** (pending commit) |
 | A10 | `homography/utils.rs` | `refit_homography` and `refit_homography_matrix` are thin wrappers around each other | Low | **RESOLVED** (pending commit) |
 | C1 | `detector/config.rs:562,582-586` | `CircleRefinementMethod` enum and `ProjectiveCenterParams.enable` are redundant | Medium | **RESOLVED** (pending commit) |

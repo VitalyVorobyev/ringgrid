@@ -210,7 +210,6 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::Luma;
 
     fn draw_ring_image(
         w: u32,
@@ -219,21 +218,7 @@ mod tests {
         outer_radius: f32,
         inner_radius: f32,
     ) -> GrayImage {
-        let mut img = GrayImage::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f32 - center[0];
-                let dy = y as f32 - center[1];
-                let d = (dx * dx + dy * dy).sqrt();
-                let pix = if d >= inner_radius && d <= outer_radius {
-                    24u8
-                } else {
-                    230u8
-                };
-                img.put_pixel(x, y, Luma([pix]));
-            }
-        }
-        img
+        crate::test_utils::draw_ring_image(w, h, center, outer_radius, inner_radius, 24, 230)
     }
 
     fn nearest_marker(markers: &[DetectedMarker], center: [f64; 2]) -> Option<&DetectedMarker> {

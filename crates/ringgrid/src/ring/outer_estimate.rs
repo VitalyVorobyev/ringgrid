@@ -24,6 +24,21 @@ pub enum OuterStatus {
     Failed,
 }
 
+/// Typed failure reason for outer-edge estimation.
+///
+/// Replaces the old `reason: Option<String>` field so callers receive
+/// structured data instead of a formatted string to be parsed back.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OuterEstimateFailure {
+    /// The radial search window is degenerate (window width ≤ 0).
+    InvalidSearchWindow,
+    /// Fewer than `min_theta_coverage` fraction of rays produced a valid sample.
+    InsufficientThetaCoverage { observed: f32, min_required: f32 },
+    /// No polarity produced a hypothesis that passed quality gates.
+    NoPolarityCandidates,
+}
+
 /// Candidate outer-radius hypothesis from aggregated radial response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterHypothesis {
@@ -48,8 +63,8 @@ pub struct OuterEstimate {
     pub hypotheses: Vec<OuterHypothesis>,
     /// Final estimator status.
     pub status: OuterStatus,
-    /// Optional human-readable reject/failure reason.
-    pub reason: Option<String>,
+    /// Typed failure reason (present when `status` is `Failed`).
+    pub failure: Option<OuterEstimateFailure>,
     /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
     /// Optional sampled radii corresponding to `radial_response_agg`.
@@ -57,22 +72,38 @@ pub struct OuterEstimate {
 }
 
 /// Configuration for outer-radius estimation around a center prior.
+///
+/// The number of theta samples (rays) is **not** stored here; it is passed
+/// explicitly to `estimate_outer_from_prior_with_mapper` so the caller can
+/// synchronise it with the edge-sampling resolution without a silent override.
+/// Set [`crate::EdgeSampleConfig::n_rays`] to control angular density for both stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
     pub search_halfwidth_px: f32,
     /// Number of radial samples used to build the aggregated response.
+    ///
+    /// Same convention as [`crate::MarkerSpec::radial_samples`], calibrated
+    /// independently for the outer estimation stage.
     pub radial_samples: usize,
-    /// Number of theta samples (rays).
-    pub theta_samples: usize,
     /// Aggregation method across theta.
+    ///
+    /// Same convention as [`crate::MarkerSpec::aggregator`], applied to the outer
+    /// radial profile.
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
     pub grad_polarity: GradPolarity,
     /// Minimum fraction of theta samples required for an estimate.
+    ///
+    /// Same convention as [`crate::MarkerSpec::min_theta_coverage`], calibrated
+    /// independently for the outer estimation stage.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree with the selected peak.
+    ///
+    /// Same convention as [`crate::MarkerSpec::min_theta_consistency`]; the outer
+    /// estimator uses a stricter default (0.35) than the inner estimator (0.25)
+    /// because the outer edge is anchored to a scale prior.
     pub min_theta_consistency: f32,
     /// If set, emit up to two hypotheses (best + runner-up) when runner-up is comparable.
     pub allow_two_hypotheses: bool,
@@ -87,7 +118,6 @@ impl Default for OuterEstimationConfig {
         Self {
             search_halfwidth_px: 4.0,
             radial_samples: 64,
-            theta_samples: 48,
             aggregator: AngularAggregator::Median,
             grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.6,
@@ -96,6 +126,24 @@ impl Default for OuterEstimationConfig {
             second_peak_min_rel: 0.85,
             refine_halfwidth_px: 1.0,
         }
+    }
+}
+
+fn failed_outer_estimate(
+    r_outer_expected_px: f32,
+    search_window_px: [f32; 2],
+    failure: OuterEstimateFailure,
+    r_samples: Option<Vec<f32>>,
+) -> OuterEstimate {
+    OuterEstimate {
+        r_outer_expected_px,
+        search_window_px,
+        polarity: None,
+        hypotheses: Vec::new(),
+        status: OuterStatus::Failed,
+        failure: Some(failure),
+        radial_response_agg: None,
+        r_samples,
     }
 }
 
@@ -114,12 +162,17 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
 
 /// Estimate outer radius around a center prior using radial derivatives.
 ///
+/// `theta_samples` sets the number of angular rays. Pass
+/// `edge_sample.n_rays` to keep the outer-estimation and edge-sampling
+/// resolutions in sync without a silent config override.
+///
 /// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn estimate_outer_from_prior_with_mapper(
     gray: &GrayImage,
     center_prior: [f32; 2],
     r_outer_expected_px: f32,
     cfg: &OuterEstimationConfig,
+    theta_samples: usize,
     mapper: Option<&dyn PixelMapper>,
     store_response: bool,
 ) -> OuterEstimate {
@@ -128,20 +181,16 @@ pub fn estimate_outer_from_prior_with_mapper(
     let mut window = [r_expected - hw, r_expected + hw];
     window[0] = window[0].max(1.0);
     if window[1] <= window[0] + 1e-3 {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
-            radial_response_agg: None,
-            r_samples: None,
-        };
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InvalidSearchWindow,
+            None,
+        );
     }
 
     let n_r = cfg.radial_samples.max(7);
-    let n_t = cfg.theta_samples.max(8);
+    let n_t = theta_samples.max(8);
     let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
         GradPolarity::DarkToLight => vec![Polarity::Pos],
         GradPolarity::LightToDark => vec![Polarity::Neg],
@@ -150,16 +199,12 @@ pub fn estimate_outer_from_prior_with_mapper(
     let track_pos = polarity_candidates.contains(&Polarity::Pos);
     let track_neg = polarity_candidates.contains(&Polarity::Neg);
     let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
-            radial_response_agg: None,
-            r_samples: None,
-        };
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InvalidSearchWindow,
+            None,
+        );
     };
     let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
@@ -186,23 +231,15 @@ pub fn estimate_outer_from_prior_with_mapper(
 
     let coverage = scan.coverage();
     if scan.n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            reason: Some(format!(
-                "insufficient_theta_coverage({:.2}<{:.2})",
-                coverage, cfg.min_theta_coverage
-            )),
-            radial_response_agg: None,
-            r_samples: if store_response {
-                Some(scan.grid.r_samples.clone())
-            } else {
-                None
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InsufficientThetaCoverage {
+                observed: coverage,
+                min_required: cfg.min_theta_coverage,
             },
-        };
+            store_response.then(|| scan.grid.r_samples.clone()),
+        );
     }
 
     let agg_resp = scan.aggregate_response(&cfg.aggregator);
@@ -284,7 +321,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             polarity: Some(pol),
             hypotheses,
             status: OuterStatus::Ok,
-            reason: None,
+            failure: None,
             radial_response_agg: if store_response {
                 Some(agg_resp.clone())
             } else {
@@ -305,19 +342,13 @@ pub fn estimate_outer_from_prior_with_mapper(
         }
     }
 
-    best.map(|(e, _)| e).unwrap_or(OuterEstimate {
-        r_outer_expected_px: r_expected,
-        search_window_px: window,
-        polarity: None,
-        hypotheses: Vec::new(),
-        status: OuterStatus::Failed,
-        reason: Some("no_polarity_candidates".to_string()),
-        radial_response_agg: None,
-        r_samples: if store_response {
-            Some(scan.grid.r_samples.clone())
-        } else {
-            None
-        },
+    best.map(|(e, _)| e).unwrap_or_else(|| {
+        failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::NoPolarityCandidates,
+            store_response.then(|| scan.grid.r_samples.clone()),
+        )
     })
 }
 
@@ -327,22 +358,7 @@ mod tests {
     use image::{GrayImage, Luma};
 
     fn blur_gray(img: &GrayImage, sigma: f32) -> GrayImage {
-        let (w, h) = img.dimensions();
-        let mut f = image::ImageBuffer::<Luma<f32>, Vec<f32>>::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                f.put_pixel(x, y, Luma([img.get_pixel(x, y)[0] as f32 / 255.0]));
-            }
-        }
-        let blurred = imageproc::filter::gaussian_blur_f32(&f, sigma);
-        let mut out = GrayImage::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let v = blurred.get_pixel(x, y)[0].clamp(0.0, 1.0);
-                out.put_pixel(x, y, Luma([(v * 255.0).round() as u8]));
-            }
-        }
-        out
+        crate::test_utils::blur_gray(img, sigma)
     }
 
     #[test]
@@ -383,7 +399,6 @@ mod tests {
         let cfg = OuterEstimationConfig {
             search_halfwidth_px: 4.0,
             radial_samples: 64,
-            theta_samples: 64,
             aggregator: AngularAggregator::Median,
             grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.5,
@@ -394,12 +409,13 @@ mod tests {
         };
 
         // If we search around r_outer, we should land near r_outer, not the stronger inner edge.
-        let est = estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_outer, &cfg, None, true);
+        let est =
+            estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_outer, &cfg, 64, None, true);
         assert_eq!(
             est.status,
             OuterStatus::Ok,
             "outer estimate failed: {:?}",
-            est.reason
+            est.failure
         );
         assert_eq!(est.polarity, Some(Polarity::Pos));
         let r_found = est.hypotheses[0].r_outer_px;

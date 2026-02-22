@@ -1,9 +1,10 @@
 use image::GrayImage;
 
 use super::{
-    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
-    mean_reproj_error_px, refit_homography_matrix, verify_and_correct_ids,
-    warn_center_correction_without_intrinsics, CompletionStats, DetectConfig,
+    annotate_neighbor_radius_ratios, apply_projective_centers, complete_with_h, compute_h_stats,
+    global_filter, matrix3_to_array, mean_reproj_error_px, refit_homography,
+    try_recover_inner_as_outer, verify_and_correct_ids, warn_center_correction_without_intrinsics,
+    CompletionStats, DetectConfig,
 };
 use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
@@ -62,9 +63,8 @@ fn phase_final_h(
     config: &DetectConfig,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let final_h_matrix = if final_markers.len() >= 10 {
-        let h_refit =
-            refit_homography_matrix(final_markers, &config.ransac_homography, &config.board)
-                .map(|(h, _)| h);
+        let h_refit = refit_homography(final_markers, &config.ransac_homography, &config.board)
+            .map(|(h, _)| h);
         match (h_current, h_refit) {
             (Some(h_cur), Some(h_new)) => {
                 let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.board);
@@ -141,6 +141,24 @@ fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &Boar
     cleared_invalid_ids
 }
 
+/// Runs `annotate_neighbor_radius_ratios`, then optionally runs
+/// `try_recover_inner_as_outer` (+ re-sync + re-annotate) when recovery is
+/// enabled. Called identically by both finalize paths, eliminating duplication.
+fn apply_post_filter_fixup(
+    gray: &GrayImage,
+    markers: &mut [DetectedMarker],
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) {
+    let k = config.inner_as_outer_recovery.k_neighbors;
+    annotate_neighbor_radius_ratios(markers, k);
+    if config.inner_as_outer_recovery.enable {
+        try_recover_inner_as_outer(gray, markers, config, mapper);
+        sync_marker_board_correspondence(markers, &config.board);
+        annotate_neighbor_radius_ratios(markers, k);
+    }
+}
+
 fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
     tracing::info!(
         n_ids_corrected = stats.n_ids_corrected,
@@ -164,6 +182,7 @@ fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectio
 }
 
 fn finalize_no_global_filter_result(
+    gray: &GrayImage,
     mut corrected_markers: Vec<DetectedMarker>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
@@ -187,6 +206,7 @@ fn finalize_no_global_filter_result(
         n_markers = corrected_markers.len(),
         "synchronized marker id/board correspondence"
     );
+    apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
     DetectionResult {
         detected_markers: corrected_markers,
         center_frame: DetectionFrame::Image,
@@ -211,7 +231,9 @@ fn finalize_global_filter_result(
     let completion_stats =
         phase_completion(gray, &mut final_markers, h_current.as_ref(), config, mapper);
 
-    if config.projective_center.enable && final_markers.len() > n_before_completion {
+    if config.circle_refinement.uses_projective_center()
+        && final_markers.len() > n_before_completion
+    {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
     if let Some(mapper) = mapper {
@@ -252,6 +274,8 @@ fn finalize_global_filter_result(
         completion_stats.n_failed_gate
     );
 
+    apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
+
     DetectionResult {
         detected_markers: final_markers,
         center_frame: DetectionFrame::Image,
@@ -280,7 +304,7 @@ pub(super) fn run(
     warn_center_correction_without_intrinsics(config, mapper.is_some());
 
     let mut corrected_markers = fit_markers;
-    if config.projective_center.enable {
+    if config.circle_refinement.uses_projective_center() {
         apply_projective_centers(&mut corrected_markers, config);
     }
 
@@ -292,6 +316,7 @@ pub(super) fn run(
 
     if !config.use_global_filter {
         return finalize_no_global_filter_result(
+            gray,
             corrected_markers,
             config,
             mapper,
@@ -361,10 +386,7 @@ mod tests {
     fn no_global_filter_config() -> DetectConfig {
         DetectConfig {
             use_global_filter: false,
-            projective_center: crate::ProjectiveCenterParams {
-                enable: false,
-                ..crate::ProjectiveCenterParams::default()
-            },
+            circle_refinement: crate::CircleRefinementMethod::None,
             ..DetectConfig::default()
         }
     }

@@ -87,8 +87,6 @@ impl Default for CompletionParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ProjectiveCenterParams {
-    /// Enable projective unbiased center estimation.
-    pub enable: bool,
     /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
@@ -110,7 +108,6 @@ pub struct ProjectiveCenterParams {
 impl Default for ProjectiveCenterParams {
     fn default() -> Self {
         Self {
-            enable: true,
             use_expected_ratio: true,
             ratio_penalty_weight: 1.0,
             max_center_shift_px: None,
@@ -429,6 +426,18 @@ pub struct IdCorrectionConfig {
     pub seed_min_decode_confidence: f32,
 }
 
+impl IdCorrectionConfig {
+    /// Returns the minimum vote threshold appropriate for a marker at `i`:
+    /// `min_votes_recover` if the marker has no current ID, `min_votes` otherwise.
+    pub(crate) fn effective_min_votes(&self, has_id: bool) -> usize {
+        if has_id {
+            self.min_votes
+        } else {
+            self.min_votes_recover
+        }
+    }
+}
+
 impl Default for IdCorrectionConfig {
     fn default() -> Self {
         Self {
@@ -449,6 +458,78 @@ impl Default for IdCorrectionConfig {
             max_iters: 5,
             remove_unverified: false,
             seed_min_decode_confidence: 0.7,
+        }
+    }
+}
+
+/// Configuration for automatic recovery of markers where the inner edge was
+/// incorrectly fitted as the outer ellipse.
+///
+/// After all markers are finalized, each marker's outer radius is compared to
+/// the median outer radius of its k nearest neighbors. A ratio well below 1.0
+/// (see `ratio_threshold`) indicates the outer fit locked onto the inner ring
+/// edge. When enabled, the detector re-attempts the outer fit for flagged
+/// markers using the neighbor median radius as the corrected expected radius.
+///
+/// The recovery re-fit uses a tight 4 px search window (to exclude the inner
+/// ring) combined with relaxed quality gates (`min_theta_consistency`,
+/// `min_ring_depth`, `refine_halfwidth_px`) suited to the blurry/soft edges
+/// that typically cause inner-as-outer confusion. A post-fit size gate
+/// (`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto
+/// the inner ring even under the relaxed thresholds.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InnerAsOuterRecoveryConfig {
+    /// Enable inner-as-outer recovery (default: `true`).
+    pub enable: bool,
+    /// Neighbor-radius ratio below which a marker is considered anomalous and
+    /// a re-fit is attempted.
+    ///
+    /// Default: `0.75`. Markers with `own_radius / neighbor_median < 0.75` are
+    /// flagged. A value of ~0.64 is expected for an inner-as-outer confusion
+    /// (inner radius ≈ 0.49 × outer radius → ratio = 0.49 / 0.77 ≈ 0.64 when
+    /// inner accounts for the inner/outer ratio of the ring marker geometry).
+    pub ratio_threshold: f32,
+    /// Number of nearest neighbors used to compute the median outer radius.
+    ///
+    /// Default: `6` (matching the hex-lattice neighbor count). Self is always
+    /// excluded by passing k+1 to the neighbor function.
+    pub k_neighbors: usize,
+    /// Minimum fraction of angular samples (rays) whose radial peak must agree
+    /// with the selected hypothesis radius during the recovery re-estimation.
+    ///
+    /// Lower than the production default (0.35) because blurry outer edges
+    /// scatter per-θ peaks more widely. Default: `0.18`.
+    pub min_theta_consistency: f32,
+    /// Minimum fraction of angular rays with valid (in-bounds) samples during
+    /// the recovery re-estimation. Default: `0.40`.
+    pub min_theta_coverage: f32,
+    /// Minimum signed intensity depth at a candidate outer edge point during
+    /// recovery edge collection. Lower than production (0.05) to tolerate
+    /// blur-smeared intensity gradients. Default: `0.02`.
+    pub min_ring_depth: f32,
+    /// Per-ray radius refinement half-width (pixels) during recovery. Wider
+    /// than production (1.0 px) to catch the flat-topped derivative peaks that
+    /// occur under blur. Default: `2.5`.
+    pub refine_halfwidth_px: f32,
+    /// Maximum allowed fractional deviation of the recovered outer radius from
+    /// the neighbor-median corrected radius: `|r_recovered - r_corrected| /
+    /// r_corrected ≤ size_gate_tolerance`. Prevents the relaxed estimator from
+    /// accepting a re-locked inner-ring fit. Default: `0.25`.
+    pub size_gate_tolerance: f32,
+}
+
+impl Default for InnerAsOuterRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            ratio_threshold: 0.75,
+            k_neighbors: 6,
+            min_theta_consistency: 0.18,
+            min_theta_coverage: 0.40,
+            min_ring_depth: 0.02,
+            refine_halfwidth_px: 2.5,
+            size_gate_tolerance: 0.25,
         }
     }
 }
@@ -492,9 +573,11 @@ pub struct DetectConfig {
     /// Homography-guided completion controls.
     pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
-    pub min_semi_axis: f64,
+    /// Derived from `marker_scale` by the config constructors; do not set directly.
+    pub(crate) min_semi_axis: f64,
     /// Maximum semi-axis for a valid outer ellipse.
-    pub max_semi_axis: f64,
+    /// Derived from `marker_scale` by the config constructors; do not set directly.
+    pub(crate) max_semi_axis: f64,
     /// Maximum aspect ratio (a/b) for a valid ellipse.
     pub max_aspect_ratio: f64,
     /// NMS dedup radius for final markers (pixels).
@@ -509,6 +592,9 @@ pub struct DetectConfig {
     pub self_undistort: SelfUndistortConfig,
     /// Structural ID verification and correction using hex neighborhood consensus.
     pub id_correction: IdCorrectionConfig,
+    /// Automatic recovery for markers where the inner edge was incorrectly
+    /// fitted as the outer ellipse.
+    pub inner_as_outer_recovery: InnerAsOuterRecoveryConfig,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -579,6 +665,7 @@ impl Default for DetectConfig {
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),
             id_correction: IdCorrectionConfig::default(),
+            inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -602,7 +689,6 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     // Edge sampling range
     config.edge_sample.r_max = r_max * 2.0;
     config.edge_sample.r_min = 1.5;
-    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
     let desired_halfwidth = ((r_max - r_min) * 0.5).max(2.0);
     let base_halfwidth = OuterEstimationConfig::default().search_halfwidth_px;
     config.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);

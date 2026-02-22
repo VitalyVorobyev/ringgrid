@@ -190,6 +190,14 @@ struct CliDetectArgs {
     #[arg(long)]
     id_correct: bool,
 
+    /// Disable inner-as-outer recovery.
+    ///
+    /// By default, the detector re-attempts the outer fit for any marker whose
+    /// outer radius is anomalously small compared to its neighbors (a sign that
+    /// the inner edge was mistakenly fitted as the outer ellipse).
+    #[arg(long)]
+    no_inner_as_outer_recovery: bool,
+
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
@@ -334,6 +342,7 @@ struct DetectConfigFile {
     ransac_homography: Option<ringgrid::RansacHomographyConfig>,
     self_undistort: Option<ringgrid::SelfUndistortConfig>,
     id_correction: Option<ringgrid::IdCorrectionConfig>,
+    inner_as_outer_recovery: Option<ringgrid::InnerAsOuterRecoveryConfig>,
     dedup_radius: Option<f64>,
     max_aspect_ratio: Option<f64>,
     use_global_filter: Option<bool>,
@@ -359,6 +368,7 @@ struct DetectConfigDump {
     ransac_homography: ringgrid::RansacHomographyConfig,
     self_undistort: ringgrid::SelfUndistortConfig,
     id_correction: ringgrid::IdCorrectionConfig,
+    inner_as_outer_recovery: ringgrid::InnerAsOuterRecoveryConfig,
     dedup_radius: f64,
     max_aspect_ratio: f64,
     use_global_filter: bool,
@@ -395,6 +405,7 @@ struct DetectOverrides {
     decode_min_confidence: Option<f32>,
     outer_size_score_weight: Option<f32>,
     id_correct_enable: bool,
+    inner_as_outer_recovery_enable: bool,
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
@@ -450,6 +461,7 @@ impl CliDetectArgs {
             decode_min_confidence: self.decode_min_confidence,
             outer_size_score_weight: self.outer_size_score_weight,
             id_correct_enable: self.id_correct,
+            inner_as_outer_recovery_enable: !self.no_inner_as_outer_recovery,
             self_undistort_enable: self.self_undistort,
             self_undistort_lambda_range: [
                 self.self_undistort_lambda_min,
@@ -518,6 +530,9 @@ fn build_detect_config(
         if let Some(v) = file.id_correction.clone() {
             config.id_correction = v;
         }
+        if let Some(v) = file.inner_as_outer_recovery.clone() {
+            config.inner_as_outer_recovery = v;
+        }
         if let Some(v) = file.use_global_filter {
             config.use_global_filter = v;
         }
@@ -538,7 +553,6 @@ fn build_detect_config(
     config.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
-    config.projective_center.enable = config.circle_refinement.uses_projective_center();
     if let Some(shift) = overrides.projective_center_max_shift_px {
         config.projective_center.max_center_shift_px = Some(shift);
     }
@@ -589,6 +603,11 @@ fn build_detect_config(
     // ID correction: CLI --id-correct enables it on top of whatever the config file set.
     if overrides.id_correct_enable {
         config.id_correction.enable = true;
+    }
+
+    // Inner-as-outer recovery: --no-inner-as-outer-recovery disables it.
+    if !overrides.inner_as_outer_recovery_enable {
+        config.inner_as_outer_recovery.enable = false;
     }
 
     // Self-undistort options
@@ -785,6 +804,7 @@ fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
         ransac_homography: config.ransac_homography,
         self_undistort: config.self_undistort,
         id_correction: config.id_correction,
+        inner_as_outer_recovery: config.inner_as_outer_recovery,
         dedup_radius: config.dedup_radius,
         max_aspect_ratio: config.max_aspect_ratio,
         use_global_filter: config.use_global_filter,
@@ -930,6 +950,7 @@ mod tests {
             decode_min_confidence: None,
             outer_size_score_weight: None,
             id_correct_enable: false,
+            inner_as_outer_recovery_enable: true,
             self_undistort_enable: false,
             self_undistort_lambda_range: [-8e-7, 8e-7],
             self_undistort_min_markers: 6,

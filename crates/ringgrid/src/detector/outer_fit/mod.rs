@@ -6,7 +6,7 @@ use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
-    estimate_outer_from_prior_with_mapper, OuterHypothesis, OuterStatus,
+    estimate_outer_from_prior_with_mapper, OuterEstimateFailure, OuterHypothesis, OuterStatus,
 };
 
 use super::DetectConfig;
@@ -26,7 +26,6 @@ pub(crate) enum OuterFitRejectReason {
     OuterEstimateInvalidSearchWindow,
     OuterEstimateInsufficientThetaCoverage,
     OuterEstimateNoPolarityCandidates,
-    OuterEstimateUnknownFailure,
     OuterEstimateMissingPolarity,
     NoValidHypothesis,
     AngularGapTooLarge,
@@ -40,7 +39,6 @@ impl OuterFitRejectReason {
                 "outer_estimate_insufficient_theta_coverage"
             }
             Self::OuterEstimateNoPolarityCandidates => "outer_estimate_no_polarity_candidates",
-            Self::OuterEstimateUnknownFailure => "outer_estimate_unknown_failure",
             Self::OuterEstimateMissingPolarity => "outer_estimate_missing_polarity",
             Self::NoValidHypothesis => "no_valid_hypothesis",
             Self::AngularGapTooLarge => "angular_gap_too_large",
@@ -84,38 +82,29 @@ impl OuterFitReject {
     }
 }
 
-fn parse_theta_coverage_reason(reason: &str) -> Option<(f32, f32)> {
-    const PREFIX: &str = "insufficient_theta_coverage(";
-    let payload = reason.strip_prefix(PREFIX)?.strip_suffix(')')?;
-    let (observed, min_required) = payload.split_once('<')?;
-    let observed = observed.parse::<f32>().ok()?;
-    let min_required = min_required.parse::<f32>().ok()?;
-    Some((observed, min_required))
-}
-
-fn map_outer_estimate_reject(reason: Option<&str>) -> OuterFitReject {
-    match reason {
-        Some("invalid_search_window") => {
+fn map_outer_estimate_reject(failure: Option<OuterEstimateFailure>) -> OuterFitReject {
+    match failure {
+        Some(OuterEstimateFailure::InvalidSearchWindow) => {
             OuterFitReject::new(OuterFitRejectReason::OuterEstimateInvalidSearchWindow, None)
         }
-        Some("no_polarity_candidates") => OuterFitReject::new(
+        Some(OuterEstimateFailure::NoPolarityCandidates) => OuterFitReject::new(
             OuterFitRejectReason::OuterEstimateNoPolarityCandidates,
             None,
         ),
-        Some(raw) => {
-            if let Some((observed, min_required)) = parse_theta_coverage_reason(raw) {
-                OuterFitReject::new(
-                    OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage,
-                    Some(OuterFitRejectContext::ThetaCoverage {
-                        observed_coverage: observed,
-                        min_required_coverage: min_required,
-                    }),
-                )
-            } else {
-                OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None)
-            }
-        }
-        None => OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None),
+        Some(OuterEstimateFailure::InsufficientThetaCoverage {
+            observed,
+            min_required,
+        }) => OuterFitReject::new(
+            OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage,
+            Some(OuterFitRejectContext::ThetaCoverage {
+                observed_coverage: observed,
+                min_required_coverage: min_required,
+            }),
+        ),
+        None => OuterFitReject::new(
+            OuterFitRejectReason::OuterEstimateNoPolarityCandidates,
+            None,
+        ),
     }
 }
 
@@ -143,15 +132,6 @@ fn completion_edge_cfg(config: &DetectConfig) -> EdgeSampleConfig {
     edge_cfg
 }
 
-fn build_outer_estimation_cfg(
-    config: &DetectConfig,
-    edge_cfg: &EdgeSampleConfig,
-) -> crate::ring::OuterEstimationConfig {
-    let mut outer_cfg = config.outer_estimation.clone();
-    outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
-    outer_cfg
-}
-
 struct OuterFitEvalContext<'a> {
     gray: &'a GrayImage,
     center_prior: [f32; 2],
@@ -159,7 +139,6 @@ struct OuterFitEvalContext<'a> {
     pol: Polarity,
     config: &'a DetectConfig,
     edge_cfg: &'a EdgeSampleConfig,
-    outer_cfg: &'a crate::ring::OuterEstimationConfig,
     sampler: DistortionAwareSampler<'a>,
     mapper: Option<&'a dyn PixelMapper>,
 }
@@ -174,7 +153,7 @@ fn evaluate_hypothesis(
         hyp.r_outer_px,
         ctx.pol,
         ctx.edge_cfg,
-        ctx.outer_cfg.refine_halfwidth_px,
+        ctx.config.outer_estimation.refine_halfwidth_px,
     );
 
     if outer_points.len() < ctx.edge_cfg.min_rays_with_ring {
@@ -264,19 +243,19 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
     edge_cfg: &EdgeSampleConfig,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
     let r_expected = r_outer_expected_px.max(2.0);
-    let outer_cfg = build_outer_estimation_cfg(config, edge_cfg);
     let sampler = DistortionAwareSampler::new(gray, mapper);
 
     let outer_estimate = estimate_outer_from_prior_with_mapper(
         gray,
         center_prior,
         r_expected,
-        &outer_cfg,
+        &config.outer_estimation,
+        edge_cfg.n_rays.max(8),
         mapper,
         false,
     );
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
-        return Err(map_outer_estimate_reject(outer_estimate.reason.as_deref()));
+        return Err(map_outer_estimate_reject(outer_estimate.failure));
     }
 
     let pol = outer_estimate.polarity.ok_or_else(|| {
@@ -290,7 +269,6 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         pol,
         config,
         edge_cfg,
-        outer_cfg: &outer_cfg,
         sampler,
         mapper,
     };
@@ -320,7 +298,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{GrayImage, Luma};
+    use image::GrayImage;
 
     fn draw_ring_image(
         w: u32,
@@ -329,21 +307,7 @@ mod tests {
         outer_radius: f32,
         inner_radius: f32,
     ) -> GrayImage {
-        let mut img = GrayImage::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f32 - center[0];
-                let dy = y as f32 - center[1];
-                let d = (dx * dx + dy * dy).sqrt();
-                let pix = if d >= inner_radius && d <= outer_radius {
-                    24u8
-                } else {
-                    230u8
-                };
-                img.put_pixel(x, y, Luma([pix]));
-            }
-        }
-        img
+        crate::test_utils::draw_ring_image(w, h, center, outer_radius, inner_radius, 24, 230)
     }
 
     #[test]
@@ -377,8 +341,12 @@ mod tests {
     }
 
     #[test]
-    fn outer_estimate_reason_mapping_extracts_theta_coverage_context() {
-        let reject = map_outer_estimate_reject(Some("insufficient_theta_coverage(0.31<0.60)"));
+    fn outer_estimate_failure_mapping_extracts_theta_coverage_context() {
+        let reject =
+            map_outer_estimate_reject(Some(OuterEstimateFailure::InsufficientThetaCoverage {
+                observed: 0.31,
+                min_required: 0.60,
+            }));
         assert_eq!(
             reject.reason,
             OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage

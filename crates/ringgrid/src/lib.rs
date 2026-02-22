@@ -58,6 +58,8 @@ mod marker;
 mod pipeline;
 mod pixelmap;
 mod ring;
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 // ── Public API ──────────────────────────────────────────────────────────
 
@@ -66,15 +68,16 @@ pub use api::Detector;
 
 // Result types
 pub use detector::Proposal;
-pub use detector::{DetectedMarker, FitMetrics};
+pub use detector::{DetectedMarker, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
 pub use pipeline::{DetectionFrame, DetectionResult};
 
 // Configuration
 pub use detector::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig, InnerFitConfig,
-    MarkerScalePrior, OuterFitConfig, ProjectiveCenterParams, SeedProposalParams,
+    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
+    InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
+    ProjectiveCenterParams, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
 
@@ -91,7 +94,12 @@ pub use conic::Ellipse;
 pub use marker::MarkerSpec;
 
 // Camera / distortion
+// These raw codebook/codec modules are re-exported for the ringgrid-cli diagnostic
+// commands (codebook-info, decode-test). They are not part of the stable library
+// API — external code should use the high-level Detector interface.
+#[doc(hidden)]
 pub use marker::codebook;
+#[doc(hidden)]
 pub use marker::codec;
 pub use pixelmap::{
     CameraIntrinsics, CameraModel, DivisionModel, PixelMapper, RadialTangentialDistortion,

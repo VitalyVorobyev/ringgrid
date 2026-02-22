@@ -20,7 +20,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         ring_center_projective_with_debug, RingCenterProjectiveOptions,
     };
 
-    if !config.projective_center.enable {
+    if !config.circle_refinement.uses_projective_center() {
         return;
     }
 

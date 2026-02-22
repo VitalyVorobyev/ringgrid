@@ -3,7 +3,8 @@ use crate::marker::decode::DecodeResult;
 use crate::marker::DecodeMetrics;
 use crate::ring::edge_sample::EdgeSampleResult;
 
-use super::inner_fit::InnerFitResult;
+use super::config::InnerFitConfig;
+use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
 
 /// Fit quality metrics for a detected marker.
 ///
@@ -38,6 +39,24 @@ pub struct FitMetrics {
     /// Maximum angular gap (radians) between consecutive inner edge points.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_angular_gap_inner: Option<f64>,
+    /// Inner fit outcome: `"ok"`, `"rejected"`, or `"failed"`. Absent when fit
+    /// succeeded without issue.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_fit_status: Option<InnerFitStatus>,
+    /// Inner fit rejection reason code. Present only when `inner_fit_status` is
+    /// `"rejected"` or `"failed"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_fit_reason: Option<InnerFitReason>,
+    /// Ratio of this marker's outer radius to the median outer radius of its
+    /// k nearest decoded neighbors. Values well below 1.0 (< 0.75) indicate a
+    /// potential inner-as-outer substitution. Populated in the finalization stage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neighbor_radius_ratio: Option<f32>,
+    /// Theta consistency score from the inner estimate stage. Fraction of theta
+    /// samples that agree on the inner edge location. Present when estimation ran,
+    /// including when it failed the quality gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_theta_consistency: Option<f32>,
 }
 
 /// A detected marker with its refined center and optional ID.
@@ -86,14 +105,38 @@ pub struct DetectedMarker {
     pub decode: Option<DecodeMetrics>,
 }
 
-fn fit_metrics_from_outer(
-    edge: &EdgeSampleResult,
-    outer: &Ellipse,
-    outer_ransac: Option<&conic::RansacResult>,
+#[derive(Debug, Clone, Copy)]
+struct InnerFitSummary {
     n_points_inner: usize,
     ransac_inlier_ratio_inner: Option<f32>,
     rms_residual_inner: Option<f64>,
     max_angular_gap_inner: Option<f64>,
+    inner_fit_status: Option<InnerFitStatus>,
+    inner_fit_reason: Option<InnerFitReason>,
+    inner_theta_consistency: Option<f32>,
+}
+
+impl InnerFitSummary {
+    fn from_result(inner: &InnerFitResult) -> Self {
+        Self {
+            n_points_inner: inner.points_inner.len(),
+            ransac_inlier_ratio_inner: inner.ransac_inlier_ratio_inner,
+            rms_residual_inner: inner.rms_residual_inner,
+            max_angular_gap_inner: inner.max_angular_gap,
+            inner_fit_status: Some(inner.status),
+            inner_fit_reason: (inner.status != InnerFitStatus::Ok)
+                .then_some(inner.reason)
+                .flatten(),
+            inner_theta_consistency: inner.theta_consistency,
+        }
+    }
+}
+
+fn fit_metrics_from_outer(
+    edge: &EdgeSampleResult,
+    outer: &Ellipse,
+    outer_ransac: Option<&conic::RansacResult>,
+    inner_summary: &InnerFitSummary,
 ) -> FitMetrics {
     use super::outer_fit::max_angular_gap;
     let gap_outer = if edge.outer_points.is_empty() {
@@ -105,14 +148,18 @@ fn fit_metrics_from_outer(
         n_angles_total: edge.n_total_rays,
         n_angles_with_both_edges: edge.n_good_rays,
         n_points_outer: edge.outer_points.len(),
-        n_points_inner,
+        n_points_inner: inner_summary.n_points_inner,
         ransac_inlier_ratio_outer: outer_ransac
             .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-        ransac_inlier_ratio_inner,
+        ransac_inlier_ratio_inner: inner_summary.ransac_inlier_ratio_inner,
         rms_residual_outer: Some(conic::rms_sampson_distance(outer, &edge.outer_points)),
-        rms_residual_inner,
+        rms_residual_inner: inner_summary.rms_residual_inner,
         max_angular_gap_outer: gap_outer,
-        max_angular_gap_inner,
+        max_angular_gap_inner: inner_summary.max_angular_gap_inner,
+        inner_fit_status: inner_summary.inner_fit_status,
+        inner_fit_reason: inner_summary.inner_fit_reason,
+        neighbor_radius_ratio: None,
+        inner_theta_consistency: inner_summary.inner_theta_consistency,
     }
 }
 
@@ -124,15 +171,8 @@ pub(crate) fn fit_metrics_with_inner(
     outer_ransac: Option<&conic::RansacResult>,
     inner: &InnerFitResult,
 ) -> FitMetrics {
-    fit_metrics_from_outer(
-        edge,
-        outer,
-        outer_ransac,
-        inner.points_inner.len(),
-        inner.ransac_inlier_ratio_inner,
-        inner.rms_residual_inner,
-        inner.max_angular_gap,
-    )
+    let inner_summary = InnerFitSummary::from_result(inner);
+    fit_metrics_from_outer(edge, outer, outer_ransac, &inner_summary)
 }
 
 pub(crate) fn decode_metrics_from_result(
@@ -146,4 +186,76 @@ pub(crate) fn decode_metrics_from_result(
         margin: d.margin,
         decode_confidence: d.confidence,
     })
+}
+
+/// Composite fit-quality score: arc coverage × RANSAC inlier ratio, clamped to [0, 1].
+///
+/// When no RANSAC result is available (direct-fit path), the inlier ratio defaults to 1.0
+/// so the score degrades gracefully to pure arc coverage.
+pub(crate) fn fit_support_score(
+    edge: &EdgeSampleResult,
+    outer_ransac: Option<&conic::RansacResult>,
+) -> f32 {
+    let arc_cov = edge.n_good_rays as f32 / edge.n_total_rays.max(1) as f32;
+    let inlier_ratio = outer_ransac
+        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+        .unwrap_or(1.0);
+    (arc_cov * inlier_ratio).clamp(0.0, 1.0)
+}
+
+fn fallback_fit_confidence(
+    edge: &EdgeSampleResult,
+    outer_ransac: Option<&conic::RansacResult>,
+) -> f32 {
+    fit_support_score(edge, outer_ransac)
+}
+
+/// Composite confidence score incorporating decode quality, angular coverage,
+/// RANSAC inlier ratio, inner fit quality, and RMS residual. Each factor is
+/// in [0, 1]; multiplicative composition ensures any single failing dimension
+/// pulls confidence toward zero.
+pub(crate) fn compute_marker_confidence(
+    decode_result: Option<&DecodeResult>,
+    edge: &EdgeSampleResult,
+    outer_ransac: Option<&conic::RansacResult>,
+    inner_fit: &InnerFitResult,
+    fit_metrics: &FitMetrics,
+    inner_fit_config: &InnerFitConfig,
+) -> f32 {
+    // 1. Decode signal (base): use normalised Hamming distance only.
+    // d.confidence = (1−dist/6) × (margin/CODEBOOK_MIN_CYCLIC_DIST) which halves
+    // the value for the common margin=1 case.  Using distance alone keeps the
+    // factor consistent across margin values while still penalising close calls.
+    let decode_conf = decode_result
+        .map(|d| (1.0 - d.dist as f32 / 6.0).clamp(0.0, 1.0))
+        .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));
+
+    // 2. Outer angular coverage: linear map gap -> [0, 1]
+    let outer_gap = fit_metrics
+        .max_angular_gap_outer
+        .unwrap_or(std::f64::consts::TAU);
+    let angular_outer = (1.0 - outer_gap / std::f64::consts::TAU).clamp(0.0, 1.0) as f32;
+
+    // 3. RANSAC inlier ratio
+    let inlier_factor = outer_ransac
+        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
+
+    // 4. Inner fit quality: angular coverage when present, miss penalty otherwise
+    let inner_factor = if inner_fit.ellipse_inner.is_some() {
+        let inner_gap = fit_metrics.max_angular_gap_inner.unwrap_or(0.0);
+        (1.0 - inner_gap / std::f64::consts::TAU).clamp(0.5, 1.0) as f32
+    } else {
+        inner_fit_config.miss_confidence_factor
+    };
+
+    // 5. RMS residual penalty: softer 1/(1+rms/2) so clean fits (rms≈0.2) are
+    // penalised less while still pushing noisy fits (rms>1) toward zero.
+    let rms_factor = match fit_metrics.rms_residual_outer {
+        Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32 / 2.0),
+        _ => 1.0,
+    };
+
+    (decode_conf * angular_outer * inlier_factor * inner_factor * rms_factor).clamp(0.0, 1.0)
 }

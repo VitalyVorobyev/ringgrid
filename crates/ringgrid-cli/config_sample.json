@@ -30,7 +30,12 @@
   "inner_as_outer_recovery": {
     "enable": true,
     "ratio_threshold": 0.75,
-    "k_neighbors": 6
+    "k_neighbors": 6,
+    "min_theta_consistency": 0.18,
+    "min_theta_coverage": 0.40,
+    "min_ring_depth": 0.02,
+    "refine_halfwidth_px": 2.5,
+    "size_gate_tolerance": 0.25
   },
 
   "outer_fit": {

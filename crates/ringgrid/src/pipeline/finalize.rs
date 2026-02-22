@@ -240,11 +240,17 @@ fn try_recover_inner_as_outer(
             continue;
         };
 
-        // Attempt outer fit with corrected radius, using a tight search window so
-        // the estimator does not wander back to the inner ring edge.
+        // Attempt outer fit with corrected radius. Use a tight search window
+        // (default 4 px halfwidth) so the estimator cannot wander back to the
+        // inner ring edge, combined with relaxed quality gates suited to the
+        // blurry/soft edges that cause inner-as-outer confusion.
         let mut recovery_config = config.clone();
         recovery_config.outer_estimation.search_halfwidth_px =
             OuterEstimationConfig::default().search_halfwidth_px;
+        recovery_config.outer_estimation.min_theta_consistency = cfg.min_theta_consistency;
+        recovery_config.outer_estimation.min_theta_coverage = cfg.min_theta_coverage;
+        recovery_config.outer_estimation.refine_halfwidth_px = cfg.refine_halfwidth_px;
+        recovery_config.edge_sample.min_ring_depth = cfg.min_ring_depth;
         let fit_result = outer_fit::fit_outer_candidate_from_prior(
             gray,
             center_f32,
@@ -265,18 +271,68 @@ fn try_recover_inner_as_outer(
             }
         };
 
-        // Only replace if the re-fit produced a valid decode.
-        if candidate.decode_result.is_none() {
-            tracing::debug!(idx, "inner-as-outer recovery: re-fit produced no decode");
+        // Size gate: reject if the recovered radius deviates too far from the
+        // neighbour-median prior. This prevents the relaxed estimator from
+        // accepting a re-locked inner-ring fit even under relaxed thresholds.
+        let recovered_r = candidate.outer.mean_axis() as f32;
+        if (recovered_r - r_corrected).abs() / r_corrected > cfg.size_gate_tolerance {
+            tracing::debug!(
+                idx,
+                recovered_r,
+                r_corrected,
+                "inner-as-outer recovery: size gate rejected (re-locked to wrong ring)"
+            );
             continue;
         }
+
+        // Determine the marker id and decode result to use.
+        //
+        // Primary path: the re-fit produced a valid decode → use it.
+        //
+        // Fallback (geometry-only) path: the code band is too blurry to decode
+        // at the corrected outer radius, but the id was already validated by
+        // id_correction via neighbourhood consensus. Accept the corrected
+        // geometry and keep the validated id, provided the recovered centre is
+        // close to the original centre (centre proximity gate).
+        let (marker_id, decode_result) = if candidate.decode_result.is_some() {
+            let id = candidate.decode_result.as_ref().map(|d| d.id);
+            (id, candidate.decode_result)
+        } else if let Some(orig_id) = markers[idx].id {
+            let orig_center_wf = markers[idx].center_mapped.unwrap_or(markers[idx].center);
+            let recovered_center = candidate.outer.center();
+            let center_shift = (((recovered_center[0] - orig_center_wf[0]).powi(2)
+                + (recovered_center[1] - orig_center_wf[1]).powi(2))
+                .sqrt()) as f32;
+            let max_shift = r_corrected * cfg.size_gate_tolerance;
+            if center_shift > max_shift {
+                tracing::debug!(
+                    idx,
+                    center_shift,
+                    max_shift,
+                    "inner-as-outer recovery: centre proximity gate failed"
+                );
+                continue;
+            }
+            tracing::debug!(
+                idx,
+                orig_id,
+                center_shift,
+                "inner-as-outer recovery: geometry-only (keeping id-corrected id)"
+            );
+            (Some(orig_id), None)
+        } else {
+            tracing::debug!(
+                idx,
+                "inner-as-outer recovery: no decode and no validated id — skipping"
+            );
+            continue;
+        };
 
         // Run inner fit on the recovered outer.
         let outer_fit::OuterFitCandidate {
             edge,
             outer,
             outer_ransac,
-            decode_result,
             ..
         } = candidate;
 
@@ -299,7 +355,6 @@ fn try_recover_inner_as_outer(
             &config.inner_fit,
         );
         let decode_metrics = marker_build::decode_metrics_from_result(decode_result.as_ref());
-        let marker_id = decode_result.as_ref().map(|d| d.id);
         let new_center_wf = outer.center();
 
         // Build image-frame center.

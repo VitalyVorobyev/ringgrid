@@ -461,6 +461,13 @@ impl Default for IdCorrectionConfig {
 /// (see `ratio_threshold`) indicates the outer fit locked onto the inner ring
 /// edge. When enabled, the detector re-attempts the outer fit for flagged
 /// markers using the neighbor median radius as the corrected expected radius.
+///
+/// The recovery re-fit uses a tight 4 px search window (to exclude the inner
+/// ring) combined with relaxed quality gates (`min_theta_consistency`,
+/// `min_ring_depth`, `refine_halfwidth_px`) suited to the blurry/soft edges
+/// that typically cause inner-as-outer confusion. A post-fit size gate
+/// (`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto
+/// the inner ring even under the relaxed thresholds.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InnerAsOuterRecoveryConfig {
@@ -479,6 +486,28 @@ pub struct InnerAsOuterRecoveryConfig {
     /// Default: `6` (matching the hex-lattice neighbor count). Self is always
     /// excluded by passing k+1 to the neighbor function.
     pub k_neighbors: usize,
+    /// Minimum fraction of angular samples (rays) whose radial peak must agree
+    /// with the selected hypothesis radius during the recovery re-estimation.
+    ///
+    /// Lower than the production default (0.35) because blurry outer edges
+    /// scatter per-θ peaks more widely. Default: `0.18`.
+    pub min_theta_consistency: f32,
+    /// Minimum fraction of angular rays with valid (in-bounds) samples during
+    /// the recovery re-estimation. Default: `0.40`.
+    pub min_theta_coverage: f32,
+    /// Minimum signed intensity depth at a candidate outer edge point during
+    /// recovery edge collection. Lower than production (0.05) to tolerate
+    /// blur-smeared intensity gradients. Default: `0.02`.
+    pub min_ring_depth: f32,
+    /// Per-ray radius refinement half-width (pixels) during recovery. Wider
+    /// than production (1.0 px) to catch the flat-topped derivative peaks that
+    /// occur under blur. Default: `2.5`.
+    pub refine_halfwidth_px: f32,
+    /// Maximum allowed fractional deviation of the recovered outer radius from
+    /// the neighbor-median corrected radius: `|r_recovered - r_corrected| /
+    /// r_corrected ≤ size_gate_tolerance`. Prevents the relaxed estimator from
+    /// accepting a re-locked inner-ring fit. Default: `0.25`.
+    pub size_gate_tolerance: f32,
 }
 
 impl Default for InnerAsOuterRecoveryConfig {
@@ -487,6 +516,11 @@ impl Default for InnerAsOuterRecoveryConfig {
             enable: true,
             ratio_threshold: 0.75,
             k_neighbors: 6,
+            min_theta_consistency: 0.18,
+            min_theta_coverage: 0.40,
+            min_ring_depth: 0.02,
+            refine_halfwidth_px: 2.5,
+            size_gate_tolerance: 0.25,
         }
     }
 }

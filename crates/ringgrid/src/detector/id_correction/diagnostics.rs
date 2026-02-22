@@ -66,11 +66,7 @@ pub(super) fn diagnose_unverified_reasons(
             ws.stats.n_unverified_no_neighbors += 1;
             continue;
         }
-        let effective_min_votes = if ws.markers[i].id.is_none() {
-            ws.config.min_votes_recover
-        } else {
-            ws.config.min_votes
-        };
+        let effective_min_votes = ws.config.effective_min_votes(ws.markers[i].id.is_some());
         let out = vote_for_candidate(
             ws.markers[i].center,
             ws.outer_radii_px[i],

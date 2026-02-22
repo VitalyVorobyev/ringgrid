@@ -65,11 +65,7 @@ fn run_local_stage(
             if neighbors.is_empty() {
                 continue;
             }
-            let effective_min_votes = if ws.markers[i].id.is_none() {
-                ws.config.min_votes_recover
-            } else {
-                ws.config.min_votes
-            };
+            let effective_min_votes = ws.config.effective_min_votes(ws.markers[i].id.is_some());
             let vote = vote_for_candidate(
                 ws.markers[i].center,
                 ws.outer_radii_px[i],

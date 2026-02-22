@@ -429,6 +429,18 @@ pub struct IdCorrectionConfig {
     pub seed_min_decode_confidence: f32,
 }
 
+impl IdCorrectionConfig {
+    /// Returns the minimum vote threshold appropriate for a marker at `i`:
+    /// `min_votes_recover` if the marker has no current ID, `min_votes` otherwise.
+    pub(crate) fn effective_min_votes(&self, has_id: bool) -> usize {
+        if has_id {
+            self.min_votes
+        } else {
+            self.min_votes_recover
+        }
+    }
+}
+
 impl Default for IdCorrectionConfig {
     fn default() -> Self {
         Self {
@@ -564,9 +576,11 @@ pub struct DetectConfig {
     /// Homography-guided completion controls.
     pub completion: CompletionParams,
     /// Minimum semi-axis for a valid outer ellipse.
-    pub min_semi_axis: f64,
+    /// Derived from `marker_scale` by the config constructors; do not set directly.
+    pub(crate) min_semi_axis: f64,
     /// Maximum semi-axis for a valid outer ellipse.
-    pub max_semi_axis: f64,
+    /// Derived from `marker_scale` by the config constructors; do not set directly.
+    pub(crate) max_semi_axis: f64,
     /// Maximum aspect ratio (a/b) for a valid ellipse.
     pub max_aspect_ratio: f64,
     /// NMS dedup radius for final markers (pixels).

@@ -6,7 +6,7 @@ use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
-    estimate_outer_from_prior_with_mapper, OuterHypothesis, OuterStatus,
+    estimate_outer_from_prior_with_mapper, OuterEstimateFailure, OuterHypothesis, OuterStatus,
 };
 
 use super::DetectConfig;
@@ -26,7 +26,6 @@ pub(crate) enum OuterFitRejectReason {
     OuterEstimateInvalidSearchWindow,
     OuterEstimateInsufficientThetaCoverage,
     OuterEstimateNoPolarityCandidates,
-    OuterEstimateUnknownFailure,
     OuterEstimateMissingPolarity,
     NoValidHypothesis,
     AngularGapTooLarge,
@@ -40,7 +39,6 @@ impl OuterFitRejectReason {
                 "outer_estimate_insufficient_theta_coverage"
             }
             Self::OuterEstimateNoPolarityCandidates => "outer_estimate_no_polarity_candidates",
-            Self::OuterEstimateUnknownFailure => "outer_estimate_unknown_failure",
             Self::OuterEstimateMissingPolarity => "outer_estimate_missing_polarity",
             Self::NoValidHypothesis => "no_valid_hypothesis",
             Self::AngularGapTooLarge => "angular_gap_too_large",
@@ -84,38 +82,29 @@ impl OuterFitReject {
     }
 }
 
-fn parse_theta_coverage_reason(reason: &str) -> Option<(f32, f32)> {
-    const PREFIX: &str = "insufficient_theta_coverage(";
-    let payload = reason.strip_prefix(PREFIX)?.strip_suffix(')')?;
-    let (observed, min_required) = payload.split_once('<')?;
-    let observed = observed.parse::<f32>().ok()?;
-    let min_required = min_required.parse::<f32>().ok()?;
-    Some((observed, min_required))
-}
-
-fn map_outer_estimate_reject(reason: Option<&str>) -> OuterFitReject {
-    match reason {
-        Some("invalid_search_window") => {
+fn map_outer_estimate_reject(failure: Option<OuterEstimateFailure>) -> OuterFitReject {
+    match failure {
+        Some(OuterEstimateFailure::InvalidSearchWindow) => {
             OuterFitReject::new(OuterFitRejectReason::OuterEstimateInvalidSearchWindow, None)
         }
-        Some("no_polarity_candidates") => OuterFitReject::new(
+        Some(OuterEstimateFailure::NoPolarityCandidates) => OuterFitReject::new(
             OuterFitRejectReason::OuterEstimateNoPolarityCandidates,
             None,
         ),
-        Some(raw) => {
-            if let Some((observed, min_required)) = parse_theta_coverage_reason(raw) {
-                OuterFitReject::new(
-                    OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage,
-                    Some(OuterFitRejectContext::ThetaCoverage {
-                        observed_coverage: observed,
-                        min_required_coverage: min_required,
-                    }),
-                )
-            } else {
-                OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None)
-            }
-        }
-        None => OuterFitReject::new(OuterFitRejectReason::OuterEstimateUnknownFailure, None),
+        Some(OuterEstimateFailure::InsufficientThetaCoverage {
+            observed,
+            min_required,
+        }) => OuterFitReject::new(
+            OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage,
+            Some(OuterFitRejectContext::ThetaCoverage {
+                observed_coverage: observed,
+                min_required_coverage: min_required,
+            }),
+        ),
+        None => OuterFitReject::new(
+            OuterFitRejectReason::OuterEstimateNoPolarityCandidates,
+            None,
+        ),
     }
 }
 
@@ -276,7 +265,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         false,
     );
     if outer_estimate.status != OuterStatus::Ok || outer_estimate.hypotheses.is_empty() {
-        return Err(map_outer_estimate_reject(outer_estimate.reason.as_deref()));
+        return Err(map_outer_estimate_reject(outer_estimate.failure));
     }
 
     let pol = outer_estimate.polarity.ok_or_else(|| {
@@ -377,8 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn outer_estimate_reason_mapping_extracts_theta_coverage_context() {
-        let reject = map_outer_estimate_reject(Some("insufficient_theta_coverage(0.31<0.60)"));
+    fn outer_estimate_failure_mapping_extracts_theta_coverage_context() {
+        let reject =
+            map_outer_estimate_reject(Some(OuterEstimateFailure::InsufficientThetaCoverage {
+                observed: 0.31,
+                min_required: 0.60,
+            }));
         assert_eq!(
             reject.reason,
             OuterFitRejectReason::OuterEstimateInsufficientThetaCoverage

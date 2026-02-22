@@ -26,6 +26,29 @@ pub enum InnerStatus {
     Failed,
 }
 
+/// Typed failure/rejection reason for inner-edge estimation.
+///
+/// Replaces the old `reason: Option<String>` field so callers receive
+/// structured data rather than a formatted string.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InnerEstimateFailure {
+    /// The outer ellipse is invalid or too small to sample.
+    InvalidOuterEllipse,
+    /// The normalized inner search window is degenerate.
+    InvalidSearchWindow,
+    /// Fewer than `min_theta_coverage` fraction of rays produced a valid sample.
+    InsufficientThetaCoverage { observed: f32, min_required: f32 },
+    /// No polarity produced a valid estimate.
+    NoPolarityCandidates,
+    /// The selected peak is out of the valid [0.2, 0.9] normalized range.
+    ScaleOutOfBounds { r_star: f32 },
+    /// The selected peak sits at the edge of the search window.
+    PeakAtSearchWindowEdge,
+    /// Theta consistency is below the minimum threshold.
+    ThetaInconsistent { observed: f32, min_required: f32 },
+}
+
 /// Inner-edge estimation result anchored on the fitted outer ellipse.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InnerEstimate {
@@ -43,8 +66,8 @@ pub struct InnerEstimate {
     pub theta_consistency: Option<f32>,
     /// Final estimator status.
     pub status: InnerStatus,
-    /// Optional human-readable reject/failure reason.
-    pub reason: Option<String>,
+    /// Typed failure/rejection reason (present when `status` is not `Ok`).
+    pub failure: Option<InnerEstimateFailure>,
     /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
     /// Optional sampled normalized radii corresponding to `radial_response_agg`.
@@ -70,7 +93,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             peak_strength: None,
             theta_consistency: None,
             status: InnerStatus::Failed,
-            reason: Some("invalid_outer_ellipse".to_string()),
+            failure: Some(InnerEstimateFailure::InvalidOuterEllipse),
             radial_response_agg: None,
             r_samples: None,
         };
@@ -89,7 +112,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             peak_strength: None,
             theta_consistency: None,
             status: InnerStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
+            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
             radial_response_agg: None,
             r_samples: None,
         };
@@ -113,7 +136,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             peak_strength: None,
             theta_consistency: None,
             status: InnerStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
+            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
             radial_response_agg: None,
             r_samples: None,
         };
@@ -158,10 +181,10 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             peak_strength: None,
             theta_consistency: Some(coverage),
             status: InnerStatus::Failed,
-            reason: Some(format!(
-                "insufficient_theta_coverage({:.2}<{:.2})",
-                coverage, spec.min_theta_coverage
-            )),
+            failure: Some(InnerEstimateFailure::InsufficientThetaCoverage {
+                observed: coverage,
+                min_required: spec.min_theta_coverage,
+            }),
             radial_response_agg: None,
             r_samples: if store_response {
                 Some(scan.grid.r_samples.clone())
@@ -192,19 +215,19 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         let peak_strength = peak_val.abs();
 
         let mut status = InnerStatus::Ok;
-        let mut reason = None;
+        let mut failure = None;
         if !(0.2..=0.9).contains(&r_star) {
             status = InnerStatus::Rejected;
-            reason = Some(format!("scale_out_of_bounds({:.3})", r_star));
+            failure = Some(InnerEstimateFailure::ScaleOutOfBounds { r_star });
         } else if peak_idx == 0 || peak_idx + 1 == n_r {
             status = InnerStatus::Rejected;
-            reason = Some("peak_at_search_window_edge".to_string());
+            failure = Some(InnerEstimateFailure::PeakAtSearchWindowEdge);
         } else if theta_consistency < spec.min_theta_consistency {
             status = InnerStatus::Rejected;
-            reason = Some(format!(
-                "theta_inconsistent({:.2}<{:.2})",
-                theta_consistency, spec.min_theta_consistency
-            ));
+            failure = Some(InnerEstimateFailure::ThetaInconsistent {
+                observed: theta_consistency,
+                min_required: spec.min_theta_consistency,
+            });
         }
 
         let est = InnerEstimate {
@@ -215,7 +238,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
             peak_strength: Some(peak_strength),
             theta_consistency: Some(theta_consistency),
             status,
-            reason,
+            failure,
             radial_response_agg: if store_response {
                 Some(agg_resp.clone())
             } else {
@@ -246,7 +269,7 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         peak_strength: None,
         theta_consistency: None,
         status: InnerStatus::Failed,
-        reason: Some("no_polarity_candidates".to_string()),
+        failure: Some(InnerEstimateFailure::NoPolarityCandidates),
         radial_response_agg: None,
         r_samples: if store_response {
             Some(scan.grid.r_samples.clone())
@@ -350,7 +373,7 @@ mod tests {
             est.status,
             InnerStatus::Ok,
             "inner estimate should succeed: {:?}",
-            est.reason
+            est.failure
         );
         let r_found = est.r_inner_found.unwrap();
         assert!(

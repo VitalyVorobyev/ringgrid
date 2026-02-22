@@ -24,6 +24,21 @@ pub enum OuterStatus {
     Failed,
 }
 
+/// Typed failure reason for outer-edge estimation.
+///
+/// Replaces the old `reason: Option<String>` field so callers receive
+/// structured data instead of a formatted string to be parsed back.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OuterEstimateFailure {
+    /// The radial search window is degenerate (window width ≤ 0).
+    InvalidSearchWindow,
+    /// Fewer than `min_theta_coverage` fraction of rays produced a valid sample.
+    InsufficientThetaCoverage { observed: f32, min_required: f32 },
+    /// No polarity produced a hypothesis that passed quality gates.
+    NoPolarityCandidates,
+}
+
 /// Candidate outer-radius hypothesis from aggregated radial response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterHypothesis {
@@ -48,8 +63,8 @@ pub struct OuterEstimate {
     pub hypotheses: Vec<OuterHypothesis>,
     /// Final estimator status.
     pub status: OuterStatus,
-    /// Optional human-readable reject/failure reason.
-    pub reason: Option<String>,
+    /// Typed failure reason (present when `status` is `Failed`).
+    pub failure: Option<OuterEstimateFailure>,
     /// Optional aggregated radial response profile (for debug/analysis).
     pub radial_response_agg: Option<Vec<f32>>,
     /// Optional sampled radii corresponding to `radial_response_agg`.
@@ -134,7 +149,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             polarity: None,
             hypotheses: Vec::new(),
             status: OuterStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
+            failure: Some(OuterEstimateFailure::InvalidSearchWindow),
             radial_response_agg: None,
             r_samples: None,
         };
@@ -156,7 +171,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             polarity: None,
             hypotheses: Vec::new(),
             status: OuterStatus::Failed,
-            reason: Some("invalid_search_window".to_string()),
+            failure: Some(OuterEstimateFailure::InvalidSearchWindow),
             radial_response_agg: None,
             r_samples: None,
         };
@@ -192,10 +207,10 @@ pub fn estimate_outer_from_prior_with_mapper(
             polarity: None,
             hypotheses: Vec::new(),
             status: OuterStatus::Failed,
-            reason: Some(format!(
-                "insufficient_theta_coverage({:.2}<{:.2})",
-                coverage, cfg.min_theta_coverage
-            )),
+            failure: Some(OuterEstimateFailure::InsufficientThetaCoverage {
+                observed: coverage,
+                min_required: cfg.min_theta_coverage,
+            }),
             radial_response_agg: None,
             r_samples: if store_response {
                 Some(scan.grid.r_samples.clone())
@@ -284,7 +299,7 @@ pub fn estimate_outer_from_prior_with_mapper(
             polarity: Some(pol),
             hypotheses,
             status: OuterStatus::Ok,
-            reason: None,
+            failure: None,
             radial_response_agg: if store_response {
                 Some(agg_resp.clone())
             } else {
@@ -311,7 +326,7 @@ pub fn estimate_outer_from_prior_with_mapper(
         polarity: None,
         hypotheses: Vec::new(),
         status: OuterStatus::Failed,
-        reason: Some("no_polarity_candidates".to_string()),
+        failure: Some(OuterEstimateFailure::NoPolarityCandidates),
         radial_response_agg: None,
         r_samples: if store_response {
             Some(scan.grid.r_samples.clone())
@@ -399,7 +414,7 @@ mod tests {
             est.status,
             OuterStatus::Ok,
             "outer estimate failed: {:?}",
-            est.reason
+            est.failure
         );
         assert_eq!(est.polarity, Some(Polarity::Pos));
         let r_found = est.hypotheses[0].r_outer_px;

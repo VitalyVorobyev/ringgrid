@@ -30,11 +30,11 @@ Total config parameters counted: **72 across all nested structs** in `DetectConf
 | A6 | `detector/id_correction/local.rs:68-79`, `detector/id_correction/diagnostics.rs:69-80` | `effective_min_votes` logic duplicated verbatim | Low | **RESOLVED** (pending commit) |
 | A7 | `ring/inner_estimate.rs:264`, `ring/outer_estimate.rs:329`, `ring/radial_estimator.rs:168` | `blur_gray` test helper copied three times | Low |
 | A8 | `pipeline/fit_decode.rs:215`, `detector/outer_fit/mod.rs:325`, `detector/outer_fit/sampling.rs:207`, `detector/inner_fit.rs:422`, `api.rs:206`, `pipeline/fit_decode.rs:215` | `draw_ring_image` test helper copied six times | Low |
-| A9 | `lib.rs:95-96` | `codebook` and `codec` raw modules publicly re-exported | Low |
-| A10 | `homography/utils.rs` | `refit_homography` and `refit_homography_matrix` are thin wrappers around each other | Low |
+| A9 | `lib.rs:95-96` | `codebook` and `codec` raw modules publicly re-exported | Low | **RESOLVED** (pending commit) |
+| A10 | `homography/utils.rs` | `refit_homography` and `refit_homography_matrix` are thin wrappers around each other | Low | **RESOLVED** (pending commit) |
 | C1 | `detector/config.rs:562,582-586` | `CircleRefinementMethod` enum and `ProjectiveCenterParams.enable` are redundant | Medium | **RESOLVED** (pending commit) |
 | C2 | `detector/config.rs:544,562` | `marker_scale` and derived axis/completion fields expose internal coupling | Medium |
-| C3 | `detector/config.rs:681` | `outer_estimation.theta_samples` silently overwritten from `edge_sample.n_rays` | Medium |
+| C3 | `detector/config.rs:681` | `outer_estimation.theta_samples` silently overwritten from `edge_sample.n_rays` | Medium | **RESOLVED** (pending commit) |
 | C4 | `ring/outer_estimate.rs:OuterEstimationConfig`, `marker/marker_spec.rs:MarkerSpec` | Overlapping config fields (`theta_samples`, `radial_samples`, `aggregator`, `min_theta_coverage`, `min_theta_consistency`) | Medium |
 
 ---

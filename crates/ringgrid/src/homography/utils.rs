@@ -13,7 +13,7 @@ pub(crate) fn refit_homography(
     markers: &[DetectedMarker],
     config: &RansacHomographyConfig,
     board: &BoardLayout,
-) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
+) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
     let correspondences = collect_marker_correspondences(
         markers,
         board,
@@ -26,7 +26,7 @@ pub(crate) fn refit_homography(
         CorrespondenceDestinationFrame::Image
     );
     if correspondences.len() < 4 {
-        return (None, None);
+        return None;
     }
 
     // Use a light RANSAC (most outliers already removed)
@@ -55,9 +55,9 @@ pub(crate) fn refit_homography(
                 p95_err_px: p95_err,
             };
 
-            (Some(matrix3_to_array(&result.h)), Some(stats))
+            Some((result.h, stats))
         }
-        Err(_) => (None, None),
+        Err(_) => None,
     }
 }
 
@@ -67,12 +67,6 @@ pub(crate) fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
         [m[(1, 0)], m[(1, 1)], m[(1, 2)]],
         [m[(2, 0)], m[(2, 1)], m[(2, 2)]],
     ]
-}
-
-pub(crate) fn array_to_matrix3(m: &[[f64; 3]; 3]) -> nalgebra::Matrix3<f64> {
-    nalgebra::Matrix3::new(
-        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
-    )
 }
 
 pub(crate) fn mean_reproj_error_px(
@@ -145,16 +139,4 @@ pub(crate) fn compute_h_stats(
         mean_err_px: mean_err,
         p95_err_px: p95_err,
     })
-}
-
-pub(crate) fn refit_homography_matrix(
-    markers: &[DetectedMarker],
-    config: &RansacHomographyConfig,
-    board: &BoardLayout,
-) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
-    let (h_arr, stats) = refit_homography(markers, config, board);
-    match (h_arr, stats) {
-        (Some(h_arr), Some(stats)) => Some((array_to_matrix3(&h_arr), stats)),
-        _ => None,
-    }
 }

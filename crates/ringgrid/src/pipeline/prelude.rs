@@ -6,7 +6,7 @@ pub(crate) use crate::detector::outer_fit;
 pub(crate) use crate::detector::{CompletionStats, DetectConfig};
 
 pub(crate) use crate::homography::{
-    compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
+    compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography,
 };
 
 pub(crate) use crate::detector::{

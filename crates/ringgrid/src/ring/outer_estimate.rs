@@ -80,6 +80,11 @@ pub struct OuterEstimationConfig {
     /// Number of radial samples used to build the aggregated response.
     pub radial_samples: usize,
     /// Number of theta samples (rays).
+    ///
+    /// At runtime this value is always overridden by `build_outer_estimation_cfg`
+    /// (in `detector/outer_fit`) to `edge_sample.n_rays.max(8)`. Setting it
+    /// directly on a stored `DetectConfig` has no effect — adjust
+    /// `DetectConfig.edge_sample.n_rays` instead.
     pub theta_samples: usize,
     /// Aggregation method across theta.
     pub aggregator: AngularAggregator,

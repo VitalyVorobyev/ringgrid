@@ -2,7 +2,7 @@ use image::GrayImage;
 
 use super::{
     annotate_neighbor_radius_ratios, apply_projective_centers, complete_with_h, compute_h_stats,
-    global_filter, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
+    global_filter, matrix3_to_array, mean_reproj_error_px, refit_homography,
     try_recover_inner_as_outer, verify_and_correct_ids, warn_center_correction_without_intrinsics,
     CompletionStats, DetectConfig,
 };
@@ -63,9 +63,8 @@ fn phase_final_h(
     config: &DetectConfig,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let final_h_matrix = if final_markers.len() >= 10 {
-        let h_refit =
-            refit_homography_matrix(final_markers, &config.ransac_homography, &config.board)
-                .map(|(h, _)| h);
+        let h_refit = refit_homography(final_markers, &config.ransac_homography, &config.board)
+            .map(|(h, _)| h);
         match (h_current, h_refit) {
             (Some(h_cur), Some(h_new)) => {
                 let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.board);

@@ -14,6 +14,4 @@ pub(crate) use correspondence::{
     mean_finite_masked_inlier_error, reprojection_errors, CorrespondenceDestinationFrame,
     DuplicateIdPolicy,
 };
-pub(crate) use utils::{
-    compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography_matrix,
-};
+pub(crate) use utils::{compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography};

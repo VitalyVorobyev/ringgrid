@@ -689,7 +689,8 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     // Edge sampling range
     config.edge_sample.r_max = r_max * 2.0;
     config.edge_sample.r_min = 1.5;
-    config.outer_estimation.theta_samples = config.edge_sample.n_rays;
+    // Note: outer_estimation.theta_samples is intentionally NOT set here.
+    // build_outer_estimation_cfg() always derives it from edge_cfg.n_rays at call time.
     let desired_halfwidth = ((r_max - r_min) * 0.5).max(2.0);
     let base_halfwidth = OuterEstimationConfig::default().search_halfwidth_px;
     config.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);

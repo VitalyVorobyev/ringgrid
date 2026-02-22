@@ -8,7 +8,7 @@ use crate::DetectedMarker;
 
 use super::{
     fit_outer_candidate_from_prior_for_completion,
-    marker_build::{decode_metrics_from_result, fit_metrics_with_inner},
+    marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
     median_outer_radius_from_neighbors_px, CompletionParams, DetectConfig, OuterFitCandidate,
 };
 
@@ -130,11 +130,8 @@ fn compute_candidate_quality(
     r_expected: f32,
 ) -> CandidateQuality {
     let center = outer.center();
-    let arc_cov = (edge.n_good_rays as f32) / (edge.n_total_rays.max(1) as f32);
-    let inlier_ratio = outer_ransac
-        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-        .unwrap_or(1.0);
-    let fit_confidence = (arc_cov * inlier_ratio).clamp(0.0, 1.0);
+    let arc_cov = edge.n_good_rays as f32 / edge.n_total_rays.max(1) as f32;
+    let fit_confidence = fit_support_score(edge, outer_ransac);
     let mean_axis = ((outer.a + outer.b) * 0.5) as f32;
     let scale_ok = mean_axis.is_finite()
         && mean_axis >= (r_expected * 0.75)

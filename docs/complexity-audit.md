@@ -20,12 +20,12 @@ Total config parameters counted: **72 across all nested structs** in `DetectConf
 
 ## Executive Summary Table
 
-| ID | File(s) | Issue | Severity |
-|----|---------|-------|----------|
-| A1 | `detector/outer_fit/mod.rs:87-119`, `ring/outer_estimate.rs:162,196` | String-parsed error bridge between modules | High |
-| A2 | `pipeline/finalize.rs:194-402` | Algorithmic recovery function in orchestrator module | High |
-| A3 | `pipeline/finalize.rs:440-456,522-527` | Duplicated `sync` + `annotate` call sequences in both finalize paths | Medium |
-| A4 | `detector/marker_build.rs:191-195`, `detector/completion.rs:133-137`, `detector/outer_fit/scoring.rs:13-18` | `arc_cov * inlier_ratio` formula duplicated three times | Medium |
+| ID | File(s) | Issue | Severity | Status |
+|----|---------|-------|----------|--------|
+| A1 | `detector/outer_fit/mod.rs:87-119`, `ring/outer_estimate.rs:162,196` | String-parsed error bridge between modules | High | **RESOLVED** (`eddbc8e`) |
+| A2 | `pipeline/finalize.rs:194-402` | Algorithmic recovery function in orchestrator module | High | **RESOLVED** (`052f48b`) |
+| A3 | `pipeline/finalize.rs:440-456,522-527` | Duplicated `sync` + `annotate` call sequences in both finalize paths | Medium | **RESOLVED** (`052f48b`) |
+| A4 | `detector/marker_build.rs:191-195`, `detector/completion.rs:133-137`, `detector/outer_fit/scoring.rs:13-18` | `arc_cov * inlier_ratio` formula duplicated three times | Medium | **RESOLVED** (pending commit) |
 | A5 | `detector/config.rs:567-569` (`min_semi_axis`, `max_semi_axis`) | Derived fields exposed as writable public config | Medium |
 | A6 | `detector/id_correction/local.rs:68-79`, `detector/id_correction/diagnostics.rs:69-80` | `effective_min_votes` logic duplicated verbatim | Low |
 | A7 | `ring/inner_estimate.rs:264`, `ring/outer_estimate.rs:329`, `ring/radial_estimator.rs:168` | `blur_gray` test helper copied three times | Low |

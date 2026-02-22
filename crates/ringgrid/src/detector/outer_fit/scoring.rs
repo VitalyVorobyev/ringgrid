@@ -1,6 +1,8 @@
 use crate::conic::{rms_sampson_distance, Ellipse};
 use crate::ring::edge_sample::EdgeSampleResult;
 
+use super::super::marker_build::fit_support_score;
+
 pub(super) fn score_outer_candidate(
     edge: &EdgeSampleResult,
     outer: &Ellipse,
@@ -10,12 +12,7 @@ pub(super) fn score_outer_candidate(
     size_score_weight: f32,
 ) -> f32 {
     let decode_score = decode_confidence.clamp(0.0, 1.0);
-    let arc_cov = (edge.n_good_rays as f32 / edge.n_total_rays.max(1) as f32).clamp(0.0, 1.0);
-    let inlier_ratio = outer_ransac
-        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0);
-    let fit_support = (arc_cov * inlier_ratio).clamp(0.0, 1.0);
+    let fit_support = fit_support_score(edge, outer_ransac);
 
     let mean_axis = ((outer.a + outer.b) * 0.5) as f32;
     let size_score = 1.0 - ((mean_axis - r_expected).abs() / r_expected.max(1.0)).min(1.0);

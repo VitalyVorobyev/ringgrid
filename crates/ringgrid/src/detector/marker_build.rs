@@ -184,7 +184,11 @@ pub(crate) fn decode_metrics_from_result(
     })
 }
 
-fn fallback_fit_confidence(
+/// Composite fit-quality score: arc coverage × RANSAC inlier ratio, clamped to [0, 1].
+///
+/// When no RANSAC result is available (direct-fit path), the inlier ratio defaults to 1.0
+/// so the score degrades gracefully to pure arc coverage.
+pub(crate) fn fit_support_score(
     edge: &EdgeSampleResult,
     outer_ransac: Option<&conic::RansacResult>,
 ) -> f32 {
@@ -193,6 +197,13 @@ fn fallback_fit_confidence(
         .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
         .unwrap_or(1.0);
     (arc_cov * inlier_ratio).clamp(0.0, 1.0)
+}
+
+fn fallback_fit_confidence(
+    edge: &EdgeSampleResult,
+    outer_ransac: Option<&conic::RansacResult>,
+) -> f32 {
+    fit_support_score(edge, outer_ransac)
 }
 
 /// Composite confidence score incorporating decode quality, angular coverage,

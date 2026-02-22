@@ -411,7 +411,6 @@ fn bench_outer_estimate(c: &mut Criterion) {
     let cfg = outer_estimate::OuterEstimationConfig {
         search_halfwidth_px: 4.0,
         radial_samples: 64,
-        theta_samples: 48,
         aggregator: marker::AngularAggregator::Median,
         grad_polarity: marker::GradPolarity::DarkToLight,
         min_theta_coverage: 0.6,
@@ -433,6 +432,7 @@ fn bench_outer_estimate(c: &mut Criterion) {
                 black_box(center),
                 black_box(r_expected),
                 black_box(&cfg),
+                48,
                 None,
                 false,
             );
@@ -447,6 +447,7 @@ fn bench_outer_estimate(c: &mut Criterion) {
                 black_box(center),
                 black_box(r_expected),
                 black_box(&cfg),
+                48,
                 Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
                 false,
             );

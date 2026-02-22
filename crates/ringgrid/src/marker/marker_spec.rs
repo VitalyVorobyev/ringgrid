@@ -54,15 +54,32 @@ pub struct MarkerSpec {
     /// Expected sign of dI/dr at the inner edge.
     pub inner_grad_polarity: GradPolarity,
     /// Number of radii samples per theta.
+    ///
+    /// Same convention as [`OuterEstimationConfig::radial_samples`], calibrated
+    /// independently for the inner estimation stage.
     pub radial_samples: usize,
-    /// Number of theta samples.
+    /// Number of theta samples (rays) for inner-scale estimation.
+    ///
+    /// Unlike the outer estimator (where ray count is set to `edge_sample.n_rays`
+    /// at the call site), this value is used directly — the inner scan is not
+    /// coupled to the edge-sampling resolution.
     pub theta_samples: usize,
     /// Aggregator across theta.
+    ///
+    /// Same convention as [`OuterEstimationConfig::aggregator`], applied to the
+    /// inner radial profile.
     pub aggregator: AngularAggregator,
     /// Minimum fraction of theta samples required for a valid estimate.
+    ///
+    /// Same convention as [`OuterEstimationConfig::min_theta_coverage`], calibrated
+    /// independently for the inner estimation stage.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree on the inner edge
     /// location (used as a quality gate).
+    ///
+    /// Same convention as [`OuterEstimationConfig::min_theta_consistency`]; the
+    /// inner estimator uses a more permissive default (0.25) than the outer (0.35)
+    /// because the inner edge is less anchored to a scale prior.
     ///
     /// Kept separate from `min_theta_coverage`: "coverage" is about in-bounds
     /// sampling, while "consistency" is about peak agreement.

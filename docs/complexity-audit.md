@@ -35,7 +35,7 @@ Total config parameters counted: **72 across all nested structs** in `DetectConf
 | C1 | `detector/config.rs:562,582-586` | `CircleRefinementMethod` enum and `ProjectiveCenterParams.enable` are redundant | Medium | **RESOLVED** (pending commit) |
 | C2 | `detector/config.rs:544,562` | `marker_scale` and derived axis/completion fields expose internal coupling | Medium |
 | C3 | `detector/config.rs:681` | `outer_estimation.theta_samples` silently overwritten from `edge_sample.n_rays` | Medium | **RESOLVED** (pending commit) |
-| C4 | `ring/outer_estimate.rs:OuterEstimationConfig`, `marker/marker_spec.rs:MarkerSpec` | Overlapping config fields (`theta_samples`, `radial_samples`, `aggregator`, `min_theta_coverage`, `min_theta_consistency`) | Medium |
+| C4 | `ring/outer_estimate.rs:OuterEstimationConfig`, `marker/marker_spec.rs:MarkerSpec` | Overlapping config fields (`theta_samples`, `radial_samples`, `aggregator`, `min_theta_coverage`, `min_theta_consistency`) | Medium | **RESOLVED** (pending commit) — `theta_samples` removed from `OuterEstimationConfig`; remaining shared fields cross-referenced via doc comments |
 
 ---
 

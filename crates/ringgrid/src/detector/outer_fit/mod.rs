@@ -132,15 +132,6 @@ fn completion_edge_cfg(config: &DetectConfig) -> EdgeSampleConfig {
     edge_cfg
 }
 
-fn build_outer_estimation_cfg(
-    config: &DetectConfig,
-    edge_cfg: &EdgeSampleConfig,
-) -> crate::ring::OuterEstimationConfig {
-    let mut outer_cfg = config.outer_estimation.clone();
-    outer_cfg.theta_samples = edge_cfg.n_rays.max(8);
-    outer_cfg
-}
-
 struct OuterFitEvalContext<'a> {
     gray: &'a GrayImage,
     center_prior: [f32; 2],
@@ -148,7 +139,6 @@ struct OuterFitEvalContext<'a> {
     pol: Polarity,
     config: &'a DetectConfig,
     edge_cfg: &'a EdgeSampleConfig,
-    outer_cfg: &'a crate::ring::OuterEstimationConfig,
     sampler: DistortionAwareSampler<'a>,
     mapper: Option<&'a dyn PixelMapper>,
 }
@@ -163,7 +153,7 @@ fn evaluate_hypothesis(
         hyp.r_outer_px,
         ctx.pol,
         ctx.edge_cfg,
-        ctx.outer_cfg.refine_halfwidth_px,
+        ctx.config.outer_estimation.refine_halfwidth_px,
     );
 
     if outer_points.len() < ctx.edge_cfg.min_rays_with_ring {
@@ -253,14 +243,14 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
     edge_cfg: &EdgeSampleConfig,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
     let r_expected = r_outer_expected_px.max(2.0);
-    let outer_cfg = build_outer_estimation_cfg(config, edge_cfg);
     let sampler = DistortionAwareSampler::new(gray, mapper);
 
     let outer_estimate = estimate_outer_from_prior_with_mapper(
         gray,
         center_prior,
         r_expected,
-        &outer_cfg,
+        &config.outer_estimation,
+        edge_cfg.n_rays.max(8),
         mapper,
         false,
     );
@@ -279,7 +269,6 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         pol,
         config,
         edge_cfg,
-        outer_cfg: &outer_cfg,
         sampler,
         mapper,
     };

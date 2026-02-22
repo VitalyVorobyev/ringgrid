@@ -72,27 +72,38 @@ pub struct OuterEstimate {
 }
 
 /// Configuration for outer-radius estimation around a center prior.
+///
+/// The number of theta samples (rays) is **not** stored here; it is passed
+/// explicitly to [`estimate_outer_from_prior_with_mapper`] so the caller can
+/// synchronise it with the edge-sampling resolution without a silent override.
+/// Set [`EdgeSampleConfig::n_rays`] to control angular density for both stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
     pub search_halfwidth_px: f32,
     /// Number of radial samples used to build the aggregated response.
-    pub radial_samples: usize,
-    /// Number of theta samples (rays).
     ///
-    /// At runtime this value is always overridden by `build_outer_estimation_cfg`
-    /// (in `detector/outer_fit`) to `edge_sample.n_rays.max(8)`. Setting it
-    /// directly on a stored `DetectConfig` has no effect — adjust
-    /// `DetectConfig.edge_sample.n_rays` instead.
-    pub theta_samples: usize,
+    /// Same convention as [`MarkerSpec::radial_samples`], calibrated
+    /// independently for the outer estimation stage.
+    pub radial_samples: usize,
     /// Aggregation method across theta.
+    ///
+    /// Same convention as [`MarkerSpec::aggregator`], applied to the outer
+    /// radial profile.
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
     pub grad_polarity: GradPolarity,
     /// Minimum fraction of theta samples required for an estimate.
+    ///
+    /// Same convention as [`MarkerSpec::min_theta_coverage`], calibrated
+    /// independently for the outer estimation stage.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree with the selected peak.
+    ///
+    /// Same convention as [`MarkerSpec::min_theta_consistency`]; the outer
+    /// estimator uses a stricter default (0.35) than the inner estimator (0.25)
+    /// because the outer edge is anchored to a scale prior.
     pub min_theta_consistency: f32,
     /// If set, emit up to two hypotheses (best + runner-up) when runner-up is comparable.
     pub allow_two_hypotheses: bool,
@@ -107,7 +118,6 @@ impl Default for OuterEstimationConfig {
         Self {
             search_halfwidth_px: 4.0,
             radial_samples: 64,
-            theta_samples: 48,
             aggregator: AngularAggregator::Median,
             grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.6,
@@ -134,12 +144,17 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
 
 /// Estimate outer radius around a center prior using radial derivatives.
 ///
+/// `theta_samples` sets the number of angular rays. Pass
+/// `edge_sample.n_rays` to keep the outer-estimation and edge-sampling
+/// resolutions in sync without a silent config override.
+///
 /// Uses an optional working<->image mapper for distortion-aware sampling.
 pub fn estimate_outer_from_prior_with_mapper(
     gray: &GrayImage,
     center_prior: [f32; 2],
     r_outer_expected_px: f32,
     cfg: &OuterEstimationConfig,
+    theta_samples: usize,
     mapper: Option<&dyn PixelMapper>,
     store_response: bool,
 ) -> OuterEstimate {
@@ -161,7 +176,7 @@ pub fn estimate_outer_from_prior_with_mapper(
     }
 
     let n_r = cfg.radial_samples.max(7);
-    let n_t = cfg.theta_samples.max(8);
+    let n_t = theta_samples.max(8);
     let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
         GradPolarity::DarkToLight => vec![Polarity::Pos],
         GradPolarity::LightToDark => vec![Polarity::Neg],
@@ -388,7 +403,6 @@ mod tests {
         let cfg = OuterEstimationConfig {
             search_halfwidth_px: 4.0,
             radial_samples: 64,
-            theta_samples: 64,
             aggregator: AngularAggregator::Median,
             grad_polarity: GradPolarity::DarkToLight,
             min_theta_coverage: 0.5,
@@ -399,7 +413,8 @@ mod tests {
         };
 
         // If we search around r_outer, we should land near r_outer, not the stronger inner edge.
-        let est = estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_outer, &cfg, None, true);
+        let est =
+            estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_outer, &cfg, 64, None, true);
         assert_eq!(
             est.status,
             OuterStatus::Ok,

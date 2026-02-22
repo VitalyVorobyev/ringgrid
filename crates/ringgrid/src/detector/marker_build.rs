@@ -105,11 +105,8 @@ pub struct DetectedMarker {
     pub decode: Option<DecodeMetrics>,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn fit_metrics_from_outer(
-    edge: &EdgeSampleResult,
-    outer: &Ellipse,
-    outer_ransac: Option<&conic::RansacResult>,
+#[derive(Debug, Clone, Copy)]
+struct InnerFitSummary {
     n_points_inner: usize,
     ransac_inlier_ratio_inner: Option<f32>,
     rms_residual_inner: Option<f64>,
@@ -117,6 +114,29 @@ fn fit_metrics_from_outer(
     inner_fit_status: Option<InnerFitStatus>,
     inner_fit_reason: Option<InnerFitReason>,
     inner_theta_consistency: Option<f32>,
+}
+
+impl InnerFitSummary {
+    fn from_result(inner: &InnerFitResult) -> Self {
+        Self {
+            n_points_inner: inner.points_inner.len(),
+            ransac_inlier_ratio_inner: inner.ransac_inlier_ratio_inner,
+            rms_residual_inner: inner.rms_residual_inner,
+            max_angular_gap_inner: inner.max_angular_gap,
+            inner_fit_status: Some(inner.status),
+            inner_fit_reason: (inner.status != InnerFitStatus::Ok)
+                .then_some(inner.reason)
+                .flatten(),
+            inner_theta_consistency: inner.theta_consistency,
+        }
+    }
+}
+
+fn fit_metrics_from_outer(
+    edge: &EdgeSampleResult,
+    outer: &Ellipse,
+    outer_ransac: Option<&conic::RansacResult>,
+    inner_summary: &InnerFitSummary,
 ) -> FitMetrics {
     use super::outer_fit::max_angular_gap;
     let gap_outer = if edge.outer_points.is_empty() {
@@ -128,18 +148,18 @@ fn fit_metrics_from_outer(
         n_angles_total: edge.n_total_rays,
         n_angles_with_both_edges: edge.n_good_rays,
         n_points_outer: edge.outer_points.len(),
-        n_points_inner,
+        n_points_inner: inner_summary.n_points_inner,
         ransac_inlier_ratio_outer: outer_ransac
             .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32),
-        ransac_inlier_ratio_inner,
+        ransac_inlier_ratio_inner: inner_summary.ransac_inlier_ratio_inner,
         rms_residual_outer: Some(conic::rms_sampson_distance(outer, &edge.outer_points)),
-        rms_residual_inner,
+        rms_residual_inner: inner_summary.rms_residual_inner,
         max_angular_gap_outer: gap_outer,
-        max_angular_gap_inner,
-        inner_fit_status,
-        inner_fit_reason,
+        max_angular_gap_inner: inner_summary.max_angular_gap_inner,
+        inner_fit_status: inner_summary.inner_fit_status,
+        inner_fit_reason: inner_summary.inner_fit_reason,
         neighbor_radius_ratio: None,
-        inner_theta_consistency,
+        inner_theta_consistency: inner_summary.inner_theta_consistency,
     }
 }
 
@@ -151,24 +171,8 @@ pub(crate) fn fit_metrics_with_inner(
     outer_ransac: Option<&conic::RansacResult>,
     inner: &InnerFitResult,
 ) -> FitMetrics {
-    let inner_fit_status = Some(inner.status);
-    let inner_fit_reason = if inner.status == InnerFitStatus::Ok {
-        None
-    } else {
-        inner.reason
-    };
-    fit_metrics_from_outer(
-        edge,
-        outer,
-        outer_ransac,
-        inner.points_inner.len(),
-        inner.ransac_inlier_ratio_inner,
-        inner.rms_residual_inner,
-        inner.max_angular_gap,
-        inner_fit_status,
-        inner_fit_reason,
-        inner.theta_consistency,
-    )
+    let inner_summary = InnerFitSummary::from_result(inner);
+    fit_metrics_from_outer(edge, outer, outer_ransac, &inner_summary)
 }
 
 pub(crate) fn decode_metrics_from_result(

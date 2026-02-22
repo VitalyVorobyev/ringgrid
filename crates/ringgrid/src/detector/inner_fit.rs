@@ -117,6 +117,68 @@ pub(crate) struct InnerFitResult {
     pub theta_consistency: Option<f32>,
 }
 
+fn failed_inner_fit(
+    reason: InnerFitReason,
+    reason_context: Option<InnerFitReasonContext>,
+    points_inner: Vec<[f64; 2]>,
+    theta_consistency: Option<f32>,
+) -> InnerFitResult {
+    InnerFitResult {
+        status: InnerFitStatus::Failed,
+        reason: Some(reason),
+        reason_context,
+        ellipse_inner: None,
+        points_inner,
+        ransac_inlier_ratio_inner: None,
+        rms_residual_inner: None,
+        max_angular_gap: None,
+        theta_consistency,
+    }
+}
+
+fn rejected_inner_fit(
+    reason: InnerFitReason,
+    reason_context: Option<InnerFitReasonContext>,
+    points_inner: Vec<[f64; 2]>,
+    inlier_ratio: Option<f32>,
+    rms_residual_inner: f64,
+    inner_angular_gap: f64,
+    theta_consistency: Option<f32>,
+) -> InnerFitResult {
+    InnerFitResult {
+        status: InnerFitStatus::Rejected,
+        reason: Some(reason),
+        reason_context,
+        ellipse_inner: None,
+        points_inner,
+        ransac_inlier_ratio_inner: inlier_ratio,
+        rms_residual_inner: Some(rms_residual_inner),
+        max_angular_gap: Some(inner_angular_gap),
+        theta_consistency,
+    }
+}
+
+fn successful_inner_fit(
+    ellipse_inner: Ellipse,
+    points_inner: Vec<[f64; 2]>,
+    inlier_ratio: Option<f32>,
+    rms_residual_inner: f64,
+    inner_angular_gap: f64,
+    theta_consistency: Option<f32>,
+) -> InnerFitResult {
+    InnerFitResult {
+        status: InnerFitStatus::Ok,
+        reason: None,
+        reason_context: None,
+        ellipse_inner: Some(ellipse_inner),
+        points_inner,
+        ransac_inlier_ratio_inner: inlier_ratio,
+        rms_residual_inner: Some(rms_residual_inner),
+        max_angular_gap: Some(inner_angular_gap),
+        theta_consistency,
+    }
+}
+
 fn signed_peak_value(v: f32, pol: Polarity) -> f32 {
     match pol {
         Polarity::Pos => v,
@@ -235,50 +297,35 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, mapper, store_response);
 
     if estimate.status != InnerStatus::Ok {
-        return InnerFitResult {
-            status: InnerFitStatus::Failed,
-            reason: Some(InnerFitReason::EstimateNotOk),
-            reason_context: Some(InnerFitReasonContext::EstimateStatus {
+        return failed_inner_fit(
+            InnerFitReason::EstimateNotOk,
+            Some(InnerFitReasonContext::EstimateStatus {
                 status: estimate.status,
             }),
-            ellipse_inner: None,
-            points_inner: Vec::new(),
-            ransac_inlier_ratio_inner: None,
-            rms_residual_inner: None,
-            max_angular_gap: None,
-            theta_consistency: estimate.theta_consistency,
-        };
+            Vec::new(),
+            estimate.theta_consistency,
+        );
     }
     if estimate.r_inner_found.is_none() || estimate.polarity.is_none() {
-        return InnerFitResult {
-            status: InnerFitStatus::Failed,
-            reason: Some(InnerFitReason::EstimateMissingHint),
-            reason_context: None,
-            ellipse_inner: None,
-            points_inner: Vec::new(),
-            ransac_inlier_ratio_inner: None,
-            rms_residual_inner: None,
-            max_angular_gap: None,
-            theta_consistency: estimate.theta_consistency,
-        };
+        return failed_inner_fit(
+            InnerFitReason::EstimateMissingHint,
+            None,
+            Vec::new(),
+            estimate.theta_consistency,
+        );
     }
 
     let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, mapper);
     if points_inner.len() < cfg.min_points {
-        return InnerFitResult {
-            status: InnerFitStatus::Failed,
-            reason: Some(InnerFitReason::InsufficientPoints),
-            reason_context: Some(InnerFitReasonContext::InsufficientPoints {
+        return failed_inner_fit(
+            InnerFitReason::InsufficientPoints,
+            Some(InnerFitReasonContext::InsufficientPoints {
                 observed_points: points_inner.len(),
                 min_required_points: cfg.min_points,
             }),
-            ellipse_inner: None,
             points_inner,
-            ransac_inlier_ratio_inner: None,
-            rms_residual_inner: None,
-            max_angular_gap: None,
-            theta_consistency: estimate.theta_consistency,
-        };
+            estimate.theta_consistency,
+        );
     }
 
     let (ellipse_inner, inlier_ratio): (Ellipse, Option<f32>) = if points_inner.len() >= 8 {
@@ -290,17 +337,12 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             Err(_) => match conic::fit_ellipse_direct(&points_inner) {
                 Some(e) => (e, None),
                 None => {
-                    return InnerFitResult {
-                        status: InnerFitStatus::Failed,
-                        reason: Some(InnerFitReason::FitFailed),
-                        reason_context: None,
-                        ellipse_inner: None,
+                    return failed_inner_fit(
+                        InnerFitReason::FitFailed,
+                        None,
                         points_inner,
-                        ransac_inlier_ratio_inner: None,
-                        rms_residual_inner: None,
-                        max_angular_gap: None,
-                        theta_consistency: estimate.theta_consistency,
-                    };
+                        estimate.theta_consistency,
+                    );
                 }
             },
         }
@@ -308,17 +350,12 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         match conic::fit_ellipse_direct(&points_inner) {
             Some(e) => (e, None),
             None => {
-                return InnerFitResult {
-                    status: InnerFitStatus::Failed,
-                    reason: Some(InnerFitReason::FitFailed),
-                    reason_context: None,
-                    ellipse_inner: None,
+                return failed_inner_fit(
+                    InnerFitReason::FitFailed,
+                    None,
                     points_inner,
-                    ransac_inlier_ratio_inner: None,
-                    rms_residual_inner: None,
-                    max_angular_gap: None,
-                    theta_consistency: estimate.theta_consistency,
-                };
+                    estimate.theta_consistency,
+                );
             }
         }
     };
@@ -387,30 +424,25 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
     }
 
     if let Some(reason) = reject_reason {
-        return InnerFitResult {
-            status: InnerFitStatus::Rejected,
-            reason: Some(reason),
-            reason_context: reject_context,
-            ellipse_inner: None,
+        return rejected_inner_fit(
+            reason,
+            reject_context,
             points_inner,
-            ransac_inlier_ratio_inner: inlier_ratio,
-            rms_residual_inner: Some(rms_residual_inner),
-            max_angular_gap: Some(inner_angular_gap),
-            theta_consistency: estimate.theta_consistency,
-        };
+            inlier_ratio,
+            rms_residual_inner,
+            inner_angular_gap,
+            estimate.theta_consistency,
+        );
     }
 
-    InnerFitResult {
-        status: InnerFitStatus::Ok,
-        reason: None,
-        reason_context: None,
-        ellipse_inner: Some(ellipse_inner),
+    successful_inner_fit(
+        ellipse_inner,
         points_inner,
-        ransac_inlier_ratio_inner: inlier_ratio,
-        rms_residual_inner: Some(rms_residual_inner),
-        max_angular_gap: Some(inner_angular_gap),
-        theta_consistency: estimate.theta_consistency,
-    }
+        inlier_ratio,
+        rms_residual_inner,
+        inner_angular_gap,
+        estimate.theta_consistency,
+    )
 }
 
 #[cfg(test)]

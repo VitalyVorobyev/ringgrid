@@ -74,9 +74,9 @@ pub struct OuterEstimate {
 /// Configuration for outer-radius estimation around a center prior.
 ///
 /// The number of theta samples (rays) is **not** stored here; it is passed
-/// explicitly to [`estimate_outer_from_prior_with_mapper`] so the caller can
+/// explicitly to `estimate_outer_from_prior_with_mapper` so the caller can
 /// synchronise it with the edge-sampling resolution without a silent override.
-/// Set [`EdgeSampleConfig::n_rays`] to control angular density for both stages.
+/// Set [`crate::EdgeSampleConfig::n_rays`] to control angular density for both stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OuterEstimationConfig {
@@ -84,24 +84,24 @@ pub struct OuterEstimationConfig {
     pub search_halfwidth_px: f32,
     /// Number of radial samples used to build the aggregated response.
     ///
-    /// Same convention as [`MarkerSpec::radial_samples`], calibrated
+    /// Same convention as [`crate::MarkerSpec::radial_samples`], calibrated
     /// independently for the outer estimation stage.
     pub radial_samples: usize,
     /// Aggregation method across theta.
     ///
-    /// Same convention as [`MarkerSpec::aggregator`], applied to the outer
+    /// Same convention as [`crate::MarkerSpec::aggregator`], applied to the outer
     /// radial profile.
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
     pub grad_polarity: GradPolarity,
     /// Minimum fraction of theta samples required for an estimate.
     ///
-    /// Same convention as [`MarkerSpec::min_theta_coverage`], calibrated
+    /// Same convention as [`crate::MarkerSpec::min_theta_coverage`], calibrated
     /// independently for the outer estimation stage.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree with the selected peak.
     ///
-    /// Same convention as [`MarkerSpec::min_theta_consistency`]; the outer
+    /// Same convention as [`crate::MarkerSpec::min_theta_consistency`]; the outer
     /// estimator uses a stricter default (0.35) than the inner estimator (0.25)
     /// because the outer edge is anchored to a scale prior.
     pub min_theta_consistency: f32,
@@ -126,6 +126,24 @@ impl Default for OuterEstimationConfig {
             second_peak_min_rel: 0.85,
             refine_halfwidth_px: 1.0,
         }
+    }
+}
+
+fn failed_outer_estimate(
+    r_outer_expected_px: f32,
+    search_window_px: [f32; 2],
+    failure: OuterEstimateFailure,
+    r_samples: Option<Vec<f32>>,
+) -> OuterEstimate {
+    OuterEstimate {
+        r_outer_expected_px,
+        search_window_px,
+        polarity: None,
+        hypotheses: Vec::new(),
+        status: OuterStatus::Failed,
+        failure: Some(failure),
+        radial_response_agg: None,
+        r_samples,
     }
 }
 
@@ -163,16 +181,12 @@ pub fn estimate_outer_from_prior_with_mapper(
     let mut window = [r_expected - hw, r_expected + hw];
     window[0] = window[0].max(1.0);
     if window[1] <= window[0] + 1e-3 {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            failure: Some(OuterEstimateFailure::InvalidSearchWindow),
-            radial_response_agg: None,
-            r_samples: None,
-        };
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InvalidSearchWindow,
+            None,
+        );
     }
 
     let n_r = cfg.radial_samples.max(7);
@@ -185,16 +199,12 @@ pub fn estimate_outer_from_prior_with_mapper(
     let track_pos = polarity_candidates.contains(&Polarity::Pos);
     let track_neg = polarity_candidates.contains(&Polarity::Neg);
     let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            failure: Some(OuterEstimateFailure::InvalidSearchWindow),
-            radial_response_agg: None,
-            r_samples: None,
-        };
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InvalidSearchWindow,
+            None,
+        );
     };
     let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
@@ -221,23 +231,15 @@ pub fn estimate_outer_from_prior_with_mapper(
 
     let coverage = scan.coverage();
     if scan.n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
-        return OuterEstimate {
-            r_outer_expected_px: r_expected,
-            search_window_px: window,
-            polarity: None,
-            hypotheses: Vec::new(),
-            status: OuterStatus::Failed,
-            failure: Some(OuterEstimateFailure::InsufficientThetaCoverage {
+        return failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::InsufficientThetaCoverage {
                 observed: coverage,
                 min_required: cfg.min_theta_coverage,
-            }),
-            radial_response_agg: None,
-            r_samples: if store_response {
-                Some(scan.grid.r_samples.clone())
-            } else {
-                None
             },
-        };
+            store_response.then(|| scan.grid.r_samples.clone()),
+        );
     }
 
     let agg_resp = scan.aggregate_response(&cfg.aggregator);
@@ -340,19 +342,13 @@ pub fn estimate_outer_from_prior_with_mapper(
         }
     }
 
-    best.map(|(e, _)| e).unwrap_or(OuterEstimate {
-        r_outer_expected_px: r_expected,
-        search_window_px: window,
-        polarity: None,
-        hypotheses: Vec::new(),
-        status: OuterStatus::Failed,
-        failure: Some(OuterEstimateFailure::NoPolarityCandidates),
-        radial_response_agg: None,
-        r_samples: if store_response {
-            Some(scan.grid.r_samples.clone())
-        } else {
-            None
-        },
+    best.map(|(e, _)| e).unwrap_or_else(|| {
+        failed_outer_estimate(
+            r_expected,
+            window,
+            OuterEstimateFailure::NoPolarityCandidates,
+            store_response.then(|| scan.grid.r_samples.clone()),
+        )
     })
 }
 

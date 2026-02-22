@@ -12,6 +12,7 @@ rust-version = "1.87"
 [[bin]]
 name = "ringgrid"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 ringgrid = { path = "../ringgrid" }

@@ -232,7 +232,9 @@ fn finalize_global_filter_result(
     let completion_stats =
         phase_completion(gray, &mut final_markers, h_current.as_ref(), config, mapper);
 
-    if config.projective_center.enable && final_markers.len() > n_before_completion {
+    if config.circle_refinement.uses_projective_center()
+        && final_markers.len() > n_before_completion
+    {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
     if let Some(mapper) = mapper {
@@ -303,7 +305,7 @@ pub(super) fn run(
     warn_center_correction_without_intrinsics(config, mapper.is_some());
 
     let mut corrected_markers = fit_markers;
-    if config.projective_center.enable {
+    if config.circle_refinement.uses_projective_center() {
         apply_projective_centers(&mut corrected_markers, config);
     }
 
@@ -385,10 +387,7 @@ mod tests {
     fn no_global_filter_config() -> DetectConfig {
         DetectConfig {
             use_global_filter: false,
-            projective_center: crate::ProjectiveCenterParams {
-                enable: false,
-                ..crate::ProjectiveCenterParams::default()
-            },
+            circle_refinement: crate::CircleRefinementMethod::None,
             ..DetectConfig::default()
         }
     }

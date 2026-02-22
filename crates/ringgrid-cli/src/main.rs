@@ -553,7 +553,6 @@ fn build_detect_config(
     config.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     // Center refinement method
     config.circle_refinement = overrides.circle_refinement;
-    config.projective_center.enable = config.circle_refinement.uses_projective_center();
     if let Some(shift) = overrides.projective_center_max_shift_px {
         config.projective_center.max_center_shift_px = Some(shift);
     }

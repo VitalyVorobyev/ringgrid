@@ -87,8 +87,6 @@ impl Default for CompletionParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ProjectiveCenterParams {
-    /// Enable projective unbiased center estimation.
-    pub enable: bool,
     /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
@@ -110,7 +108,6 @@ pub struct ProjectiveCenterParams {
 impl Default for ProjectiveCenterParams {
     fn default() -> Self {
         Self {
-            enable: true,
             use_expected_ratio: true,
             ratio_penalty_weight: 1.0,
             max_center_shift_px: None,

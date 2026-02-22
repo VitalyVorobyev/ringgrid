@@ -32,7 +32,7 @@ Total config parameters counted: **72 across all nested structs** in `DetectConf
 | A8 | `pipeline/fit_decode.rs:215`, `detector/outer_fit/mod.rs:325`, `detector/outer_fit/sampling.rs:207`, `detector/inner_fit.rs:422`, `api.rs:206`, `pipeline/fit_decode.rs:215` | `draw_ring_image` test helper copied six times | Low |
 | A9 | `lib.rs:95-96` | `codebook` and `codec` raw modules publicly re-exported | Low |
 | A10 | `homography/utils.rs` | `refit_homography` and `refit_homography_matrix` are thin wrappers around each other | Low |
-| C1 | `detector/config.rs:562,582-586` | `CircleRefinementMethod` enum and `ProjectiveCenterParams.enable` are redundant | Medium |
+| C1 | `detector/config.rs:562,582-586` | `CircleRefinementMethod` enum and `ProjectiveCenterParams.enable` are redundant | Medium | **RESOLVED** (pending commit) |
 | C2 | `detector/config.rs:544,562` | `marker_scale` and derived axis/completion fields expose internal coupling | Medium |
 | C3 | `detector/config.rs:681` | `outer_estimation.theta_samples` silently overwritten from `edge_sample.n_rays` | Medium |
 | C4 | `ring/outer_estimate.rs:OuterEstimationConfig`, `marker/marker_spec.rs:MarkerSpec` | Overlapping config fields (`theta_samples`, `radial_samples`, `aggregator`, `min_theta_coverage`, `min_theta_consistency`) | Medium |

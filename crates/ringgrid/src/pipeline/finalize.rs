@@ -227,16 +227,19 @@ fn try_recover_inner_as_outer(
     for idx in flagged {
         // Determine working-frame center: if map_centers_to_image has already run,
         // center_mapped holds the working-frame center; otherwise use center directly.
-        let center_wf: [f64; 2] = markers[idx]
-            .center_mapped
-            .unwrap_or(markers[idx].center);
+        let center_wf: [f64; 2] = markers[idx].center_mapped.unwrap_or(markers[idx].center);
         let center_f32 = [center_wf[0] as f32, center_wf[1] as f32];
 
         // Compute corrected expected radius from neighbors (excluding self with k+1).
-        let Some(r_corrected) =
-            median_outer_radius_from_neighbors_px(markers[idx].center, markers, cfg.k_neighbors + 1)
-        else {
-            tracing::debug!(idx, "recovery skipped: could not compute neighbor median radius");
+        let Some(r_corrected) = median_outer_radius_from_neighbors_px(
+            markers[idx].center,
+            markers,
+            cfg.k_neighbors + 1,
+        ) else {
+            tracing::debug!(
+                idx,
+                "recovery skipped: could not compute neighbor median radius"
+            );
             continue;
         };
 
@@ -302,7 +305,7 @@ fn try_recover_inner_as_outer(
             let recovered_center = candidate.outer.center();
             let center_shift = (((recovered_center[0] - orig_center_wf[0]).powi(2)
                 + (recovered_center[1] - orig_center_wf[1]).powi(2))
-                .sqrt()) as f32;
+            .sqrt()) as f32;
             let max_shift = r_corrected * cfg.size_gate_tolerance;
             if center_shift > max_shift {
                 tracing::debug!(
@@ -345,7 +348,8 @@ fn try_recover_inner_as_outer(
             false,
         );
 
-        let fit_metrics = marker_build::fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
+        let fit_metrics =
+            marker_build::fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
         let confidence = compute_marker_confidence(
             decode_result.as_ref(),
             &edge,

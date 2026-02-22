@@ -112,6 +112,9 @@ pub(crate) struct InnerFitResult {
     pub rms_residual_inner: Option<f64>,
     /// Maximum angular gap (radians) between consecutive inner edge points.
     pub max_angular_gap: Option<f64>,
+    /// Theta consistency score from the inner estimate stage (fraction of theta
+    /// samples that agree on the inner edge location). Present when estimation ran.
+    pub theta_consistency: Option<f32>,
 }
 
 fn signed_peak_value(v: f32, pol: Polarity) -> f32 {
@@ -243,6 +246,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
             max_angular_gap: None,
+            theta_consistency: estimate.theta_consistency,
         };
     }
     if estimate.r_inner_found.is_none() || estimate.polarity.is_none() {
@@ -255,6 +259,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
             max_angular_gap: None,
+            theta_consistency: estimate.theta_consistency,
         };
     }
 
@@ -272,6 +277,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             ransac_inlier_ratio_inner: None,
             rms_residual_inner: None,
             max_angular_gap: None,
+            theta_consistency: estimate.theta_consistency,
         };
     }
 
@@ -293,6 +299,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                         ransac_inlier_ratio_inner: None,
                         rms_residual_inner: None,
                         max_angular_gap: None,
+                        theta_consistency: estimate.theta_consistency,
                     };
                 }
             },
@@ -310,6 +317,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
                     ransac_inlier_ratio_inner: None,
                     rms_residual_inner: None,
                     max_angular_gap: None,
+                    theta_consistency: estimate.theta_consistency,
                 };
             }
         }
@@ -388,6 +396,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
             ransac_inlier_ratio_inner: inlier_ratio,
             rms_residual_inner: Some(rms_residual_inner),
             max_angular_gap: Some(inner_angular_gap),
+            theta_consistency: estimate.theta_consistency,
         };
     }
 
@@ -400,6 +409,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         ransac_inlier_ratio_inner: inlier_ratio,
         rms_residual_inner: Some(rms_residual_inner),
         max_angular_gap: Some(inner_angular_gap),
+        theta_consistency: estimate.theta_consistency,
     }
 }
 

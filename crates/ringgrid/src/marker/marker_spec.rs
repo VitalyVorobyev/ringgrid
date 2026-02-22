@@ -109,5 +109,5 @@ impl MarkerSpec {
 }
 
 fn default_min_theta_consistency() -> f32 {
-    0.35
+    0.25
 }

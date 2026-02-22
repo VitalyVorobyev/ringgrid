@@ -52,6 +52,11 @@ pub struct FitMetrics {
     /// potential inner-as-outer substitution. Populated in the finalization stage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neighbor_radius_ratio: Option<f32>,
+    /// Theta consistency score from the inner estimate stage. Fraction of theta
+    /// samples that agree on the inner edge location. Present when estimation ran,
+    /// including when it failed the quality gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_theta_consistency: Option<f32>,
 }
 
 /// A detected marker with its refined center and optional ID.
@@ -111,6 +116,7 @@ fn fit_metrics_from_outer(
     max_angular_gap_inner: Option<f64>,
     inner_fit_status: Option<InnerFitStatus>,
     inner_fit_reason: Option<InnerFitReason>,
+    inner_theta_consistency: Option<f32>,
 ) -> FitMetrics {
     use super::outer_fit::max_angular_gap;
     let gap_outer = if edge.outer_points.is_empty() {
@@ -133,6 +139,7 @@ fn fit_metrics_from_outer(
         inner_fit_status,
         inner_fit_reason,
         neighbor_radius_ratio: None,
+        inner_theta_consistency,
     }
 }
 
@@ -160,6 +167,7 @@ pub(crate) fn fit_metrics_with_inner(
         inner.max_angular_gap,
         inner_fit_status,
         inner_fit_reason,
+        inner.theta_consistency,
     )
 }
 
@@ -199,9 +207,12 @@ pub(crate) fn compute_marker_confidence(
     fit_metrics: &FitMetrics,
     inner_fit_config: &InnerFitConfig,
 ) -> f32 {
-    // 1. Decode signal (base)
+    // 1. Decode signal (base): use normalised Hamming distance only.
+    // d.confidence = (1−dist/6) × (margin/CODEBOOK_MIN_CYCLIC_DIST) which halves
+    // the value for the common margin=1 case.  Using distance alone keeps the
+    // factor consistent across margin values while still penalising close calls.
     let decode_conf = decode_result
-        .map(|d| d.confidence)
+        .map(|d| (1.0 - d.dist as f32 / 6.0).clamp(0.0, 1.0))
         .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));
 
     // 2. Outer angular coverage: linear map gap -> [0, 1]
@@ -224,9 +235,10 @@ pub(crate) fn compute_marker_confidence(
         inner_fit_config.miss_confidence_factor
     };
 
-    // 5. RMS residual penalty: 1/(1+rms)
+    // 5. RMS residual penalty: softer 1/(1+rms/2) so clean fits (rms≈0.2) are
+    // penalised less while still pushing noisy fits (rms>1) toward zero.
     let rms_factor = match fit_metrics.rms_residual_outer {
-        Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32),
+        Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32 / 2.0),
         _ => 1.0,
     };
 

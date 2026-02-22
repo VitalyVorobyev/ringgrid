@@ -64,7 +64,7 @@
   },
 
   "completion": {
-    "enable": false,
+    "enable": true,
     "reproj_gate_px": 3.0,
     "min_fit_confidence": 0.45,
     "min_arc_coverage": 0.35,
@@ -98,6 +98,6 @@
     "homography_min_inliers": 12,
     "max_iters": 5,
     "remove_unverified": false,
-    "seed_min_decode_confidence": 0.7
+    "seed_min_decode_confidence": 0.65
   }
 }

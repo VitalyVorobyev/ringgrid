@@ -42,15 +42,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          STATUS="$(curl -sS -o /tmp/ringgrid-crate.json -w '%{http_code}' https://crates.io/api/v1/crates/ringgrid)"
+          # Avoid crates.io API access-policy issues by probing the sparse index
+          # entry directly. For crate "ringgrid", index path is ri/ng/ringgrid.
+          INDEX_URL="https://index.crates.io/ri/ng/ringgrid"
+          STATUS="$(
+            curl -sS -L \
+              -A "ringgrid-ci/${GITHUB_RUN_ID} (+https://github.com/${GITHUB_REPOSITORY})" \
+              -o /tmp/ringgrid-index.json \
+              -w '%{http_code}' \
+              "${INDEX_URL}"
+          )"
+
           if [ "$STATUS" = "404" ]; then
             echo "::error title=First release requires manual publish::Crate 'ringgrid' does not exist on crates.io yet. Trusted Publishing cannot perform the first publish. Run 'cargo publish -p ringgrid --locked' locally with a scoped token, then use this workflow for subsequent tags."
             exit 1
           fi
+
           if [ "$STATUS" != "200" ]; then
-            echo "::error title=crates.io check failed::Unexpected crates.io response: HTTP $STATUS"
-            cat /tmp/ringgrid-crate.json || true
-            exit 1
+            echo "::warning title=crates.io index check skipped::Could not verify crate existence from index (HTTP $STATUS). Continuing to publish; cargo will perform final validation."
+            cat /tmp/ringgrid-index.json || true
           fi
 
       - name: Test workspace

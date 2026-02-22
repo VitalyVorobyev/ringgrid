@@ -1,0 +1,22 @@
+[package]
+name = "ringgrid-py"
+version = "0.2.1"
+edition = "2021"
+description = "Python bindings for ringgrid"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/VitalyVorobyev/ringgrid"
+homepage = "https://github.com/VitalyVorobyev/ringgrid"
+rust-version = "1.87"
+publish = false
+
+[lib]
+name = "_ringgrid"
+crate-type = ["cdylib"]
+
+[dependencies]
+ringgrid = { path = "../ringgrid", version = "0.2.1" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+image = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

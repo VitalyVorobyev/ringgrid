@@ -79,6 +79,37 @@ tools/run_synth_viz.sh tools/out/synth_001 0
 
 `tools/run_synth_viz.sh` auto-uses `.venv/bin/python` when present.
 
+## Python Bindings (maturin)
+
+The repo includes native Python bindings in `crates/ringgrid-py` exposed as the
+`ringgrid` package.
+
+Build and install locally:
+
+```bash
+python3 -m pip install -U pip maturin
+maturin develop -m crates/ringgrid-py/Cargo.toml --release
+```
+
+Install with plotting extras:
+
+```bash
+python3 -m pip install -e crates/ringgrid-py[viz]
+```
+
+Minimal Python usage:
+
+```python
+import ringgrid
+
+board = ringgrid.BoardLayout.default()
+cfg = ringgrid.DetectConfig(board)
+detector = ringgrid.Detector(board, cfg)
+
+result = detector.detect("data/target_3_split_00.png")
+print(len(result.detected_markers))
+```
+
 ## Public API (v1)
 
 All detection goes through `Detector` methods. No public free functions.

@@ -1,0 +1,143 @@
+name: Release Python Package to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  verify-version:
+    name: Verify tag/version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify versions match tag (vX.Y.Z)
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path('.')
+          tag = os.environ['GITHUB_REF_NAME']
+          tag_version = tag[1:] if tag.startswith('v') else tag
+
+          ringgrid_rust = tomllib.loads((root / 'crates/ringgrid/Cargo.toml').read_text())['package']['version']
+          ringgrid_py_cargo = tomllib.loads((root / 'crates/ringgrid-py/Cargo.toml').read_text())['package']['version']
+          ringgrid_py_project = tomllib.loads((root / 'crates/ringgrid-py/pyproject.toml').read_text())['project']['version']
+
+          print(f'tag version:           {tag_version}')
+          print(f'ringgrid rust version: {ringgrid_rust}')
+          print(f'ringgrid-py cargo:     {ringgrid_py_cargo}')
+          print(f'ringgrid-py project:   {ringgrid_py_project}')
+
+          versions = {tag_version, ringgrid_rust, ringgrid_py_cargo, ringgrid_py_project}
+          if len(versions) != 1:
+              raise SystemExit('version mismatch between tag and project files')
+          PY
+
+      - name: Check generated typing artifacts
+        run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
+
+  build-wheels:
+    name: Build wheels (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: verify-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Check generated typing artifacts
+        run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >-
+            --release
+            -m crates/ringgrid-py/Cargo.toml
+            --out dist
+            -i python
+          manylinux: auto
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/*
+
+  build-sdist:
+    name: Build sdist
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check generated typing artifacts
+        run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: -m crates/ringgrid-py/Cargo.toml --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

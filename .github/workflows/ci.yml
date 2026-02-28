@@ -65,6 +65,39 @@ jobs:
       - name: Run end-to-end synthetic smoke eval
         run: python tools/run_synth_eval.py --n 1 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/ci_smoke
 
+  python-binding:
+    name: Python Binding (ubuntu)
+    runs-on: ubuntu-latest
+    needs: rust-quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create venv and install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip maturin pytest numpy matplotlib
+
+      - name: Check generated typing artifacts
+        run: .venv/bin/python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
+
+      - name: Build/install Python package
+        run: .venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+
+      - name: Run Python tests
+        run: .venv/bin/python -m pytest crates/ringgrid-py/tests -q
+
   check-docs:
     name: Documentation (ubuntu)
     runs-on: ubuntu-latest

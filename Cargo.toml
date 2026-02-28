@@ -4,6 +4,7 @@ members = [
     "crates/ringgrid",
     "crates/ringgrid-cli",
 ]
+exclude = ["crates/ringgrid-py"]
 
 [workspace.dependencies]
 nalgebra = { version = "0.33", features = ["serde-serialize"] }

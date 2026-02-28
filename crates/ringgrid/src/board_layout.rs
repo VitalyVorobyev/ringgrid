@@ -304,7 +304,12 @@ impl BoardLayout {
     /// Load a board layout from a JSON file.
     pub fn from_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         let data = std::fs::read_to_string(path)?;
-        let spec: BoardLayoutSpecV3 = serde_json::from_str(&data)?;
+        Self::from_json_str(&data)
+    }
+
+    /// Load a board layout from a JSON string.
+    pub fn from_json_str(data: &str) -> Result<Self, BoardLayoutLoadError> {
+        let spec: BoardLayoutSpecV3 = serde_json::from_str(data)?;
         Self::from_layout_spec(spec).map_err(Into::into)
     }
 
@@ -634,5 +639,24 @@ mod tests {
         ));
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_json_str_loads_valid_spec() {
+        let raw = r#"{
+            "schema":"ringgrid.target.v3",
+            "name":"x",
+            "pitch_mm":8.0,
+            "rows":3,
+            "long_row_cols":4,
+            "marker_outer_radius_mm":4.8,
+            "marker_inner_radius_mm":3.2
+        }"#;
+
+        let board = BoardLayout::from_json_str(raw).expect("valid board json");
+        assert_eq!(board.name, "x");
+        assert_eq!(board.rows, 3);
+        assert_eq!(board.long_row_cols, 4);
+        assert!(board.n_markers() > 0);
     }
 }

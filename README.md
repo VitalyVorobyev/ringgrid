@@ -1,3 +1,9 @@
+[![CI](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/ci.yml/badge.svg)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/ci.yml)
+[![Publish Rust crates (crates.io)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/publish-crates.yml/badge.svg)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/publish-crates.yml)
+[![Publish Docs](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/publish-docs.yml/badge.svg)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/publish-docs.yml)
+[![Release Python Package to PyPI](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/release-pypi.yml/badge.svg)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/release-pypi.yml)
+[![Security Audit](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/audit.yml/badge.svg)](https://github.com/VitalyVorobyev/ringgrid/actions/workflows/audit.yml)
+
 # ringgrid
 
 `ringgrid` is a pure-Rust detector for dense coded ring calibration targets on a hex lattice.

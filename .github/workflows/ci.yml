@@ -84,17 +84,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: python -m pip install --upgrade pip maturin pytest numpy matplotlib
+      - name: Create venv and install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip maturin pytest numpy matplotlib
 
       - name: Check generated typing artifacts
-        run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
+        run: .venv/bin/python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
 
       - name: Build/install Python package
-        run: python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+        run: .venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
 
       - name: Run Python tests
-        run: python -m pytest crates/ringgrid-py/tests -q
+        run: .venv/bin/python -m pytest crates/ringgrid-py/tests -q
 
   check-docs:
     name: Documentation (ubuntu)

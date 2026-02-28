@@ -120,39 +120,9 @@ jobs:
           name: dist-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/*
 
-  build-sdist:
-    name: Build sdist
-    needs: verify-version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Check generated typing artifacts
-        run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
-
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: -m crates/ringgrid-py/Cargo.toml --out dist
-
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-sdist
-          path: dist/*
-
   publish:
     name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+    needs: [build-wheels]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

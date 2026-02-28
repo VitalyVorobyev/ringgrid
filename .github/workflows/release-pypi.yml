@@ -74,6 +74,22 @@ jobs:
       - name: Check generated typing artifacts
         run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
 
+      - name: Resolve manylinux Python interpreter
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.python-version }}" in
+            "3.10") echo "MANYLINUX_PY=/opt/python/cp310-cp310/bin/python" >> "$GITHUB_ENV" ;;
+            "3.11") echo "MANYLINUX_PY=/opt/python/cp311-cp311/bin/python" >> "$GITHUB_ENV" ;;
+            "3.12") echo "MANYLINUX_PY=/opt/python/cp312-cp312/bin/python" >> "$GITHUB_ENV" ;;
+            "3.13") echo "MANYLINUX_PY=/opt/python/cp313-cp313/bin/python" >> "$GITHUB_ENV" ;;
+            *)
+              echo "Unsupported python-version: ${{ matrix.python-version }}" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Build wheels (Linux manylinux)
         if: matrix.os == 'ubuntu-latest'
         uses: PyO3/maturin-action@v1
@@ -83,7 +99,7 @@ jobs:
             --release
             -m crates/ringgrid-py/Cargo.toml
             --out dist
-            -i /opt/python/cp${{ replace(matrix.python-version, '.', '') }}-cp${{ replace(matrix.python-version, '.', '') }}/bin/python
+            -i ${{ env.MANYLINUX_PY }}
           manylinux: auto
 
       - name: Build wheels (macOS/Windows)

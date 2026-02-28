@@ -74,7 +74,20 @@ jobs:
       - name: Check generated typing artifacts
         run: python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
 
-      - name: Build wheels
+      - name: Build wheels (Linux manylinux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >-
+            --release
+            -m crates/ringgrid-py/Cargo.toml
+            --out dist
+            -i /opt/python/cp${{ replace(matrix.python-version, '.', '') }}-cp${{ replace(matrix.python-version, '.', '') }}/bin/python
+          manylinux: auto
+
+      - name: Build wheels (macOS/Windows)
+        if: matrix.os != 'ubuntu-latest'
         uses: PyO3/maturin-action@v1
         with:
           command: build

@@ -6,7 +6,7 @@ Run from repository root after:
 
 Example:
   python crates/ringgrid-py/examples/basic_detect.py \
-    --image data/target_3_split_00.png
+    --image testdata/target_3_split_00.png
 """
 
 from __future__ import annotations

@@ -106,16 +106,16 @@ board = ringgrid.BoardLayout.default()
 cfg = ringgrid.DetectConfig(board)
 detector = ringgrid.Detector(board, cfg)
 
-result = detector.detect("data/target_3_split_00.png")
+result = detector.detect("testdata/target_3_split_00.png")
 print(len(result.detected_markers))
 ```
 
 Runnable examples:
 
 ```bash
-python crates/ringgrid-py/examples/basic_detect.py --image data/target_3_split_00.png
-python crates/ringgrid-py/examples/detect_with_camera.py --image data/target_3_split_00.png
-python crates/ringgrid-py/examples/plot_detection.py --image data/target_3_split_00.png --out data/target_3_split_00_overlay_py.png
+python crates/ringgrid-py/examples/basic_detect.py --image testdata/target_3_split_00.png
+python crates/ringgrid-py/examples/detect_with_camera.py --image testdata/target_3_split_00.png
+python crates/ringgrid-py/examples/plot_detection.py --image testdata/target_3_split_00.png --out testdata/target_3_split_00_overlay_py.png
 ```
 
 ## Public API (v1)

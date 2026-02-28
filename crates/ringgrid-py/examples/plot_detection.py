@@ -6,8 +6,8 @@ Requires plotting extras:
 
 Example:
   python crates/ringgrid-py/examples/plot_detection.py \
-    --image data/target_3_split_00.png \
-    --out data/target_3_split_00_overlay.png
+    --image testdata/target_3_split_00.png \
+    --out testdata/target_3_split_00_overlay.png
 """
 
 from __future__ import annotations

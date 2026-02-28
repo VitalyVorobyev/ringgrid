@@ -12,7 +12,7 @@ from ringgrid import viz
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BOARD_JSON = REPO_ROOT / "tools" / "board" / "board_spec.json"
-SAMPLE_IMAGE = REPO_ROOT / "data" / "target_3_split_00.png"
+SAMPLE_IMAGE = REPO_ROOT / "testdata" / "target_3_split_00.png"
 
 
 def test_board_layout_default_and_from_json() -> None:

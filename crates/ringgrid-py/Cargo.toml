@@ -1,6 +1,6 @@
 [package]
 name = "ringgrid-py"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 description = "Python bindings for ringgrid"
 license = "MIT OR Apache-2.0"
@@ -14,9 +14,9 @@ name = "_ringgrid"
 crate-type = ["cdylib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.2.6" }
-pyo3 = { version = "0.23", features = ["extension-module"] }
-numpy = "0.23"
+ringgrid = { path = "../ringgrid", version = "0.2.7" }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"
 image = "0.25"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

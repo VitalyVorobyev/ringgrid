@@ -1,6 +1,6 @@
 [package]
 name = "ringgrid"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 description = "Pure-Rust detector for coded ring calibration targets"
 license = "MIT OR Apache-2.0"

@@ -391,7 +391,8 @@ impl ScaleTier {
 /// - [`ScaleTiers::single`] — single-pass equivalent, no merge overhead
 /// - [`ScaleTiers::from_detected_radii`] — built from a scale-probe result
 ///
-/// See [`Detector::detect_adaptive`] and [`Detector::detect_multiscale`].
+/// See [`crate::Detector::detect_adaptive`] and
+/// [`crate::Detector::detect_multiscale`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScaleTiers(pub Vec<ScaleTier>);
 

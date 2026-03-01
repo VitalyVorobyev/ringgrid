@@ -131,7 +131,7 @@ impl Detector {
     ///
     /// Runs a lightweight scale probe to estimate the dominant marker size(s)
     /// in the image, selects matching tiers, and calls [`detect_multiscale`].
-    /// Falls back to four broad tiers ([8,24], [20,60], [50,130], [110,220] px)
+    /// Falls back to four broad tiers (`[8,24]`, `[20,60]`, `[50,130]`, `[110,220]` px)
     /// when the probe returns no usable scale signal.
     ///
     /// No manual scale configuration is required. Use

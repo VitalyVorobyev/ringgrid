@@ -6,8 +6,8 @@
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `diameter_min_px` | `f32` | 20.0 | Minimum expected marker outer diameter in pixels. |
-| `diameter_max_px` | `f32` | 56.0 | Maximum expected marker outer diameter in pixels. |
+| `diameter_min_px` | `f32` | 14.0 | Minimum expected marker outer diameter in pixels. |
+| `diameter_max_px` | `f32` | 66.0 | Maximum expected marker outer diameter in pixels. |
 
 ## Constructors
 
@@ -29,7 +29,7 @@ let scale = MarkerScalePrior::from_nominal_diameter_px(32.0);
 
 Every constructor and accessor normalizes the stored range:
 
-1. Non-finite values are replaced with the corresponding default (20.0 or 56.0).
+1. Non-finite values are replaced with the corresponding default (14.0 or 66.0).
 2. If `min > max`, the two are swapped.
 3. `min` is clamped to at least 4.0 px.
 4. `max` is clamped to at least `min`.
@@ -95,9 +95,13 @@ When a `DetectConfig` is constructed (or `set_marker_scale_prior()` is called), 
 
 - **Markers vary in apparent size** (perspective, varying distance): use `new(min, max)` with the smallest and largest expected diameters. This widens search and validation windows to accommodate the range. A wider range makes detection more permissive but may increase false positives.
 
-- **Unsure about scale**: start with the default (20--56 px) and inspect detection results. Narrow the range once you know the actual marker sizes in your images.
+- **Unsure about scale**: start with the default (14--66 px) and inspect detection results. Narrow the range once you know the actual marker sizes in your images.
 
 - **Post-construction update**: call `config.set_marker_scale_prior(new_scale)` or `config.set_marker_diameter_hint_px(d)` to re-derive all coupled parameters without rebuilding the full config.
+
+- **Very wide scale variation**: use adaptive multi-scale methods
+  (`Detector::detect_adaptive`, `Detector::detect_adaptive_with_hint`, or
+  `Detector::detect_multiscale`) instead of forcing one very wide prior.
 
 ## Source
 

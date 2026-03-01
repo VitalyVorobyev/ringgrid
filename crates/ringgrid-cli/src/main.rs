@@ -67,14 +67,16 @@ struct CliDetectArgs {
 
     /// Minimum marker outer diameter in pixels for scale search.
     ///
-    /// Default: 20.0 (built-in). Can also be set via `--config`
+    /// Unset by default. Effective default prior is 14.0-66.0 when both
+    /// min/max are omitted. Can also be set via `--config`
     /// (`marker_scale.diameter_min_px`). CLI takes precedence over config file.
     #[arg(long)]
     marker_diameter_min: Option<f64>,
 
     /// Maximum marker outer diameter in pixels for scale search.
     ///
-    /// Default: 56.0 (built-in). Can also be set via `--config`
+    /// Unset by default. Effective default prior is 14.0-66.0 when both
+    /// min/max are omitted. Can also be set via `--config`
     /// (`marker_scale.diameter_max_px`). CLI takes precedence over config file.
     #[arg(long)]
     marker_diameter_max: Option<f64>,
@@ -418,7 +420,10 @@ impl CliDetectArgs {
     /// 1. `--marker-diameter` (fixed single value)
     /// 2. `--marker-diameter-min` / `--marker-diameter-max` (explicitly set)
     /// 3. `marker_scale` section in the JSON config file
-    /// 4. Built-in defaults (20 – 56 px)
+    /// 4. Built-in defaults (`MarkerScalePrior::default()`, currently 14-66 px)
+    ///
+    /// Note: if exactly one bound is provided via CLI, the missing side uses
+    /// legacy compatibility fallback (20 or 56).
     fn to_preset(&self, config_file: Option<&DetectConfigFile>) -> DetectPreset {
         let marker_scale = if let Some(d) = self.marker_diameter {
             ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32)

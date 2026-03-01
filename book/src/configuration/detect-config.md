@@ -12,7 +12,7 @@ use std::path::Path;
 
 let board = BoardLayout::from_json_file(Path::new("board_spec.json")).unwrap();
 
-// 1. Default scale prior (20--56 px diameter range)
+// 1. Default scale prior (14--66 px diameter range)
 let cfg = DetectConfig::from_target(board.clone());
 
 // 2. Explicit scale range
@@ -53,6 +53,10 @@ let det = Detector::with_config(cfg);
 
 // Detect
 let result = det.detect(&image);
+
+// Adaptive multi-scale APIs (wide size variation scenes)
+let result = det.detect_adaptive(&image);
+let result = det.detect_adaptive_with_hint(&image, Some(32.0));
 ```
 
 ## Post-construction tuning
@@ -72,7 +76,7 @@ Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `Detect
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
-| `marker_scale` | `MarkerScalePrior` | 20.0--56.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
+| `marker_scale` | `MarkerScalePrior` | 14.0--66.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
 | `outer_estimation` | `OuterEstimationConfig` | (see sub-configs) | Outer-edge radius hypothesis generation from radial profile peaks. |
 | `proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
 | `seed_proposals` | `SeedProposalParams` | merge=3.0, score=1e12, max=512 | Controls seed injection for multi-pass detection. |

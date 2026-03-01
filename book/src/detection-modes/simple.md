@@ -73,8 +73,11 @@ can specify a min/max diameter range with `MarkerScalePrior`:
 ```rust
 use ringgrid::MarkerScalePrior;
 
-let detector = Detector::with_marker_scale(board, MarkerScalePrior::new(20.0, 56.0));
+let detector = Detector::with_marker_scale(board, MarkerScalePrior::new(14.0, 66.0));
 ```
+
+For very wide variation (for example very small and very large markers in one
+image), switch to [Adaptive Scale Detection](adaptive-scale.md).
 
 ## One-Step Construction from JSON
 

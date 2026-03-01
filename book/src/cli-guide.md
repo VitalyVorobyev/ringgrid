@@ -44,12 +44,17 @@ results as JSON.
 | Flag | Default | Description |
 |---|---|---|
 | `--marker-diameter <px>` | -- | Fixed marker outer diameter in pixels (legacy mode). Overrides min/max range. |
-| `--marker-diameter-min <px>` | 20.0 | Minimum marker outer diameter for scale search. |
-| `--marker-diameter-max <px>` | 56.0 | Maximum marker outer diameter for scale search. |
+| `--marker-diameter-min <px>` | unset | Minimum marker outer diameter for scale search. |
+| `--marker-diameter-max <px>` | unset | Maximum marker outer diameter for scale search. |
 
 When `--marker-diameter` is set, it locks the detector to a single scale instead of
 searching a range. This is a legacy compatibility path; prefer the min/max range for
 new workflows.
+
+When both min/max are omitted, the detector uses the library default prior
+(`14-66 px`).
+If only one bound is provided, the missing side uses the legacy compatibility
+fallback (`20` for min, `56` for max).
 
 **RANSAC homography:**
 
@@ -165,6 +170,16 @@ ringgrid detect \
     --no-global-filter \
     --no-complete
 ```
+
+## Adaptive Scale Status
+
+Adaptive multi-scale entry points are currently exposed via Rust API methods:
+
+- `Detector::detect_adaptive`
+- `Detector::detect_adaptive_with_hint`
+- `Detector::detect_multiscale`
+
+CLI `ringgrid detect` uses the regular config-driven detect flow.
 
 ### `ringgrid codebook-info` -- Print codebook statistics
 

@@ -27,6 +27,56 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 ringgrid = "0.1"
 ```
 
+## Fast Start: Generate Target JSON + Printable SVG/PNG
+
+Target generation scripts are in the repository root (`tools/`).
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -U pip
+./.venv/bin/python -m pip install numpy
+
+./.venv/bin/python tools/gen_synth.py \
+  --out_dir tools/out/target_faststart \
+  --n_images 0 \
+  --board_mm 200 \
+  --pitch_mm 8 \
+  --print \
+  --print_dpi 600 \
+  --print_margin_mm 5 \
+  --print_basename target_print
+```
+
+Key knobs:
+
+| Flag | What it controls | Typical value |
+|---|---|---|
+| `--board_mm` | Physical board side length (mm) | `200` |
+| `--pitch_mm` | Marker spacing (mm) | `8` |
+| `--n_images` | Number of synthetic images (`0` for print-only) | `0` |
+| `--print_dpi` | PNG raster resolution | `300` or `600` |
+| `--print_margin_mm` | Extra white border | `3-10` |
+| `--print_basename` | Output file basename | `target_print` |
+
+This generates:
+
+- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_print.svg`
+- `tools/out/target_faststart/target_print.png`
+
+Use the generated JSON in detection:
+
+```rust,no_run
+use ringgrid::{BoardLayout, Detector};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("tools/out/target_faststart/board_spec.json")).unwrap();
+let detector = Detector::new(board);
+```
+
+Complete step-by-step target generation docs (all flags/config fields):
+- https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
+
 ## Simple Detection
 
 ```rust,no_run
@@ -54,6 +104,24 @@ With a marker diameter hint for better scale tuning:
 # let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
 let detector = Detector::with_marker_diameter_hint(board, 32.0);
 ```
+
+## Adaptive Scale Detection
+
+For scenes with large marker size variation, use adaptive multi-scale methods:
+
+```rust,no_run
+# use ringgrid::{BoardLayout, Detector, ScaleTiers};
+# use std::path::Path;
+# let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+# let detector = Detector::new(board);
+# let image = image::open("photo.png").unwrap().to_luma8();
+let result = detector.detect_adaptive(&image);
+let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
+let result = detector.detect_multiscale(&image, &ScaleTiers::four_tier_wide());
+```
+
+Adaptive scale guide:
+- https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html
 
 ## Detection with Camera Model
 

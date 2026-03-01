@@ -37,11 +37,12 @@ The detector returns a `DetectionResult` containing:
 
 ## Detection Modes
 
-ringgrid supports three detection modes:
+ringgrid supports four high-level detection modes:
 
 1. **Simple detection** — single-pass detection in image coordinates. No distortion correction.
-2. **External pixel mapper** — two-pass detection using a user-provided coordinate mapping (e.g., camera distortion model). Pass-1 finds seed positions, pass-2 refines in the undistorted working frame.
-3. **Self-undistort** — automatic estimation of a single-parameter division distortion model from the detected ellipses, followed by a corrected second pass. No external calibration required.
+2. **Adaptive scale detection** — multi-tier detection that auto-selects scale bands (or uses explicit tiers) for scenes with large marker size variation.
+3. **External pixel mapper** — two-pass detection using a user-provided coordinate mapping (e.g., camera distortion model). Pass-1 finds seed positions, pass-2 refines in the undistorted working frame.
+4. **Self-undistort** — automatic estimation of a single-parameter division distortion model from the detected ellipses, followed by a corrected second pass. No external calibration required.
 
 ## Target Audience
 
@@ -54,6 +55,7 @@ This book is for Rust developers working on:
 
 ## Book Structure
 
+- **Fast Start** — one-command workflow to generate `board_spec.json` + printable SVG/PNG and run first detection
 - **Marker Design** — anatomy of the ring marker, coding scheme, and hex lattice layout
 - **Detection Pipeline** — detailed walkthrough of all 10 detection stages
 - **Mathematical Foundations** — full derivations of the core algorithms (ellipse fitting, RANSAC, homography, projective center recovery, division model)

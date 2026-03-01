@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](introduction.md)
+[Fast Start](fast-start.md)
 
 # Marker Design
 
@@ -40,6 +41,7 @@
   - [Fit & Decode Metrics](output-types/fit-metrics.md)
   - [RansacStats](output-types/ransac-stats.md)
 - [Detection Modes](detection-modes/simple.md)
+  - [Adaptive Scale Detection](detection-modes/adaptive-scale.md)
   - [External PixelMapper](detection-modes/external-mapper.md)
   - [Self-Undistort Mode](detection-modes/self-undistort.md)
   - [Custom PixelMapper](detection-modes/custom-pixel-mapper.md)

@@ -75,6 +75,18 @@ Estimates a division-model distortion correction from the detected markers, then
 
 The self-undistort result is attached to `DetectionResult.self_undistort` regardless of whether pass 2 was applied.
 
+### `detect_adaptive` and `detect_multiscale`
+
+Adaptive scale entry points run the same fit/decode and finalize logic, but over
+one or more scale tiers:
+
+1. Build tiers (automatic probe, hint-derived, or explicit).
+2. Run per-tier fit/decode + projective center + ID correction.
+3. Merge markers across tiers with size-aware dedup.
+4. Run global filter + completion + final homography refit once.
+
+See [Adaptive Scale Detection](../detection-modes/adaptive-scale.md).
+
 ## Seed Injection in Two-Pass Modes
 
 When a pass-2 runs (either `detect_with_mapper` or `detect_with_self_undistort`), pass-1 detection centers become seed proposals for pass-2. Seeds are injected with a high score (`seed_score = 1e12` by default) so they are prioritized during candidate selection. The `SeedProposalParams` configuration controls:

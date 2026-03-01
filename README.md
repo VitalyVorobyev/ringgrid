@@ -31,8 +31,68 @@ ringgrid uses dual concentric ring markers with a 16-sector binary code band bet
 
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the named detection pipeline (including structural `id_correction`), mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
 - [API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) — rustdoc for all public types
+- [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) — one-command generation of `board_spec.json` + printable SVG/PNG
+- [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) — full configuration reference for JSON/SVG/PNG generation
+- [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) — `detect_adaptive`, hint-based adaptive, and explicit multi-scale tiers
 
-## Quick Start
+## Fast Start (Create JSON + SVG + PNG Target Files)
+
+From repository root:
+
+### 1. Install Python deps for target generation
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -U pip
+./.venv/bin/python -m pip install numpy
+```
+
+### 2. Generate target config JSON and printable files
+
+```bash
+./.venv/bin/python tools/gen_synth.py \
+  --out_dir tools/out/target_faststart \
+  --n_images 0 \
+  --board_mm 200 \
+  --pitch_mm 8 \
+  --print \
+  --print_dpi 600 \
+  --print_margin_mm 5 \
+  --print_basename target_print
+```
+
+Key generation knobs:
+
+| Flag | What it controls | Typical value |
+|---|---|---|
+| `--board_mm` | Physical board side length (mm) | `200` |
+| `--pitch_mm` | Marker center spacing (mm) | `8` |
+| `--n_images` | Number of synthetic images to render (`0` for print-only) | `0` |
+| `--print` | Emit both SVG and PNG print files | set |
+| `--print_dpi` | PNG raster resolution | `300` or `600` |
+| `--print_margin_mm` | Extra white border for printer margins | `3-10` |
+| `--print_basename` | Output base filename | `target_print` |
+| `--n_markers` | Optional cap for small test targets | unset |
+
+Generated files:
+
+- `tools/out/target_faststart/board_spec.json` (detector target config)
+- `tools/out/target_faststart/target_print.svg` (vector print file)
+- `tools/out/target_faststart/target_print.png` (raster print file with DPI metadata)
+
+### 3. Run detection against this target config
+
+```bash
+cargo run -- detect \
+  --target tools/out/target_faststart/board_spec.json \
+  --image path/to/photo.png \
+  --out tools/out/target_faststart/detect.json
+```
+
+Detailed step-by-step tutorial and all generation flags:
+- https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
+
+## Detection Quick Start (Synthetic Eval Loop)
 
 ### 1. Build
 

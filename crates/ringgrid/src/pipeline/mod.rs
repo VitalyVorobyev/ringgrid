@@ -26,5 +26,5 @@ pub(crate) use prelude::*;
 
 pub(crate) use run::{
     detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,
-    detect_with_mapper, detect_with_self_undistort,
+    detect_with_mapper, detect_with_self_undistort, select_adaptive_tiers,
 };

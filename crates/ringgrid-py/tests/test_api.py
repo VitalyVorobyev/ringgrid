@@ -121,6 +121,117 @@ def test_detect_with_mapper_camera_and_division() -> None:
     assert isinstance(res_div, ringgrid.DetectionResult)
 
 
+def test_scale_tier_and_scale_tiers_roundtrip() -> None:
+    tier = ringgrid.ScaleTier(diameter_min_px=12.0, diameter_max_px=48.0)
+    tier_roundtrip = ringgrid.ScaleTier.from_dict(tier.to_dict())
+    assert tier_roundtrip.to_dict() == tier.to_dict()
+
+    tiers = ringgrid.ScaleTiers(
+        tiers=[
+            ringgrid.ScaleTier(diameter_min_px=10.0, diameter_max_px=30.0),
+            ringgrid.ScaleTier(diameter_min_px=26.0, diameter_max_px=72.0),
+        ]
+    )
+    tiers_roundtrip = ringgrid.ScaleTiers.from_dict(tiers.to_dict())
+    assert tiers_roundtrip.to_dict() == tiers.to_dict()
+
+
+def test_detect_adaptive_smoke_array_and_path() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    result_array = detector.detect_adaptive(gray)
+    assert isinstance(result_array, ringgrid.DetectionResult)
+
+    result_path = detector.detect_adaptive(SAMPLE_IMAGE)
+    assert isinstance(result_path, ringgrid.DetectionResult)
+
+
+def test_detect_adaptive_with_optional_hint() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    result_no_hint = detector.detect_adaptive(gray, None)
+    assert isinstance(result_no_hint, ringgrid.DetectionResult)
+
+    result_with_hint = detector.detect_adaptive(gray, 32.0)
+    assert isinstance(result_with_hint, ringgrid.DetectionResult)
+
+
+def test_detect_adaptive_with_hint_rejects_invalid_values() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    for value in (float("nan"), float("inf"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            detector.detect_adaptive(gray, value)
+
+
+def test_detect_adaptive_with_hint_alias_warns_and_works() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    with pytest.warns(DeprecationWarning):
+        result = detector.detect_adaptive_with_hint(gray, 32.0)
+    assert isinstance(result, ringgrid.DetectionResult)
+
+
+def test_adaptive_tiers_helper_smoke_and_validation() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    tiers_auto = detector.adaptive_tiers(gray)
+    assert isinstance(tiers_auto, ringgrid.ScaleTiers)
+    assert len(tiers_auto.tiers) > 0
+
+    tiers_hint = detector.adaptive_tiers(gray, 32.0)
+    assert isinstance(tiers_hint, ringgrid.ScaleTiers)
+    assert len(tiers_hint.tiers) == 2
+
+    for bad_value in (float("nan"), float("inf"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            detector.adaptive_tiers(gray, bad_value)
+
+
+def test_detect_multiscale_presets_and_custom_tiers() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    wide = ringgrid.ScaleTiers.four_tier_wide()
+    result_wide = detector.detect_multiscale(gray, wide)
+    assert isinstance(result_wide, ringgrid.DetectionResult)
+
+    standard = ringgrid.ScaleTiers.two_tier_standard()
+    result_standard = detector.detect_multiscale(gray, standard)
+    assert isinstance(result_standard, ringgrid.DetectionResult)
+
+    custom = ringgrid.ScaleTiers(
+        tiers=[
+            ringgrid.ScaleTier(diameter_min_px=12.0, diameter_max_px=40.0),
+            ringgrid.ScaleTier(diameter_min_px=36.0, diameter_max_px=90.0),
+        ]
+    )
+    result_custom = detector.detect_multiscale(gray, custom)
+    assert isinstance(result_custom, ringgrid.DetectionResult)
+
+
+def test_detect_multiscale_rejects_invalid_tiers() -> None:
+    detector = _make_detector()
+    gray = np.zeros((96, 128), dtype=np.uint8)
+
+    with pytest.raises(ValueError):
+        ringgrid.ScaleTier(diameter_min_px=0.0, diameter_max_px=40.0)
+
+    with pytest.raises(ValueError):
+        ringgrid.ScaleTiers(tiers=[])
+
+    with pytest.raises(TypeError):
+        ringgrid.ScaleTiers(tiers=[{"diameter_min_px": 12.0, "diameter_max_px": 40.0}])
+
+    with pytest.raises(TypeError):
+        detector.detect_multiscale(gray, "bad_tiers")
+
+
 def test_detection_result_roundtrips() -> None:
     detector = _make_detector()
     gray = np.zeros((80, 120), dtype=np.uint8)

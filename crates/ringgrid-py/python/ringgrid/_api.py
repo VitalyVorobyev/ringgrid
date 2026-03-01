@@ -6,7 +6,8 @@ typed Python surface that feels idiomatic in notebooks and applications.
 Typical flow:
 1. Build/load a :class:`BoardLayout`.
 2. Construct :class:`DetectConfig` and :class:`Detector`.
-3. Call :meth:`Detector.detect` (or :meth:`Detector.detect_with_mapper`).
+3. Call :meth:`Detector.detect` / :meth:`Detector.detect_adaptive` /
+   :meth:`Detector.detect_multiscale`.
 4. Consume :class:`DetectionResult` in memory, JSON, or via plotting.
 """
 
@@ -16,8 +17,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping
+import warnings
 
 import numpy as np
 
@@ -27,6 +30,8 @@ from ._ringgrid import (
     default_board_spec_json as _default_board_spec_json,
     load_board_spec_json as _load_board_spec_json,
     package_version as _package_version,
+    scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
+    scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
     resolve_config_json as _resolve_config_json,
     update_config_json as _update_config_json,
 )
@@ -44,6 +49,13 @@ def _require_mapping(value: Any, *, name: str) -> Mapping[str, Any]:
 
 def _coerce_path(path: str | Path) -> str:
     return str(Path(path))
+
+
+def _require_finite_positive_float(value: Any, *, name: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be finite and > 0")
+    return parsed
 
 
 def _json_loads_path_or_text(path_or_json: str | Path) -> dict[str, Any]:
@@ -222,6 +234,101 @@ class MarkerScalePrior:
             "diameter_min_px": float(self.diameter_min_px),
             "diameter_max_px": float(self.diameter_max_px),
         }
+
+
+@dataclass(slots=True)
+class ScaleTier:
+    """One adaptive detection tier, parameterized by marker diameter range."""
+
+    diameter_min_px: float
+    diameter_max_px: float
+
+    def __post_init__(self) -> None:
+        self.diameter_min_px = _require_finite_positive_float(
+            self.diameter_min_px, name="diameter_min_px"
+        )
+        self.diameter_max_px = _require_finite_positive_float(
+            self.diameter_max_px, name="diameter_max_px"
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ScaleTier":
+        data = _require_mapping(data, name="data")
+        return cls(
+            diameter_min_px=float(data["diameter_min_px"]),
+            diameter_max_px=float(data["diameter_max_px"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "diameter_min_px": float(self.diameter_min_px),
+            "diameter_max_px": float(self.diameter_max_px),
+        }
+
+    @classmethod
+    def _from_wire(cls, data: Mapping[str, Any]) -> "ScaleTier":
+        return cls.from_dict(data)
+
+    def _to_wire(self) -> dict[str, Any]:
+        return self.to_dict()
+
+
+@dataclass(slots=True)
+class ScaleTiers:
+    """Ordered scale tiers for explicit multi-scale adaptive detection."""
+
+    tiers: list[ScaleTier]
+
+    def __post_init__(self) -> None:
+        normalized: list[ScaleTier] = []
+        for idx, tier in enumerate(self.tiers):
+            if not isinstance(tier, ScaleTier):
+                raise TypeError(f"tiers[{idx}] must be ScaleTier")
+            normalized.append(tier)
+        if not normalized:
+            raise ValueError("tiers must contain at least one ScaleTier")
+        self.tiers = normalized
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ScaleTiers":
+        data = _require_mapping(data, name="data")
+        raw_tiers = data.get("tiers")
+        if not isinstance(raw_tiers, list):
+            raise TypeError("data['tiers'] must be a list")
+        return cls(
+            tiers=[ScaleTier.from_dict(_require_mapping(tier, name="tier")) for tier in raw_tiers]
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"tiers": [tier.to_dict() for tier in self.tiers]}
+
+    @classmethod
+    def four_tier_wide(cls) -> "ScaleTiers":
+        return cls._from_wire(json.loads(_scale_tiers_four_tier_wide_json()))
+
+    @classmethod
+    def two_tier_standard(cls) -> "ScaleTiers":
+        return cls._from_wire(json.loads(_scale_tiers_two_tier_standard_json()))
+
+    @classmethod
+    def single(cls, prior: MarkerScalePrior) -> "ScaleTiers":
+        if not isinstance(prior, MarkerScalePrior):
+            raise TypeError("prior must be MarkerScalePrior")
+        return cls(
+            tiers=[
+                ScaleTier(
+                    diameter_min_px=float(prior.diameter_min_px),
+                    diameter_max_px=float(prior.diameter_max_px),
+                )
+            ]
+        )
+
+    @classmethod
+    def _from_wire(cls, data: Mapping[str, Any]) -> "ScaleTiers":
+        return cls.from_dict(data)
+
+    def _to_wire(self) -> dict[str, Any]:
+        return self.to_dict()
 
 
 @dataclass(slots=True)
@@ -864,6 +971,73 @@ class Detector:
         result_json = self._detect_impl(image=image, mapper_payload=payload)
         return DetectionResult.from_dict(json.loads(result_json))
 
+    def detect_adaptive(
+        self,
+        image: np.ndarray | str | Path,
+        nominal_diameter_px: float | None = None,
+    ) -> DetectionResult:
+        """Run adaptive multi-scale detection.
+
+        Parameters
+        ----------
+        image:
+            NumPy image array or image path.
+        nominal_diameter_px:
+            Optional expected marker diameter in pixels. When provided, adaptive
+            mode skips scale probing and uses a focused two-tier bracket around
+            the hint. Must be finite and > 0.
+        """
+        parsed_hint = _parse_nominal_diameter_hint(nominal_diameter_px)
+        if parsed_hint is None:
+            result_json = self._detect_adaptive_impl(image=image)
+        else:
+            result_json = self._detect_adaptive_with_hint_impl(
+                image=image, nominal_diameter_px=parsed_hint
+            )
+        return DetectionResult.from_dict(json.loads(result_json))
+
+    def detect_adaptive_with_hint(
+        self,
+        image: np.ndarray | str | Path,
+        nominal_diameter_px: float | None = None,
+    ) -> DetectionResult:
+        """Compatibility alias for :meth:`detect_adaptive`.
+
+        Deprecated: prefer :meth:`detect_adaptive(image, nominal_diameter_px=...)`.
+        """
+        warnings.warn(
+            "Detector.detect_adaptive_with_hint is deprecated; "
+            "use Detector.detect_adaptive(image, nominal_diameter_px=...)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.detect_adaptive(image, nominal_diameter_px=nominal_diameter_px)
+
+    def detect_multiscale(
+        self,
+        image: np.ndarray | str | Path,
+        tiers: ScaleTiers,
+    ) -> DetectionResult:
+        """Run explicit multi-scale detection with caller-provided tiers."""
+        if not isinstance(tiers, ScaleTiers):
+            raise TypeError("tiers must be ScaleTiers")
+        result_json = self._detect_multiscale_impl(image=image, tiers_payload=tiers._to_wire())
+        return DetectionResult.from_dict(json.loads(result_json))
+
+    def adaptive_tiers(
+        self,
+        image: np.ndarray | str | Path,
+        nominal_diameter_px: float | None = None,
+    ) -> ScaleTiers:
+        """Return the tier set adaptive detection would use for `image`.
+
+        Useful for debugging and reproducible experiments: inspect or persist
+        selected tiers, then run :meth:`detect_multiscale` with that exact set.
+        """
+        parsed_hint = _parse_nominal_diameter_hint(nominal_diameter_px)
+        tiers_json = self._adaptive_tiers_impl(image=image, nominal_diameter_px=parsed_hint)
+        return ScaleTiers._from_wire(json.loads(tiers_json))
+
     def _detect_impl(
         self,
         *,
@@ -880,6 +1054,57 @@ class Detector:
         if mapper_payload is None:
             return self._core.detect_path(image_path)
         return self._core.detect_with_mapper_path(image_path, json.dumps(dict(mapper_payload)))
+
+    def _detect_adaptive_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+    ) -> str:
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            return self._core.detect_adaptive_array(image)
+
+        image_path = _coerce_path(image)
+        return self._core.detect_adaptive_path(image_path)
+
+    def _detect_adaptive_with_hint_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        nominal_diameter_px: float | None,
+    ) -> str:
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            return self._core.detect_adaptive_with_hint_array(image, nominal_diameter_px)
+
+        image_path = _coerce_path(image)
+        return self._core.detect_adaptive_with_hint_path(image_path, nominal_diameter_px)
+
+    def _detect_multiscale_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        tiers_payload: Mapping[str, Any],
+    ) -> str:
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            return self._core.detect_multiscale_array(image, json.dumps(dict(tiers_payload)))
+
+        image_path = _coerce_path(image)
+        return self._core.detect_multiscale_path(image_path, json.dumps(dict(tiers_payload)))
+
+    def _adaptive_tiers_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        nominal_diameter_px: float | None,
+    ) -> str:
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            return self._core.adaptive_tiers_array(image, nominal_diameter_px)
+
+        image_path = _coerce_path(image)
+        return self._core.adaptive_tiers_path(image_path, nominal_diameter_px)
 
 
 __version__ = _package_version()
@@ -937,6 +1162,12 @@ def _validate_image_array(image: np.ndarray) -> None:
     raise TypeError("image ndarray must have shape (H, W) or (H, W, 3|4)")
 
 
+def _parse_nominal_diameter_hint(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return _require_finite_positive_float(value, name="nominal_diameter_px")
+
+
 def _circle_refinement_from_wire(value: str) -> CircleRefinementMethod:
     lowered = value.strip().lower()
     if lowered in {"none"}:
@@ -958,6 +1189,8 @@ __all__ = [
     "BoardLayout",
     "BoardMarker",
     "MarkerScalePrior",
+    "ScaleTier",
+    "ScaleTiers",
     "DetectConfig",
     "Detector",
     "CameraIntrinsics",

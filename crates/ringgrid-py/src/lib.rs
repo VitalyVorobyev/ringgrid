@@ -93,6 +93,19 @@ enum MapperSpec {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScaleTierWire {
+    diameter_min_px: f32,
+    diameter_max_px: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScaleTiersWire {
+    tiers: Vec<ScaleTierWire>,
+}
+
 fn py_value_error<E: std::fmt::Display>(err: E) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
@@ -273,6 +286,61 @@ fn detect_with_core_mapper(
     }
 }
 
+fn validate_nominal_diameter_hint(nominal_diameter_px: Option<f32>) -> PyResult<Option<f32>> {
+    if let Some(diameter_px) = nominal_diameter_px {
+        if !diameter_px.is_finite() || diameter_px <= 0.0 {
+            return Err(PyValueError::new_err(
+                "nominal_diameter_px must be finite and > 0 when provided",
+            ));
+        }
+    }
+    Ok(nominal_diameter_px)
+}
+
+fn scale_tiers_to_wire(tiers: &ringgrid::ScaleTiers) -> ScaleTiersWire {
+    ScaleTiersWire {
+        tiers: tiers
+            .tiers()
+            .iter()
+            .map(|tier| ScaleTierWire {
+                diameter_min_px: tier.prior.diameter_min_px,
+                diameter_max_px: tier.prior.diameter_max_px,
+            })
+            .collect(),
+    }
+}
+
+fn scale_tiers_from_wire(wire: ScaleTiersWire) -> PyResult<ringgrid::ScaleTiers> {
+    if wire.tiers.is_empty() {
+        return Err(PyValueError::new_err(
+            "scale tiers cannot be empty; provide at least one tier",
+        ));
+    }
+
+    let mut tiers = Vec::with_capacity(wire.tiers.len());
+    for tier in wire.tiers {
+        if !tier.diameter_min_px.is_finite()
+            || !tier.diameter_max_px.is_finite()
+            || tier.diameter_min_px <= 0.0
+            || tier.diameter_max_px <= 0.0
+        {
+            return Err(PyValueError::new_err(
+                "tier diameters must be finite and > 0",
+            ));
+        }
+        tiers.push(ringgrid::ScaleTier::new(
+            tier.diameter_min_px,
+            tier.diameter_max_px,
+        ));
+    }
+    Ok(ringgrid::ScaleTiers(tiers))
+}
+
+fn parse_scale_tiers(tiers_json: &str) -> PyResult<ringgrid::ScaleTiers> {
+    let wire = serde_json::from_str::<ScaleTiersWire>(tiers_json).map_err(py_value_error)?;
+    scale_tiers_from_wire(wire)
+}
+
 fn load_gray_image(path: &str) -> PyResult<GrayImage> {
     image::open(path)
         .map(|img| img.to_luma8())
@@ -373,6 +441,92 @@ impl DetectorCore {
         let result = detect_with_core_mapper(&detector, &gray, &mapper);
         serde_json::to_string(&result).map_err(py_value_error)
     }
+
+    fn detect_adaptive_path(&self, image_path: &str) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let result = detector.detect_adaptive(&gray);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    fn detect_adaptive_array(&self, image: PyReadonlyArrayDyn<'_, u8>) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let result = detector.detect_adaptive(&gray);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    #[pyo3(signature = (image_path, nominal_diameter_px=None))]
+    fn detect_adaptive_with_hint_path(
+        &self,
+        image_path: &str,
+        nominal_diameter_px: Option<f32>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
+        let result = detector.detect_adaptive_with_hint(&gray, nominal_diameter_px);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    #[pyo3(signature = (image, nominal_diameter_px=None))]
+    fn detect_adaptive_with_hint_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+        nominal_diameter_px: Option<f32>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
+        let result = detector.detect_adaptive_with_hint(&gray, nominal_diameter_px);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    fn detect_multiscale_path(&self, image_path: &str, tiers_json: &str) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let tiers = parse_scale_tiers(tiers_json)?;
+        let result = detector.detect_multiscale(&gray, &tiers);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    fn detect_multiscale_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+        tiers_json: &str,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let tiers = parse_scale_tiers(tiers_json)?;
+        let result = detector.detect_multiscale(&gray, &tiers);
+        serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    #[pyo3(signature = (image_path, nominal_diameter_px=None))]
+    fn adaptive_tiers_path(
+        &self,
+        image_path: &str,
+        nominal_diameter_px: Option<f32>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
+        let tiers = detector.adaptive_tiers(&gray, nominal_diameter_px);
+        serde_json::to_string(&scale_tiers_to_wire(&tiers)).map_err(py_value_error)
+    }
+
+    #[pyo3(signature = (image, nominal_diameter_px=None))]
+    fn adaptive_tiers_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+        nominal_diameter_px: Option<f32>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
+        let tiers = detector.adaptive_tiers(&gray, nominal_diameter_px);
+        serde_json::to_string(&scale_tiers_to_wire(&tiers)).map_err(py_value_error)
+    }
 }
 
 #[pyfunction]
@@ -428,6 +582,18 @@ fn update_config_json(
     serde_json::to_string(&config_to_dump(&config)).map_err(py_value_error)
 }
 
+#[pyfunction]
+fn scale_tiers_four_tier_wide_json() -> PyResult<String> {
+    let tiers = ringgrid::ScaleTiers::four_tier_wide();
+    serde_json::to_string(&scale_tiers_to_wire(&tiers)).map_err(py_value_error)
+}
+
+#[pyfunction]
+fn scale_tiers_two_tier_standard_json() -> PyResult<String> {
+    let tiers = ringgrid::ScaleTiers::two_tier_standard();
+    serde_json::to_string(&scale_tiers_to_wire(&tiers)).map_err(py_value_error)
+}
+
 #[pymodule]
 fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DetectorCore>()?;
@@ -438,5 +604,7 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(board_snapshot_json, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_config_json, m)?)?;
     m.add_function(wrap_pyfunction!(update_config_json, m)?)?;
+    m.add_function(wrap_pyfunction!(scale_tiers_four_tier_wide_json, m)?)?;
+    m.add_function(wrap_pyfunction!(scale_tiers_two_tier_standard_json, m)?)?;
     Ok(())
 }

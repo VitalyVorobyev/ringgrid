@@ -43,9 +43,10 @@ crates/ringgrid/src/
 │   └── marker_spec.rs  # MarkerSpec type
 ├── pipeline/           # Detection pipeline orchestration
 │   ├── mod.rs          # DetectionResult struct, module glue, re-exports
-│   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort flow
+│   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort/multiscale flow
 │   ├── fit_decode.rs   # Proposals → fit → decode → dedup
 │   ├── finalize.rs     # Center correction → global filter → completion → final H
+│   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
 │   ├── prelude.rs      # Common imports for pipeline modules
 │   └── result.rs       # DetectionResult type
 ├── homography/         # Homography estimation & utilities
@@ -64,7 +65,7 @@ crates/ringgrid/src/
 
 ## Detection Pipeline Architecture
 
-The core pipeline flows through these stages in order:
+### Single-pass stages (in order)
 
 1. **Proposal** (`detector/proposal.rs`) — Scharr gradient voting + NMS → candidate centers
 2. **Outer Estimate** (`ring/outer_estimate.rs`) — radius hypotheses via radial profile peaks
@@ -79,6 +80,18 @@ The core pipeline flows through these stages in order:
 
 Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–10 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`.
 
+### Multi-scale / adaptive pipeline
+
+For multi-scale detection (`detect_multiscale`, `detect_adaptive`, `detect_adaptive_with_hint`), the pipeline is split at the finalize boundary:
+
+- **`finalize_premerge`** — runs stages 7 (projective center) only; returns `Vec<DetectedMarker>` without global filter, completion, or H refit. Called once per tier.
+- **`merge_multiscale_markers`** (`detector/dedup.rs`) — size-consistency-aware NMS across all tier outputs. Prefers markers whose outer radius matches the neighborhood median (k=6 hex-lattice neighbors); confidence breaks ties.
+- **`finalize_postmerge`** — runs stages 8–10 (global filter + completion + final H refit) exactly once on the merged pool.
+
+Scale probe (`pipeline/scale_probe.rs`): ring angular-variance sweep at top-K gradient proposals over 20 geometric radius candidates (4–110 px). High variance at a radius indicates the code band (alternating bright/dark sectors). Code-band midpoint ≈ 0.8× outer ring radius; results feed `ScaleTiers::from_detected_radii`.
+
+Default `MarkerScalePrior` is **[14, 66] px** (updated from [20, 56] in this release, +11.4% on the rtv3d dataset).
+
 ## Public API
 
 All detection goes through the `Detector` struct (`api.rs`). No public free functions.
@@ -86,6 +99,7 @@ All detection goes through the `Detector` struct (`api.rs`). No public free func
 Key public types:
 - `Detector` — entry point
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
+- `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
 - `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
 - `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion

@@ -287,6 +287,74 @@ fn finalize_global_filter_result(
     }
 }
 
+/// Apply projective-center correction and ID correction to `fit_markers`.
+///
+/// Returns the corrected marker list **without** running global filter,
+/// completion, or final H refit. These post-merge stages are deferred to
+/// [`finalize_postmerge`] after all tier outputs have been merged by
+/// `merge_multiscale_markers`.
+///
+/// Called once per scale tier by `detect_multiscale`.
+pub(super) fn finalize_premerge(
+    fit_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+) -> Vec<DetectedMarker> {
+    let mut corrected_markers = fit_markers;
+
+    if config.circle_refinement.uses_projective_center() {
+        apply_projective_centers(&mut corrected_markers, config);
+    }
+
+    if config.id_correction.enable {
+        let stats =
+            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        log_id_correction_summary(&stats);
+    }
+
+    corrected_markers
+}
+
+/// Apply global RANSAC homography filter, completion, and final H refit to
+/// the merged marker pool.
+///
+/// Called once after all tier outputs have been merged by
+/// `merge_multiscale_markers`. Uses `config` for the board, RANSAC
+/// homography, and completion parameters.
+pub(super) fn finalize_postmerge(
+    gray: &GrayImage,
+    merged_markers: Vec<DetectedMarker>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> DetectionResult {
+    let (w, h) = gray.dimensions();
+    let image_size = [w, h];
+    let homography_frame = if mapper.is_some() {
+        DetectionFrame::Working
+    } else {
+        DetectionFrame::Image
+    };
+
+    if !config.use_global_filter {
+        return finalize_no_global_filter_result(
+            gray,
+            merged_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        );
+    }
+
+    finalize_global_filter_result(
+        gray,
+        merged_markers,
+        config,
+        mapper,
+        homography_frame,
+        image_size,
+    )
+}
+
 pub(super) fn run(
     gray: &GrayImage,
     fit_markers: Vec<DetectedMarker>,

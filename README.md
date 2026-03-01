@@ -131,6 +131,7 @@ All detection goes through `Detector` methods. No public free functions.
 Stable surface (library users):
 - `Detector` — entry point
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
+- `ScaleTier`, `ScaleTiers` — multi-scale tier configuration
 - `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
 - `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
@@ -249,6 +250,55 @@ cfg.self_undistort.enable = true;
 let detector = Detector::with_config(cfg);
 let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
 ```
+
+**Adaptive multi-scale detection** (markers spanning a wide range of apparent sizes):
+
+The default `MarkerScalePrior` covers **14–66 px** diameter, which works well for most scenes.
+For scenes where marker apparent size varies dramatically, use the multi-scale API:
+
+```rust,no_run
+use ringgrid::{BoardLayout, Detector, ScaleTiers};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::new(board);
+let image = image::open("photo.png").unwrap().to_luma8();
+
+// Automatic: scale probe selects tiers from image content
+let result = detector.detect_adaptive(&image);
+
+// With a nominal diameter hint (skips probe, builds a 2-tier bracket)
+let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
+
+// Explicit tiers for direct control
+let tiers = ScaleTiers::four_tier_wide();   // [8,24] ∪ [20,60] ∪ [50,130] ∪ [110,220] px
+let tiers = ScaleTiers::two_tier_standard(); // [14,42] ∪ [36,100] px
+let result = detector.detect_multiscale(&image, &tiers);
+```
+
+`ScaleTiers` presets:
+
+| Preset | Tiers | Diameter range | Use case |
+|---|---|---:|---|
+| `four_tier_wide()` | 4 | 8–220 px | 27:1 range, mixed near/far |
+| `two_tier_standard()` | 2 | 14–100 px | 7:1 range, typical multi-distance |
+| `single(prior)` | 1 | custom | single-pass, no merge overhead |
+
+Multi-scale pipeline: each tier runs fit/decode + projective center correction independently,
+then results are merged with **size-consistency-aware NMS** (markers whose outer radius matches
+the neighborhood median are preferred over same-location detections from a mismatched tier),
+followed by a single global filter + completion + homography refit pass.
+
+Validation on the `rtv3d` dataset (102 tiles, 8–120 px diameter range):
+
+| Strategy | Decoded markers | vs. old default |
+|---|---:|---:|
+| Old default [20, 56] px | 4 264 | — |
+| **New default [14, 66] px** | **4 752** | **+11.4 %** |
+| Wide single [8, 220] px | 4 429 | +3.9 % |
+
+The new default is a free +11% with no API changes required. Multi-scale detection further
+closes the gap on scenes with very small markers (< 14 px).
 
 ### CLI Flags
 

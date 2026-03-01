@@ -1,6 +1,8 @@
 //! Top-level pipeline orchestrator: fit_decode → finalize.
 
 use super::*;
+use crate::detector::config::{ScaleTier, ScaleTiers};
+use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::proposal::find_proposals;
 use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
@@ -50,6 +52,136 @@ pub fn detect_with_mapper(
 ) -> DetectionResult {
     let pass1 = detect_single_pass(gray, config);
     run_pass2(gray, config, mapper, &pass1)
+}
+
+// ---------------------------------------------------------------------------
+// Multi-scale / adaptive entry points
+// ---------------------------------------------------------------------------
+
+/// Run a single scale tier through fit/decode and per-tier finalization
+/// (projective centers + ID correction).
+///
+/// Returns a raw marker list **without** global filter, completion, or final H
+/// refit. Call [`detect_multiscale`] to merge and finalize across tiers.
+pub(crate) fn detect_premerge(
+    gray: &GrayImage,
+    config: &DetectConfig,
+) -> Vec<crate::DetectedMarker> {
+    let proposals = find_proposals(gray, &config.proposal);
+    let fit_markers = super::fit_decode::run(gray, config, None, proposals);
+    super::finalize::finalize_premerge(fit_markers, config)
+}
+
+/// Detect markers across multiple scale tiers.
+///
+/// For each tier:
+/// 1. Clones `config` and applies the tier's scale prior.
+/// 2. Runs fit/decode + projective centers + ID correction (`detect_premerge`).
+///
+/// After all tiers:
+/// 3. Merges results with size-consistency-aware dedup
+///    ([`merge_multiscale_markers`]).
+/// 4. Runs global filter + completion + final H refit once on the merged pool.
+///
+/// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
+/// `config.dedup_radius`.
+pub fn detect_multiscale(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    tiers: &ScaleTiers,
+) -> DetectionResult {
+    warn_center_correction_without_intrinsics(config, false);
+
+    let mut all_markers: Vec<crate::DetectedMarker> = Vec::new();
+
+    for tier in tiers.tiers() {
+        let mut tier_config = config.clone();
+        tier_config.set_marker_scale_prior(tier.prior);
+
+        tracing::debug!(
+            d_min = tier.prior.diameter_min_px,
+            d_max = tier.prior.diameter_max_px,
+            "running scale tier"
+        );
+
+        let tier_markers = detect_premerge(gray, &tier_config);
+        tracing::debug!(n = tier_markers.len(), "tier produced markers before merge");
+        all_markers.extend(tier_markers);
+    }
+
+    // Merge dedup radius: small enough not to suppress neighboring markers,
+    // large enough to collapse same-marker duplicates from overlapping tiers.
+    let min_tier_d = tiers
+        .tiers()
+        .iter()
+        .map(|t| t.prior.diameter_min_px as f64)
+        .fold(f64::INFINITY, f64::min);
+    let dedup_radius = (min_tier_d * 0.6).max(config.dedup_radius);
+
+    let merged = merge_multiscale_markers(all_markers, dedup_radius, 6);
+
+    tracing::info!(
+        n_merged = merged.len(),
+        n_tiers = tiers.tiers().len(),
+        dedup_radius,
+        "merged markers from all tiers"
+    );
+
+    super::finalize::finalize_postmerge(gray, merged, config, None)
+}
+
+/// Adaptive detection using automatically selected scale tiers.
+///
+/// Runs a lightweight scale probe to estimate the dominant marker size(s) in
+/// the image, selects matching tiers via [`ScaleTiers::from_detected_radii`],
+/// and calls [`detect_multiscale`]. Falls back to
+/// [`ScaleTiers::four_tier_wide`] when the probe returns no usable radii.
+///
+/// No manual scale configuration is required. Use
+/// [`detect_adaptive_with_hint`] when an approximate diameter is known.
+pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+    let probe_radii = super::scale_probe::scale_probe(gray, 64, 16);
+    let tiers = if probe_radii.is_empty() {
+        tracing::debug!("scale probe found no dominant radii; using four_tier_wide fallback");
+        ScaleTiers::four_tier_wide()
+    } else {
+        tracing::debug!(n = probe_radii.len(), "scale probe succeeded");
+        ScaleTiers::from_detected_radii(&probe_radii)
+    };
+    detect_multiscale(gray, config, &tiers)
+}
+
+/// Adaptive detection with an optional nominal-diameter hint.
+///
+/// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
+/// two-tier bracket around `[0.5×, 1.5×]` the hint. When `None`, behaves
+/// identically to [`detect_adaptive`].
+pub fn detect_adaptive_with_hint(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    nominal_diameter_px: Option<f32>,
+) -> DetectionResult {
+    let tiers = match nominal_diameter_px {
+        Some(d) => {
+            let d_lo = (d * 0.5).max(4.0);
+            let d_hi = d * 1.5;
+            // Split at nominal with 5 % overlap to avoid gap at boundary.
+            let d_split = d * 1.05;
+            ScaleTiers(vec![
+                ScaleTier::new(d_lo, d_split),
+                ScaleTier::new(d_split * 0.95, d_hi),
+            ])
+        }
+        None => {
+            let probe_radii = super::scale_probe::scale_probe(gray, 64, 16);
+            if probe_radii.is_empty() {
+                ScaleTiers::four_tier_wide()
+            } else {
+                ScaleTiers::from_detected_radii(&probe_radii)
+            }
+        }
+    };
+    detect_multiscale(gray, config, &tiers)
 }
 
 /// Detect markers, then estimate and optionally apply a self-undistort model.

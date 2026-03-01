@@ -268,7 +268,13 @@ mod tests {
         relaxed.inner_fit.max_center_shift_px = f64::INFINITY;
         relaxed.inner_fit.max_ratio_abs_error = f64::INFINITY;
 
-        let relaxed_out = run(&img, &relaxed, None, proposals.clone(), DetectionSource::FitDecoded);
+        let relaxed_out = run(
+            &img,
+            &relaxed,
+            None,
+            proposals.clone(),
+            DetectionSource::FitDecoded,
+        );
         assert!(
             !relaxed_out.is_empty(),
             "expected at least one marker with relaxed inner-fit params"

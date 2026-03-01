@@ -30,7 +30,13 @@ fn run_pass2(
 ) -> DetectionResult {
     let seed_params = &config.seed_proposals;
     let proposals = pass1.seed_proposals(seed_params.max_seeds);
-    run(gray, config, Some(mapper), proposals, DetectionSource::SeededPass)
+    run(
+        gray,
+        config,
+        Some(mapper),
+        proposals,
+        DetectionSource::SeededPass,
+    )
 }
 
 // ---------------------------------------------------------------------------

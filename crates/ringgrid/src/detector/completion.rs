@@ -438,20 +438,12 @@ pub(crate) fn complete_with_h(
         );
     }
 
-    if stats.n_added > 0 {
-        tracing::info!(
-            "Completion: added {} markers (attempted {}, in_image {})",
-            stats.n_added,
-            stats.n_attempted,
-            stats.n_in_image
-        );
-    } else {
-        tracing::info!(
-            "Completion: added 0 markers (attempted {}, in_image {})",
-            stats.n_attempted,
-            stats.n_in_image
-        );
-    }
+    tracing::info!(
+        "Completion: added {} markers (attempted {}, in_image {})",
+        stats.n_added,
+        stats.n_attempted,
+        stats.n_in_image
+    );
 
     stats
 }

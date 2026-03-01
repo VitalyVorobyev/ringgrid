@@ -9,7 +9,9 @@ use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
 /// Indicates which pipeline stage produced a [`DetectedMarker`].
 ///
 /// Used to separate false-positive sources in post-processing and analysis.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionSource {
     /// Marker was produced by the primary gradient-proposal → fit → decode path.
@@ -167,8 +169,7 @@ fn radii_std(radii: &[f32]) -> Option<f32> {
         return None;
     }
     let mean = radii.iter().sum::<f32>() / radii.len() as f32;
-    let variance =
-        radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32;
+    let variance = radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32;
     Some(variance.sqrt())
 }
 

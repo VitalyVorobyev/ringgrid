@@ -18,9 +18,13 @@ mod fit_decode;
 mod prelude;
 mod result;
 mod run;
+mod scale_probe;
 
 pub use result::{DetectionFrame, DetectionResult};
 
 pub(crate) use prelude::*;
 
-pub(crate) use run::{detect_single_pass, detect_with_mapper, detect_with_self_undistort};
+pub(crate) use run::{
+    detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,
+    detect_with_mapper, detect_with_self_undistort,
+};

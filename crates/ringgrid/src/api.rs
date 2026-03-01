@@ -8,6 +8,7 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
+use crate::detector::config::ScaleTiers;
 use crate::detector::proposal::find_proposals;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
@@ -124,6 +125,49 @@ impl Detector {
     /// This exposes the same proposal stage used by single-pass detection.
     pub fn propose(&self, image: &GrayImage) -> Vec<Proposal> {
         find_proposals(image, &self.config.proposal)
+    }
+
+    /// Detect markers using four overlapping scale tiers (8–220 px diameter).
+    ///
+    /// Runs a lightweight scale probe to estimate the dominant marker size(s)
+    /// in the image, selects matching tiers, and calls [`detect_multiscale`].
+    /// Falls back to four broad tiers ([8,24], [20,60], [50,130], [110,220] px)
+    /// when the probe returns no usable scale signal.
+    ///
+    /// No manual scale configuration is required. Use
+    /// [`detect_adaptive_with_hint`](Self::detect_adaptive_with_hint) when an
+    /// approximate marker diameter is known.
+    ///
+    /// [`detect_multiscale`]: Self::detect_multiscale
+    pub fn detect_adaptive(&self, image: &GrayImage) -> DetectionResult {
+        pipeline::detect_adaptive(image, &self.config)
+    }
+
+    /// Adaptive detection with an optional nominal-diameter hint.
+    ///
+    /// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
+    /// two-tier bracket around `[0.5×, 1.5×]` the hint diameter. When `None`,
+    /// behaves identically to [`detect_adaptive`](Self::detect_adaptive).
+    pub fn detect_adaptive_with_hint(
+        &self,
+        image: &GrayImage,
+        nominal_diameter_px: Option<f32>,
+    ) -> DetectionResult {
+        pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
+    }
+
+    /// Detect markers using an explicit set of scale tiers.
+    ///
+    /// Runs one detection pass per tier (fit/decode + projective centers + ID
+    /// correction), merges results with size-consistency-aware dedup, then runs
+    /// global filter, completion, and final H refit once on the merged pool.
+    ///
+    /// Use [`ScaleTiers`] constructors to build the tier set:
+    /// - [`ScaleTiers::four_tier_wide`] — 8–220 px
+    /// - [`ScaleTiers::two_tier_standard`] — 14–100 px
+    /// - [`ScaleTiers::single`] — single-pass, no merge overhead
+    pub fn detect_multiscale(&self, image: &GrayImage, tiers: &ScaleTiers) -> DetectionResult {
+        pipeline::detect_multiscale(image, &self.config, tiers)
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).

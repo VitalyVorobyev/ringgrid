@@ -23,7 +23,7 @@ pub(crate) use completion::{complete_with_h, CompletionStats};
 pub use config::{
     CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
     InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
-    ProjectiveCenterParams, SeedProposalParams,
+    ProjectiveCenterParams, ScaleTier, ScaleTiers, SeedProposalParams,
 };
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::global_filter;

@@ -350,9 +350,142 @@ impl MarkerScalePrior {
 impl Default for MarkerScalePrior {
     fn default() -> Self {
         Self {
-            diameter_min_px: 20.0,
-            diameter_max_px: 56.0,
+            diameter_min_px: 14.0,
+            diameter_max_px: 66.0,
         }
+    }
+}
+
+/// One scale band for multi-scale adaptive detection.
+///
+/// Each tier covers a diameter range with a ratio of at most 3:1. Combine
+/// multiple tiers with [`ScaleTiers`] to cover scenes where markers span a
+/// wide range of apparent sizes.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct ScaleTier {
+    /// Marker outer diameter range for this tier (pixels).
+    pub prior: MarkerScalePrior,
+}
+
+impl ScaleTier {
+    /// Create a tier covering `[diameter_min_px, diameter_max_px]`.
+    ///
+    /// For best results keep the ratio `diameter_max_px / diameter_min_px ≤ 3`.
+    pub fn new(diameter_min_px: f32, diameter_max_px: f32) -> Self {
+        Self {
+            prior: MarkerScalePrior::new(diameter_min_px, diameter_max_px),
+        }
+    }
+}
+
+/// An ordered set of scale tiers for multi-scale adaptive detection.
+///
+/// Each tier runs one full detection pass (fit + decode + projective centers).
+/// Results from all tiers are merged with size-consistency-aware dedup, then
+/// global filter, completion, and final H refit run once on the merged pool.
+///
+/// Use the preset constructors for common scenarios:
+///
+/// - [`ScaleTiers::four_tier_wide`] — 8–220 px, full range (27:1 ratio)
+/// - [`ScaleTiers::two_tier_standard`] — 14–100 px, moderate variation (7:1)
+/// - [`ScaleTiers::single`] — single-pass equivalent, no merge overhead
+/// - [`ScaleTiers::from_detected_radii`] — built from a scale-probe result
+///
+/// See [`Detector::detect_adaptive`] and [`Detector::detect_multiscale`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ScaleTiers(pub Vec<ScaleTier>);
+
+impl ScaleTiers {
+    /// Four overlapping tiers covering 8–220 px (27:1 diameter ratio).
+    ///
+    /// Tier boundaries: `[8,24]`, `[20,60]`, `[50,130]`, `[110,220]` px.
+    /// Each tier has ratio ≤ 3:1. Overlapping boundaries ensure markers in
+    /// the 20–24, 50–60, and 110–130 px range are detected by two tiers.
+    ///
+    /// Use when marker apparent size is unknown or spans a very wide range.
+    pub fn four_tier_wide() -> Self {
+        Self(vec![
+            ScaleTier::new(8.0, 24.0),
+            ScaleTier::new(20.0, 60.0),
+            ScaleTier::new(50.0, 130.0),
+            ScaleTier::new(110.0, 220.0),
+        ])
+    }
+
+    /// Two overlapping tiers covering 14–100 px (~7:1 diameter ratio).
+    ///
+    /// Tier boundaries: `[14,42]`, `[36,100]` px. Faster than
+    /// [`four_tier_wide`](Self::four_tier_wide) for moderate scale variation.
+    pub fn two_tier_standard() -> Self {
+        Self(vec![
+            ScaleTier::new(14.0, 42.0),
+            ScaleTier::new(36.0, 100.0),
+        ])
+    }
+
+    /// Single tier wrapping the given prior — no multi-scale overhead.
+    ///
+    /// Equivalent to single-pass detection. Use when marker scale is
+    /// approximately known.
+    pub fn single(prior: MarkerScalePrior) -> Self {
+        Self(vec![ScaleTier { prior }])
+    }
+
+    /// Construct tiers from dominant code-band radii estimated by the scale probe.
+    ///
+    /// Clusters `probe_radii` into groups where `max/min ≤ 3.0`, converts each
+    /// cluster to an outer-ring diameter estimate (probe radii land in the code
+    /// band at ~0.8× the outer ring radius), and pads each tier by ±30 %.
+    ///
+    /// Falls back to `single(MarkerScalePrior::default())` when `probe_radii`
+    /// is empty or contains no finite positive values.
+    pub fn from_detected_radii(probe_radii: &[f32]) -> Self {
+        let mut sorted: Vec<f32> = probe_radii
+            .iter()
+            .copied()
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .collect();
+
+        if sorted.is_empty() {
+            return Self::single(MarkerScalePrior::default());
+        }
+
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Code-band midpoint sits at ~0.8× the outer ring radius for the default
+        // inner/outer ratio of 0.6: midpoint = 0.5*(0.6+1.0) = 0.8.
+        const PROBE_TO_OUTER: f32 = 1.0 / 0.8; // ≈ 1.25
+
+        let mut tiers = Vec::new();
+        let mut cluster_min = sorted[0];
+        let mut cluster_max = sorted[0];
+
+        for &r in &sorted[1..] {
+            if r / cluster_min <= 3.0 {
+                cluster_max = r;
+            } else {
+                let r_outer_min = cluster_min * PROBE_TO_OUTER;
+                let r_outer_max = cluster_max * PROBE_TO_OUTER;
+                let d_min = (2.0 * r_outer_min * 0.70).max(4.0);
+                let d_max = (2.0 * r_outer_max * 1.35).max(d_min);
+                tiers.push(ScaleTier::new(d_min, d_max));
+                cluster_min = r;
+                cluster_max = r;
+            }
+        }
+        // Final cluster.
+        let r_outer_min = cluster_min * PROBE_TO_OUTER;
+        let r_outer_max = cluster_max * PROBE_TO_OUTER;
+        let d_min = (2.0 * r_outer_min * 0.70).max(4.0);
+        let d_max = (2.0 * r_outer_max * 1.35).max(d_min);
+        tiers.push(ScaleTier::new(d_min, d_max));
+
+        Self(tiers)
+    }
+
+    /// Access the ordered tier list.
+    pub fn tiers(&self) -> &[ScaleTier] {
+        &self.0
     }
 }
 

@@ -1,6 +1,7 @@
 use image::GrayImage;
 
 use crate::conic::Ellipse;
+use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
 use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
 use crate::ring::edge_sample::EdgeSampleResult;
@@ -20,6 +21,9 @@ pub struct CompletionStats {
     pub n_added: usize,
     pub n_failed_fit: usize,
     pub n_failed_gate: usize,
+    /// Number of accepted completion markers whose re-decoded ID did not match
+    /// the expected board ID (decode mismatch accepted).
+    pub n_decode_mismatch: usize,
 }
 
 struct CandidateQuality {
@@ -30,6 +34,9 @@ struct CandidateQuality {
     scale_ok: bool,
     reproj_err: f32,
     max_angular_gap_outer: f64,
+    /// Coefficient of variation (std_dev / mean) of per-ray outer radii.
+    /// Set to 0.0 when fewer than 2 rays are available or the mean is degenerate.
+    radii_cv: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -41,6 +48,7 @@ enum CompletionGateRejectReason {
     ScaleOutOfRange,
     PerfectDecodeRequired,
     AngularGapTooLarge,
+    RadiiScatterTooHigh,
 }
 
 impl CompletionGateRejectReason {
@@ -52,6 +60,7 @@ impl CompletionGateRejectReason {
             Self::ScaleOutOfRange => "scale_out_of_range",
             Self::PerfectDecodeRequired => "perfect_decode_required",
             Self::AngularGapTooLarge => "angular_gap_too_large",
+            Self::RadiiScatterTooHigh => "radii_scatter_too_high",
         }
     }
 }
@@ -86,6 +95,10 @@ enum CompletionGateRejectContext {
     AngularGapTooLarge {
         observed_gap_rad: f64,
         max_allowed_gap_rad: f64,
+    },
+    RadiiScatterTooHigh {
+        observed_radii_cv: f32,
+        max_allowed_radii_cv: f32,
     },
 }
 
@@ -122,6 +135,18 @@ struct CompletionDecodeNotice {
     observed_id: usize,
 }
 
+fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
+    if radii.len() < 2 {
+        return 0.0;
+    }
+    let mean = radii.iter().sum::<f32>() / radii.len() as f32;
+    if mean < 1.0 {
+        return 0.0;
+    }
+    let variance = radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32;
+    variance.sqrt() / mean
+}
+
 fn compute_candidate_quality(
     edge: &EdgeSampleResult,
     outer: &Ellipse,
@@ -142,6 +167,7 @@ fn compute_candidate_quality(
         (dx * dx + dy * dy).sqrt() as f32
     };
     let max_angular_gap_outer = super::outer_fit::max_angular_gap(center, &edge.outer_points);
+    let radii_cv = radii_coefficient_of_variation(&edge.outer_radii);
     CandidateQuality {
         center,
         arc_cov,
@@ -150,6 +176,7 @@ fn compute_candidate_quality(
         scale_ok,
         reproj_err,
         max_angular_gap_outer,
+        radii_cv,
     }
 }
 
@@ -181,6 +208,15 @@ fn check_quality_gates(
             context: CompletionGateRejectContext::ArcCoverageLow {
                 observed_arc_coverage: quality.arc_cov,
                 min_required_arc_coverage: params.min_arc_coverage,
+            },
+        });
+    }
+    if quality.radii_cv > params.max_radii_std_ratio {
+        return Err(CompletionGateReject {
+            reason: CompletionGateRejectReason::RadiiScatterTooHigh,
+            context: CompletionGateRejectContext::RadiiScatterTooHigh {
+                observed_radii_cv: quality.radii_cv,
+                max_allowed_radii_cv: params.max_radii_std_ratio,
             },
         });
     }
@@ -355,13 +391,14 @@ pub(crate) fn complete_with_h(
         }
 
         if let Some(notice) = check_decode_gate(decode_result.as_ref(), id) {
-            tracing::debug!(
+            tracing::info!(
                 "Completion id={} {} expected={} observed={}",
                 id,
                 notice.reason,
                 notice.expected_id,
                 notice.observed_id
             );
+            stats.n_decode_mismatch += 1;
         }
 
         let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
@@ -390,6 +427,7 @@ pub(crate) fn complete_with_h(
             edge_points_inner: Some(inner_fit.points_inner.clone()),
             fit,
             decode: decode_metrics,
+            source: DetectionSource::Completion,
             ..DetectedMarker::default()
         });
         stats.n_added += 1;
@@ -440,6 +478,7 @@ mod tests {
             scale_ok: true,
             reproj_err: 0.5,
             max_angular_gap_outer: 0.1,
+            radii_cv: 0.0,
         };
         let params = CompletionParams::default();
         let reject = check_quality_gates(&quality, &params, 20.0, std::f64::consts::FRAC_PI_2)

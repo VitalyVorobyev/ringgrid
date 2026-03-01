@@ -32,7 +32,7 @@ pub(crate) use inner_as_outer_recovery::{
     annotate_neighbor_radius_ratios, try_recover_inner_as_outer,
 };
 pub use inner_fit::{InnerFitReason, InnerFitStatus};
-pub use marker_build::{DetectedMarker, FitMetrics};
+pub use marker_build::{DetectedMarker, DetectionSource, FitMetrics};
 pub(crate) use outer_fit::{
     fit_outer_candidate_from_prior_for_completion, median_outer_radius_from_neighbors_px,
     OuterFitCandidate,

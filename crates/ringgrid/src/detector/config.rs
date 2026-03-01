@@ -60,11 +60,26 @@ pub struct CompletionParams {
     /// distortion setups where no calibrated camera model is available.
     #[serde(default = "CompletionParams::default_require_perfect_decode")]
     pub require_perfect_decode: bool,
+    /// Maximum allowed coefficient of variation (std_dev / mean) of per-ray outer
+    /// radii. High scatter indicates inner/outer edge contamination — rays landing on
+    /// the inner ring inflate the apparent outer radius for some angles. Values above
+    /// this threshold cause the completion candidate to be rejected.
+    ///
+    /// The gate is skipped when fewer than 2 rays have valid outer radii or when the
+    /// mean outer radius is below 1 px (degenerate fit).
+    ///
+    /// Default: `0.35` (35% coefficient of variation).
+    #[serde(default = "CompletionParams::default_max_radii_std_ratio")]
+    pub max_radii_std_ratio: f32,
 }
 
 impl CompletionParams {
     fn default_require_perfect_decode() -> bool {
         false
+    }
+
+    fn default_max_radii_std_ratio() -> f32 {
+        0.35
     }
 }
 
@@ -79,6 +94,7 @@ impl Default for CompletionParams {
             max_attempts: None,
             image_margin_px: 10.0,
             require_perfect_decode: false,
+            max_radii_std_ratio: 0.35,
         }
     }
 }
@@ -729,6 +745,15 @@ pub struct DetectConfig {
     /// Automatic recovery for markers where the inner edge was incorrectly
     /// fitted as the outer ellipse.
     pub inner_as_outer_recovery: InnerAsOuterRecoveryConfig,
+    /// Soft confidence penalty alpha for H-reprojection error.
+    ///
+    /// After the final homography is estimated, each marker's confidence is
+    /// multiplied by `1 / (1 + alpha * h_reproj_err_px)`. Markers with small
+    /// reprojection errors are unaffected; geometrically inconsistent markers
+    /// (e.g. 5 px error) are penalised by roughly `1 / (1 + 0.2 * 5) = 0.5`.
+    ///
+    /// Set to `0.0` to disable the penalty. Default: `0.2`.
+    pub h_reproj_confidence_alpha: f32,
 }
 
 const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
@@ -800,6 +825,7 @@ impl Default for DetectConfig {
             self_undistort: SelfUndistortConfig::default(),
             id_correction: IdCorrectionConfig::default(),
             inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
+            h_reproj_confidence_alpha: 0.2,
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);

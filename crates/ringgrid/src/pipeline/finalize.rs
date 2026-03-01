@@ -262,6 +262,33 @@ fn finalize_global_filter_result(
         "synchronized marker id/board correspondence"
     );
 
+    // Annotate per-marker H-reprojection error and apply confidence soft-penalty
+    // now that board_xy_mm and image-space centers are both available.
+    if let Some(h) = final_h {
+        let alpha = config.h_reproj_confidence_alpha;
+        for m in &mut final_markers {
+            if let Some(ref board_xy) = m.board_xy_mm {
+                // Project board point through H (row-major [[f64;3];3]).
+                let x = board_xy[0];
+                let y = board_xy[1];
+                let pw = h[0][0] * x + h[0][1] * y + h[0][2];
+                let ph = h[1][0] * x + h[1][1] * y + h[1][2];
+                let pz = h[2][0] * x + h[2][1] * y + h[2][2];
+                if pz.abs() > 1e-15 {
+                    let px = pw / pz;
+                    let py = ph / pz;
+                    let dx = px - m.center[0];
+                    let dy = py - m.center[1];
+                    let err = (dx * dx + dy * dy).sqrt() as f32;
+                    m.fit.h_reproj_err_px = Some(err);
+                    if alpha > 0.0 {
+                        m.confidence *= 1.0 / (1.0 + alpha * err);
+                    }
+                }
+            }
+        }
+    }
+
     tracing::info!(
         "{} markers after global filter/completion",
         final_markers.len(),

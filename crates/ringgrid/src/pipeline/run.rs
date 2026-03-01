@@ -3,6 +3,7 @@
 use super::*;
 use crate::detector::config::{ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
+use crate::detector::marker_build::DetectionSource;
 use crate::detector::proposal::find_proposals;
 use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
@@ -12,8 +13,9 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
+    source: DetectionSource,
 ) -> DetectionResult {
-    let fit_markers = super::fit_decode::run(gray, config, mapper, proposals);
+    let fit_markers = super::fit_decode::run(gray, config, mapper, proposals, source);
     super::finalize::run(gray, fit_markers, config, mapper)
 }
 
@@ -28,7 +30,7 @@ fn run_pass2(
 ) -> DetectionResult {
     let seed_params = &config.seed_proposals;
     let proposals = pass1.seed_proposals(seed_params.max_seeds);
-    run(gray, config, Some(mapper), proposals)
+    run(gray, config, Some(mapper), proposals, DetectionSource::SeededPass)
 }
 
 // ---------------------------------------------------------------------------
@@ -36,7 +38,7 @@ fn run_pass2(
 // ---------------------------------------------------------------------------
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let proposals = find_proposals(gray, &config.proposal);
-    run(gray, config, None, proposals)
+    run(gray, config, None, proposals, DetectionSource::FitDecoded)
 }
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
@@ -68,7 +70,8 @@ pub(crate) fn detect_premerge(
     config: &DetectConfig,
 ) -> Vec<crate::DetectedMarker> {
     let proposals = find_proposals(gray, &config.proposal);
-    let fit_markers = super::fit_decode::run(gray, config, None, proposals);
+    let fit_markers =
+        super::fit_decode::run(gray, config, None, proposals, DetectionSource::FitDecoded);
     super::finalize::finalize_premerge(fit_markers, config)
 }
 

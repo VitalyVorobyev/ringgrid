@@ -68,7 +68,7 @@ pub use api::Detector;
 
 // Result types
 pub use detector::Proposal;
-pub use detector::{DetectedMarker, FitMetrics, InnerFitReason, InnerFitStatus};
+pub use detector::{DetectedMarker, DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
 pub use pipeline::{DetectionFrame, DetectionResult};

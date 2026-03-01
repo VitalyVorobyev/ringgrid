@@ -8,6 +8,7 @@ use super::marker_build::{
 };
 use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate, OuterFitRejectReason};
 use super::{dedup_by_id, dedup_markers, DetectConfig};
+use crate::detector::marker_build::DetectionSource;
 use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
@@ -18,6 +19,7 @@ struct CandidateProcessContext<'a> {
     config: &'a DetectConfig,
     mapper: Option<&'a dyn PixelMapper>,
     sampler: DistortionAwareSampler<'a>,
+    source: DetectionSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -144,6 +146,7 @@ fn process_candidate(
         edge_points_inner: Some(inner_points),
         fit: fit_metrics,
         decode: decode_metrics,
+        source: ctx.source,
         ..DetectedMarker::default()
     })
 }
@@ -153,6 +156,7 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
+    source: DetectionSource,
 ) -> Vec<DetectedMarker> {
     let input_count = proposals.len();
     tracing::info!("{} proposals found", input_count);
@@ -172,6 +176,7 @@ pub(super) fn run(
         config,
         mapper,
         sampler,
+        source,
     };
 
     let mut markers: Vec<DetectedMarker> = Vec::new();
@@ -263,7 +268,7 @@ mod tests {
         relaxed.inner_fit.max_center_shift_px = f64::INFINITY;
         relaxed.inner_fit.max_ratio_abs_error = f64::INFINITY;
 
-        let relaxed_out = run(&img, &relaxed, None, proposals.clone());
+        let relaxed_out = run(&img, &relaxed, None, proposals.clone(), DetectionSource::FitDecoded);
         assert!(
             !relaxed_out.is_empty(),
             "expected at least one marker with relaxed inner-fit params"
@@ -278,7 +283,7 @@ mod tests {
         let mut strict = relaxed.clone();
         strict.inner_fit.min_points = usize::MAX;
 
-        let strict_out = run(&img, &strict, None, proposals);
+        let strict_out = run(&img, &strict, None, proposals, DetectionSource::FitDecoded);
         assert!(
             !strict_out.is_empty(),
             "expected marker to remain present when inner-fit is disabled by strict gate"
@@ -307,7 +312,7 @@ mod tests {
         cfg.set_marker_diameter_hint_px(outer_radius * 2.0);
         cfg.proposal.max_candidates = Some(0);
 
-        let out = run(&img, &cfg, None, proposals);
+        let out = run(&img, &cfg, None, proposals, DetectionSource::FitDecoded);
         assert!(
             out.is_empty(),
             "expected no markers when proposal cap is zero"

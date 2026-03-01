@@ -75,14 +75,11 @@ fn make_synthetic_marker(
         id: Some(0),
         confidence: 1.0,
         center,
-        center_mapped: None,
-        board_xy_mm: None,
         ellipse_outer: outer_ellipse,
         ellipse_inner: inner_ellipse,
         edge_points_outer: Some(outer_pts),
         edge_points_inner: Some(inner_pts),
-        fit: crate::FitMetrics::default(),
-        decode: None,
+        ..DetectedMarker::default()
     }
 }
 

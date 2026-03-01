@@ -6,6 +6,23 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::config::InnerFitConfig;
 use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
 
+/// Indicates which pipeline stage produced a [`DetectedMarker`].
+///
+/// Used to separate false-positive sources in post-processing and analysis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionSource {
+    /// Marker was produced by the primary gradient-proposal → fit → decode path.
+    #[default]
+    FitDecoded,
+    /// Marker was produced by the H-guided completion stage at a missing board ID.
+    Completion,
+    /// Marker was produced by the seeded two-pass path (`detect_with_mapper`).
+    /// The proposal seed came from pass-1 results; the fit ran with an active
+    /// distortion mapper.
+    SeededPass,
+}
+
 /// Fit quality metrics for a detected marker.
 ///
 /// Reports the edge sampling and ellipse fit quality. High RANSAC inlier
@@ -57,6 +74,17 @@ pub struct FitMetrics {
     /// including when it failed the quality gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner_theta_consistency: Option<f32>,
+    /// Standard deviation of per-ray outer radii (pixels). High values (> 30% of the
+    /// mean outer radius) indicate inner/outer edge contamination — some rays landed
+    /// on the inner ring instead of the outer one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radii_std_outer_px: Option<f32>,
+    /// Reprojection error (pixels) between this marker's center and the board position
+    /// projected through the final estimated homography. Populated in the finalization
+    /// stage when a global homography is available. Absent for markers detected in
+    /// no-H mode or when `board_xy_mm` is not available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h_reproj_err_px: Option<f32>,
 }
 
 /// A detected marker with its refined center and optional ID.
@@ -103,6 +131,8 @@ pub struct DetectedMarker {
     /// Decode metrics (present if decoding was attempted).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decode: Option<DecodeMetrics>,
+    /// Pipeline stage that produced this marker.
+    pub source: DetectionSource,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,6 +160,16 @@ impl InnerFitSummary {
             inner_theta_consistency: inner.theta_consistency,
         }
     }
+}
+
+fn radii_std(radii: &[f32]) -> Option<f32> {
+    if radii.len() < 2 {
+        return None;
+    }
+    let mean = radii.iter().sum::<f32>() / radii.len() as f32;
+    let variance =
+        radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32;
+    Some(variance.sqrt())
 }
 
 fn fit_metrics_from_outer(
@@ -160,6 +200,8 @@ fn fit_metrics_from_outer(
         inner_fit_reason: inner_summary.inner_fit_reason,
         neighbor_radius_ratio: None,
         inner_theta_consistency: inner_summary.inner_theta_consistency,
+        radii_std_outer_px: radii_std(&edge.outer_radii),
+        h_reproj_err_px: None,
     }
 }
 

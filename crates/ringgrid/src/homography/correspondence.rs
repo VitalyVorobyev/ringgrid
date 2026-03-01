@@ -225,21 +225,12 @@ pub(crate) fn mean_finite_masked_inlier_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FitMetrics;
-
     fn marker(id: Option<usize>, confidence: f32, center: [f64; 2]) -> DetectedMarker {
         DetectedMarker {
             id,
             confidence,
             center,
-            center_mapped: None,
-            board_xy_mm: None,
-            ellipse_outer: None,
-            ellipse_inner: None,
-            edge_points_outer: None,
-            edge_points_inner: None,
-            fit: FitMetrics::default(),
-            decode: None,
+            ..DetectedMarker::default()
         }
     }
 

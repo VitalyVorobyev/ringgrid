@@ -246,6 +246,7 @@ fn recover_marker_at_index(
         edge_points_inner: Some(inner.points_inner),
         fit: fit_metrics,
         decode: decode_metrics,
+        source: crate::detector::marker_build::DetectionSource::FitDecoded,
     })
 }
 

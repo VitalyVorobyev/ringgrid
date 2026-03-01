@@ -173,11 +173,17 @@ ringgrid detect \
 
 ## Adaptive Scale Status
 
-Adaptive multi-scale entry points are currently exposed via Rust API methods:
+Adaptive multi-scale entry points are currently exposed via Rust and Python APIs:
 
 - `Detector::detect_adaptive`
 - `Detector::detect_adaptive_with_hint`
 - `Detector::detect_multiscale`
+
+Python bindings expose the same concepts on `ringgrid.Detector`:
+
+- `detect_adaptive(image, nominal_diameter_px=None)` (canonical)
+- `detect_adaptive_with_hint(image, nominal_diameter_px=...)` (compatibility alias)
+- `detect_multiscale(image, tiers)`
 
 CLI `ringgrid detect` uses the regular config-driven detect flow.
 

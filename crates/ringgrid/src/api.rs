@@ -143,6 +143,23 @@ impl Detector {
         pipeline::detect_adaptive(image, &self.config)
     }
 
+    /// Return the scale tiers that adaptive detection would use for this image.
+    ///
+    /// This helper is useful for debugging and reproducibility:
+    /// - inspect auto-selected tiers before running detection
+    /// - persist exact tiers and replay with [`detect_multiscale`](Self::detect_multiscale)
+    ///
+    /// When `nominal_diameter_px` is `Some`, returns a hint-centered two-tier
+    /// bracket. When `None`, returns probe-selected tiers (or
+    /// [`ScaleTiers::four_tier_wide`] fallback if probing fails).
+    pub fn adaptive_tiers(
+        &self,
+        image: &GrayImage,
+        nominal_diameter_px: Option<f32>,
+    ) -> ScaleTiers {
+        pipeline::select_adaptive_tiers(image, nominal_diameter_px)
+    }
+
     /// Adaptive detection with an optional nominal-diameter hint.
     ///
     /// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
@@ -245,6 +262,37 @@ mod tests {
         let mut det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
         det.config_mut().completion.enable = false;
         assert!(!det.config().completion.enable);
+    }
+
+    #[test]
+    fn detector_adaptive_tiers_fallback_matches_four_tier_wide_on_blank_image() {
+        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let img = GrayImage::new(200, 200);
+        let tiers = det.adaptive_tiers(&img, None);
+        let expected = ScaleTiers::four_tier_wide();
+        assert_eq!(tiers.tiers().len(), expected.tiers().len());
+        for (got, want) in tiers.tiers().iter().zip(expected.tiers().iter()) {
+            assert_eq!(
+                got.prior.diameter_min_px.to_bits(),
+                want.prior.diameter_min_px.to_bits()
+            );
+            assert_eq!(
+                got.prior.diameter_max_px.to_bits(),
+                want.prior.diameter_max_px.to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn detector_adaptive_tiers_with_hint_builds_two_tier_bracket() {
+        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let img = GrayImage::new(200, 200);
+        let tiers = det.adaptive_tiers(&img, Some(32.0));
+        assert_eq!(tiers.tiers().len(), 2);
+        assert!((tiers.tiers()[0].prior.diameter_min_px - 16.0).abs() < 1e-4);
+        assert!((tiers.tiers()[0].prior.diameter_max_px - 33.6).abs() < 1e-4);
+        assert!((tiers.tiers()[1].prior.diameter_min_px - 31.92).abs() < 1e-4);
+        assert!((tiers.tiers()[1].prior.diameter_max_px - 48.0).abs() < 1e-4);
     }
 
     fn draw_ring_image(

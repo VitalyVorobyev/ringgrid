@@ -130,24 +130,47 @@ pub fn detect_multiscale(
     super::finalize::finalize_postmerge(gray, merged, config, None)
 }
 
+/// Select adaptive scale tiers for one image.
+///
+/// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
+/// two-tier bracket around `[0.5×, 1.5×]` the hint with a small overlap at the
+/// split point.
+///
+/// When `nominal_diameter_px` is `None`, runs scale probing and derives tiers
+/// from dominant radii. Falls back to [`ScaleTiers::four_tier_wide`] when the
+/// probe returns no usable signal.
+pub fn select_adaptive_tiers(gray: &GrayImage, nominal_diameter_px: Option<f32>) -> ScaleTiers {
+    match nominal_diameter_px {
+        Some(d) => {
+            let d_lo = (d * 0.5).max(4.0);
+            let d_hi = d * 1.5;
+            // Split at nominal with 5 % overlap to avoid a tier boundary gap.
+            let d_split = d * 1.05;
+            ScaleTiers(vec![
+                ScaleTier::new(d_lo, d_split),
+                ScaleTier::new(d_split * 0.95, d_hi),
+            ])
+        }
+        None => {
+            let probe_radii = super::scale_probe::scale_probe(gray, 64, 16);
+            if probe_radii.is_empty() {
+                tracing::debug!(
+                    "scale probe found no dominant radii; using four_tier_wide fallback"
+                );
+                ScaleTiers::four_tier_wide()
+            } else {
+                tracing::debug!(n = probe_radii.len(), "scale probe succeeded");
+                ScaleTiers::from_detected_radii(&probe_radii)
+            }
+        }
+    }
+}
+
 /// Adaptive detection using automatically selected scale tiers.
 ///
-/// Runs a lightweight scale probe to estimate the dominant marker size(s) in
-/// the image, selects matching tiers via [`ScaleTiers::from_detected_radii`],
-/// and calls [`detect_multiscale`]. Falls back to
-/// [`ScaleTiers::four_tier_wide`] when the probe returns no usable radii.
-///
-/// No manual scale configuration is required. Use
-/// [`detect_adaptive_with_hint`] when an approximate diameter is known.
+/// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.
 pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    let probe_radii = super::scale_probe::scale_probe(gray, 64, 16);
-    let tiers = if probe_radii.is_empty() {
-        tracing::debug!("scale probe found no dominant radii; using four_tier_wide fallback");
-        ScaleTiers::four_tier_wide()
-    } else {
-        tracing::debug!(n = probe_radii.len(), "scale probe succeeded");
-        ScaleTiers::from_detected_radii(&probe_radii)
-    };
+    let tiers = select_adaptive_tiers(gray, None);
     detect_multiscale(gray, config, &tiers)
 }
 
@@ -161,26 +184,7 @@ pub fn detect_adaptive_with_hint(
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
 ) -> DetectionResult {
-    let tiers = match nominal_diameter_px {
-        Some(d) => {
-            let d_lo = (d * 0.5).max(4.0);
-            let d_hi = d * 1.5;
-            // Split at nominal with 5 % overlap to avoid gap at boundary.
-            let d_split = d * 1.05;
-            ScaleTiers(vec![
-                ScaleTier::new(d_lo, d_split),
-                ScaleTier::new(d_split * 0.95, d_hi),
-            ])
-        }
-        None => {
-            let probe_radii = super::scale_probe::scale_probe(gray, 64, 16);
-            if probe_radii.is_empty() {
-                ScaleTiers::four_tier_wide()
-            } else {
-                ScaleTiers::from_detected_radii(&probe_radii)
-            }
-        }
-    };
+    let tiers = select_adaptive_tiers(gray, nominal_diameter_px);
     detect_multiscale(gray, config, &tiers)
 }
 

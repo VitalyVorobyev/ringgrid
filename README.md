@@ -334,7 +334,20 @@ let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
 let tiers = ScaleTiers::four_tier_wide();   // [8,24] ∪ [20,60] ∪ [50,130] ∪ [110,220] px
 let tiers = ScaleTiers::two_tier_standard(); // [14,42] ∪ [36,100] px
 let result = detector.detect_multiscale(&image, &tiers);
+
+// Inspect tiers selected by adaptive logic, then reuse exactly those tiers
+let tiers = detector.adaptive_tiers(&image, Some(32.0));
+let result = detector.detect_multiscale(&image, &tiers);
 ```
+
+Practical method selection:
+
+| Situation | Recommended call | Why |
+|---|---|---|
+| Unknown marker scale / mixed near-far markers | `detect_adaptive` | Probe + auto tier selection |
+| Approximate diameter known | `detect_adaptive_with_hint(..., Some(d))` | Skip probe, focused two-tier bracket around `d` |
+| Reproducible experiments with fixed policy | `detect_multiscale(..., tiers)` | Full explicit tier control |
+| Tight size range, throughput priority | `detect` | Single-pass and fastest |
 
 `ScaleTiers` presets:
 

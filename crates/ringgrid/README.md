@@ -120,6 +120,27 @@ let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
 let result = detector.detect_multiscale(&image, &ScaleTiers::four_tier_wide());
 ```
 
+Which method to choose:
+
+| Situation | Recommended call | Why |
+|---|---|---|
+| Marker size unknown / mixed near-far scene | `detect_adaptive` | Probe + auto tier selection |
+| Approximate diameter is known | `detect_adaptive_with_hint(..., Some(d))` | Skip probe and use focused two-tier bracket around `d` |
+| Exact tier policy required (reproducible benchmarks) | `detect_multiscale(..., tiers)` | Full explicit control over tier set |
+| Size range is tight and throughput matters | `detect` | Single-pass and fastest |
+
+Inspect adaptive tiers before detecting:
+
+```rust,no_run
+# use ringgrid::{BoardLayout, Detector};
+# use std::path::Path;
+# let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+# let detector = Detector::new(board);
+# let image = image::open("photo.png").unwrap().to_luma8();
+let tiers = detector.adaptive_tiers(&image, Some(32.0));
+let result = detector.detect_multiscale(&image, &tiers);
+```
+
 Adaptive scale guide:
 - https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html
 

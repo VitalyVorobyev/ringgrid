@@ -18,12 +18,19 @@
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
-| ALGO-013 | done | P0 | algo | Structural ID verification and correction | algo | Iterative BFS from high-confidence seeds; hex-neighbor consensus voting with local 2D affine (≥3 neighbors) or per-neighbor scale fallback; wrong IDs corrected, unverified IDs cleared; `IdCorrectionConfig` in `detector/config.rs`; stage in `pipeline/finalize.rs` after projective center, before global filter; `--id-correct` CLI flag; `"id_correction"` JSON config section |
+| INFRA-009 | todo | P0 | infra | Eliminate full JSON snapshot churn in ringgrid-py DetectConfig | infra | Replace per-property full dump/load in `crates/ringgrid-py/python/ringgrid/_api.py` with cached state + invalidation while preserving behavior. Acceptance: microbenchmark shows ≥4x faster hot getters/setters vs current baseline; parity tests keep `to_dict()` and overlay semantics unchanged. |
+| INFRA-010 | todo | P0 | infra | Add Rust target-generation API in ringgrid crate (file-oriented) | infra | Add file-oriented Rust API in `ringgrid` for target generation from direct board geometry args (`pitch_mm`, `rows`, `long_row_cols`, `marker_outer_radius_mm`, `marker_inner_radius_mm`) and write JSON/SVG/PNG; DXF deferred. Acceptance: output parity tests against current `tools/gen_synth.py` geometry semantics. |
+| DOCS-003 | todo | P0 | docs | Reconcile codebook docs/invariants with shipped artifacts | docs | Align docs (`README`, `book`, `docs/decisions`) with shipped codebook facts (`n=893`, current min cyclic distance), and document generation provenance/reproducibility expectations. Acceptance: consistency pass across docs and constants in repo. |
 
 ## Up Next
 
 | ID | Status | Priority | Type | Title | Role | Notes |
 |----|--------|----------|------|-------|------|-------|
+| INFRA-011 | todo | P1 | infra | Expose target generation in ringgrid-py (file-oriented) | infra | Add Python API wrappers over Rust target-generation API and export them in package surface; must work from installed package (not repo-tools-only). Acceptance: JSON/SVG/PNG parity tests for identical board args. |
+| INFRA-012 | todo | P1 | infra | Create dedicated tools/gen_target.py | infra | Add thin dedicated script with direct board args (`pitch_mm`, `rows`, `long_row_cols`, `marker_outer_radius_mm`, `marker_inner_radius_mm`) that emits JSON/SVG/PNG via shared generation API. Acceptance: script outputs match Rust/Python generation for same inputs. |
+| ALGO-014 | todo | P1 | algo | Optional extended codebook mode beyond 893, stable base IDs | algo | Keep default 16-bit base profile stable (IDs `0..892` unchanged), define additive opt-in extension profile, and compute max-feasible extension size under 16-bit constraints. Acceptance: compatibility tests prove default decode identity and extension-mode isolation. |
+| DOCS-001 | todo | P1 | docs | ringgrid-py README: complete DetectConfig field guide | docs | Expand `crates/ringgrid-py/README.md` with full `DetectConfig` coverage (all sections/parameters), defaults, practical ranges, and tuning hints. Acceptance: README field guide aligns with current Python/Rust config surface. |
+| DOCS-002 | todo | P1 | docs | Main README user-first refactor + split dev/perf notes | docs | Refocus root `README.md` on workspace users (install/quickstart/usage), move deep developer/performance material into dedicated docs, and add links from README. Acceptance: user-first README with clear links to developer/performance docs. |
 
 ## Backlog
 
@@ -33,6 +40,28 @@
 | INFRA-008 | todo | P2 | infra | CLI flag to load Brown-Conrady calibration JSON as mapper | infra | Add `--calibration <file.json>` to ringgrid-cli; deserialize `RadialTangentialDistortion` from JSON; construct `CameraModel`-based `PixelMapper`; `RadialTangentialDistortion` struct already exists in `pixelmap/distortion.rs` |
 | ALGO-010 | todo | P3 | algo | Pre-screen contaminated outer rays before RANSAC | algo | In outer edge collection, filter rays where `\|r_ray - r_expected\| > 0.4 * r_expected` before RANSAC; discards rays that landed on wrong ring, complementing RANSAC's Sampson-distance inlier gate |
 | ALGO-011 | todo | P3 | algo | Enforce inner/outer axis ratio consistency as post-filter | algo | After all markers collected, compute global median `(inner.mean_axis / outer.mean_axis)` from fit-decoded markers; flag or reject markers where ratio deviates >25%; catches cases where "outer" fit anchored to inner ring |
+
+## API / Interface Tracking
+
+- Rust API backlog direction: add file-oriented JSON/SVG/PNG target-generation API in `ringgrid` crate using direct board geometry args.
+- Python API backlog direction: expose the same target-generation capability in `ringgrid-py` package surface (installed-package usable).
+- `DetectConfig` backlog direction: internal Python caching/refactor only; no intentional public behavior changes.
+- Codebook backlog direction: default profile unchanged; optional extension profile additive and opt-in.
+
+## Acceptance Scenarios (Attached to Tasks)
+
+- `INFRA-009`: microbenchmark for `DetectConfig` hot getters/setters must show at least 4x improvement; overlay and `to_dict()` parity must hold.
+- `INFRA-010`/`INFRA-011`/`INFRA-012`: JSON/SVG/PNG generation parity tests against current `gen_synth.py` geometry semantics for identical board args.
+- `ALGO-014`: compatibility tests show IDs `0..892` decode identically in default mode; extension profile remains explicitly opt-in.
+- `DOCS-001`/`DOCS-002`/`DOCS-003`: documentation consistency pass must match shipped constants and supported API surfaces.
+
+## Locked Defaults
+
+- ID convention: keep existing `ALGO`/`INFRA` streams and add `DOCS-*` for docs-focused backlog work.
+- Target-generation outputs in first milestone: JSON + SVG + PNG.
+- API style for target generation: file-oriented for both Rust and Python.
+- Codebook extension policy: stable base + optional extension, 16-bit only, target extension size = max feasible.
+- Root README policy: user-quickstart-first with links to separate developer/performance docs.
 
 ## Done
 

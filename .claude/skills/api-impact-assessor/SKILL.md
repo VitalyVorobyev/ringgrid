@@ -8,7 +8,7 @@ After an Algorithm Improvement Designer proposes a change and you need to integr
 
 ## Prerequisites
 - Design document + ADR draft exist
-- Task exists in `state/backlog.md`
+- Task exists in `backlog.md`
 
 ## Inputs to consult
 - Design document + ADR draft

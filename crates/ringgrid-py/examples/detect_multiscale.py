@@ -77,7 +77,7 @@ def main() -> None:
         if args.board is None
         else ringgrid.BoardLayout.from_json_file(args.board)
     )
-    detector = ringgrid.Detector(board, ringgrid.DetectConfig(board))
+    detector = ringgrid.Detector.from_board(board)
     tiers = build_tiers(args)
 
     result = detector.detect_multiscale(args.image, tiers)

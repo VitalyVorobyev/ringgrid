@@ -421,7 +421,7 @@ pub fn ring_center_projective_with_debug(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     fn circle_conic(radius: f64) -> Matrix3<f64> {
         Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))
@@ -445,7 +445,7 @@ mod tests {
         let mut n = Matrix3::<f64>::zeros();
         for i in 0..3 {
             for j in i..3 {
-                let v = rng.gen_range(-1.0..1.0) * scale;
+                let v = rng.random_range(-1.0..1.0) * scale;
                 n[(i, j)] = v;
                 n[(j, i)] = v;
             }

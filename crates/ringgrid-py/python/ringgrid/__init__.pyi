@@ -257,18 +257,416 @@ class DetectionResult:
         alpha: float = ...,
     ) -> None: ...
 
-class DetectConfig:
-    def __init__(self, board: BoardLayout, data: Mapping[str, Any] | None = ...) -> None: ...
+class RansacFitConfig:
+    max_iters: int
+    inlier_threshold: float
+    min_inliers: int
+    seed: int
+    def __init__(self, max_iters: int = ..., inlier_threshold: float = ..., min_inliers: int = ..., seed: int = ...) -> None: ...
     @classmethod
-    def from_dict(cls, board: BoardLayout, data: Mapping[str, Any]) -> DetectConfig: ...
+    def from_dict(cls, data: Mapping[str, Any]) -> RansacFitConfig: ...
     def to_dict(self) -> dict[str, Any]: ...
-    def update_from_dict(self, data: Mapping[str, Any]) -> None: ...
+
+class InnerFitConfig:
+    min_points: int
+    min_inlier_ratio: float
+    max_rms_residual: float
+    max_center_shift_px: float
+    max_ratio_abs_error: float
+    local_peak_halfwidth_idx: int
+    ransac: RansacFitConfig
+    miss_confidence_factor: float
+    max_angular_gap_rad: float
+    require_inner_fit: bool
+    def __init__(
+        self,
+        min_points: int = ...,
+        min_inlier_ratio: float = ...,
+        max_rms_residual: float = ...,
+        max_center_shift_px: float = ...,
+        max_ratio_abs_error: float = ...,
+        local_peak_halfwidth_idx: int = ...,
+        ransac: RansacFitConfig = ...,
+        miss_confidence_factor: float = ...,
+        max_angular_gap_rad: float = ...,
+        require_inner_fit: bool = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> InnerFitConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class OuterFitConfig:
+    min_direct_fit_points: int
+    min_ransac_points: int
+    ransac: RansacFitConfig
+    size_score_weight: float
+    max_angular_gap_rad: float
+    def __init__(
+        self,
+        min_direct_fit_points: int = ...,
+        min_ransac_points: int = ...,
+        ransac: RansacFitConfig = ...,
+        size_score_weight: float = ...,
+        max_angular_gap_rad: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OuterFitConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class CompletionParams:
+    enable: bool
+    roi_radius_px: float
+    reproj_gate_px: float
+    min_fit_confidence: float
+    min_arc_coverage: float
+    max_attempts: int | None
+    image_margin_px: float
+    require_perfect_decode: bool
+    max_radii_std_ratio: float
+    def __init__(
+        self,
+        enable: bool = ...,
+        roi_radius_px: float = ...,
+        reproj_gate_px: float = ...,
+        min_fit_confidence: float = ...,
+        min_arc_coverage: float = ...,
+        max_attempts: int | None = ...,
+        image_margin_px: float = ...,
+        require_perfect_decode: bool = ...,
+        max_radii_std_ratio: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CompletionParams: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class ProjectiveCenterParams:
+    use_expected_ratio: bool
+    ratio_penalty_weight: float
+    max_center_shift_px: float | None
+    max_selected_residual: float
+    min_eig_separation: float
+    def __init__(
+        self,
+        use_expected_ratio: bool = ...,
+        ratio_penalty_weight: float = ...,
+        max_center_shift_px: float | None = ...,
+        max_selected_residual: float = ...,
+        min_eig_separation: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProjectiveCenterParams: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class SeedProposalParams:
+    merge_radius_px: float
+    seed_score: float
+    max_seeds: int | None
+    def __init__(self, merge_radius_px: float = ..., seed_score: float = ..., max_seeds: int | None = ...) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> SeedProposalParams: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class ProposalConfig:
+    r_min: float
+    r_max: float
+    grad_threshold: float
+    nms_radius: float
+    min_vote_frac: float
+    accum_sigma: float
+    max_candidates: int | None
+    def __init__(
+        self,
+        r_min: float = ...,
+        r_max: float = ...,
+        grad_threshold: float = ...,
+        nms_radius: float = ...,
+        min_vote_frac: float = ...,
+        accum_sigma: float = ...,
+        max_candidates: int | None = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProposalConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class EdgeSampleConfig:
+    n_rays: int
+    r_max: float
+    r_min: float
+    r_step: float
+    min_ring_depth: float
+    min_rays_with_ring: int
+    def __init__(
+        self,
+        n_rays: int = ...,
+        r_max: float = ...,
+        r_min: float = ...,
+        r_step: float = ...,
+        min_ring_depth: float = ...,
+        min_rays_with_ring: int = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EdgeSampleConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class DecodeConfig:
+    code_band_ratio: float
+    samples_per_sector: int
+    n_radial_rings: int
+    max_decode_dist: int
+    min_decode_confidence: float
+    min_decode_margin: int
+    min_decode_contrast: float
+    threshold_max_iters: int
+    threshold_convergence_eps: float
+    def __init__(
+        self,
+        code_band_ratio: float = ...,
+        samples_per_sector: int = ...,
+        n_radial_rings: int = ...,
+        max_decode_dist: int = ...,
+        min_decode_confidence: float = ...,
+        min_decode_margin: int = ...,
+        min_decode_contrast: float = ...,
+        threshold_max_iters: int = ...,
+        threshold_convergence_eps: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> DecodeConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class MarkerSpec:
+    r_inner_expected: float
+    inner_search_halfwidth: float
+    inner_grad_polarity: str
+    radial_samples: int
+    theta_samples: int
+    aggregator: str
+    min_theta_coverage: float
+    min_theta_consistency: float
+    def __init__(
+        self,
+        r_inner_expected: float = ...,
+        inner_search_halfwidth: float = ...,
+        inner_grad_polarity: str = ...,
+        radial_samples: int = ...,
+        theta_samples: int = ...,
+        aggregator: str = ...,
+        min_theta_coverage: float = ...,
+        min_theta_consistency: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> MarkerSpec: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class OuterEstimationConfig:
+    search_halfwidth_px: float
+    radial_samples: int
+    aggregator: str
+    grad_polarity: str
+    min_theta_coverage: float
+    min_theta_consistency: float
+    allow_two_hypotheses: bool
+    second_peak_min_rel: float
+    refine_halfwidth_px: float
+    def __init__(
+        self,
+        search_halfwidth_px: float = ...,
+        radial_samples: int = ...,
+        aggregator: str = ...,
+        grad_polarity: str = ...,
+        min_theta_coverage: float = ...,
+        min_theta_consistency: float = ...,
+        allow_two_hypotheses: bool = ...,
+        second_peak_min_rel: float = ...,
+        refine_halfwidth_px: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OuterEstimationConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class RansacHomographyConfig:
+    max_iters: int
+    inlier_threshold: float
+    min_inliers: int
+    seed: int
+    def __init__(self, max_iters: int = ..., inlier_threshold: float = ..., min_inliers: int = ..., seed: int = ...) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RansacHomographyConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class SelfUndistortConfig:
+    enable: bool
+    lambda_range: list[float]
+    max_evals: int
+    min_markers: int
+    improvement_threshold: float
+    min_abs_improvement: float
+    trim_fraction: float
+    min_lambda_abs: float
+    reject_range_edge: bool
+    range_edge_margin_frac: float
+    validation_min_markers: int
+    validation_abs_improvement_px: float
+    validation_rel_improvement: float
+    def __init__(
+        self,
+        enable: bool = ...,
+        lambda_range: list[float] = ...,
+        max_evals: int = ...,
+        min_markers: int = ...,
+        improvement_threshold: float = ...,
+        min_abs_improvement: float = ...,
+        trim_fraction: float = ...,
+        min_lambda_abs: float = ...,
+        reject_range_edge: bool = ...,
+        range_edge_margin_frac: float = ...,
+        validation_min_markers: int = ...,
+        validation_abs_improvement_px: float = ...,
+        validation_rel_improvement: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> SelfUndistortConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class IdCorrectionConfig:
+    enable: bool
+    auto_search_radius_outer_muls: list[float]
+    consistency_outer_mul: float
+    consistency_min_neighbors: int
+    consistency_min_support_edges: int
+    consistency_max_contradiction_frac: float
+    soft_lock_exact_decode: bool
+    min_votes: int
+    min_votes_recover: int
+    min_vote_weight_frac: float
+    h_reproj_gate_px: float
+    homography_fallback_enable: bool
+    homography_min_trusted: int
+    homography_min_inliers: int
+    max_iters: int
+    remove_unverified: bool
+    seed_min_decode_confidence: float
+    def __init__(
+        self,
+        enable: bool = ...,
+        auto_search_radius_outer_muls: list[float] = ...,
+        consistency_outer_mul: float = ...,
+        consistency_min_neighbors: int = ...,
+        consistency_min_support_edges: int = ...,
+        consistency_max_contradiction_frac: float = ...,
+        soft_lock_exact_decode: bool = ...,
+        min_votes: int = ...,
+        min_votes_recover: int = ...,
+        min_vote_weight_frac: float = ...,
+        h_reproj_gate_px: float = ...,
+        homography_fallback_enable: bool = ...,
+        homography_min_trusted: int = ...,
+        homography_min_inliers: int = ...,
+        max_iters: int = ...,
+        remove_unverified: bool = ...,
+        seed_min_decode_confidence: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> IdCorrectionConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class InnerAsOuterRecoveryConfig:
+    enable: bool
+    ratio_threshold: float
+    k_neighbors: int
+    min_theta_consistency: float
+    min_theta_coverage: float
+    min_ring_depth: float
+    refine_halfwidth_px: float
+    size_gate_tolerance: float
+    def __init__(
+        self,
+        enable: bool = ...,
+        ratio_threshold: float = ...,
+        k_neighbors: int = ...,
+        min_theta_consistency: float = ...,
+        min_theta_coverage: float = ...,
+        min_ring_depth: float = ...,
+        refine_halfwidth_px: float = ...,
+        size_gate_tolerance: float = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> InnerAsOuterRecoveryConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class DetectConfig:
+    def __init__(self, board: BoardLayout) -> None: ...
+    def to_dict(self) -> dict[str, Any]: ...
     @property
     def board(self) -> BoardLayout: ...
     @property
     def marker_scale(self) -> MarkerScalePrior: ...
     @marker_scale.setter
     def marker_scale(self, value: MarkerScalePrior) -> None: ...
+    @property
+    def inner_fit(self) -> InnerFitConfig: ...
+    @inner_fit.setter
+    def inner_fit(self, value: InnerFitConfig) -> None: ...
+    @property
+    def outer_fit(self) -> OuterFitConfig: ...
+    @outer_fit.setter
+    def outer_fit(self, value: OuterFitConfig) -> None: ...
+    @property
+    def completion(self) -> CompletionParams: ...
+    @completion.setter
+    def completion(self, value: CompletionParams) -> None: ...
+    @property
+    def projective_center(self) -> ProjectiveCenterParams: ...
+    @projective_center.setter
+    def projective_center(self, value: ProjectiveCenterParams) -> None: ...
+    @property
+    def seed_proposals(self) -> SeedProposalParams: ...
+    @seed_proposals.setter
+    def seed_proposals(self, value: SeedProposalParams) -> None: ...
+    @property
+    def proposal(self) -> ProposalConfig: ...
+    @proposal.setter
+    def proposal(self, value: ProposalConfig) -> None: ...
+    @property
+    def edge_sample(self) -> EdgeSampleConfig: ...
+    @edge_sample.setter
+    def edge_sample(self, value: EdgeSampleConfig) -> None: ...
+    @property
+    def decode(self) -> DecodeConfig: ...
+    @decode.setter
+    def decode(self, value: DecodeConfig) -> None: ...
+    @property
+    def marker_spec(self) -> MarkerSpec: ...
+    @marker_spec.setter
+    def marker_spec(self, value: MarkerSpec) -> None: ...
+    @property
+    def outer_estimation(self) -> OuterEstimationConfig: ...
+    @outer_estimation.setter
+    def outer_estimation(self, value: OuterEstimationConfig) -> None: ...
+    @property
+    def ransac_homography(self) -> RansacHomographyConfig: ...
+    @ransac_homography.setter
+    def ransac_homography(self, value: RansacHomographyConfig) -> None: ...
+    @property
+    def self_undistort(self) -> SelfUndistortConfig: ...
+    @self_undistort.setter
+    def self_undistort(self, value: SelfUndistortConfig) -> None: ...
+    @property
+    def id_correction(self) -> IdCorrectionConfig: ...
+    @id_correction.setter
+    def id_correction(self, value: IdCorrectionConfig) -> None: ...
+    @property
+    def inner_as_outer_recovery(self) -> InnerAsOuterRecoveryConfig: ...
+    @inner_as_outer_recovery.setter
+    def inner_as_outer_recovery(self, value: InnerAsOuterRecoveryConfig) -> None: ...
+    @property
+    def dedup_radius(self) -> float: ...
+    @dedup_radius.setter
+    def dedup_radius(self, value: float) -> None: ...
+    @property
+    def max_aspect_ratio(self) -> float: ...
+    @max_aspect_ratio.setter
+    def max_aspect_ratio(self, value: float) -> None: ...
     @property
     def completion_enable(self) -> bool: ...
     @completion_enable.setter
@@ -307,7 +705,11 @@ class DetectConfig:
     def homography_inlier_threshold_px(self, value: float) -> None: ...
 
 class Detector:
-    def __init__(self, board: BoardLayout, config: DetectConfig | None = ...) -> None: ...
+    def __init__(self, config: DetectConfig) -> None: ...
+    @classmethod
+    def from_board(cls, board: BoardLayout) -> Detector: ...
+    @classmethod
+    def with_config(cls, config: DetectConfig) -> Detector: ...
     @property
     def board(self) -> BoardLayout: ...
     @property

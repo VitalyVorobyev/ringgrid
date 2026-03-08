@@ -264,8 +264,8 @@ mod tests {
         let noise_sigma = 0.5; // pixels
 
         for p in &mut pts {
-            p[0] += rng.gen::<f64>() * noise_sigma * 2.0 - noise_sigma;
-            p[1] += rng.gen::<f64>() * noise_sigma * 2.0 - noise_sigma;
+            p[0] += rng.random::<f64>() * noise_sigma * 2.0 - noise_sigma;
+            p[1] += rng.random::<f64>() * noise_sigma * 2.0 - noise_sigma;
         }
 
         let conic = fit_conic_direct(&pts).expect("fit should succeed with noise");
@@ -439,8 +439,8 @@ mod tests {
         let noise_sigma = 2.0; // Strong: ~6% of semi-major axis
 
         for p in &mut pts {
-            p[0] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
-            p[1] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[0] += (rng.random::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[1] += (rng.random::<f64>() - 0.5) * 2.0 * noise_sigma;
         }
 
         let result = fit_conic_direct(&pts);

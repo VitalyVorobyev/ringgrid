@@ -139,6 +139,7 @@ mod tests {
     use super::super::codebook::CODEBOOK_MIN_CYCLIC_DIST;
     use super::*;
     use rand::prelude::*;
+    use rand::RngExt;
 
     #[test]
     fn test_no_codeword_is_rotationally_symmetric() {
@@ -165,8 +166,8 @@ mod tests {
         let pairs_to_check = 50_000.min(n * (n - 1) / 2);
 
         for _ in 0..pairs_to_check {
-            let i = rng.gen_range(0..n);
-            let j = rng.gen_range(0..n);
+            let i = rng.random_range(0..n);
+            let j = rng.random_range(0..n);
             if i == j {
                 continue;
             }
@@ -194,8 +195,8 @@ mod tests {
         let mut observed_min = 16u8;
 
         for _ in 0..pairs {
-            let i = rng.gen_range(0..n);
-            let j = rng.gen_range(0..n);
+            let i = rng.random_range(0..n);
+            let j = rng.random_range(0..n);
             if i == j {
                 continue;
             }
@@ -234,9 +235,9 @@ mod tests {
         let cb = Codebook::default();
         let mut rng = StdRng::seed_from_u64(77);
         for _ in 0..100 {
-            let id = rng.gen_range(0..cb.len());
+            let id = rng.random_range(0..cb.len());
             let w = cb.word(id).unwrap();
-            let rot = rng.gen_range(0u32..16);
+            let rot = rng.random_range(0u32..16);
             let rotated = rotate_left_16(w, rot);
             let m = cb.match_word(rotated);
             assert_eq!(m.id, id, "rotation match failed for id {} rot {}", id, rot);
@@ -257,12 +258,12 @@ mod tests {
         let total = 200;
 
         for _ in 0..total {
-            let id = rng.gen_range(0..cb.len());
+            let id = rng.random_range(0..cb.len());
             let w = cb.word(id).unwrap();
-            let rot = rng.gen_range(0u32..16);
+            let rot = rng.random_range(0u32..16);
             let mut obs = rotate_left_16(w, rot);
 
-            let bit = rng.gen_range(0..16);
+            let bit = rng.random_range(0..16);
             obs ^= 1u16 << bit;
 
             let m = cb.match_word(obs);
@@ -292,13 +293,13 @@ mod tests {
         let total = 200;
 
         for _ in 0..total {
-            let id = rng.gen_range(0..cb.len());
+            let id = rng.random_range(0..cb.len());
             let w = cb.word(id).unwrap();
-            let rot = rng.gen_range(0u32..16);
+            let rot = rng.random_range(0u32..16);
             let mut obs = rotate_left_16(w, rot);
 
-            let bit1 = rng.gen_range(0u16..16);
-            let mut bit2 = rng.gen_range(0u16..15);
+            let bit1 = rng.random_range(0u16..16);
+            let mut bit2 = rng.random_range(0u16..15);
             if bit2 >= bit1 {
                 bit2 += 1;
             }

@@ -35,6 +35,10 @@ ringgrid uses dual concentric ring markers with a 16-sector binary code band bet
 - [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) — full configuration reference for JSON/SVG/PNG generation
 - [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) — `detect_adaptive`, hint-based adaptive, and explicit multi-scale tiers
 
+## Diligence Statement
+
+This project is developed with AI coding assistants (`Codex` and `Claude Code`) as implementation tools. Not every code path is manually line-reviewed by a human before merge. The project author is an expert in computer vision, validates algorithmic behavior and numerical results, and enforces quality gates (`fmt`/`clippy`/tests/docs/Python checks) before release. This is engineering-assisted development, not "vibe coding."
+
 ## Fast Start (Create JSON + SVG + PNG Target Files)
 
 From repository root:
@@ -170,7 +174,8 @@ import ringgrid
 
 board = ringgrid.BoardLayout.default()
 cfg = ringgrid.DetectConfig(board)
-detector = ringgrid.Detector(board, cfg)
+detector = ringgrid.Detector(cfg)
+# Convenience defaults: detector = ringgrid.Detector.from_board(board)
 
 result = detector.detect("testdata/target_3_split_00.png")
 print(len(result.detected_markers))

@@ -19,6 +19,7 @@ use crate::{DetectionResult, Proposal};
 ///
 /// Encapsulates board layout and detection configuration.
 /// Create once, detect on many images.
+/// Board ownership is single-source: it is stored inside `DetectConfig`.
 ///
 /// # Examples
 ///
@@ -127,12 +128,19 @@ impl Detector {
         find_proposals(image, &self.config.proposal)
     }
 
-    /// Detect markers using four overlapping scale tiers (8–220 px diameter).
+    /// Detect markers with robust adaptive scale selection.
     ///
-    /// Runs a lightweight scale probe to estimate the dominant marker size(s)
-    /// in the image, selects matching tiers, and calls [`detect_multiscale`].
-    /// Falls back to four broad tiers (`[8,24]`, `[20,60]`, `[50,130]`, `[110,220]` px)
-    /// when the probe returns no usable scale signal.
+    /// Adaptive mode evaluates several scale candidates and returns the
+    /// highest-scoring result. Candidates include:
+    /// - probe-selected multi-scale tiers,
+    /// - fixed two-tier / four-tier multi-scale presets,
+    /// - curated single-pass scale priors.
+    ///
+    /// Candidate ranking is deterministic and prioritizes:
+    /// 1. mapped markers,
+    /// 2. homography availability / inlier support,
+    /// 3. decoded markers,
+    /// 4. geometric quality tie-breakers.
     ///
     /// No manual scale configuration is required. Use
     /// [`detect_adaptive_with_hint`](Self::detect_adaptive_with_hint) when an
@@ -162,9 +170,10 @@ impl Detector {
 
     /// Adaptive detection with an optional nominal-diameter hint.
     ///
-    /// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
-    /// two-tier bracket around `[0.5×, 1.5×]` the hint diameter. When `None`,
-    /// behaves identically to [`detect_adaptive`](Self::detect_adaptive).
+    /// When `nominal_diameter_px` is `Some`, the hint-centered two-tier
+    /// bracket is included as the primary candidate while robust fallback
+    /// candidates remain enabled. When `None`, behaves identically to
+    /// [`detect_adaptive`](Self::detect_adaptive).
     pub fn detect_adaptive_with_hint(
         &self,
         image: &GrayImage,

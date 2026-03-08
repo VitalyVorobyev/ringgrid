@@ -69,7 +69,8 @@ import ringgrid
 
 board = ringgrid.BoardLayout.from_json_file(Path("tools/out/target_faststart/board_spec.json"))
 cfg = ringgrid.DetectConfig(board)
-detector = ringgrid.Detector(board, cfg)
+detector = ringgrid.Detector(cfg)
+# Convenience defaults: detector = ringgrid.Detector.from_board(board)
 ```
 
 Complete target-generation tutorial and full flag reference:
@@ -124,7 +125,7 @@ from pathlib import Path
 import ringgrid
 
 board = ringgrid.BoardLayout.default()
-detector = ringgrid.Detector(board, ringgrid.DetectConfig(board))
+detector = ringgrid.Detector.from_board(board)
 image = Path("testdata/target_3_split_00.png")
 
 result = detector.detect_adaptive(image)

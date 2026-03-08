@@ -139,6 +139,7 @@ mod tests {
     use super::super::codebook::CODEBOOK_MIN_CYCLIC_DIST;
     use super::*;
     use rand::prelude::*;
+    use rand::RngExt;
 
     #[test]
     fn test_no_codeword_is_rotationally_symmetric() {

@@ -1,10 +1,11 @@
 use std::f32::consts::PI as PI_F32;
 use std::f64::consts::PI as PI_F64;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use image::GrayImage;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
+use std::hint::black_box;
 
 mod marker {
     #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -270,7 +271,7 @@ fn make_proposal_fixture(width: u32, height: u32, seed: u64) -> GrayImage {
                 continue;
             }
 
-            let jitter = rng.gen_range(-0.8f32..0.8f32);
+            let jitter = rng.random_range(-0.8f32..0.8f32);
             let rr = outer_r + jitter;
             let x0 = (cx - rr - 2.0).floor().max(0.0) as u32;
             let x1 = (cx + rr + 2.0).ceil().min((width - 1) as f32) as u32;
@@ -337,7 +338,7 @@ fn make_radial_fixture(theta_samples: usize, radial_samples: usize) -> (Vec<Vec<
         for (ri, &r) in r_samples.iter().enumerate() {
             let base = 185.0 - 120.0 / (1.0 + (-(r - edge_r) * 3.0).exp());
             let band = 8.0 * (3.0 * phase + r * 0.3).sin();
-            let noise = rng.gen_range(-1.0f32..1.0f32);
+            let noise = rng.random_range(-1.0f32..1.0f32);
             curve[ri] = base + band + noise;
         }
     }
@@ -398,7 +399,7 @@ fn make_outer_fixture(width: u32, height: u32, seed: u64) -> (GrayImage, [f32; 2
             }
 
             v += 8.0 * ((x as f32 * 0.01).sin() + (y as f32 * 0.015).cos());
-            v += rng.gen_range(-1.5f32..1.5f32);
+            v += rng.random_range(-1.5f32..1.5f32);
             img.as_mut()[(y * width + x) as usize] = v.clamp(0.0, 255.0) as u8;
         }
     }
@@ -505,7 +506,7 @@ fn make_inner_fixture(
             }
 
             v += 0.04 * ((x as f32 * 0.017).sin() + (y as f32 * 0.013).cos());
-            v += rng.gen_range(-0.012f32..0.012f32);
+            v += rng.random_range(-0.012f32..0.012f32);
             img.as_mut()[(y * width + x) as usize] = (v.clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
@@ -608,8 +609,8 @@ fn make_ellipse_points(n: usize) -> Vec<[f64; 2]> {
         let t = 2.0 * PI_F64 * (i as f64) / (n as f64);
         let ex = a * t.cos();
         let ey = b * t.sin();
-        let x = cx + cos_a * ex - sin_a * ey + rng.gen_range(-0.35f64..0.35f64);
-        let y = cy + sin_a * ex + cos_a * ey + rng.gen_range(-0.35f64..0.35f64);
+        let x = cx + cos_a * ex - sin_a * ey + rng.random_range(-0.35f64..0.35f64);
+        let y = cy + sin_a * ex + cos_a * ey + rng.random_range(-0.35f64..0.35f64);
         pts.push([x, y]);
     }
     pts

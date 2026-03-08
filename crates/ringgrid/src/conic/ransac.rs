@@ -2,6 +2,7 @@
 
 use super::fit_conic_direct;
 use super::types::{ConicError, Ellipse, RansacConfig, RansacResult};
+use rand::RngExt;
 
 /// Fit an ellipse robustly using RANSAC.
 ///
@@ -121,6 +122,7 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use rand::prelude::*;
+    use rand::RngExt;
 
     /// Helper: create an ellipse and sample points on it.
     fn make_test_ellipse() -> Ellipse {

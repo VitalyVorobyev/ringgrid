@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] — 2026-03-08
+
+### Changed
+
+**Dependency upgrades**
+- `rand` upgraded to `0.10`.
+- `criterion` upgraded to `0.8`.
+- `nalgebra` upgraded to `0.34`.
+
+**`rand` API migration**
+- Replaced deprecated/removed `Rng::gen_range(...)` calls with
+  `RngExt::random_range(...)` across library code, tests, and benchmarks.
+- Kept deterministic behavior intact by preserving all explicit `StdRng::seed_from_u64(...)`
+  seeds in test and benchmark fixtures.
+
+**`criterion` API migration**
+- Replaced deprecated `criterion::black_box(...)` with `std::hint::black_box(...)`
+  in benchmark code.
+- Bench harness remains compatible with `criterion_group!` / `criterion_main!`.
+
+**Tooling compatibility**
+- Updated benchmark/test support code to compile cleanly with `-D warnings`
+  under the new dependency set.
+
+### Fixed
+
+- `hotpaths` benchmark build now passes with latest `rand`/`criterion` APIs.
+
 ## v0.4.0
 
 ### Added

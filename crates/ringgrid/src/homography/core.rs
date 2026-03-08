@@ -255,6 +255,7 @@ pub fn fit_homography_ransac(
     }
 
     use rand::prelude::*;
+    use rand::RngExt;
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
 
     let mut best_inliers = 0usize;
@@ -358,7 +359,7 @@ pub fn fit_homography_ransac(
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     fn make_test_homography() -> Matrix3<f64> {
         // Scale + translate + mild perspective

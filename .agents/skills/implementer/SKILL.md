@@ -39,7 +39,18 @@ Do not edit `01-architect.md` or `03-reviewer.md`.
 4. Build an implementation checklist from architect plan and reviewer findings.
 5. Implement minimal, localized code changes.
 6. Add or update tests aligned to acceptance criteria.
-7. Run validation commands when possible (build, test, lint, targeted checks).
+7. Run the local CI validation baseline unless the architect explicitly narrows it or a concrete blocker prevents a command:
+- `cargo fmt --all --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
+- `cargo doc --workspace --all-features --no-deps`
+- `cargo test --doc --workspace`
+- `mdbook build book`
+- Python binding/docs checks using the repo venv (`.venv/bin/python`) or an explicitly documented equivalent interpreter:
+  - `python crates/ringgrid-py/tools/generate_typing_artifacts.py --check`
+  - `python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release`
+  - `python -m pytest crates/ringgrid-py/tests -q`
+- If any required local CI command is not run, stop and record the blocker explicitly instead of handing off as `ready_for_review`.
 8. Record deviations explicitly:
 - what changed,
 - why,
@@ -58,7 +69,7 @@ Do not edit `01-architect.md` or `03-reviewer.md`.
 ## Definition Of Done
 - Code changes align with architect plan (or documented deviation).
 - Tests are added/updated where behavior changed.
-- Validation commands and outcomes are recorded.
+- Validation commands and outcomes are recorded, including the local CI baseline for `fmt`, `clippy`, workspace tests, rustdoc/doctests, `mdbook`, and Python binding checks unless a blocker is explicitly documented.
 - `02-implementer.md` references correct `task-id`, changed files, results, and reviewer handoff.
 
 ## Handoff Rules

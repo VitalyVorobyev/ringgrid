@@ -33,9 +33,17 @@ Do not edit `01-architect.md` or `02-implementer.md`.
 1. Validate `task-id` across all handoff files.
 2. Confirm implementer status is reviewable:
 - Stop if implementer status is `blocked`.
-- Stop if commands/results are missing for required validations.
+- Stop if commands/results are missing for the required local CI baseline:
+  - `cargo fmt --all --check`
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - `cargo test --workspace --all-features`
+  - `cargo doc --workspace --all-features --no-deps`
+  - `cargo test --doc --workspace`
+  - `mdbook build book`
+  - Python binding/docs checks (`generate_typing_artifacts.py --check`, `maturin develop`, `pytest crates/ringgrid-py/tests -q`)
 3. Review against architect acceptance criteria and test plan.
-4. Check implementation quality:
+4. Confirm the implementer's recorded local CI baseline is coherent, and reproduce any high-risk or disputed checks when feasible. If you cannot reproduce an expected check, state that explicitly.
+5. Check implementation quality:
 - correctness,
 - completeness,
 - edge cases,
@@ -43,19 +51,19 @@ Do not edit `01-architect.md` or `02-implementer.md`.
 - test adequacy,
 - maintainability,
 - security/performance implications when relevant.
-5. Tie each significant finding to evidence:
+6. Tie each significant finding to evidence:
 - code location,
 - test behavior,
 - architect expectation,
 - or missing validation.
-6. Select final verdict from closed set only:
+7. Select final verdict from closed set only:
 - `approved`
 - `approved_with_minor_followups`
 - `changes_requested`
-7. Write explicit follow-up actions:
+8. Write explicit follow-up actions:
 - If `changes_requested`, provide concrete handoff back to Implementer.
 - If `approved_with_minor_followups`, list bounded non-blocking tasks.
-8. Write `03-reviewer.md` using `docs/templates/task-handoff-report.md` and role-specific sections.
+9. Write `03-reviewer.md` using `docs/templates/task-handoff-report.md` and role-specific sections.
 
 ## Guardrails
 - Do not silently approve ambiguity or risk.
@@ -67,6 +75,7 @@ Do not edit `01-architect.md` or `02-implementer.md`.
 - Review report references correct `task-id`.
 - Verdict is one of the allowed values.
 - Findings are evidence-backed and mapped to action.
+- Review explicitly accounts for the local CI baseline (`fmt`, `clippy`, workspace tests, rustdoc/doctests, `mdbook`, Python checks), either via reproduced commands or a clear statement of what evidence was reviewed and what could not be reproduced.
 - Handoff destination is explicit (Implementer or Human).
 
 ## Handoff Rules

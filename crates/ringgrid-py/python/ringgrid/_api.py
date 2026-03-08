@@ -13,6 +13,7 @@ Typical flow:
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 import json
@@ -1360,20 +1361,61 @@ class DetectConfig:
             raise TypeError("board must be BoardLayout")
         self._board = board
         self._core = _DetectConfigCore(board._spec_json)
+        self._resolved_cache: dict[str, Any] | None = None
         self._version = 0
 
+    def _refresh_snapshot(self) -> dict[str, Any]:
+        self._resolved_cache = json.loads(self._core.dump_json())
+        return self._resolved_cache
+
+    def _resolved(self) -> dict[str, Any]:
+        if self._resolved_cache is None:
+            return self._refresh_snapshot()
+        return self._resolved_cache
+
     def _snapshot(self) -> dict[str, Any]:
-        return json.loads(self._core.dump_json())
+        return copy.deepcopy(self._resolved())
 
     def _config_json(self) -> str:
-        return self._core.dump_json()
+        return json.dumps(self._resolved(), separators=(",", ":"))
 
     def to_dict(self) -> dict[str, Any]:
         """Return a snapshot of the fully resolved config dictionary."""
         return self._snapshot()
 
-    def _apply_overlay(self, overlay: dict[str, Any]) -> None:
-        self._core.apply_overlay_json(json.dumps(dict(overlay)))
+    def _patch_cached_overlay(self, overlay: Mapping[str, Any]) -> None:
+        if self._resolved_cache is None:
+            return
+        for key, value in overlay.items():
+            self._resolved_cache[str(key)] = copy.deepcopy(value)
+
+    def _patch_cached_section_field(self, section_name: str, field_name: str, value: Any) -> None:
+        if self._resolved_cache is None:
+            return
+        section = self._resolved_cache.get(section_name)
+        if not isinstance(section, dict):
+            self._refresh_snapshot()
+            return
+        section[field_name] = copy.deepcopy(value)
+
+    def _apply_overlay(self, overlay: dict[str, Any], *, refresh: bool = False) -> None:
+        payload = dict(overlay)
+        self._core.apply_overlay_json(json.dumps(payload))
+        if refresh:
+            self._refresh_snapshot()
+        else:
+            self._patch_cached_overlay(payload)
+        self._version += 1
+
+    def _apply_section_field_overlay(
+        self,
+        section_name: str,
+        section: Any,
+        field_name: str,
+        value: Any,
+    ) -> None:
+        self._core.apply_overlay_json(json.dumps({section_name: section.to_dict()}))
+        self._patch_cached_section_field(section_name, field_name, value)
         self._version += 1
 
     @property
@@ -1382,172 +1424,172 @@ class DetectConfig:
 
     @property
     def marker_scale(self) -> MarkerScalePrior:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return MarkerScalePrior.from_dict(resolved["marker_scale"])
 
     @marker_scale.setter
     def marker_scale(self, value: MarkerScalePrior) -> None:
         if not isinstance(value, MarkerScalePrior):
             raise TypeError("marker_scale must be MarkerScalePrior")
-        self._apply_overlay({"marker_scale": value.to_dict()})
+        self._apply_overlay({"marker_scale": value.to_dict()}, refresh=True)
 
     @property
     def inner_fit(self) -> InnerFitConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return InnerFitConfig.from_dict(resolved["inner_fit"])
 
     @inner_fit.setter
     def inner_fit(self, value: InnerFitConfig) -> None:
         if not isinstance(value, InnerFitConfig):
             raise TypeError("inner_fit must be InnerFitConfig")
-        self._apply_overlay({"inner_fit": value.to_dict()})
+        self._apply_overlay({"inner_fit": value.to_dict()}, refresh=True)
 
     @property
     def outer_fit(self) -> OuterFitConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return OuterFitConfig.from_dict(resolved["outer_fit"])
 
     @outer_fit.setter
     def outer_fit(self, value: OuterFitConfig) -> None:
         if not isinstance(value, OuterFitConfig):
             raise TypeError("outer_fit must be OuterFitConfig")
-        self._apply_overlay({"outer_fit": value.to_dict()})
+        self._apply_overlay({"outer_fit": value.to_dict()}, refresh=True)
 
     @property
     def completion(self) -> CompletionParams:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return CompletionParams.from_dict(resolved["completion"])
 
     @completion.setter
     def completion(self, value: CompletionParams) -> None:
         if not isinstance(value, CompletionParams):
             raise TypeError("completion must be CompletionParams")
-        self._apply_overlay({"completion": value.to_dict()})
+        self._apply_overlay({"completion": value.to_dict()}, refresh=True)
 
     @property
     def projective_center(self) -> ProjectiveCenterParams:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return ProjectiveCenterParams.from_dict(resolved["projective_center"])
 
     @projective_center.setter
     def projective_center(self, value: ProjectiveCenterParams) -> None:
         if not isinstance(value, ProjectiveCenterParams):
             raise TypeError("projective_center must be ProjectiveCenterParams")
-        self._apply_overlay({"projective_center": value.to_dict()})
+        self._apply_overlay({"projective_center": value.to_dict()}, refresh=True)
 
     @property
     def seed_proposals(self) -> SeedProposalParams:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return SeedProposalParams.from_dict(resolved["seed_proposals"])
 
     @seed_proposals.setter
     def seed_proposals(self, value: SeedProposalParams) -> None:
         if not isinstance(value, SeedProposalParams):
             raise TypeError("seed_proposals must be SeedProposalParams")
-        self._apply_overlay({"seed_proposals": value.to_dict()})
+        self._apply_overlay({"seed_proposals": value.to_dict()}, refresh=True)
 
     @property
     def proposal(self) -> ProposalConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return ProposalConfig.from_dict(resolved["proposal"])
 
     @proposal.setter
     def proposal(self, value: ProposalConfig) -> None:
         if not isinstance(value, ProposalConfig):
             raise TypeError("proposal must be ProposalConfig")
-        self._apply_overlay({"proposal": value.to_dict()})
+        self._apply_overlay({"proposal": value.to_dict()}, refresh=True)
 
     @property
     def edge_sample(self) -> EdgeSampleConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return EdgeSampleConfig.from_dict(resolved["edge_sample"])
 
     @edge_sample.setter
     def edge_sample(self, value: EdgeSampleConfig) -> None:
         if not isinstance(value, EdgeSampleConfig):
             raise TypeError("edge_sample must be EdgeSampleConfig")
-        self._apply_overlay({"edge_sample": value.to_dict()})
+        self._apply_overlay({"edge_sample": value.to_dict()}, refresh=True)
 
     @property
     def decode(self) -> DecodeConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return DecodeConfig.from_dict(resolved["decode"])
 
     @decode.setter
     def decode(self, value: DecodeConfig) -> None:
         if not isinstance(value, DecodeConfig):
             raise TypeError("decode must be DecodeConfig")
-        self._apply_overlay({"decode": value.to_dict()})
+        self._apply_overlay({"decode": value.to_dict()}, refresh=True)
 
     @property
     def marker_spec(self) -> MarkerSpec:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return MarkerSpec.from_dict(resolved["marker_spec"])
 
     @marker_spec.setter
     def marker_spec(self, value: MarkerSpec) -> None:
         if not isinstance(value, MarkerSpec):
             raise TypeError("marker_spec must be MarkerSpec")
-        self._apply_overlay({"marker_spec": value.to_dict()})
+        self._apply_overlay({"marker_spec": value.to_dict()}, refresh=True)
 
     @property
     def outer_estimation(self) -> OuterEstimationConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return OuterEstimationConfig.from_dict(resolved["outer_estimation"])
 
     @outer_estimation.setter
     def outer_estimation(self, value: OuterEstimationConfig) -> None:
         if not isinstance(value, OuterEstimationConfig):
             raise TypeError("outer_estimation must be OuterEstimationConfig")
-        self._apply_overlay({"outer_estimation": value.to_dict()})
+        self._apply_overlay({"outer_estimation": value.to_dict()}, refresh=True)
 
     @property
     def ransac_homography(self) -> RansacHomographyConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return RansacHomographyConfig.from_dict(resolved["ransac_homography"])
 
     @ransac_homography.setter
     def ransac_homography(self, value: RansacHomographyConfig) -> None:
         if not isinstance(value, RansacHomographyConfig):
             raise TypeError("ransac_homography must be RansacHomographyConfig")
-        self._apply_overlay({"ransac_homography": value.to_dict()})
+        self._apply_overlay({"ransac_homography": value.to_dict()}, refresh=True)
 
     @property
     def self_undistort(self) -> SelfUndistortConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return SelfUndistortConfig.from_dict(resolved["self_undistort"])
 
     @self_undistort.setter
     def self_undistort(self, value: SelfUndistortConfig) -> None:
         if not isinstance(value, SelfUndistortConfig):
             raise TypeError("self_undistort must be SelfUndistortConfig")
-        self._apply_overlay({"self_undistort": value.to_dict()})
+        self._apply_overlay({"self_undistort": value.to_dict()}, refresh=True)
 
     @property
     def id_correction(self) -> IdCorrectionConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return IdCorrectionConfig.from_dict(resolved["id_correction"])
 
     @id_correction.setter
     def id_correction(self, value: IdCorrectionConfig) -> None:
         if not isinstance(value, IdCorrectionConfig):
             raise TypeError("id_correction must be IdCorrectionConfig")
-        self._apply_overlay({"id_correction": value.to_dict()})
+        self._apply_overlay({"id_correction": value.to_dict()}, refresh=True)
 
     @property
     def inner_as_outer_recovery(self) -> InnerAsOuterRecoveryConfig:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return InnerAsOuterRecoveryConfig.from_dict(resolved["inner_as_outer_recovery"])
 
     @inner_as_outer_recovery.setter
     def inner_as_outer_recovery(self, value: InnerAsOuterRecoveryConfig) -> None:
         if not isinstance(value, InnerAsOuterRecoveryConfig):
             raise TypeError("inner_as_outer_recovery must be InnerAsOuterRecoveryConfig")
-        self._apply_overlay({"inner_as_outer_recovery": value.to_dict()})
+        self._apply_overlay({"inner_as_outer_recovery": value.to_dict()}, refresh=True)
 
     @property
     def circle_refinement(self) -> CircleRefinementMethod:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return _circle_refinement_from_wire(str(resolved["circle_refinement"]))
 
     @circle_refinement.setter
@@ -1556,7 +1598,7 @@ class DetectConfig:
 
     @property
     def dedup_radius(self) -> float:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return float(resolved["dedup_radius"])
 
     @dedup_radius.setter
@@ -1565,7 +1607,7 @@ class DetectConfig:
 
     @property
     def max_aspect_ratio(self) -> float:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return float(resolved["max_aspect_ratio"])
 
     @max_aspect_ratio.setter
@@ -1579,8 +1621,9 @@ class DetectConfig:
     @inner_fit_required.setter
     def inner_fit_required(self, value: bool) -> None:
         section = self.inner_fit
-        section.require_inner_fit = bool(value)
-        self.inner_fit = section
+        parsed = bool(value)
+        section.require_inner_fit = parsed
+        self._apply_section_field_overlay("inner_fit", section, "require_inner_fit", parsed)
 
     @property
     def homography_inlier_threshold_px(self) -> float:
@@ -1589,8 +1632,14 @@ class DetectConfig:
     @homography_inlier_threshold_px.setter
     def homography_inlier_threshold_px(self, value: float) -> None:
         section = self.ransac_homography
-        section.inlier_threshold = float(value)
-        self.ransac_homography = section
+        parsed = float(value)
+        section.inlier_threshold = parsed
+        self._apply_section_field_overlay(
+            "ransac_homography",
+            section,
+            "inlier_threshold",
+            parsed,
+        )
 
     @property
     def completion_enable(self) -> bool:
@@ -1599,12 +1648,13 @@ class DetectConfig:
     @completion_enable.setter
     def completion_enable(self, value: bool) -> None:
         section = self.completion
-        section.enable = bool(value)
-        self.completion = section
+        parsed = bool(value)
+        section.enable = parsed
+        self._apply_section_field_overlay("completion", section, "enable", parsed)
 
     @property
     def use_global_filter(self) -> bool:
-        resolved = self._snapshot()
+        resolved = self._resolved()
         return bool(resolved["use_global_filter"])
 
     @use_global_filter.setter
@@ -1618,8 +1668,9 @@ class DetectConfig:
     @self_undistort_enable.setter
     def self_undistort_enable(self, value: bool) -> None:
         section = self.self_undistort
-        section.enable = bool(value)
-        self.self_undistort = section
+        parsed = bool(value)
+        section.enable = parsed
+        self._apply_section_field_overlay("self_undistort", section, "enable", parsed)
 
     @property
     def decode_min_margin(self) -> int:
@@ -1628,8 +1679,9 @@ class DetectConfig:
     @decode_min_margin.setter
     def decode_min_margin(self, value: int) -> None:
         section = self.decode
-        section.min_decode_margin = int(value)
-        self.decode = section
+        parsed = int(value)
+        section.min_decode_margin = parsed
+        self._apply_section_field_overlay("decode", section, "min_decode_margin", parsed)
 
     @property
     def decode_max_dist(self) -> int:
@@ -1638,8 +1690,9 @@ class DetectConfig:
     @decode_max_dist.setter
     def decode_max_dist(self, value: int) -> None:
         section = self.decode
-        section.max_decode_dist = int(value)
-        self.decode = section
+        parsed = int(value)
+        section.max_decode_dist = parsed
+        self._apply_section_field_overlay("decode", section, "max_decode_dist", parsed)
 
     @property
     def decode_min_confidence(self) -> float:
@@ -1648,8 +1701,9 @@ class DetectConfig:
     @decode_min_confidence.setter
     def decode_min_confidence(self, value: float) -> None:
         section = self.decode
-        section.min_decode_confidence = float(value)
-        self.decode = section
+        parsed = float(value)
+        section.min_decode_confidence = parsed
+        self._apply_section_field_overlay("decode", section, "min_decode_confidence", parsed)
 
 
 class Detector:

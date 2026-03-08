@@ -26,7 +26,8 @@ The workspace has two crates with strict responsibility boundaries:
 
 - Synthetic data generation, evaluation, scoring, visualization.
 - Not part of the Rust workspace.
-- Generates `codebook.rs` and board JSON — Rust code never generates these.
+- `tools/gen_codebook.py` generates the committed codebook artifacts:
+  `tools/codebook.json` and `crates/ringgrid/src/marker/codebook.rs`.
 
 ### Anti-patterns
 

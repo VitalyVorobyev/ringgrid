@@ -146,6 +146,77 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     assert d["use_global_filter"] is False
 
 
+def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+
+    assert cfg._resolved_cache is None
+
+    decode_first = cfg.decode
+    cache = cfg._resolved_cache
+    assert cache is not None
+
+    decode_second = cfg.decode
+    assert cfg._resolved_cache is cache
+    assert decode_second.to_dict() == decode_first.to_dict()
+
+    decode_first.min_decode_margin = 99
+    assert cfg.decode.min_decode_margin != 99
+
+    snapshot = cfg.to_dict()
+    snapshot["decode"]["min_decode_margin"] = 123
+    assert cfg.to_dict()["decode"]["min_decode_margin"] != 123
+    assert cfg._resolved_cache is cache
+
+
+def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> None:
+    from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
+
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+    native = NativeDetectConfigCore(board._spec_json)
+
+    cfg.decode_min_confidence = 0.4
+    native_decode = ringgrid.DecodeConfig.from_dict(
+        json.loads(native.dump_json())["decode"]
+    )
+    native_decode.min_decode_confidence = 0.4
+    native.apply_overlay_json(json.dumps({"decode": native_decode.to_dict()}))
+
+    cfg.completion_enable = False
+    native_completion = ringgrid.CompletionParams.from_dict(
+        json.loads(native.dump_json())["completion"]
+    )
+    native_completion.enable = False
+    native.apply_overlay_json(json.dumps({"completion": native_completion.to_dict()}))
+
+    cfg.use_global_filter = False
+    native.apply_overlay_json(json.dumps({"use_global_filter": False}))
+
+    cfg.circle_refinement = ringgrid.CircleRefinementMethod.NONE
+    native.apply_overlay_json(json.dumps({"circle_refinement": "None"}))
+
+    assert cfg.to_dict() == json.loads(native.dump_json())
+
+
+def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
+    from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
+
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+    native = NativeDetectConfigCore(board._spec_json)
+
+    baseline = cfg.to_dict()
+    prior = ringgrid.MarkerScalePrior(diameter_min_px=24.0, diameter_max_px=80.0)
+    cfg.marker_scale = prior
+    native.apply_overlay_json(json.dumps({"marker_scale": prior.to_dict()}))
+
+    expected = json.loads(native.dump_json())
+    assert cfg._resolved_cache == expected
+    assert cfg.to_dict() == expected
+    assert cfg.to_dict()["proposal"] != baseline["proposal"]
+
+
 def test_detector_constructor_and_classmethods() -> None:
     board = ringgrid.BoardLayout.default()
     cfg = ringgrid.DetectConfig(board)

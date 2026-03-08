@@ -58,6 +58,7 @@ mod marker;
 mod pipeline;
 mod pixelmap;
 mod ring;
+mod target_generation;
 #[cfg(test)]
 pub(crate) mod test_utils;
 
@@ -92,6 +93,7 @@ pub use board_layout::{
 };
 pub use conic::Ellipse;
 pub use marker::MarkerSpec;
+pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // Camera / distortion
 // These raw codebook/codec modules are re-exported for the ringgrid-cli diagnostic

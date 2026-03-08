@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow Runner"
+  short_description: "Run the strict architect implementer reviewer workflow"
+  default_prompt: "Advance a task through the strict role workflow using the existing role skills"

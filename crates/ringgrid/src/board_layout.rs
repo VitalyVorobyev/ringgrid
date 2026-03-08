@@ -230,6 +230,54 @@ struct BoardLayoutSpecV3 {
 }
 
 impl BoardLayout {
+    /// Construct a board layout from direct geometry arguments.
+    ///
+    /// Uses a deterministic geometry-derived name so the layout can round-trip
+    /// through the canonical `ringgrid.target.v3` JSON schema without requiring
+    /// the caller to supply a name up front.
+    pub fn new(
+        pitch_mm: f32,
+        rows: usize,
+        long_row_cols: usize,
+        marker_outer_radius_mm: f32,
+        marker_inner_radius_mm: f32,
+    ) -> Result<Self, BoardLayoutValidationError> {
+        Self::with_name(
+            generated_name(
+                pitch_mm,
+                rows,
+                long_row_cols,
+                marker_outer_radius_mm,
+                marker_inner_radius_mm,
+            ),
+            pitch_mm,
+            rows,
+            long_row_cols,
+            marker_outer_radius_mm,
+            marker_inner_radius_mm,
+        )
+    }
+
+    /// Construct a named board layout from direct geometry arguments.
+    pub fn with_name<S: Into<String>>(
+        name: S,
+        pitch_mm: f32,
+        rows: usize,
+        long_row_cols: usize,
+        marker_outer_radius_mm: f32,
+        marker_inner_radius_mm: f32,
+    ) -> Result<Self, BoardLayoutValidationError> {
+        Self::from_layout_spec(BoardLayoutSpecV3 {
+            schema: TARGET_SCHEMA_V3.to_string(),
+            name: name.into(),
+            pitch_mm,
+            rows,
+            long_row_cols,
+            marker_outer_radius_mm,
+            marker_inner_radius_mm,
+        })
+    }
+
     /// Look up board coordinates (x, y) in mm for a given marker ID.
     pub fn xy_mm(&self, id: usize) -> Option<[f32; 2]> {
         self.id_to_idx.get(&id).map(|&idx| self.markers[idx].xy_mm)
@@ -313,6 +361,23 @@ impl BoardLayout {
         Self::from_layout_spec(spec).map_err(Into::into)
     }
 
+    /// Serialize the layout as canonical `ringgrid.target.v3` JSON.
+    pub fn to_json_string(&self) -> String {
+        serde_json::to_string_pretty(&self.to_layout_spec())
+            .expect("board layout JSON serialization must succeed")
+    }
+
+    /// Write the canonical `ringgrid.target.v3` JSON representation to disk.
+    pub fn write_json_file(&self, path: &Path) -> Result<(), std::io::Error> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        std::fs::write(path, format!("{}\n", self.to_json_string()))
+    }
+
     fn from_layout_spec(spec: BoardLayoutSpecV3) -> Result<Self, BoardLayoutValidationError> {
         if spec.schema != TARGET_SCHEMA_V3 {
             return Err(BoardLayoutValidationError::UnsupportedSchema {
@@ -335,6 +400,18 @@ impl BoardLayout {
             markers,
             id_to_idx,
         })
+    }
+
+    fn to_layout_spec(&self) -> BoardLayoutSpecV3 {
+        BoardLayoutSpecV3 {
+            schema: TARGET_SCHEMA_V3.to_string(),
+            name: self.name.clone(),
+            pitch_mm: self.pitch_mm,
+            rows: self.rows,
+            long_row_cols: self.long_row_cols,
+            marker_outer_radius_mm: self.marker_outer_radius_mm,
+            marker_inner_radius_mm: self.marker_inner_radius_mm,
+        }
     }
 }
 
@@ -478,6 +555,18 @@ fn normalize_marker_origin(markers: &mut [BoardMarker]) {
 fn hex_row_spacing_mm(pitch_mm: f32) -> f32 {
     // Hex nearest-neighbor distance in this axial layout.
     pitch_mm * f32::sqrt(3.0)
+}
+
+fn generated_name(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    marker_outer_radius_mm: f32,
+    marker_inner_radius_mm: f32,
+) -> String {
+    format!(
+        "ringgrid_hex_r{rows}_c{long_row_cols}_p{pitch_mm:.3}_o{marker_outer_radius_mm:.3}_i{marker_inner_radius_mm:.3}"
+    )
 }
 
 #[cfg(test)]
@@ -658,5 +747,73 @@ mod tests {
         assert_eq!(board.rows, 3);
         assert_eq!(board.long_row_cols, 4);
         assert!(board.n_markers() > 0);
+    }
+
+    #[test]
+    fn direct_constructor_matches_round_trip_json() {
+        let board = BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2)
+            .expect("valid direct geometry");
+
+        let json = board.to_json_string();
+        let reloaded = BoardLayout::from_json_str(&json).expect("round-trip json");
+
+        assert_eq!(reloaded.name, "fixture_compact_hex");
+        assert_eq!(reloaded.rows, 3);
+        assert_eq!(reloaded.long_row_cols, 4);
+        assert_eq!(reloaded.marker_outer_radius_mm, 4.8);
+        assert_eq!(reloaded.marker_inner_radius_mm, 3.2);
+        assert_eq!(reloaded.markers().len(), board.markers().len());
+        assert_eq!(reloaded.xy_mm(0), Some([0.0, 0.0]));
+    }
+
+    #[test]
+    fn direct_constructor_uses_deterministic_default_name() {
+        let board = BoardLayout::new(8.0, 3, 4, 4.8, 3.2).expect("valid direct geometry");
+        assert_eq!(board.name, "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200");
+    }
+
+    #[test]
+    fn write_json_file_creates_parent_dirs_and_round_trips() {
+        let path = temp_json_path("round_trip");
+        let nested = path.with_file_name("nested").join("board.json");
+        let board = BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2)
+            .expect("valid direct geometry");
+
+        board
+            .write_json_file(&nested)
+            .expect("write nested board json");
+        let loaded = BoardLayout::from_json_file(&nested).expect("load nested board json");
+
+        assert_eq!(loaded.name, board.name);
+        assert_eq!(loaded.markers().len(), board.markers().len());
+
+        let _ = std::fs::remove_file(&nested);
+        let _ = std::fs::remove_dir(nested.parent().expect("nested parent"));
+    }
+
+    #[test]
+    fn direct_constructor_reuses_layout_validation() {
+        assert!(matches!(
+            BoardLayout::new(8.0, 0, 4, 4.8, 3.2),
+            Err(BoardLayoutValidationError::InvalidRows { rows: 0 })
+        ));
+        assert!(matches!(
+            BoardLayout::new(8.0, 3, 1, 4.8, 3.2),
+            Err(BoardLayoutValidationError::InvalidLongRowColsForRows {
+                rows: 3,
+                long_row_cols: 1,
+            })
+        ));
+        assert!(matches!(
+            BoardLayout::new(8.0, 3, 4, 4.8, 4.8),
+            Err(BoardLayoutValidationError::InnerRadiusNotSmallerThanOuter {
+                marker_inner_radius_mm: 4.8,
+                marker_outer_radius_mm: 4.8,
+            })
+        ));
+        assert!(matches!(
+            BoardLayout::new(f32::NAN, 3, 4, 4.8, 3.2),
+            Err(BoardLayoutValidationError::InvalidPitch { .. })
+        ));
     }
 }

@@ -25,6 +25,7 @@ tracing = { workspace = true }
 approx = { workspace = true }
 rand = { workspace = true }
 tiny-solver = { workspace = true }
+png = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }

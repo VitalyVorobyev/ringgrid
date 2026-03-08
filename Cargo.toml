@@ -19,3 +19,4 @@ clap = { version = "4", features = ["derive"] }
 approx = "0.5"
 rand = "0.10"
 tiny-solver = "0.18"
+png = "0.18"

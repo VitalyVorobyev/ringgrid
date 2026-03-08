@@ -27,7 +27,34 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 ringgrid = "0.1"
 ```
 
-## Fast Start: Generate Target JSON + Printable SVG/PNG
+## Rust Target Generation
+
+The library can generate canonical target JSON plus printable SVG/PNG directly:
+
+```rust,no_run
+use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
+use std::path::Path;
+
+let board = BoardLayout::with_name("ringgrid_demo", 8.0, 15, 14, 4.8, 3.2).unwrap();
+
+board.write_json_file(Path::new("target.json")).unwrap();
+board
+    .write_target_svg(Path::new("target.svg"), &SvgTargetOptions::default())
+    .unwrap();
+board
+    .write_target_png(
+        Path::new("target.png"),
+        &PngTargetOptions {
+            dpi: 300.0,
+            ..PngTargetOptions::default()
+        },
+    )
+    .unwrap();
+```
+
+`render_target_svg` returns the SVG as a string, and `render_target_png` returns an in-memory grayscale `image::GrayImage` when you want to avoid file I/O. `write_target_png` embeds the requested DPI as PNG print metadata.
+
+## Python Fast Start: Generate Target JSON + Printable SVG/PNG
 
 Target generation scripts are in the repository root (`tools/`).
 

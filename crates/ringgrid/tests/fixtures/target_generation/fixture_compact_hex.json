@@ -1,0 +1,9 @@
+{
+  "schema": "ringgrid.target.v3",
+  "name": "fixture_compact_hex",
+  "pitch_mm": 8.0,
+  "rows": 3,
+  "long_row_cols": 4,
+  "marker_outer_radius_mm": 4.8,
+  "marker_inner_radius_mm": 3.2
+}

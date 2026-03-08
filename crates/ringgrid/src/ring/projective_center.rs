@@ -445,7 +445,7 @@ mod tests {
         let mut n = Matrix3::<f64>::zeros();
         for i in 0..3 {
             for j in i..3 {
-                let v = rng.gen_range(-1.0..1.0) * scale;
+                let v = rng.random_range(-1.0..1.0) * scale;
                 n[(i, j)] = v;
                 n[(j, i)] = v;
             }

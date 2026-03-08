@@ -109,7 +109,7 @@ fn sample_indices(rng: &mut impl rand::Rng, n: usize, k: usize) -> Vec<usize> {
     debug_assert!(k <= n);
     let mut indices: Vec<usize> = (0..n).collect();
     for i in 0..k {
-        let j = rng.gen_range(i..n);
+        let j = rng.random_range(i..n);
         indices.swap(i, j);
     }
     indices.truncate(k);
@@ -159,7 +159,7 @@ mod tests {
 
         // Add 20 random outliers
         for _ in 0..20 {
-            pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
+            pts.push([rng.random_range(0.0..200.0), rng.random_range(0.0..200.0)]);
         }
 
         let config = RansacConfig {
@@ -195,13 +195,13 @@ mod tests {
 
         // Add Gaussian-ish noise to inliers
         for p in pts.iter_mut() {
-            p[0] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
-            p[1] += (rng.gen::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[0] += (rng.random::<f64>() - 0.5) * 2.0 * noise_sigma;
+            p[1] += (rng.random::<f64>() - 0.5) * 2.0 * noise_sigma;
         }
 
         // Add 50 outliers
         for _ in 0..50 {
-            pts.push([rng.gen_range(20.0..180.0), rng.gen_range(20.0..160.0)]);
+            pts.push([rng.random_range(20.0..180.0), rng.random_range(20.0..160.0)]);
         }
 
         let config = RansacConfig {
@@ -246,7 +246,7 @@ mod tests {
         // Add outliers
         let mut rng = StdRng::seed_from_u64(333);
         for _ in 0..20 {
-            arc_pts.push([rng.gen_range(0.0..200.0), rng.gen_range(0.0..200.0)]);
+            arc_pts.push([rng.random_range(0.0..200.0), rng.random_range(0.0..200.0)]);
         }
 
         let config = RansacConfig {

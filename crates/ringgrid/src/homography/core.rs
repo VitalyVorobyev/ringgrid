@@ -267,7 +267,7 @@ pub fn fit_homography_ransac(
         let mut attempts = 0;
         loop {
             for idx in &mut indices {
-                *idx = rng.gen_range(0..n);
+                *idx = rng.random_range(0..n);
             }
             // Check distinct
             let mut ok = true;
@@ -419,8 +419,8 @@ mod tests {
             let d = homography_project(&h_true, s[0], s[1]);
             // Add small noise
             let d = [
-                d[0] + rng.gen_range(-0.5..0.5),
-                d[1] + rng.gen_range(-0.5..0.5),
+                d[0] + rng.random_range(-0.5..0.5),
+                d[1] + rng.random_range(-0.5..0.5),
             ];
             src.push(s);
             dst.push(d);
@@ -428,8 +428,8 @@ mod tests {
 
         // 8 outliers
         for _ in 0..8 {
-            let s = [rng.gen_range(0.0..100.0), rng.gen_range(0.0..100.0)];
-            let d = [rng.gen_range(0.0..1280.0), rng.gen_range(0.0..960.0)];
+            let s = [rng.random_range(0.0..100.0), rng.random_range(0.0..100.0)];
+            let d = [rng.random_range(0.0..1280.0), rng.random_range(0.0..960.0)];
             src.push(s);
             dst.push(d);
         }

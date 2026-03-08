@@ -55,18 +55,141 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
     assert d["inner_fit"]["require_inner_fit"] is True
     assert d["ransac_homography"]["inlier_threshold"] == pytest.approx(4.0)
 
-    cfg2 = ringgrid.DetectConfig.from_dict(board, {"decode": {"min_decode_margin": 1}})
-    assert cfg2.decode_min_margin == 1
 
-    cfg2.update_from_dict({"completion": {"enable": False}})
-    assert cfg2.completion_enable is False
+def test_detect_config_typed_sections_are_settable_without_mapping_overlays() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+
+    marker_scale = cfg.marker_scale
+    marker_scale.diameter_min_px = 12.0
+    marker_scale.diameter_max_px = 96.0
+    cfg.marker_scale = marker_scale
+
+    inner_fit = cfg.inner_fit
+    inner_fit.require_inner_fit = True
+    cfg.inner_fit = inner_fit
+
+    outer_fit = cfg.outer_fit
+    outer_fit.size_score_weight = 0.22
+    cfg.outer_fit = outer_fit
+
+    completion = cfg.completion
+    completion.enable = False
+    cfg.completion = completion
+
+    projective_center = cfg.projective_center
+    projective_center.ratio_penalty_weight = 0.45
+    cfg.projective_center = projective_center
+
+    seed_proposals = cfg.seed_proposals
+    seed_proposals.max_seeds = 128
+    cfg.seed_proposals = seed_proposals
+
+    proposal = cfg.proposal
+    proposal.max_candidates = 64
+    cfg.proposal = proposal
+
+    edge_sample = cfg.edge_sample
+    edge_sample.n_rays = 56
+    cfg.edge_sample = edge_sample
+
+    decode = cfg.decode
+    decode.min_decode_margin = 3
+    cfg.decode = decode
+
+    marker_spec = cfg.marker_spec
+    marker_spec.theta_samples = 120
+    cfg.marker_spec = marker_spec
+
+    outer_estimation = cfg.outer_estimation
+    outer_estimation.allow_two_hypotheses = not outer_estimation.allow_two_hypotheses
+    cfg.outer_estimation = outer_estimation
+
+    ransac_homography = cfg.ransac_homography
+    ransac_homography.inlier_threshold = 5.5
+    cfg.ransac_homography = ransac_homography
+
+    self_undistort = cfg.self_undistort
+    self_undistort.enable = True
+    cfg.self_undistort = self_undistort
+
+    id_correction = cfg.id_correction
+    id_correction.enable = False
+    cfg.id_correction = id_correction
+
+    inner_as_outer_recovery = cfg.inner_as_outer_recovery
+    inner_as_outer_recovery.enable = False
+    cfg.inner_as_outer_recovery = inner_as_outer_recovery
+
+    cfg.dedup_radius = 0.65
+    cfg.max_aspect_ratio = 2.4
+    cfg.use_global_filter = False
+
+    d = cfg.to_dict()
+    assert d["marker_scale"]["diameter_min_px"] == pytest.approx(12.0)
+    assert d["marker_scale"]["diameter_max_px"] == pytest.approx(96.0)
+    assert d["inner_fit"]["require_inner_fit"] is True
+    assert d["outer_fit"]["size_score_weight"] == pytest.approx(0.22)
+    assert d["completion"]["enable"] is False
+    assert d["projective_center"]["ratio_penalty_weight"] == pytest.approx(0.45)
+    assert d["seed_proposals"]["max_seeds"] == 128
+    assert d["proposal"]["max_candidates"] == 64
+    assert d["edge_sample"]["n_rays"] == 56
+    assert d["decode"]["min_decode_margin"] == 3
+    assert d["marker_spec"]["theta_samples"] == 120
+    assert d["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
+    assert d["self_undistort"]["enable"] is True
+    assert d["id_correction"]["enable"] is False
+    assert d["inner_as_outer_recovery"]["enable"] is False
+    assert d["dedup_radius"] == pytest.approx(0.65)
+    assert d["max_aspect_ratio"] == pytest.approx(2.4)
+    assert d["use_global_filter"] is False
+
+
+def test_detector_constructor_and_classmethods() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+
+    detector = ringgrid.Detector(cfg)
+    assert detector.config is cfg
+    assert detector.board is cfg.board
+
+    detector_from_board = ringgrid.Detector.from_board(board)
+    assert isinstance(detector_from_board, ringgrid.Detector)
+    assert detector_from_board.board is board
+    assert detector_from_board.config.board is board
+
+    detector_with_config = ringgrid.Detector.with_config(cfg)
+    assert detector_with_config.config is cfg
+
+    with pytest.raises(TypeError):
+        ringgrid.Detector(board)
+    with pytest.raises(TypeError):
+        ringgrid.Detector(board, cfg)
+
+
+def test_detector_refreshes_native_core_after_config_update() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+    detector = ringgrid.Detector(cfg)
+
+    before_version = detector._core_config_version
+    cfg.decode_min_margin = cfg.decode_min_margin + 1
+    assert cfg._version > before_version
+    assert detector._core_config_version == before_version
+
+    gray = np.zeros((64, 96), dtype=np.uint8)
+    result = detector.detect(gray)
+    assert isinstance(result, ringgrid.DetectionResult)
+    assert detector._core_config_version == cfg._version
 
 
 def _make_detector() -> ringgrid.Detector:
     board = ringgrid.BoardLayout.default()
     cfg = ringgrid.DetectConfig(board)
-    cfg.update_from_dict({"completion": {"enable": False}, "use_global_filter": False})
-    return ringgrid.Detector(board, cfg)
+    cfg.completion_enable = False
+    cfg.use_global_filter = False
+    return ringgrid.Detector(cfg)
 
 
 def test_detect_accepts_grayscale_rgb_rgba_uint8_arrays() -> None:

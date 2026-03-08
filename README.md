@@ -170,7 +170,8 @@ import ringgrid
 
 board = ringgrid.BoardLayout.default()
 cfg = ringgrid.DetectConfig(board)
-detector = ringgrid.Detector(board, cfg)
+detector = ringgrid.Detector(cfg)
+# Convenience defaults: detector = ringgrid.Detector.from_board(board)
 
 result = detector.detect("testdata/target_3_split_00.png")
 print(len(result.detected_markers))

@@ -37,7 +37,7 @@ def main() -> None:
     board = ringgrid.BoardLayout.default() if args.board is None else ringgrid.BoardLayout.from_json_file(args.board)
 
     config = ringgrid.DetectConfig(board)
-    detector = ringgrid.Detector(board, config)
+    detector = ringgrid.Detector(config)
 
     mapper = ringgrid.CameraModel(
         intrinsics=ringgrid.CameraIntrinsics(fx=900.0, fy=900.0, cx=640.0, cy=480.0),

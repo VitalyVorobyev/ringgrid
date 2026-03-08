@@ -1,6 +1,6 @@
 ---
 name: algorithm-improvement-designer
-description: Document an algorithm limitation, propose a mathematically justified improvement, and produce an ADR + handoff package for integration.
+description: Use it when a computation algorithms performance and/or correctness should be improved. It documents an algorithm limitation, proposes a mathematically justified improvement, and produces an ADR + handoff package for integration.
 ---
 
 ## When to use
@@ -8,16 +8,16 @@ Replacing or enhancing a mathematical primitive (ellipse fitting, decode strateg
 
 ## Prerequisites
 - Limitation is clearly identified (accuracy ceiling, robustness issue, theoretical gap).
-- Task exists in `state/backlog.md`.
+- Task exists in `backlog.md`.
 
 ## Inputs to consult
 - Current implementation location(s) and call sites
 - Existing synthetic eval baselines (or create minimal baseline if missing)
-- `templates/adr.md`
+- `adr.md`
 
 ## Outputs (deliverables)
 - **Algorithm design document** (problem → proposal → math spec → risks)
-- **ADR** in the repo format (from `templates/adr.md`)
+- **ADR** in the repo format (from `adr.md`)
 - **Handoff note → Pipeline Architect** (integration constraints request)
 
 ## What to include in the design doc

@@ -32,7 +32,7 @@ def main() -> None:
     args = parser.parse_args()
 
     board = ringgrid.BoardLayout.default() if args.board is None else ringgrid.BoardLayout.from_json_file(args.board)
-    detector = ringgrid.Detector(board, ringgrid.DetectConfig(board))
+    detector = ringgrid.Detector.from_board(board)
     result = detector.detect(args.image)
 
     viz.plot_detection(image=args.image, detection=result, out=args.out)

@@ -392,6 +392,31 @@ fn gray_image_from_array(array: PyReadonlyArrayDyn<'_, u8>) -> PyResult<GrayImag
 }
 
 #[pyclass(module = "ringgrid._ringgrid")]
+struct DetectConfigCore {
+    config: ringgrid::DetectConfig,
+}
+
+#[pymethods]
+impl DetectConfigCore {
+    #[new]
+    fn new(board_spec_json: String) -> PyResult<Self> {
+        let board = board_from_spec_json(&board_spec_json)?;
+        let config = ringgrid::DetectConfig::from_target(board);
+        Ok(Self { config })
+    }
+
+    fn dump_json(&self) -> PyResult<String> {
+        serde_json::to_string(&config_to_dump(&self.config)).map_err(py_value_error)
+    }
+
+    fn apply_overlay_json(&mut self, overlay_json: &str) -> PyResult<()> {
+        let overlay = parse_overlay(Some(overlay_json))?;
+        apply_config_overlay(&mut self.config, overlay);
+        Ok(())
+    }
+}
+
+#[pyclass(module = "ringgrid._ringgrid")]
 struct DetectorCore {
     board_spec_json: String,
     config_json: String,
@@ -596,6 +621,7 @@ fn scale_tiers_two_tier_standard_json() -> PyResult<String> {
 
 #[pymodule]
 fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<DetectConfigCore>()?;
     m.add_class::<DetectorCore>()?;
 
     m.add_function(wrap_pyfunction!(package_version, m)?)?;

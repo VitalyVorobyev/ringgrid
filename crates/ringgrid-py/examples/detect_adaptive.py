@@ -49,7 +49,7 @@ def main() -> None:
         if args.board is None
         else ringgrid.BoardLayout.from_json_file(args.board)
     )
-    detector = ringgrid.Detector(board, ringgrid.DetectConfig(board))
+    detector = ringgrid.Detector.from_board(board)
 
     tiers = detector.adaptive_tiers(args.image, nominal_diameter_px=args.hint)
     tier_text = ", ".join(

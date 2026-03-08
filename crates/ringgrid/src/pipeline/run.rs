@@ -1,12 +1,13 @@
 //! Top-level pipeline orchestrator: fit_decode → finalize.
 
 use super::*;
-use crate::detector::config::{ScaleTier, ScaleTiers};
+use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
 use crate::detector::proposal::find_proposals;
 use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
+use std::collections::HashSet;
 
 pub(super) fn run(
     gray: &GrayImage,
@@ -175,12 +176,203 @@ pub fn select_adaptive_tiers(gray: &GrayImage, nominal_diameter_px: Option<f32>)
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AdaptiveCandidateScore {
+    mapped: usize,
+    has_ransac: usize,
+    ransac_inliers: usize,
+    decoded: usize,
+    ransac_neg_err_px: f64,
+    mean_confidence: f64,
+    total: usize,
+}
+
+impl AdaptiveCandidateScore {
+    fn from_result(result: &DetectionResult) -> Self {
+        let mut mapped = 0usize;
+        let mut decoded = 0usize;
+        let mut mapped_conf_sum = 0.0f64;
+
+        for marker in &result.detected_markers {
+            if marker.id.is_some() {
+                decoded += 1;
+                if marker.board_xy_mm.is_some() {
+                    mapped += 1;
+                    mapped_conf_sum += f64::from(marker.confidence);
+                }
+            }
+        }
+
+        let mean_confidence = if mapped > 0 {
+            mapped_conf_sum / mapped as f64
+        } else {
+            0.0
+        };
+
+        let (has_ransac, ransac_inliers, ransac_neg_err_px) = result
+            .ransac
+            .as_ref()
+            .map(|stats| (1usize, stats.n_inliers, -stats.mean_err_px))
+            .unwrap_or((0usize, 0usize, f64::NEG_INFINITY));
+
+        Self {
+            mapped,
+            has_ransac,
+            ransac_inliers,
+            decoded,
+            ransac_neg_err_px,
+            mean_confidence,
+            total: result.detected_markers.len(),
+        }
+    }
+
+    fn is_better_than(&self, other: &Self) -> bool {
+        self.mapped > other.mapped
+            || (self.mapped == other.mapped && self.has_ransac > other.has_ransac)
+            || (self.mapped == other.mapped
+                && self.has_ransac == other.has_ransac
+                && self.ransac_inliers > other.ransac_inliers)
+            || (self.mapped == other.mapped
+                && self.has_ransac == other.has_ransac
+                && self.ransac_inliers == other.ransac_inliers
+                && self.decoded > other.decoded)
+            || (self.mapped == other.mapped
+                && self.has_ransac == other.has_ransac
+                && self.ransac_inliers == other.ransac_inliers
+                && self.decoded == other.decoded
+                && self.ransac_neg_err_px > other.ransac_neg_err_px)
+            || (self.mapped == other.mapped
+                && self.has_ransac == other.has_ransac
+                && self.ransac_inliers == other.ransac_inliers
+                && self.decoded == other.decoded
+                && self.ransac_neg_err_px == other.ransac_neg_err_px
+                && self.mean_confidence > other.mean_confidence)
+            || (self.mapped == other.mapped
+                && self.has_ransac == other.has_ransac
+                && self.ransac_inliers == other.ransac_inliers
+                && self.decoded == other.decoded
+                && self.ransac_neg_err_px == other.ransac_neg_err_px
+                && self.mean_confidence == other.mean_confidence
+                && self.total > other.total)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AdaptiveCandidate {
+    label: &'static str,
+    tiers: ScaleTiers,
+}
+
+fn tiers_signature(tiers: &ScaleTiers) -> Vec<(u32, u32)> {
+    tiers
+        .tiers()
+        .iter()
+        .map(|tier| {
+            (
+                tier.prior.diameter_min_px.to_bits(),
+                tier.prior.diameter_max_px.to_bits(),
+            )
+        })
+        .collect()
+}
+
+fn candidate_single_prior(
+    label: &'static str,
+    diameter_min_px: f32,
+    diameter_max_px: f32,
+) -> AdaptiveCandidate {
+    AdaptiveCandidate {
+        label,
+        tiers: ScaleTiers::single(MarkerScalePrior::new(diameter_min_px, diameter_max_px)),
+    }
+}
+
+fn build_adaptive_candidates(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    nominal_diameter_px: Option<f32>,
+) -> Vec<AdaptiveCandidate> {
+    let mut candidates: Vec<AdaptiveCandidate> = Vec::new();
+    let mut seen: HashSet<Vec<(u32, u32)>> = HashSet::new();
+
+    let mut push_candidate = |candidate: AdaptiveCandidate| {
+        let signature = tiers_signature(&candidate.tiers);
+        if seen.insert(signature) {
+            candidates.push(candidate);
+        }
+    };
+
+    push_candidate(AdaptiveCandidate {
+        label: "probe",
+        tiers: select_adaptive_tiers(gray, nominal_diameter_px),
+    });
+    push_candidate(AdaptiveCandidate {
+        label: "two_tier_standard",
+        tiers: ScaleTiers::two_tier_standard(),
+    });
+    push_candidate(AdaptiveCandidate {
+        label: "four_tier_wide",
+        tiers: ScaleTiers::four_tier_wide(),
+    });
+    push_candidate(AdaptiveCandidate {
+        label: "single_config",
+        tiers: ScaleTiers::single(config.marker_scale),
+    });
+
+    // Curated fallback priors mirror historical RTV3D tuning presets.
+    push_candidate(candidate_single_prior("single_14_80", 14.0, 80.0));
+    push_candidate(candidate_single_prior("single_18_100", 18.0, 100.0));
+    push_candidate(candidate_single_prior("single_16_120", 16.0, 120.0));
+    push_candidate(candidate_single_prior("single_10_120", 10.0, 120.0));
+    push_candidate(candidate_single_prior("single_14_140", 14.0, 140.0));
+    push_candidate(candidate_single_prior("single_20_140", 20.0, 140.0));
+    push_candidate(candidate_single_prior("single_8_220", 8.0, 220.0));
+
+    candidates
+}
+
+fn detect_adaptive_candidates(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    nominal_diameter_px: Option<f32>,
+) -> DetectionResult {
+    let candidates = build_adaptive_candidates(gray, config, nominal_diameter_px);
+    let mut best_result: Option<DetectionResult> = None;
+    let mut best_score: Option<AdaptiveCandidateScore> = None;
+    let mut best_label = "<none>";
+
+    for candidate in candidates {
+        let result = detect_multiscale(gray, config, &candidate.tiers);
+        let score = AdaptiveCandidateScore::from_result(&result);
+
+        let should_replace = best_score
+            .as_ref()
+            .is_none_or(|best| score.is_better_than(best));
+
+        if should_replace {
+            best_label = candidate.label;
+            best_score = Some(score);
+            best_result = Some(result);
+        }
+    }
+
+    tracing::debug!(
+        selected = best_label,
+        mapped = best_score.as_ref().map(|s| s.mapped),
+        decoded = best_score.as_ref().map(|s| s.decoded),
+        has_ransac = best_score.as_ref().map(|s| s.has_ransac),
+        inliers = best_score.as_ref().map(|s| s.ransac_inliers),
+        "adaptive candidate selected"
+    );
+
+    best_result.expect("adaptive candidate list must not be empty")
+}
+
 /// Adaptive detection using automatically selected scale tiers.
 ///
 /// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.
 pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    let tiers = select_adaptive_tiers(gray, None);
-    detect_multiscale(gray, config, &tiers)
+    detect_adaptive_candidates(gray, config, None)
 }
 
 /// Adaptive detection with an optional nominal-diameter hint.
@@ -193,8 +385,7 @@ pub fn detect_adaptive_with_hint(
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
 ) -> DetectionResult {
-    let tiers = select_adaptive_tiers(gray, nominal_diameter_px);
-    detect_multiscale(gray, config, &tiers)
+    detect_adaptive_candidates(gray, config, nominal_diameter_px)
 }
 
 /// Detect markers, then estimate and optionally apply a self-undistort model.
@@ -226,4 +417,60 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> De
 
     result.self_undistort = Some(su_result);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn score_from(
+        mapped: usize,
+        decoded: usize,
+        has_ransac: bool,
+        inliers: usize,
+        mean_err_px: f64,
+    ) -> AdaptiveCandidateScore {
+        let mut result = DetectionResult {
+            detected_markers: (0..decoded)
+                .map(|i| {
+                    let mut marker = crate::DetectedMarker {
+                        id: Some(i),
+                        confidence: 0.8,
+                        ..crate::DetectedMarker::default()
+                    };
+                    if i < mapped {
+                        marker.board_xy_mm = Some([0.0, 0.0]);
+                    }
+                    marker
+                })
+                .collect(),
+            ..DetectionResult::default()
+        };
+
+        if has_ransac {
+            result.ransac = Some(crate::homography::RansacStats {
+                n_candidates: decoded,
+                n_inliers: inliers,
+                threshold_px: 4.0,
+                mean_err_px,
+                p95_err_px: mean_err_px,
+            });
+        }
+
+        AdaptiveCandidateScore::from_result(&result)
+    }
+
+    #[test]
+    fn adaptive_score_prefers_mapped_over_all_other_axes() {
+        let a = score_from(12, 12, false, 0, 0.0);
+        let b = score_from(10, 20, true, 20, 0.1);
+        assert!(a.is_better_than(&b));
+    }
+
+    #[test]
+    fn adaptive_score_prefers_ransac_when_mapped_ties() {
+        let a = score_from(12, 12, true, 10, 0.6);
+        let b = score_from(12, 12, false, 0, 0.0);
+        assert!(a.is_better_than(&b));
+    }
 }

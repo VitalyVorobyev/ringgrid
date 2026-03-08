@@ -37,7 +37,7 @@ def main() -> None:
     board = ringgrid.BoardLayout.default() if args.board is None else ringgrid.BoardLayout.from_json_file(args.board)
 
     config = ringgrid.DetectConfig(board)
-    detector = ringgrid.Detector(board, config)
+    detector = ringgrid.Detector(config)
 
     result = detector.detect(args.image)
 

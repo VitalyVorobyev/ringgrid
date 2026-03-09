@@ -1,6 +1,6 @@
 ---
 name: workflow-runner
-description: Coordinate a strict Architect -> Implementer -> Reviewer task workflow for a mandatory task-id without skipping stages or overwriting another role's report. Use when Codex must advance a task through `docs/handoffs/<task-id>/01-architect.md`, `02-implementer.md`, and `03-reviewer.md` in sequence, including reviewer rework loops on `changes_requested`.
+description: Coordinate a strict Architect -> Implementer -> Reviewer task workflow for a TASK id or backlog item id without skipping stages or overwriting another role's report. Use when Codex must advance a task through `docs/handoffs/<task-id>/01-architect.md`, `02-implementer.md`, and `03-reviewer.md` in sequence, including reviewer rework loops on `changes_requested`.
 ---
 
 # Workflow Runner
@@ -11,10 +11,12 @@ Advance one task through the existing `architect`, `implementer`, and `reviewer`
 Treat this skill as the workflow control plane. Use the role skills to do the actual work. Do not invent a parallel process.
 
 ## Required Inputs
-- `task-id` (mandatory). Format: `TASK-<number>-<slug>`.
+- One task anchor (mandatory):
+  - `task-id` in format `TASK-<number>-<slug>`, or
+  - a backlog/source task id.
 - A task request, backlog item, issue, ADR, or direct human instruction.
 
-If `task-id` is missing or malformed, stop immediately and state the exact problem.
+If neither a valid `task-id` nor a resolvable source task id is provided, stop immediately and state the exact problem.
 
 ## Required Skill Inputs To Read
 Read these skill files before routing the task:
@@ -51,7 +53,12 @@ Canonical routing:
 7. If `03-reviewer.md` exists and verdict is `approved` or `approved_with_minor_followups`, stop as complete.
 
 ## Procedure
-1. Validate `task-id`.
+1. Resolve `task-id`.
+   - If a valid `task-id` is provided, use it.
+   - If only a backlog/source task id is provided:
+     - Reuse an existing unique handoff directory when one is already mapped through `Backlog ID:` or older explicit mapping text.
+     - If no handoff exists yet, mint the next unused `TASK-<number>-<slug>` id from the source title and start with the Architect stage.
+     - Stop if multiple handoff directories match the same backlog/source task id.
 2. Inspect `docs/handoffs/<task-id>/` and determine the next legal stage.
 3. Check that upstream report prerequisites are present and actionable for that stage.
 4. Apply only the role skill for that stage:
@@ -70,11 +77,11 @@ Canonical routing:
 - Do not let `reviewer` run before `02-implementer.md` exists.
 - Do not continue past an incomplete plan.
 - Do not silently reinterpret the task if the upstream report is weak or contradictory.
-- Do not treat a missing `task-id` as recoverable.
+- Do not guess when a backlog/source task id cannot be resolved unambiguously.
 
 ## Stop Conditions
 Stop and state exactly what is wrong when any of the following is true:
-- `task-id` is missing or malformed.
+- no valid `task-id` can be resolved from the provided input.
 - `01-architect.md` is missing when implementer work would be required.
 - `02-implementer.md` is missing when reviewer work would be required.
 - A report has the wrong `task-id`.

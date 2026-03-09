@@ -12,13 +12,16 @@
 - `P2` — planned
 - `P3` — someday
 
+## ID Model
+- Backlog ids (`INFRA-011`, `ALGO-014`, `DOCS-003`) are the stable planning ids used in this file.
+- Workflow handoff ids (`TASK-012-...`) are execution-trace ids used under `docs/handoffs/`.
+- Handoff reports should record both ids when the work came from the backlog.
+
 ---
 
 ## Active Sprint
 
-| ID | Status | Priority | Type | Title | Role | Notes |
-|----|--------|----------|------|-------|------|-------|
-| DOCS-003 | todo | P0 | docs | Reconcile codebook docs/invariants with shipped artifacts | docs | Align docs (`README`, `book`, `docs/decisions`) with shipped codebook facts (`n=893`, current min cyclic distance), and document generation provenance/reproducibility expectations. Acceptance: consistency pass across docs and constants in repo. |
+_None currently assigned._
 
 ## Up Next
 
@@ -65,6 +68,7 @@
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| DOCS-003 | 2026-03-09 | docs | Reconcile codebook docs/invariants with shipped artifacts | Accepted via `TASK-011`: aligned `README`, `book`, and `docs/decisions` with shipped codebook artifacts (`n=893`, `bits=16`, `min cyclic Hamming=2`, `seed=1`), corrected the `codebook-info` example and generated Rust artifact path, added provenance/reproducibility notes, and reviewer approved with only optional broader DEC-011 boundary cleanup follow-up. |
 | INFRA-010 | 2026-03-08 | infra | Add Rust target-generation API in ringgrid crate (file-oriented) | Accepted: added additive `BoardLayout`-centered Rust target-generation API in `ringgrid` for canonical `ringgrid.target.v3` JSON plus printable SVG/PNG output, added compact committed JSON/SVG/PNG parity fixtures and integration coverage, and fixed `write_target_png` to always emit PNG bytes with DPI-preserving `pHYs` metadata; reviewer approval reproduced via `cargo test -p ringgrid --test target_generation` and `cargo test -p ringgrid` |
 | INFRA-009 | 2026-03-08 | infra | Eliminate full JSON snapshot churn in ringgrid-py DetectConfig | Accepted: added lazy resolved-config caching in `ringgrid-py` `DetectConfig`, kept native refresh for whole-section/marker-scale updates, added cache/parity regression tests plus `benchmark_detect_config.py`, and verified hot getter/setter paths exceed the `>=4x` target (`~5.7x` to `24.7x`) while preserving `to_dict()`/overlay semantics |
 | ALGO-003/004/005/006/007/008 | 2026-03-01 | algo | Detection provenance, fit diagnostics, and confidence refinement | `DetectionSource` enum (FitDecoded\|Completion\|SeededPass) on `DetectedMarker`; `h_reproj_err_px` and `radii_std_outer_px` in `FitMetrics`; outer-radii scatter gate in completion (max_radii_std_ratio=0.35); H-reproj confidence soft-penalty (alpha=0.2, `confidence *= 1/(1 + alpha * err)`); `n_decode_mismatch` in `CompletionStats` |

@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Convert a backlog item, issue, ADR, or change request into an implementation-ready plan with strict handoff traceability. Use when work must be scoped and planned before coding. Require a mandatory task-id and write only docs/handoffs/<task-id>/01-architect.md.
+description: Convert a backlog item, issue, ADR, or change request into an implementation-ready plan with strict handoff traceability. Use when work must be scoped and planned before coding. Accept a backlog item id or a TASK id; write only docs/handoffs/<task-id>/01-architect.md.
 ---
 
 # Architect
@@ -9,11 +9,13 @@ description: Convert a backlog item, issue, ADR, or change request into an imple
 Turn a task request into a small, implementation-ready, reviewable plan with clear acceptance criteria and test strategy.
 
 ## Required Inputs
-- `task-id` (mandatory). Format: `TASK-<number>-<slug>` (example: `TASK-012-image-store-refactor`).
+- One task anchor (mandatory):
+  - `task-id` in format `TASK-<number>-<slug>` (example: `TASK-012-image-store-refactor`), or
+  - a source task id such as a backlog item id (`INFRA-011`, `DOCS-003`, etc.).
 - At least one task source: backlog item, issue, ADR, incident note, or direct human request.
 - Optional but recommended: priority, deadline, and non-functional constraints.
 
-If `task-id` is missing or malformed, stop and report the exact issue.
+If neither a valid `task-id` nor a resolvable source task id is provided, stop and report the exact issue.
 
 ## Inputs To Consult
 Read in this order before planning:
@@ -30,7 +32,15 @@ Create or update only:
 Do not edit `02-implementer.md` or `03-reviewer.md`.
 
 ## Procedure
-1. Validate `task-id` format and create `docs/handoffs/<task-id>/` if needed.
+1. Resolve the workflow task id before planning.
+   - If a valid `task-id` is provided, use it.
+   - If only a backlog/source task id is provided:
+     - Search existing `docs/handoffs/*/01-architect.md` for a matching `Backlog ID:` field first.
+     - If that field is absent in older reports, fall back to explicit mapping text such as `backlog item \`INFRA-011\``.
+     - If exactly one matching handoff directory exists, reuse that `task-id`.
+     - If none exist, mint the next unused `TASK-<number>-<slug>` id using the source title/backlog title for the slug.
+     - If multiple matches exist, stop and ask the human which task directory should continue.
+   - Create `docs/handoffs/<task-id>/` if needed.
 2. Read all existing reports under that task directory.
 3. Perform consistency checks:
 - Stop if an existing report has a different task id.
@@ -52,6 +62,7 @@ Do not edit `02-implementer.md` or `03-reviewer.md`.
 - Regression criteria.
 - Required validation commands.
 8. Write `01-architect.md` using `docs/templates/task-handoff-report.md` and role-specific sections.
+   - Include `Backlog ID: <ID>` in report metadata when the work comes from `docs/backlog.md`; otherwise use `n/a` or another stable source id if helpful.
 9. End with explicit handoff instructions to Implementer.
 
 ## Guardrails
@@ -63,6 +74,7 @@ Do not edit `02-implementer.md` or `03-reviewer.md`.
 
 ## Definition Of Done
 - `01-architect.md` exists and references the correct `task-id` in title and metadata.
+- `01-architect.md` records `Backlog ID` when the task came from the backlog.
 - Report includes: problem statement, scope, constraints, assumptions, affected areas, plan, acceptance criteria, test plan, out of scope, handoff to Implementer.
 - Plan is actionable without rereading the full conversation.
 

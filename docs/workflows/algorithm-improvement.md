@@ -4,7 +4,7 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 
 ## Prerequisites
 - Limitation of current algorithm identified (accuracy ceiling, robustness issue, theoretical improvement available)
-- Task added to `state/backlog.md`
+- Task added to `docs/backlog.md`
 
 ## Phases
 
@@ -97,7 +97,7 @@ Use this workflow for: replacing or enhancing a mathematical primitive (e.g., be
 1. Review all handoff notes for the task
 2. Verify acceptance criteria from task spec are met
 3. Verify validation gates passed (check reported results)
-4. Update `state/backlog.md` — mark task done
+4. Update `docs/backlog.md` — mark task done
 5. Write session summary
 6. Present to human for review and merge
 

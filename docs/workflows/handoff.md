@@ -2,18 +2,21 @@
 
 Rules for transferring work between agent roles.
 
+Current authoritative task-handoff mechanics live in `docs/handoffs/README.md`. This page is a higher-level protocol note; where it refers to backlog tracking, use `docs/backlog.md`.
+
 ## When to Hand Off
 
 Hand off when your phase in the workflow is complete. Do not accumulate multiple phases — complete one, hand off, then the next role picks up.
 
 ## Handoff Steps
 
-1. **Fill the handoff template.** Copy `templates/handoff-note.md` and fill in all sections.
+1. **Fill the handoff template.** Copy `docs/templates/handoff-note.md` and fill in all sections.
 
-2. **Save to sessions.** Name: `state/sessions/YYYY-MM-DD-TASKID-from-to.md`
-   - Example: `state/sessions/2026-02-15-FEAT-003-algorithm-validation.md`
+2. **Save to sessions.** Name: `docs/sessions/YYYY-MM-DD-TASKID-from-to.md`
+   - Example: `docs/sessions/2026-02-15-FEAT-003-algorithm-validation.md`
 
-3. **Update the backlog.** Set the task status in `state/backlog.md` to reflect current state and note the active role.
+3. **Update the backlog.** Set the task status in `docs/backlog.md` to reflect current state.
+   - The current backlog tracks queue placement and completion state; it does not record per-role ownership.
 
 4. **Include test results.** Every handoff must include:
    - `cargo test` pass/fail
@@ -42,7 +45,7 @@ Hand off when your phase in the workflow is complete. Do not accumulate multiple
   - blur=3 synth eval (`n=10`) via `run_blur3_benchmark.sh`
   - `run_reference_benchmark.sh`
   - `run_distortion_benchmark.sh`
-- Link to filled `.ai/templates/accuracy-report.md`
+- Link to filled `docs/templates/accuracy-report.md`
 
 ## Handoff Flow by Workflow
 
@@ -81,5 +84,5 @@ Each implementor runs validation gates (tests, clippy, synthetic eval) before ha
 When you receive a handoff:
 1. Read the handoff note completely
 2. Start from "Recommended Next Steps"
-3. If anything is unclear, check the task spec in `state/sessions/` or the original backlog entry
+3. If anything is unclear, check the task spec in `docs/sessions/` or the original backlog entry
 4. If still unclear, write your questions as a new handoff note back to the sender before proceeding

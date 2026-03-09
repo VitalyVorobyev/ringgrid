@@ -1,6 +1,7 @@
 # <Role> Report - <TASK-ID>
 
 - Task ID: `<TASK-ID>`
+- Backlog ID: `<INFRA-011|DOCS-003|n/a>`
 - Role: `<architect|implementer|reviewer>`
 - Date: `<YYYY-MM-DD>`
 - Status: `<role-specific status>`

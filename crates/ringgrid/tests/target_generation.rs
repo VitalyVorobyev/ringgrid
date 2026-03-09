@@ -9,6 +9,10 @@ const EXPECTED_JSON: &str = include_str!("fixtures/target_generation/fixture_com
 const EXPECTED_SVG: &str = include_str!("fixtures/target_generation/fixture_compact_hex.svg");
 const EXPECTED_PNG: &[u8] = include_bytes!("fixtures/target_generation/fixture_compact_hex.png");
 
+fn normalize_text_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
 fn fixture_board() -> BoardLayout {
     BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2)
         .expect("fixture board must be valid")
@@ -29,7 +33,10 @@ fn temp_output_dir(prefix: &str) -> PathBuf {
 #[test]
 fn json_generation_matches_committed_fixture() {
     let board = fixture_board();
-    assert_eq!(format!("{}\n", board.to_json_string()), EXPECTED_JSON);
+    assert_eq!(
+        format!("{}\n", board.to_json_string()),
+        normalize_text_newlines(EXPECTED_JSON)
+    );
 }
 
 #[test]
@@ -38,7 +45,10 @@ fn svg_generation_matches_committed_fixture() {
     let svg = board
         .render_target_svg(&SvgTargetOptions::default())
         .expect("fixture svg");
-    assert_eq!(svg, EXPECTED_SVG);
+    assert_eq!(
+        normalize_text_newlines(&svg),
+        normalize_text_newlines(EXPECTED_SVG)
+    );
 }
 
 #[test]
@@ -83,12 +93,12 @@ fn file_writers_create_parent_dirs_and_round_trip() {
         .expect("write fixture png");
 
     assert_eq!(
-        std::fs::read_to_string(&json_path).expect("read written json"),
-        EXPECTED_JSON
+        normalize_text_newlines(&std::fs::read_to_string(&json_path).expect("read written json")),
+        normalize_text_newlines(EXPECTED_JSON)
     );
     assert_eq!(
-        std::fs::read_to_string(&svg_path).expect("read written svg"),
-        EXPECTED_SVG
+        normalize_text_newlines(&std::fs::read_to_string(&svg_path).expect("read written svg")),
+        normalize_text_newlines(EXPECTED_SVG)
     );
 
     let png_bytes = std::fs::read(&png_path).expect("read written png bytes");

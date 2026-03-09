@@ -13,6 +13,68 @@ from ringgrid import viz
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BOARD_JSON = REPO_ROOT / "tools" / "board" / "board_spec.json"
 SAMPLE_IMAGE = REPO_ROOT / "testdata" / "target_3_split_00.png"
+TARGET_FIXTURE_DIR = (
+    REPO_ROOT / "crates" / "ringgrid" / "tests" / "fixtures" / "target_generation"
+)
+TARGET_FIXTURE_JSON = TARGET_FIXTURE_DIR / "fixture_compact_hex.json"
+TARGET_FIXTURE_SVG = TARGET_FIXTURE_DIR / "fixture_compact_hex.svg"
+TARGET_FIXTURE_PNG = TARGET_FIXTURE_DIR / "fixture_compact_hex.png"
+
+
+def _normalize_text_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
+def _fixture_board() -> ringgrid.BoardLayout:
+    return ringgrid.BoardLayout.from_geometry(
+        8.0,
+        3,
+        4,
+        4.8,
+        3.2,
+        name="fixture_compact_hex",
+    )
+
+
+def _png_phys(path: Path) -> tuple[int, int, int]:
+    data = path.read_bytes()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+
+    offset = 8
+    while offset + 12 <= len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data_start = offset + 8
+        chunk_data_end = chunk_data_start + length
+        chunk_data = data[chunk_data_start:chunk_data_end]
+        if chunk_type == b"pHYs":
+            return (
+                int.from_bytes(chunk_data[0:4], "big"),
+                int.from_bytes(chunk_data[4:8], "big"),
+                int(chunk_data[8]),
+            )
+        offset = chunk_data_end + 4
+
+    raise AssertionError("missing pHYs chunk")
+
+
+def _png_pixels(path: Path) -> np.ndarray:
+    import matplotlib.image as mpimg
+
+    pixels = np.asarray(mpimg.imread(path))
+    if pixels.ndim == 3:
+        rgb = pixels[..., :3]
+        if rgb.dtype.kind == "f":
+            rgb = np.rint(rgb * 255.0).astype(np.uint8)
+        else:
+            rgb = rgb.astype(np.uint8, copy=False)
+        assert np.array_equal(rgb[..., 0], rgb[..., 1])
+        assert np.array_equal(rgb[..., 0], rgb[..., 2])
+        return rgb[..., 0]
+
+    if pixels.dtype.kind == "f":
+        return np.rint(pixels * 255.0).astype(np.uint8)
+    return pixels.astype(np.uint8, copy=False)
 
 
 def test_board_layout_default_and_from_json() -> None:
@@ -27,6 +89,123 @@ def test_board_layout_default_and_from_json() -> None:
     assert board_file.rows == 15
     assert board_file.long_row_cols == 14
     assert len(board_file.markers) > 0
+
+
+def test_board_layout_from_geometry_matches_fixture_and_generated_name() -> None:
+    board = _fixture_board()
+    assert board.schema == "ringgrid.target.v3"
+    assert board.name == "fixture_compact_hex"
+    assert board.to_spec_dict() == json.loads(TARGET_FIXTURE_JSON.read_text())
+
+    generated = ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2)
+    assert generated.name == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200"
+
+
+def test_board_layout_spec_json_roundtrip_and_file_write(tmp_path: Path) -> None:
+    board = _fixture_board()
+
+    spec_json = board.to_spec_json()
+    assert isinstance(spec_json, str)
+    assert (
+        _normalize_text_newlines(spec_json + "\n")
+        == _normalize_text_newlines(TARGET_FIXTURE_JSON.read_text())
+    )
+
+    out_json = tmp_path / "nested" / "fixture.json"
+    saved = board.to_spec_json(out_json)
+    assert saved is None
+    assert (
+        _normalize_text_newlines(out_json.read_text())
+        == _normalize_text_newlines(TARGET_FIXTURE_JSON.read_text())
+    )
+
+    loaded = ringgrid.BoardLayout.from_json_file(out_json)
+    assert loaded.to_spec_dict() == board.to_spec_dict()
+
+
+def test_board_layout_svg_and_png_generation_match_rust_fixtures(tmp_path: Path) -> None:
+    board = _fixture_board()
+
+    svg_path = tmp_path / "nested" / "fixture.svg"
+    png_path = tmp_path / "nested" / "fixture.target"
+
+    board.write_svg(svg_path)
+    board.write_png(png_path, dpi=96.0)
+
+    assert (
+        _normalize_text_newlines(svg_path.read_text())
+        == _normalize_text_newlines(TARGET_FIXTURE_SVG.read_text())
+    )
+
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    expected_ppm = round(96.0 * 1000.0 / 25.4)
+    assert _png_phys(png_path) == (expected_ppm, expected_ppm, 1)
+    assert np.array_equal(_png_pixels(png_path), _png_pixels(TARGET_FIXTURE_PNG))
+
+
+def test_board_layout_target_generation_tracks_mutated_spec_fields(
+    tmp_path: Path,
+) -> None:
+    board = _fixture_board()
+    original_marker_xy = list(board.markers[1].xy_mm)
+
+    board.name = "mutated_fixture"
+    board.pitch_mm = 10.0
+
+    spec = json.loads(board.to_spec_json())
+    assert spec["name"] == "mutated_fixture"
+    assert spec["pitch_mm"] == pytest.approx(10.0)
+    assert board.to_spec_dict() == spec
+    assert board.markers[1].xy_mm != original_marker_xy
+
+    svg_path = tmp_path / "mutated.svg"
+    png_path = tmp_path / "mutated.png"
+    board.write_svg(svg_path)
+    board.write_png(png_path, dpi=96.0)
+
+    assert _normalize_text_newlines(svg_path.read_text()) != _normalize_text_newlines(
+        TARGET_FIXTURE_SVG.read_text()
+    )
+    assert _png_pixels(png_path).shape != _png_pixels(TARGET_FIXTURE_PNG).shape
+
+
+def test_board_layout_target_generation_rejects_invalid_geometry_and_options(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        ringgrid.BoardLayout.from_geometry(8.0, 0, 4, 4.8, 3.2)
+
+    with pytest.raises(ValueError):
+        ringgrid.BoardLayout.from_geometry(8.0, 2, 1, 4.8, 3.2)
+
+    with pytest.raises(ValueError):
+        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.8)
+
+    board = _fixture_board()
+
+    with pytest.raises(ValueError):
+        board.write_svg(tmp_path / "bad.svg", margin_mm=-1.0)
+
+    for dpi in (float("nan"), float("inf"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            board.write_png(tmp_path / "bad.png", dpi=dpi)
+
+
+def test_board_layout_target_generation_write_errors_raise_oserror(
+    tmp_path: Path,
+) -> None:
+    board = _fixture_board()
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        board.to_spec_json(blocked_parent / "fixture.json")
+
+    with pytest.raises(OSError):
+        board.write_svg(blocked_parent / "fixture.svg")
+
+    with pytest.raises(OSError):
+        board.write_png(blocked_parent / "fixture.png")
 
 
 def test_detect_config_curated_properties_and_dict_roundtrip() -> None:

@@ -28,11 +28,16 @@ from ._ringgrid import (
     DetectConfigCore as _DetectConfigCore,
     DetectorCore as _DetectorCore,
     board_snapshot_json as _board_snapshot_json,
+    board_spec_json_from_geometry as _board_spec_json_from_geometry,
+    canonical_board_spec_json as _canonical_board_spec_json,
     default_board_spec_json as _default_board_spec_json,
     load_board_spec_json as _load_board_spec_json,
     package_version as _package_version,
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
+    write_board_spec_json as _write_board_spec_json,
+    write_target_png as _write_target_png,
+    write_target_svg as _write_target_svg,
 )
 
 
@@ -135,15 +140,39 @@ class BoardLayout:
     def default(cls) -> "BoardLayout":
         """Construct the built-in default board layout."""
         spec_json = _default_board_spec_json()
-        snapshot = json.loads(_board_snapshot_json(spec_json))
-        return cls._from_snapshot(snapshot, spec_json)
+        return cls._from_spec_json(spec_json)
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> "BoardLayout":
         """Load a board layout from a `ringgrid.target.v3` JSON file."""
         spec_json = _load_board_spec_json(_coerce_path(path))
-        snapshot = json.loads(_board_snapshot_json(spec_json))
-        return cls._from_snapshot(snapshot, spec_json)
+        return cls._from_spec_json(spec_json)
+
+    @classmethod
+    def from_geometry(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        long_row_cols: int,
+        marker_outer_radius_mm: float,
+        marker_inner_radius_mm: float,
+        *,
+        name: str | None = None,
+    ) -> "BoardLayout":
+        """Construct a board layout from direct geometry arguments.
+
+        When `name` is omitted, the Rust library derives a deterministic
+        geometry-based name that round-trips through the canonical target JSON.
+        """
+        spec_json = _board_spec_json_from_geometry(
+            float(pitch_mm),
+            int(rows),
+            int(long_row_cols),
+            float(marker_outer_radius_mm),
+            float(marker_inner_radius_mm),
+            name,
+        )
+        return cls._from_spec_json(spec_json)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BoardLayout":
@@ -158,7 +187,11 @@ class BoardLayout:
             "marker_outer_radius_mm": float(data["marker_outer_radius_mm"]),
             "marker_inner_radius_mm": float(data["marker_inner_radius_mm"]),
         }
-        spec_json = json.dumps(spec)
+        spec_json = _canonical_board_spec_json(json.dumps(spec))
+        return cls._from_spec_json(spec_json)
+
+    @classmethod
+    def _from_spec_json(cls, spec_json: str) -> "BoardLayout":
         snapshot = json.loads(_board_snapshot_json(spec_json))
         return cls._from_snapshot(snapshot, spec_json)
 
@@ -176,6 +209,30 @@ class BoardLayout:
             markers=markers,
             _spec_json=spec_json,
         )
+
+    def _refresh_from_current_spec_fields(self) -> str:
+        spec_json = _canonical_board_spec_json(
+            json.dumps(self.to_spec_dict(), separators=(",", ":"))
+        )
+        refreshed = type(self)._from_spec_json(spec_json)
+        object.__setattr__(self, "schema", refreshed.schema)
+        object.__setattr__(self, "name", refreshed.name)
+        object.__setattr__(self, "pitch_mm", refreshed.pitch_mm)
+        object.__setattr__(self, "rows", refreshed.rows)
+        object.__setattr__(self, "long_row_cols", refreshed.long_row_cols)
+        object.__setattr__(
+            self,
+            "marker_outer_radius_mm",
+            refreshed.marker_outer_radius_mm,
+        )
+        object.__setattr__(
+            self,
+            "marker_inner_radius_mm",
+            refreshed.marker_inner_radius_mm,
+        )
+        object.__setattr__(self, "markers", refreshed.markers)
+        object.__setattr__(self, "_spec_json", refreshed._spec_json)
+        return refreshed._spec_json
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the full board payload including generated marker list."""
@@ -201,6 +258,52 @@ class BoardLayout:
             "marker_outer_radius_mm": float(self.marker_outer_radius_mm),
             "marker_inner_radius_mm": float(self.marker_inner_radius_mm),
         }
+
+    def to_spec_json(self, path: str | Path | None = None) -> str | None:
+        """Serialize canonical `ringgrid.target.v3` spec JSON.
+
+        This is spec-only JSON and intentionally does not include the expanded
+        `markers` snapshot that :meth:`to_dict` returns.
+        """
+        spec_json = self._refresh_from_current_spec_fields()
+        if path is None:
+            return spec_json
+        _write_board_spec_json(spec_json, _coerce_path(path))
+        return None
+
+    def write_svg(
+        self,
+        path: str | Path,
+        *,
+        margin_mm: float = 0.0,
+        include_scale_bar: bool = True,
+    ) -> None:
+        """Write a printable SVG target using the Rust target-generation path."""
+        spec_json = self._refresh_from_current_spec_fields()
+        _write_target_svg(
+            spec_json,
+            _coerce_path(path),
+            float(margin_mm),
+            bool(include_scale_bar),
+        )
+
+    def write_png(
+        self,
+        path: str | Path,
+        *,
+        dpi: float = 300.0,
+        margin_mm: float = 0.0,
+        include_scale_bar: bool = True,
+    ) -> None:
+        """Write a printable PNG target using the Rust target-generation path."""
+        spec_json = self._refresh_from_current_spec_fields()
+        _write_target_png(
+            spec_json,
+            _coerce_path(path),
+            float(dpi),
+            float(margin_mm),
+            bool(include_scale_bar),
+        )
 
 
 @dataclass(slots=True)

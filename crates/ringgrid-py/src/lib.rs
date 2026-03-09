@@ -1,22 +1,10 @@
 use image::GrayImage;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
 const TARGET_SCHEMA_V3: &str = "ringgrid.target.v3";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BoardSpecV3 {
-    schema: String,
-    name: String,
-    pitch_mm: f32,
-    rows: usize,
-    long_row_cols: usize,
-    marker_outer_radius_mm: f32,
-    marker_inner_radius_mm: f32,
-}
 
 #[derive(Debug, Clone, Serialize)]
 struct BoardSnapshot {
@@ -110,15 +98,19 @@ fn py_value_error<E: std::fmt::Display>(err: E) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
-fn board_to_spec(board: &ringgrid::BoardLayout) -> BoardSpecV3 {
-    BoardSpecV3 {
-        schema: TARGET_SCHEMA_V3.to_string(),
-        name: board.name.clone(),
-        pitch_mm: board.pitch_mm,
-        rows: board.rows,
-        long_row_cols: board.long_row_cols,
-        marker_outer_radius_mm: board.marker_outer_radius_mm,
-        marker_inner_radius_mm: board.marker_inner_radius_mm,
+fn py_os_error<E: std::fmt::Display>(err: E) -> PyErr {
+    PyOSError::new_err(err.to_string())
+}
+
+fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
+    match err {
+        ringgrid::TargetGenerationError::InvalidMargin { .. }
+        | ringgrid::TargetGenerationError::InvalidDpi { .. } => PyValueError::new_err(err.to_string()),
+        ringgrid::TargetGenerationError::Io(io) => PyOSError::new_err(io.to_string()),
+        ringgrid::TargetGenerationError::Image(_)
+        | ringgrid::TargetGenerationError::PngEncoding(_) => {
+            PyRuntimeError::new_err(err.to_string())
+        }
     }
 }
 
@@ -137,6 +129,34 @@ fn board_snapshot(board: &ringgrid::BoardLayout) -> BoardSnapshot {
 
 fn board_from_spec_json(spec_json: &str) -> PyResult<ringgrid::BoardLayout> {
     ringgrid::BoardLayout::from_json_str(spec_json).map_err(py_value_error)
+}
+
+fn board_from_geometry(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    marker_outer_radius_mm: f32,
+    marker_inner_radius_mm: f32,
+    name: Option<&str>,
+) -> PyResult<ringgrid::BoardLayout> {
+    match name {
+        Some(name) => ringgrid::BoardLayout::with_name(
+            name,
+            pitch_mm,
+            rows,
+            long_row_cols,
+            marker_outer_radius_mm,
+            marker_inner_radius_mm,
+        ),
+        None => ringgrid::BoardLayout::new(
+            pitch_mm,
+            rows,
+            long_row_cols,
+            marker_outer_radius_mm,
+            marker_inner_radius_mm,
+        ),
+    }
+    .map_err(py_value_error)
 }
 
 fn config_to_dump(config: &ringgrid::DetectConfig) -> DetectConfigDump {
@@ -562,20 +582,94 @@ fn package_version() -> &'static str {
 #[pyfunction]
 fn default_board_spec_json() -> PyResult<String> {
     let board = ringgrid::BoardLayout::default();
-    serde_json::to_string(&board_to_spec(&board)).map_err(py_value_error)
+    Ok(board.to_json_string())
 }
 
 #[pyfunction]
 fn load_board_spec_json(path: &str) -> PyResult<String> {
     let board = ringgrid::BoardLayout::from_json_file(std::path::Path::new(path))
         .map_err(py_value_error)?;
-    serde_json::to_string(&board_to_spec(&board)).map_err(py_value_error)
+    Ok(board.to_json_string())
 }
 
 #[pyfunction]
 fn board_snapshot_json(spec_json: &str) -> PyResult<String> {
     let board = board_from_spec_json(spec_json)?;
     serde_json::to_string(&board_snapshot(&board)).map_err(py_value_error)
+}
+
+#[pyfunction]
+fn canonical_board_spec_json(spec_json: &str) -> PyResult<String> {
+    let board = board_from_spec_json(spec_json)?;
+    Ok(board.to_json_string())
+}
+
+#[pyfunction]
+#[pyo3(signature = (pitch_mm, rows, long_row_cols, marker_outer_radius_mm, marker_inner_radius_mm, name=None))]
+fn board_spec_json_from_geometry(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    marker_outer_radius_mm: f32,
+    marker_inner_radius_mm: f32,
+    name: Option<&str>,
+) -> PyResult<String> {
+    let board = board_from_geometry(
+        pitch_mm,
+        rows,
+        long_row_cols,
+        marker_outer_radius_mm,
+        marker_inner_radius_mm,
+        name,
+    )?;
+    Ok(board.to_json_string())
+}
+
+#[pyfunction]
+fn write_board_spec_json(spec_json: &str, path: &str) -> PyResult<()> {
+    let board = board_from_spec_json(spec_json)?;
+    board.write_json_file(std::path::Path::new(path))
+        .map_err(py_os_error)
+}
+
+#[pyfunction]
+#[pyo3(signature = (spec_json, path, margin_mm=0.0, include_scale_bar=true))]
+fn write_target_svg(
+    spec_json: &str,
+    path: &str,
+    margin_mm: f32,
+    include_scale_bar: bool,
+) -> PyResult<()> {
+    let board = board_from_spec_json(spec_json)?;
+    board.write_target_svg(
+        std::path::Path::new(path),
+        &ringgrid::SvgTargetOptions {
+            margin_mm,
+            include_scale_bar,
+        },
+    )
+    .map_err(py_target_generation_error)
+}
+
+#[pyfunction]
+#[pyo3(signature = (spec_json, path, dpi=300.0, margin_mm=0.0, include_scale_bar=true))]
+fn write_target_png(
+    spec_json: &str,
+    path: &str,
+    dpi: f32,
+    margin_mm: f32,
+    include_scale_bar: bool,
+) -> PyResult<()> {
+    let board = board_from_spec_json(spec_json)?;
+    board.write_target_png(
+        std::path::Path::new(path),
+        &ringgrid::PngTargetOptions {
+            dpi,
+            margin_mm,
+            include_scale_bar,
+        },
+    )
+    .map_err(py_target_generation_error)
 }
 
 #[pyfunction]
@@ -628,6 +722,11 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(default_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(load_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(board_snapshot_json, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_board_spec_json, m)?)?;
+    m.add_function(wrap_pyfunction!(board_spec_json_from_geometry, m)?)?;
+    m.add_function(wrap_pyfunction!(write_board_spec_json, m)?)?;
+    m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;
+    m.add_function(wrap_pyfunction!(write_target_png, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_config_json, m)?)?;
     m.add_function(wrap_pyfunction!(update_config_json, m)?)?;
     m.add_function(wrap_pyfunction!(scale_tiers_four_tier_wide_json, m)?)?;

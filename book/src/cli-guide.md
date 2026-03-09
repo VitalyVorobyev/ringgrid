@@ -202,10 +202,10 @@ Example output:
 ringgrid embedded codebook
   bits per codeword:    16
   number of codewords:  893
-  min cyclic Hamming:   3
+  min cyclic Hamming:   2
   generator seed:       1
-  first codeword:       0x0007
-  last codeword:        0xFFE0
+  first codeword:       0x035D
+  last codeword:        0x0E63
 ```
 
 ### `ringgrid board-info` -- Print default board specification

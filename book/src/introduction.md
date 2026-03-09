@@ -21,7 +21,7 @@ Each ringgrid marker consists of two concentric rings — an outer ring and an i
 
 2. **Projective center correction.** Under perspective projection, the center of a fitted ellipse is *not* the true projected center of the circle. ringgrid fits both the outer and inner ring ellipses and uses their conic pencil to recover the unbiased projected center — without requiring camera intrinsics.
 
-3. **Large identification capacity.** The 16-sector binary code band provides 893 unique codewords with guaranteed minimum Hamming distance, enabling rotation-invariant decoding with error tolerance.
+3. **Large identification capacity.** The 16-sector binary code band provides 893 unique codewords with current minimum cyclic Hamming distance 2, enabling rotation-invariant decoding and unambiguous matches at distance 1.
 
 ## What You Get
 

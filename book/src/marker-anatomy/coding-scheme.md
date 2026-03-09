@@ -98,7 +98,9 @@ pub struct DecodeConfig {
     /// Maximum Hamming distance for a valid decode.
     pub max_decode_dist: u8,         // default: 3
     /// Minimum confidence for a valid decode.
-    pub min_decode_confidence: f32,  // default: 0.15
+    pub min_decode_confidence: f32,  // default: 0.30
+    /// Minimum Hamming margin for a valid decode.
+    pub min_decode_margin: u8,       // default: 1
 }
 ```
 
@@ -153,15 +155,23 @@ The better of the normal and inverted matches is selected based on the
 confidence heuristic:
 
 ```
-confidence = clamp(1 - dist/6) * clamp(margin/3)
+confidence = clamp(1 - dist/6) * clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)
 ```
 
-where `margin = second_best_dist - best_dist`. High confidence requires both
-a low distance to the best match and a comfortable gap to the runner-up.
+where `margin = second_best_dist - best_dist`. In the shipped baseline profile,
+`CODEBOOK_MIN_CYCLIC_DIST = 2`, so a perfect decode with margin 2 or greater
+scores 1.0. High confidence requires both a low distance to the best match and
+a comfortable gap to the runner-up.
 
 A decode is accepted only if:
 - `best_dist <= max_decode_dist` (default: 3)
-- `confidence >= min_decode_confidence` (default: 0.15)
+- `margin >= min_decode_margin` (default: 1)
+- `confidence >= min_decode_confidence` (default: 0.30)
+
+The generator script starts from a higher target distance and relaxes it until
+it can reach the requested count. For the committed `--n 893 --seed 1`
+artifacts, the achieved minimum cyclic Hamming distance recorded in
+`tools/codebook.json` and `crates/ringgrid/src/marker/codebook.rs` is `2`.
 
 ## Decode metrics
 

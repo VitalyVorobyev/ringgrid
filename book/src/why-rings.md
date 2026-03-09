@@ -35,7 +35,7 @@ The improvement is measurable: on clean synthetic images, projective center corr
 
 ## Large Identification Capacity
 
-Each marker carries a unique identity encoded in a 16-sector binary code band between the inner and outer rings. The codebook contains **893 codewords** selected to maximize the minimum Hamming distance between any pair.
+Each marker carries a unique identity encoded in a 16-sector binary code band between the inner and outer rings. The shipped baseline codebook contains **893 codewords** with minimum cyclic Hamming distance **2**, while also enforcing rotational uniqueness and pairwise uniqueness under cyclic rotation.
 
 This design provides several advantages over other encoding approaches:
 
@@ -50,7 +50,7 @@ Key properties of the coding scheme:
 
 - **Rotation invariance**: The 16-sector code is sampled relative to the marker's geometry, and the decoder tries all 16 cyclic rotations. No marker orientation assumption is needed.
 - **Polarity invariance**: The decoder also checks the inverted contrast pattern, handling both dark-on-light and light-on-dark printing.
-- **Error tolerance**: The minimum Hamming distance in the codebook provides robustness against individual sector misreads due to blur, noise, or partial occlusion.
+- **Error tolerance**: The codebook's minimum cyclic Hamming distance of 2 prevents a single-bit error from silently mapping to a different valid codeword, though it does not guarantee single-bit correction.
 
 ## Comparison with Other Calibration Targets
 

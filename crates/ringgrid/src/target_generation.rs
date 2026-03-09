@@ -460,8 +460,7 @@ fn scale_bar_params(
         canvas.canvas_side_mm - inset_y_mm - bar_h_mm - (marker_bottom_mm + clearance_mm);
     if available_mm < 0.0 {
         bar_h_mm = (canvas.canvas_side_mm - inset_y_mm - (marker_bottom_mm + clearance_mm))
-            .max(1.0)
-            .min(4.0);
+            .clamp(1.0, 4.0);
     }
 
     let usable_w_mm = (canvas.side_mm - 2.0 * inset_x_mm).max(1.0);

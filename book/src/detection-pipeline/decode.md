@@ -37,7 +37,7 @@ The best match is accepted based on:
 
 - **Hamming distance** (`best_dist`): number of bit disagreements with the closest codeword
 - **Margin** (`margin`): gap between the best and second-best Hamming distances
-- **Decode confidence**: `clamp(1 - dist/6) × clamp(margin/3)`, a heuristic combining closeness and uniqueness
+- **Decode confidence**: `clamp(1 - dist/6) × clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)`, a heuristic combining closeness and uniqueness. For the shipped profile, `CODEBOOK_MIN_CYCLIC_DIST = 2`.
 
 ## DecodeMetrics
 

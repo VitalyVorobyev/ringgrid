@@ -21,6 +21,15 @@ All stochastic algorithms use seeded RNGs for deterministic reproducibility.
 - Synthetic image generation (`tools/gen_synth.py`) accepts `--seed` for
   reproducible test images.
 
+### Generated artifacts
+
+- Codebook generation is reproducible via `tools/gen_codebook.py`.
+- The committed shipped codebook artifacts are generated with `--n 893 --seed 1`
+  and written to `tools/codebook.json` and
+  `crates/ringgrid/src/marker/codebook.rs`.
+- The achieved minimum cyclic Hamming distance recorded in those generated
+  outputs is part of the reproducible artifact contract.
+
 ### Invariant
 
 Given the same input image and `DetectConfig`, `Detector::detect` must

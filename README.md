@@ -43,46 +43,48 @@ This project is developed with AI coding assistants (`Codex` and `Claude Code`) 
 
 From repository root:
 
-### 1. Install Python deps for target generation
+### 1. Build the local Python binding
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
-./.venv/bin/python -m pip install numpy
+./.venv/bin/python -m pip install -U pip maturin
+./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
 ### 2. Generate target config JSON and printable files
 
 ```bash
-./.venv/bin/python tools/gen_synth.py \
+./.venv/bin/python tools/gen_target.py \
   --out_dir tools/out/target_faststart \
-  --n_images 0 \
-  --board_mm 200 \
   --pitch_mm 8 \
-  --print \
-  --print_dpi 600 \
-  --print_margin_mm 5 \
-  --print_basename target_print
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
 ```
 
 Key generation knobs:
 
 | Flag | What it controls | Typical value |
 |---|---|---|
-| `--board_mm` | Physical board side length (mm) | `200` |
 | `--pitch_mm` | Marker center spacing (mm) | `8` |
-| `--n_images` | Number of synthetic images to render (`0` for print-only) | `0` |
-| `--print` | Emit both SVG and PNG print files | set |
-| `--print_dpi` | PNG raster resolution | `300` or `600` |
-| `--print_margin_mm` | Extra white border for printer margins | `3-10` |
-| `--print_basename` | Output base filename | `target_print` |
-| `--n_markers` | Optional cap for small test targets | unset |
+| `--rows` / `--long_row_cols` | Hex-lattice board shape | `15` / `14` |
+| `--marker_outer_radius_mm` / `--marker_inner_radius_mm` | Ring radii in mm | `4.8` / `3.2` |
+| `--dpi` | PNG raster resolution | `300` or `600` |
+| `--margin_mm` | Extra white border for printer margins | `3-10` |
+| `--basename` | Output base filename for SVG/PNG | `target_print` |
+| `--no-scale-bar` | Omit the default scale bar from print files | unset |
 
 Generated files:
 
 - `tools/out/target_faststart/board_spec.json` (detector target config)
 - `tools/out/target_faststart/target_print.svg` (vector print file)
 - `tools/out/target_faststart/target_print.png` (raster print file with DPI metadata)
+
+If you also need synthetic images or ground-truth JSON, keep using `tools/gen_synth.py`.
 
 ### 3. Run detection against this target config
 

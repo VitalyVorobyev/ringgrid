@@ -8,33 +8,33 @@ This section gets you from zero to:
 
 in one command.
 
-## 1. Install minimal tooling
+## 1. Build the local Python binding
 
 From repository root:
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
-./.venv/bin/python -m pip install numpy
+./.venv/bin/python -m pip install -U pip maturin
+./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
-`tools/gen_synth.py` only needs NumPy for target generation.
+`tools/gen_target.py` uses the installed `ringgrid` Python package, so the local
+binding must be built into the active virtualenv first.
 
 ## 2. Generate target JSON + SVG + PNG
 
 ```bash
-./.venv/bin/python tools/gen_synth.py \
+./.venv/bin/python tools/gen_target.py \
   --out_dir tools/out/target_faststart \
-  --n_images 0 \
-  --board_mm 200 \
   --pitch_mm 8 \
-  --print \
-  --print_dpi 600 \
-  --print_margin_mm 5 \
-  --print_basename target_print
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
 ```
-
-`--print` enables both `--print_svg` and `--print_png`.
 
 ## 3. Output files
 
@@ -43,6 +43,9 @@ After the command finishes, you will have:
 - `tools/out/target_faststart/board_spec.json`
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
+
+If you also need synthetic camera renders and ground truth, use
+`tools/gen_synth.py` instead of `tools/gen_target.py`.
 
 ## 4. Detect against this board
 

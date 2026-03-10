@@ -10,33 +10,68 @@ for physical calibration boards.
 
 ## Overview
 
-There are two supported generation paths:
+There are three supported generation paths:
 
-1. `tools/gen_synth.py` (recommended fast path)
-   - can emit `board_spec.json`, `.svg`, and `.png` in one run
-   - can also generate synthetic images/ground truth if needed
-2. `tools/gen_board_spec.py` (JSON-only)
+1. `tools/gen_target.py` (dedicated JSON/SVG/PNG path)
+   - emits `board_spec.json`, `.svg`, and `.png` in one run
+   - routes directly through the shipped `ringgrid` Python API
+2. `tools/gen_synth.py` (synth + optional print path)
+   - can emit `board_spec.json`, `.svg`, and `.png`
+   - can also generate synthetic images and ground truth
+3. `tools/gen_board_spec.py` (JSON-only)
    - emits only `board_spec.json`
-   - use when you want an explicit parametric board spec without synth assets
+   - use when you want an explicit parametric board spec without printable outputs
 
 ## Prerequisites
 
 From repository root:
 
+For the dedicated `gen_target.py` path:
+
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
+./.venv/bin/python -m pip install -U pip maturin
+./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+```
+
+For `gen_synth.py` synthetic generation:
+
+```bash
 ./.venv/bin/python -m pip install numpy
 ```
 
-## Fastest Workflow (One Command)
+## Fastest Dedicated Workflow (One Command)
 
 Generate JSON + SVG + PNG without synthetic images:
 
 ```bash
-./.venv/bin/python tools/gen_synth.py \
+./.venv/bin/python tools/gen_target.py \
   --out_dir tools/out/target_print_200mm \
-  --n_images 0 \
+  --pitch_mm 8 \
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
+```
+
+Outputs:
+
+- `tools/out/target_print_200mm/board_spec.json`
+- `tools/out/target_print_200mm/target_print.svg`
+- `tools/out/target_print_200mm/target_print.png`
+
+## Combined Synth + Print Workflow
+
+Use `tools/gen_synth.py` when you want print outputs and synthetic images from
+one command:
+
+```bash
+./.venv/bin/python tools/gen_synth.py \
+  --out_dir tools/out/target_print_with_synth \
+  --n_images 3 \
   --board_mm 200 \
   --pitch_mm 8 \
   --print \
@@ -45,43 +80,22 @@ Generate JSON + SVG + PNG without synthetic images:
   --print_basename target_print
 ```
 
-`--print` enables both `--print_svg` and `--print_png`.
-
-Outputs:
-
-- `tools/out/target_print_200mm/board_spec.json`
-- `tools/out/target_print_200mm/target_print.svg`
-- `tools/out/target_print_200mm/target_print.png`
-
 ## Step-by-Step Custom Workflow
 
-### Step 1: Generate `board_spec.json`
+### Step 1: Generate `board_spec.json` + matching print files
 
 ```bash
-python3 tools/gen_board_spec.py \
+./.venv/bin/python tools/gen_target.py \
   --pitch_mm 8.0 \
   --rows 15 \
   --long_row_cols 14 \
-  --board_mm 200.0 \
-  --json_out tools/board/board_spec.json
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --out_dir tools/out/target_print_custom
 ```
 
-### Step 2: Generate printable SVG and PNG for matching geometry
-
-```bash
-./.venv/bin/python tools/gen_synth.py \
-  --out_dir tools/out/target_print_custom \
-  --n_images 0 \
-  --board_mm 200 \
-  --pitch_mm 8 \
-  --print_svg \
-  --print_png \
-  --print_dpi 600 \
-  --print_margin_mm 5 \
-  --print_basename target_print
-```
-
-### Step 3: Use the generated JSON in detection
+### Step 2: Use the generated JSON in detection
 
 ```bash
 cargo run -- detect \
@@ -91,6 +105,22 @@ cargo run -- detect \
 ```
 
 ## Configuration Reference
+
+### `tools/gen_target.py` options
+
+| Argument | Default | Description |
+|---|---|---|
+| `--pitch_mm` | required | Marker spacing in mm. |
+| `--rows` | required | Number of hex lattice rows. |
+| `--long_row_cols` | required | Number of markers in long rows. |
+| `--marker_outer_radius_mm` | required | Outer ring radius in mm. |
+| `--marker_inner_radius_mm` | required | Inner ring radius in mm. |
+| `--name` | auto | Optional board name. Omitted uses deterministic geometry-derived naming. |
+| `--out_dir` | `tools/out/target` | Output directory for `board_spec.json`, SVG, and PNG. |
+| `--basename` | `target_print` | Base filename for SVG/PNG outputs. |
+| `--dpi` | `300.0` | Raster DPI for PNG export (also embedded in PNG metadata). |
+| `--margin_mm` | `0.0` | Extra white margin around the board in print outputs. |
+| `--no-scale-bar` | `false` | Omit the default scale bar from SVG/PNG outputs. |
 
 ### `tools/gen_synth.py` geometry options
 
@@ -117,8 +147,9 @@ cargo run -- detect \
 
 Notes:
 
+- `gen_target.py` always writes `board_spec.json`, `<basename>.svg`, and `<basename>.png` together.
 - SVG is resolution-independent and preferred for professional printing.
-- PNG size is derived from `board_mm`, `print_margin_mm`, and `print_dpi`.
+- PNG size is derived from the board geometry, requested margin, and DPI.
 - `gen_synth.py` always writes a matching `board_spec.json` to `--out_dir`.
 
 ### `tools/gen_board_spec.py` options

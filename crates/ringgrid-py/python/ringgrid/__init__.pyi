@@ -37,9 +37,36 @@ class BoardLayout:
     @classmethod
     def from_json_file(cls, path: str | Path) -> BoardLayout: ...
     @classmethod
+    def from_geometry(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        long_row_cols: int,
+        marker_outer_radius_mm: float,
+        marker_inner_radius_mm: float,
+        *,
+        name: str | None = ...,
+    ) -> BoardLayout: ...
+    @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> BoardLayout: ...
     def to_dict(self) -> dict[str, Any]: ...
     def to_spec_dict(self) -> dict[str, Any]: ...
+    def to_spec_json(self, path: str | Path | None = ...) -> str | None: ...
+    def write_svg(
+        self,
+        path: str | Path,
+        *,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
+    def write_png(
+        self,
+        path: str | Path,
+        *,
+        dpi: float = ...,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
 
 class MarkerScalePrior:
     diameter_min_px: float

@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Execute an approved architecture handoff with minimal, production-ready code and tests, then prepare a reviewer-ready implementation report. Use when coding is required from a task plan. Require a mandatory task-id and write only docs/handoffs/<task-id>/02-implementer.md.
+description: Execute an approved architecture handoff with minimal, production-ready code and tests, then prepare a reviewer-ready implementation report. Use when coding is required from a task plan. Accept a TASK id or a backlog item id and write only docs/handoffs/<task-id>/02-implementer.md.
 ---
 
 # Implementer
@@ -9,7 +9,9 @@ description: Execute an approved architecture handoff with minimal, production-r
 Implement the Architect plan with focused code changes, explicit validation, and a reviewer-ready handoff.
 
 ## Required Inputs
-- `task-id` (mandatory). Format: `TASK-<number>-<slug>`.
+- One task anchor (mandatory):
+  - `task-id` in format `TASK-<number>-<slug>`, or
+  - a backlog/source task id that resolves to exactly one existing handoff directory.
 - `docs/handoffs/<task-id>/01-architect.md` (required).
 - For rework cycles: latest `docs/handoffs/<task-id>/03-reviewer.md` (required when reviewer requested changes).
 
@@ -29,17 +31,21 @@ Create or update only:
 Do not edit `01-architect.md` or `03-reviewer.md`.
 
 ## Procedure
-1. Validate `task-id` and verify `01-architect.md` exists.
-2. Confirm architecture status is implementable:
+1. Resolve `task-id`.
+   - If a valid `task-id` is provided, use it.
+   - If only a backlog/source task id is provided, resolve it to one existing handoff directory by checking `Backlog ID:` first, then falling back to older explicit mapping text.
+   - Stop if the backlog/source task id resolves to zero or multiple handoff directories.
+2. Verify `01-architect.md` exists.
+3. Confirm architecture status is implementable:
 - Stop if architect status is `blocked` or `needs_human_decision`.
 - Stop if acceptance criteria/test plan are missing.
-3. If reviewer report exists:
+4. If reviewer report exists:
 - If verdict is `changes_requested`, treat reviewer findings as mandatory.
 - Stop if findings are ambiguous or not tied to code/tests.
-4. Build an implementation checklist from architect plan and reviewer findings.
-5. Implement minimal, localized code changes.
-6. Add or update tests aligned to acceptance criteria.
-7. Run the local CI validation baseline unless the architect explicitly narrows it or a concrete blocker prevents a command:
+5. Build an implementation checklist from architect plan and reviewer findings.
+6. Implement minimal, localized code changes.
+7. Add or update tests aligned to acceptance criteria.
+8. Run the local CI validation baseline unless the architect explicitly narrows it or a concrete blocker prevents a command:
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo test --workspace --all-features`
@@ -51,13 +57,14 @@ Do not edit `01-architect.md` or `03-reviewer.md`.
   - `python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release`
   - `python -m pytest crates/ringgrid-py/tests -q`
 - If any required local CI command is not run, stop and record the blocker explicitly instead of handing off as `ready_for_review`.
-8. Record deviations explicitly:
+9. Record deviations explicitly:
 - what changed,
 - why,
 - risk impact,
 - whether reviewer/architect follow-up is needed.
-9. Write `02-implementer.md` using `docs/templates/task-handoff-report.md` and role-specific sections.
-10. End with a concrete handoff to Reviewer.
+10. Write `02-implementer.md` using `docs/templates/task-handoff-report.md` and role-specific sections.
+   - Preserve the architect report's `Backlog ID` in metadata when present.
+11. End with a concrete handoff to Reviewer.
 
 ## Guardrails
 - Do not silently redefine scope.
@@ -71,6 +78,7 @@ Do not edit `01-architect.md` or `03-reviewer.md`.
 - Tests are added/updated where behavior changed.
 - Validation commands and outcomes are recorded, including the local CI baseline for `fmt`, `clippy`, workspace tests, rustdoc/doctests, `mdbook`, and Python binding checks unless a blocker is explicitly documented.
 - `02-implementer.md` references correct `task-id`, changed files, results, and reviewer handoff.
+- `02-implementer.md` preserves the correct `Backlog ID` when the task originated from `docs/backlog.md`.
 
 ## Handoff Rules
 - Set status to one of:

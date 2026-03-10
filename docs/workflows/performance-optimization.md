@@ -4,10 +4,10 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 
 ## Prerequisites
 - Performance concern identified (profiling data, user report, or benchmark regression)
-- Task added to `state/backlog.md`
+- Task added to `docs/backlog.md`
 - PERF validation uses the standardized suite in:
-  - `.ai/workflows/perf-validation-suite-runbook.md`
-  - `.ai/templates/accuracy-report.md`
+  - `docs/workflows/perf-validation-suite-runbook.md`
+  - `docs/templates/accuracy-report.md`
 
 ## Phases
 
@@ -59,7 +59,7 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 **Goal:** Document results and hand off.
 
 **Steps:**
-1. Fill in benchmark report from `templates/benchmark-report.md`
+1. Fill in benchmark report from `docs/templates/benchmark-report.md`
 2. Document optimization in commit message:
    ```
    perf(proposal): reduce gradient voting allocation by reusing scratch buffer
@@ -79,7 +79,7 @@ Use this workflow for: latency reduction, throughput improvement, allocation eli
 1. Review all handoff notes for the task
 2. Verify acceptance criteria from task spec are met
 3. Verify validation gates passed (check reported results)
-4. Update `state/backlog.md` — mark task done
+4. Update `docs/backlog.md` — mark task done
 5. Write session summary
 6. Present to human for review and merge
 

@@ -181,6 +181,17 @@ result = detector.detect("testdata/target_3_split_00.png")
 print(len(result.detected_markers))
 ```
 
+Installed-package target generation:
+
+```python
+import ringgrid
+
+board = ringgrid.BoardLayout.from_geometry(8.0, 15, 14, 4.8, 3.2)
+board.to_spec_json("target.json")
+board.write_svg("target.svg", margin_mm=5.0)
+board.write_png("target.png", dpi=600.0, margin_mm=5.0)
+```
+
 Runnable examples:
 
 ```bash

@@ -25,41 +25,41 @@ maturin develop -m crates/ringgrid-py/Cargo.toml --release
 
 ## Fast Start: Generate `board_spec.json` + Printable SVG/PNG
 
-Target-generation scripts live in the repository root (`tools/`). If you only
-installed from PyPI, clone the repository first to access these scripts.
+Installed-package target generation is available directly from `import ringgrid`:
 
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
-./.venv/bin/python -m pip install numpy
+```python
+from pathlib import Path
+import ringgrid
 
-./.venv/bin/python tools/gen_synth.py \
-  --out_dir tools/out/target_faststart \
-  --n_images 0 \
-  --board_mm 200 \
-  --pitch_mm 8 \
-  --print \
-  --print_dpi 600 \
-  --print_margin_mm 5 \
-  --print_basename target_print
+board = ringgrid.BoardLayout.from_geometry(
+    8.0,
+    15,
+    14,
+    4.8,
+    3.2,
+    name="ringgrid_200mm_hex",
+)
+
+board.to_spec_json(Path("board_spec.json"))
+board.write_svg(Path("target_print.svg"), margin_mm=5.0)
+board.write_png(Path("target_print.png"), dpi=600.0, margin_mm=5.0)
 ```
 
 Key knobs:
 
-| Flag | What it controls | Typical value |
+| API | What it controls | Typical value |
 |---|---|---|
-| `--board_mm` | Physical board side length (mm) | `200` |
-| `--pitch_mm` | Marker spacing (mm) | `8` |
-| `--n_images` | Number of synthetic images (`0` for print-only) | `0` |
-| `--print_dpi` | PNG raster resolution | `300` or `600` |
-| `--print_margin_mm` | Extra white border | `3-10` |
-| `--print_basename` | Output file basename | `target_print` |
+| `BoardLayout.from_geometry(...)` | Board geometry (`pitch_mm`, `rows`, `long_row_cols`, radii) | `8.0`, `15`, `14`, `4.8`, `3.2` |
+| `name=` | Optional explicit board name; omitted uses deterministic geometry-derived name | `"ringgrid_200mm_hex"` |
+| `write_svg(..., margin_mm=...)` | Extra white border around the printable page | `3-10` |
+| `write_png(..., dpi=...)` | PNG raster resolution and embedded print metadata | `300` or `600` |
+| `write_png(..., include_scale_bar=...)` | Include or omit the default scale bar | `True` |
 
 Outputs:
 
-- `tools/out/target_faststart/board_spec.json`
-- `tools/out/target_faststart/target_print.svg`
-- `tools/out/target_faststart/target_print.png`
+- `board_spec.json`
+- `target_print.svg`
+- `target_print.png`
 
 Load this board in Python:
 
@@ -73,11 +73,17 @@ detector = ringgrid.Detector(cfg)
 # Convenience defaults: detector = ringgrid.Detector.from_board(board)
 ```
 
+If you are working from a repository checkout and also need synthetic images or
+ground truth, the repo tools under `tools/` still provide the combined
+generation/evaluation workflow. The installed package target-generation API is
+for board JSON + printable SVG/PNG only.
+
 Complete target-generation tutorial and full flag reference:
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
 
 ## Features
 
+- Native `BoardLayout` target generation for canonical spec JSON + printable SVG/PNG
 - Native `Detector` API with NumPy input support
 - Full `DetectionResult` model objects with JSON round-trips
 - Optional plotting helpers in `ringgrid.viz` (`pip install ringgrid[viz]`)

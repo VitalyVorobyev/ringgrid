@@ -4,7 +4,7 @@ Use this workflow for: correctness regressions, detection failures, decode error
 
 ## Prerequisites
 - Bug reported or observed (scoring regression, test failure, visual inspection)
-- Task added to `state/backlog.md`
+- Task added to `docs/backlog.md`
 
 ## Phases
 
@@ -79,7 +79,7 @@ Use this workflow for: correctness regressions, detection failures, decode error
 1. Review all handoff notes for the task
 2. Verify acceptance criteria from task spec are met
 3. Verify validation gates passed (check reported results)
-4. Update `state/backlog.md` — mark task done
+4. Update `docs/backlog.md` — mark task done
 5. Write session summary with root cause and fix description
 6. Present to human for review and merge
 

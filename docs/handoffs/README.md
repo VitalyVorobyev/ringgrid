@@ -3,14 +3,25 @@
 This directory stores role handoffs for a strict `Architect -> Implementer -> Reviewer` workflow.
 
 ## Naming Rules
-- Task id is mandatory for every invocation.
+- Backlog ids and workflow task ids are different on purpose:
+  - backlog ids live in `docs/backlog.md` (`INFRA-011`, `DOCS-003`, ...),
+  - workflow task ids live under `docs/handoffs/` (`TASK-012-expose-target-generation-in-ringgrid-py`, ...).
 - Task id format: `TASK-<number>-<slug>`.
-- One task directory per task id:
+- One task directory per workflow task id:
   - `docs/handoffs/<task-id>/`
 - Fixed report files per role:
   - `docs/handoffs/<task-id>/01-architect.md`
   - `docs/handoffs/<task-id>/02-implementer.md`
   - `docs/handoffs/<task-id>/03-reviewer.md`
+
+## Backlog Mapping
+- A backlog item may map to one workflow task directory at a time.
+- When starting from a backlog item and no handoff exists yet:
+  - mint the next unused `TASK-<number>-<slug>` id,
+  - derive the slug from the backlog title,
+  - record the source backlog id in report metadata as `Backlog ID: <ID>`.
+- When a backlog item already has exactly one matching handoff directory, reuse that `task-id`.
+- If multiple handoff directories appear to map to the same backlog item, stop and ask the human which one should continue.
 
 ## File Ownership
 - Architect reads available upstream context and writes only `01-architect.md`.
@@ -22,6 +33,7 @@ No role edits another role's report file.
 ## Required Metadata In Every Report
 - Title
 - Task ID
+- Backlog ID (required when sourced from `docs/backlog.md`; otherwise `n/a` is acceptable)
 - Role
 - Date
 - Status
@@ -104,6 +116,8 @@ python3 tools/orchestrate_handoffs.py init TASK-012-image-store-refactor \
   --input-ref "docs/backlog.md" \
   --input-ref "Issue #42"
 ```
+
+If the human starts from a backlog id like `INFRA-011`, resolve or mint the `TASK-*` id first, then use that id consistently for the handoff directory and orchestrator control file.
 
 Inspect all task states:
 ```bash

@@ -1148,6 +1148,7 @@ class EdgeSampleConfig:
 
 @dataclass(slots=True)
 class DecodeConfig:
+    codebook_profile: str = "base"
     code_band_ratio: float = 0.74404764
     samples_per_sector: int = 5
     n_radial_rings: int = 3
@@ -1162,6 +1163,7 @@ class DecodeConfig:
     def from_dict(cls, data: Mapping[str, Any]) -> "DecodeConfig":
         data = _require_mapping(data, name="data")
         return cls(
+            codebook_profile=str(data.get("codebook_profile", "base")),
             code_band_ratio=float(data["code_band_ratio"]),
             samples_per_sector=int(data["samples_per_sector"]),
             n_radial_rings=int(data["n_radial_rings"]),
@@ -1175,6 +1177,7 @@ class DecodeConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "codebook_profile": str(self.codebook_profile),
             "code_band_ratio": float(self.code_band_ratio),
             "samples_per_sector": int(self.samples_per_sector),
             "n_radial_rings": int(self.n_radial_rings),

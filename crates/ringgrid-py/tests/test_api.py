@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -19,10 +20,53 @@ TARGET_FIXTURE_DIR = (
 TARGET_FIXTURE_JSON = TARGET_FIXTURE_DIR / "fixture_compact_hex.json"
 TARGET_FIXTURE_SVG = TARGET_FIXTURE_DIR / "fixture_compact_hex.svg"
 TARGET_FIXTURE_PNG = TARGET_FIXTURE_DIR / "fixture_compact_hex.png"
+README_PATH = REPO_ROOT / "crates" / "ringgrid-py" / "README.md"
+
+README_SECTION_TYPES: dict[str, type[object]] = {
+    "marker_scale": ringgrid.MarkerScalePrior,
+    "proposal": ringgrid.ProposalConfig,
+    "edge_sample": ringgrid.EdgeSampleConfig,
+    "outer_estimation": ringgrid.OuterEstimationConfig,
+    "marker_spec": ringgrid.MarkerSpec,
+    "outer_fit": ringgrid.OuterFitConfig,
+    "inner_fit": ringgrid.InnerFitConfig,
+    "decode": ringgrid.DecodeConfig,
+    "seed_proposals": ringgrid.SeedProposalParams,
+    "projective_center": ringgrid.ProjectiveCenterParams,
+    "completion": ringgrid.CompletionParams,
+    "ransac_homography": ringgrid.RansacHomographyConfig,
+    "self_undistort": ringgrid.SelfUndistortConfig,
+    "id_correction": ringgrid.IdCorrectionConfig,
+    "inner_as_outer_recovery": ringgrid.InnerAsOuterRecoveryConfig,
+}
+
+README_ALIAS_NAMES = (
+    "completion_enable",
+    "self_undistort_enable",
+    "inner_fit_required",
+    "homography_inlier_threshold_px",
+    "decode_min_margin",
+    "decode_max_dist",
+    "decode_min_confidence",
+)
 
 
 def _normalize_text_newlines(text: str) -> str:
     return text.replace("\r\n", "\n")
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    marker = f"### {heading}\n"
+    start = text.find(marker)
+    if start < 0:
+        raise AssertionError(f"missing README heading: {heading}")
+    start += len(marker)
+
+    next_h3 = text.find("\n### ", start)
+    next_h2 = text.find("\n## ", start)
+    stops = [idx for idx in (next_h3, next_h2) if idx >= 0]
+    end = min(stops) if stops else len(text)
+    return text[start:end]
 
 
 def _fixture_board() -> ringgrid.BoardLayout:
@@ -273,6 +317,7 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     cfg.edge_sample = edge_sample
 
     decode = cfg.decode
+    decode.codebook_profile = "extended"
     decode.min_decode_margin = 3
     cfg.decode = decode
 
@@ -314,6 +359,7 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     assert d["seed_proposals"]["max_seeds"] == 128
     assert d["proposal"]["max_candidates"] == 64
     assert d["edge_sample"]["n_rays"] == 56
+    assert d["decode"]["codebook_profile"] == "extended"
     assert d["decode"]["min_decode_margin"] == 3
     assert d["marker_spec"]["theta_samples"] == 120
     assert d["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
@@ -346,6 +392,36 @@ def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
     snapshot["decode"]["min_decode_margin"] = 123
     assert cfg.to_dict()["decode"]["min_decode_margin"] != 123
     assert cfg._resolved_cache is cache
+
+
+def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+
+    assert cfg.decode.to_dict() == cfg.to_dict()["decode"]
+
+    decode = cfg.decode
+    decode.codebook_profile = "extended"
+    decode.min_decode_margin = 2
+    cfg.decode = decode
+
+    assert cfg.decode.codebook_profile == "extended"
+    assert cfg.decode.min_decode_margin == 2
+    assert cfg.decode.to_dict() == cfg.to_dict()["decode"]
+
+    roundtrip = ringgrid.DecodeConfig.from_dict(cfg.to_dict()["decode"])
+    assert roundtrip.to_dict() == cfg.to_dict()["decode"]
+
+
+def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
+    cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
+    legacy_payload = dict(cfg.to_dict()["decode"])
+    del legacy_payload["codebook_profile"]
+
+    decoded = ringgrid.DecodeConfig.from_dict(legacy_payload)
+
+    assert decoded.codebook_profile == "base"
+    assert decoded.to_dict() == cfg.to_dict()["decode"]
 
 
 def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> None:
@@ -394,6 +470,26 @@ def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
     assert cfg._resolved_cache == expected
     assert cfg.to_dict() == expected
     assert cfg.to_dict()["proposal"] != baseline["proposal"]
+
+
+def test_readme_detect_config_field_guide_covers_python_surface() -> None:
+    cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "## DetectConfig Field Guide" in readme
+    assert "`cfg.board`" in readme
+
+    resolved = cfg.to_dict()
+    for key, value in resolved.items():
+        if isinstance(value, dict):
+            section = _markdown_section(readme, f"`{key}`")
+            for field in dataclasses.fields(README_SECTION_TYPES[key]):
+                assert f"`{field.name}`" in section
+        else:
+            assert f"`cfg.{key}`" in readme
+
+    for alias in README_ALIAS_NAMES:
+        assert f"`cfg.{alias}`" in readme
 
 
 def test_detector_constructor_and_classmethods() -> None:

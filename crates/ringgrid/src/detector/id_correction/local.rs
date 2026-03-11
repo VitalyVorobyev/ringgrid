@@ -17,11 +17,12 @@ use super::workspace::{
 fn config_soft_lock_blocks_override(
     marker: &DetectedMarker,
     soft_lock_enable: bool,
+    codebook_min_cyclic_dist: usize,
     candidate_id: usize,
 ) -> bool {
     let current_id = marker.id;
     soft_lock_enable
-        && is_soft_locked_assignment(marker, soft_lock_enable)
+        && is_soft_locked_assignment(marker, soft_lock_enable, codebook_min_cyclic_dist)
         && current_id.is_some()
         && current_id != Some(candidate_id)
 }
@@ -82,6 +83,7 @@ fn run_local_stage(
             if config_soft_lock_blocks_override(
                 &ws.markers[i],
                 ws.config.soft_lock_exact_decode,
+                ws.codebook_min_cyclic_dist,
                 candidate_id,
             ) {
                 continue;
@@ -172,6 +174,7 @@ fn select_topology_candidate(
         if config_soft_lock_blocks_override(
             &ws.markers[marker_index],
             ws.config.soft_lock_exact_decode,
+            ws.codebook_min_cyclic_dist,
             cand_id,
         ) {
             continue;

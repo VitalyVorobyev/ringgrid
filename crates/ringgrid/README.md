@@ -2,7 +2,8 @@
 
 Pure-Rust detector for dense coded ring calibration targets on a hex lattice.
 Detects markers with subpixel edge precision, decodes 16-sector binary IDs from
-a 893-codeword codebook, fits ellipses via Fitzgibbon's direct method with
+a shipped baseline 893-codeword profile (with an opt-in extended profile
+available for larger ID spaces), fits ellipses via Fitzgibbon's direct method with
 RANSAC, corrects projective center bias, and estimates a board-to-image
 homography. No OpenCV dependency.
 
@@ -11,7 +12,7 @@ homography. No OpenCV dependency.
 - **Subpixel edge detection** — gradient-based radial sampling produces edge points fed to a direct ellipse fit, yielding subpixel-accurate marker localization
 - **Projective center correction** — recovers the true projected center from inner/outer conic pencil geometry, correcting the systematic bias of ellipse-fit centers
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
-- **893 unique IDs** — 16-sector binary codebook with minimum cyclic Hamming distance of 5, enabling reliable identification under noise and partial occlusion
+- **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 

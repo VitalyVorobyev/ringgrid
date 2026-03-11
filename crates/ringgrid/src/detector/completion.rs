@@ -3,7 +3,7 @@ use image::GrayImage;
 use crate::conic::Ellipse;
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
-use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
+use crate::marker::codec::Codebook;
 use crate::ring::edge_sample::EdgeSampleResult;
 use crate::DetectedMarker;
 
@@ -277,6 +277,8 @@ pub(crate) fn complete_with_h(
     if !params.enable {
         return CompletionStats::default();
     }
+    let active_codebook_min_cyclic_dist =
+        Codebook::from_profile(config.decode.codebook_profile).min_cyclic_dist() as u8;
 
     let (w, h_img) = gray.dimensions();
     let w_f = w as f64;
@@ -376,7 +378,7 @@ pub(crate) fn complete_with_h(
         if params.require_perfect_decode {
             let is_perfect = decode_result
                 .as_ref()
-                .is_some_and(|d| d.dist == 0 && d.margin >= CODEBOOK_MIN_CYCLIC_DIST as u8);
+                .is_some_and(|d| d.dist == 0 && d.margin >= active_codebook_min_cyclic_dist);
             if !is_perfect {
                 tracing::trace!(
                     "Completion id={} gate_reject={} (dist={:?}, margin={:?})",

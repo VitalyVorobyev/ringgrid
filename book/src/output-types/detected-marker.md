@@ -8,7 +8,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | `Option<usize>` | Codebook index (0--892). `None` if decoding was rejected due to insufficient confidence or Hamming distance. |
+| `id` | `Option<usize>` | Codebook index in the active profile. `None` if decoding was rejected due to insufficient confidence or Hamming distance. |
 | `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters (`BoardLayout::xy_mm` semantics). Present only when `id` is valid for the active board layout. |
 | `confidence` | `f32` | Combined detection and decode confidence in `[0, 1]`. |
 | `center` | `[f64; 2]` | Marker center in raw image pixel coordinates `[x, y]`. |

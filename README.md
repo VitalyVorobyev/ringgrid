@@ -21,7 +21,7 @@ Detection overlay example:
 
 ## How It Works
 
-ringgrid uses dual concentric ring markers with a 16-sector binary code band between the inner and outer rings. Each marker encodes a unique ID from a 893-codeword codebook with current minimum cyclic Hamming distance 2. The shipped codebook artifacts are generated reproducibly by `tools/gen_codebook.py --n 893 --seed 1`.
+ringgrid uses dual concentric ring markers with a 16-sector binary code band between the inner and outer rings. Each marker encodes a unique ID from the shipped baseline 893-codeword profile with minimum cyclic Hamming distance 2. An additive opt-in extended profile grows that to 2180 codewords with minimum cyclic Hamming distance 1 for advanced workflows that need more IDs without introducing new polarity ambiguity beyond the shipped baseline. The shipped codebook artifacts are generated reproducibly by `tools/gen_codebook.py --n 893 --seed 1`.
 
 **Why rings?** Circles project to ellipses under perspective, and ellipse boundaries can be localized to subpixel precision via gradient-based edge sampling and direct algebraic fitting (Fitzgibbon's method). The dual-ring design enables projective center correction — recovering the true projected center from the inner/outer conic pencil, which corrects the systematic bias inherent in ellipse-fit centers. This yields significantly better accuracy than corner-based targets (checkerboards, ArUco) at oblique viewing angles.
 

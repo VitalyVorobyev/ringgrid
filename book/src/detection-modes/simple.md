@@ -10,7 +10,7 @@ the pipeline runs once in raw image coordinates:
 
 1. Gradient voting and NMS produce candidate centers.
 2. Outer and inner ellipses are fitted via RANSAC.
-3. 16-sector codes are sampled and matched against the 893-codeword codebook.
+3. 16-sector codes are sampled and matched against the active embedded codebook profile (`base` by default).
 4. Spatial and ID-based deduplication removes redundant detections.
 5. If enough decoded markers exist, a RANSAC homography is fitted.
 6. Completion fills in missing markers at H-projected positions.

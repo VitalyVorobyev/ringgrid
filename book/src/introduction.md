@@ -1,6 +1,6 @@
 # Introduction
 
-**ringgrid** is a pure-Rust library for detecting dense coded ring calibration targets arranged on a hexagonal lattice. It detects markers with subpixel accuracy, decodes unique IDs from a 893-codeword codebook, estimates a board-to-image homography, and returns structured results ready for downstream camera calibration.
+**ringgrid** is a pure-Rust library for detecting dense coded ring calibration targets arranged on a hexagonal lattice. It detects markers with subpixel accuracy, decodes unique IDs from the shipped baseline 893-codeword profile (with an opt-in extended profile available for larger ID spaces), estimates a board-to-image homography, and returns structured results ready for downstream camera calibration.
 
 > *No OpenCV bindings — all image processing is implemented in Rust.*
 
@@ -21,14 +21,14 @@ Each ringgrid marker consists of two concentric rings — an outer ring and an i
 
 2. **Projective center correction.** Under perspective projection, the center of a fitted ellipse is *not* the true projected center of the circle. ringgrid fits both the outer and inner ring ellipses and uses their conic pencil to recover the unbiased projected center — without requiring camera intrinsics.
 
-3. **Large identification capacity.** The 16-sector binary code band provides 893 unique codewords with current minimum cyclic Hamming distance 2, enabling rotation-invariant decoding and unambiguous matches at distance 1.
+3. **Large identification capacity.** The 16-sector binary code band ships with a stable 893-codeword baseline profile at minimum cyclic Hamming distance 2, plus an opt-in 2180-codeword extended profile when larger ID capacity matters more than the baseline ambiguity guarantee without introducing new polarity ambiguity beyond the shipped baseline.
 
 ## What You Get
 
 The detector returns a `DetectionResult` containing:
 
 - A list of `DetectedMarker` structs, each with:
-  - Decoded ID (from the 893-codeword codebook)
+  - Decoded ID (from the active codebook profile; baseline by default)
   - Subpixel center in image coordinates
   - Fitted outer and inner ellipses
   - Quality metrics (fit residuals, decode confidence)

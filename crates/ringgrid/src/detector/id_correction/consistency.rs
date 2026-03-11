@@ -186,8 +186,11 @@ pub(super) fn scrub_inconsistent_ids(
             to_clear.push(i);
             continue;
         }
-        let is_soft_locked =
-            is_soft_locked_assignment(&ws.markers[i], ws.config.soft_lock_exact_decode);
+        let is_soft_locked = is_soft_locked_assignment(
+            &ws.markers[i],
+            ws.config.soft_lock_exact_decode,
+            ws.codebook_min_cyclic_dist,
+        );
         let soft_locked_anchor_contradiction = matches!(stage, ScrubStage::Post)
             && is_soft_locked
             && support_anchor == 0
@@ -214,6 +217,7 @@ pub(super) fn scrub_inconsistent_ids(
             &mut ws.trust,
             &mut ws.stats,
             ws.config.soft_lock_exact_decode,
+            ws.codebook_min_cyclic_dist,
             stage,
         ) {
             cleared += 1;

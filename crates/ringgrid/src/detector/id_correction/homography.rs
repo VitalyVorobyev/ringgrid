@@ -21,11 +21,12 @@ fn seed_allowed_for_homography(trust: Trust) -> bool {
 fn config_soft_lock_blocks_override(
     marker: &DetectedMarker,
     soft_lock_enable: bool,
+    codebook_min_cyclic_dist: usize,
     candidate_id: usize,
 ) -> bool {
     let current_id = marker.id;
     soft_lock_enable
-        && is_soft_locked_assignment(marker, soft_lock_enable)
+        && is_soft_locked_assignment(marker, soft_lock_enable, codebook_min_cyclic_dist)
         && current_id.is_some()
         && current_id != Some(candidate_id)
 }
@@ -158,7 +159,13 @@ fn collect_homography_assignments(
         if !eligible || !marker_center_is_finite(m) {
             continue;
         }
-        if m.id.is_some() && is_soft_locked_assignment(m, ws.config.soft_lock_exact_decode) {
+        if m.id.is_some()
+            && is_soft_locked_assignment(
+                m,
+                ws.config.soft_lock_exact_decode,
+                ws.codebook_min_cyclic_dist,
+            )
+        {
             continue;
         }
         let board_hint = homography_project(&model.h_inv, m.center[0], m.center[1]);
@@ -239,8 +246,12 @@ fn apply_homography_assignments(
         if matches!(ws.trust[i], Trust::AnchorStrong | Trust::AnchorWeak) {
             continue;
         }
-        if config_soft_lock_blocks_override(&ws.markers[i], ws.config.soft_lock_exact_decode, a.id)
-        {
+        if config_soft_lock_blocks_override(
+            &ws.markers[i],
+            ws.config.soft_lock_exact_decode,
+            ws.codebook_min_cyclic_dist,
+            a.id,
+        ) {
             continue;
         }
         claimed_ids.insert(a.id);

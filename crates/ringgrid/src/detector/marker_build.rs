@@ -266,9 +266,10 @@ pub(crate) fn compute_marker_confidence(
     inner_fit_config: &InnerFitConfig,
 ) -> f32 {
     // 1. Decode signal (base): use normalised Hamming distance only.
-    // d.confidence = (1−dist/6) × (margin/CODEBOOK_MIN_CYCLIC_DIST) which halves
-    // the value for the common margin=1 case.  Using distance alone keeps the
-    // factor consistent across margin values while still penalising close calls.
+    // d.confidence = (1−dist/6) × (margin/profile_min_cyclic_dist), which
+    // can overemphasize small profile-specific margin differences. Using
+    // distance alone keeps this factor consistent while still penalising close
+    // calls.
     let decode_conf = decode_result
         .map(|d| (1.0 - d.dist as f32 / 6.0).clamp(0.0, 1.0))
         .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));

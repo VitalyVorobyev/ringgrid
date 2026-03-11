@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
 use crate::detector::marker_build::DetectedMarker;
-use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
 
 use super::index::BoardIndex;
 use super::types::{IdCorrectionStats, RecoverySource, ScrubStage, Trust};
@@ -17,6 +16,7 @@ pub(super) struct IdCorrectionWorkspace<'a> {
     pub(super) stats: IdCorrectionStats,
     pub(super) config: &'a IdCorrectionConfig,
     pub(super) anchor_h: Option<nalgebra::Matrix3<f64>>,
+    pub(super) codebook_min_cyclic_dist: usize,
 }
 
 impl<'a> IdCorrectionWorkspace<'a> {
@@ -24,6 +24,7 @@ impl<'a> IdCorrectionWorkspace<'a> {
         markers: &'a mut Vec<DetectedMarker>,
         board: &BoardLayout,
         config: &'a IdCorrectionConfig,
+        codebook_min_cyclic_dist: usize,
     ) -> Self {
         let board_index = BoardIndex::build(board);
         let outer_radii_px = compute_outer_radii_px(markers);
@@ -38,6 +39,7 @@ impl<'a> IdCorrectionWorkspace<'a> {
             stats: IdCorrectionStats::default(),
             config,
             anchor_h: None,
+            codebook_min_cyclic_dist,
         }
     }
 
@@ -67,15 +69,19 @@ fn marker_outer_radius_px(marker: &DetectedMarker) -> Option<f64> {
 }
 
 #[inline]
-pub(super) fn is_exact_decode(marker: &DetectedMarker) -> bool {
+pub(super) fn is_exact_decode(marker: &DetectedMarker, codebook_min_cyclic_dist: usize) -> bool {
     marker
         .decode
         .as_ref()
-        .is_some_and(|d| d.best_dist == 0 && usize::from(d.margin) >= CODEBOOK_MIN_CYCLIC_DIST)
+        .is_some_and(|d| d.best_dist == 0 && usize::from(d.margin) >= codebook_min_cyclic_dist)
 }
 
 #[inline]
-pub(super) fn is_soft_locked_assignment(marker: &DetectedMarker, soft_lock_enable: bool) -> bool {
+pub(super) fn is_soft_locked_assignment(
+    marker: &DetectedMarker,
+    soft_lock_enable: bool,
+    codebook_min_cyclic_dist: usize,
+) -> bool {
     if !soft_lock_enable {
         return false;
     }
@@ -83,7 +89,7 @@ pub(super) fn is_soft_locked_assignment(marker: &DetectedMarker, soft_lock_enabl
         return false;
     };
     marker.decode.as_ref().is_some_and(|d| {
-        d.best_dist == 0 && usize::from(d.margin) >= CODEBOOK_MIN_CYCLIC_DIST && d.best_id == id
+        d.best_dist == 0 && usize::from(d.margin) >= codebook_min_cyclic_dist && d.best_id == id
     })
 }
 
@@ -172,13 +178,18 @@ pub(super) fn clear_marker_id(
     trust: &mut [Trust],
     stats: &mut IdCorrectionStats,
     soft_lock_enable: bool,
+    codebook_min_cyclic_dist: usize,
     stage: ScrubStage,
 ) -> bool {
     if markers[marker_index].id.is_none() {
         trust[marker_index] = Trust::Untrusted;
         return false;
     }
-    let was_soft_locked = is_soft_locked_assignment(&markers[marker_index], soft_lock_enable);
+    let was_soft_locked = is_soft_locked_assignment(
+        &markers[marker_index],
+        soft_lock_enable,
+        codebook_min_cyclic_dist,
+    );
     markers[marker_index].id = None;
     trust[marker_index] = Trust::Untrusted;
     stats.n_ids_cleared += 1;

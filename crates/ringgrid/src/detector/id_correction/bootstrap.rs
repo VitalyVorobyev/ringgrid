@@ -10,7 +10,7 @@ pub(super) fn bootstrap_trust_anchors(ws: &mut IdCorrectionWorkspace<'_>) -> usi
         if !ws.board_index.id_to_xy.contains_key(&id) {
             continue;
         }
-        let exact = is_exact_decode(&ws.markers[i]);
+        let exact = is_exact_decode(&ws.markers[i], ws.codebook_min_cyclic_dist);
         let decode_conf = ws.markers[i]
             .decode
             .as_ref()

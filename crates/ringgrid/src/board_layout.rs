@@ -171,11 +171,12 @@ impl From<BoardLayoutValidationError> for BoardLayoutLoadError {
 }
 /// A single marker's position on the calibration board.
 ///
-/// Each marker has a unique `id` (codebook index 0–892), a physical position
-/// `xy_mm` on the board, and optional hex-lattice axial coordinates `(q, r)`.
+/// Each marker has a unique `id` (codebook index in the active profile), a
+/// physical position `xy_mm` on the board, and optional hex-lattice axial
+/// coordinates `(q, r)`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BoardMarker {
-    /// Unique marker ID (codebook index, 0–892).
+    /// Unique marker ID (codebook index in the active profile).
     pub id: usize,
     /// Position on the board in millimeters `[x, y]`.
     pub xy_mm: [f32; 2],

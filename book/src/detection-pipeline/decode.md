@@ -1,6 +1,6 @@
 # Code Decoding
 
-After the outer ellipse is fitted, the detector samples the code band — the annular region between the inner and outer rings — to read the marker's 16-sector binary code and match it against the 893-codeword codebook.
+After the outer ellipse is fitted, the detector samples the code band — the annular region between the inner and outer rings — to read the marker's 16-sector binary code and match it against the active embedded codebook profile. The shipped default is the 893-codeword `base` profile; `extended` is explicit opt-in.
 
 ## Code Band Sampling
 
@@ -27,7 +27,7 @@ This local thresholding adapts to the actual contrast of each marker, handling v
 
 ## Cyclic Codebook Matching
 
-The 16-bit binary word is matched against the embedded codebook (893 codewords) with **cyclic rotation search**:
+The 16-bit binary word is matched against the selected embedded codebook profile with **cyclic rotation search**:
 
 - For each of the 16 possible rotational offsets, compute the Hamming distance between the observed word and each codebook entry
 - Also check the **inverted** (bitwise NOT) word at each rotation, handling both dark-on-light and light-on-dark contrast
@@ -37,7 +37,7 @@ The best match is accepted based on:
 
 - **Hamming distance** (`best_dist`): number of bit disagreements with the closest codeword
 - **Margin** (`margin`): gap between the best and second-best Hamming distances
-- **Decode confidence**: `clamp(1 - dist/6) × clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)`, a heuristic combining closeness and uniqueness. For the shipped profile, `CODEBOOK_MIN_CYCLIC_DIST = 2`.
+- **Decode confidence**: `clamp(1 - dist/6) × clamp(margin / active_profile_min_cyclic_dist)`, a heuristic combining closeness and uniqueness. For the shipped `base` profile, the minimum cyclic Hamming distance is `2`; for the opt-in `extended` profile it is `1`.
 
 ## DecodeMetrics
 
@@ -52,6 +52,6 @@ The decoding stage produces a `DecodeMetrics` struct:
 | `margin` | `u8` | Gap to second-best match |
 | `decode_confidence` | `f32` | Combined confidence score in [0, 1] |
 
-A `best_dist` of 0 means a perfect match. The minimum cyclic Hamming distance in the codebook is 2, so a distance of 1 is still an unambiguous match.
+A `best_dist` of 0 means a perfect match. In the shipped `base` profile, minimum cyclic Hamming distance is `2`, so a distance of `1` is still unambiguous. The opt-in `extended` profile weakens that minimum distance to `1` in exchange for more available IDs.
 
 **Source**: `marker/decode.rs`, `marker/codec.rs`, `marker/codebook.rs`

@@ -35,7 +35,7 @@ The improvement is measurable: on clean synthetic images, projective center corr
 
 ## Large Identification Capacity
 
-Each marker carries a unique identity encoded in a 16-sector binary code band between the inner and outer rings. The shipped baseline codebook contains **893 codewords** with minimum cyclic Hamming distance **2**, while also enforcing rotational uniqueness and pairwise uniqueness under cyclic rotation.
+Each marker carries a unique identity encoded in a 16-sector binary code band between the inner and outer rings. The shipped baseline codebook contains **893 codewords** with minimum cyclic Hamming distance **2**, while an opt-in extended profile expands that to **2180 codewords** at minimum cyclic Hamming distance **1**. Both profiles enforce rotational uniqueness and pairwise uniqueness under cyclic rotation, and the extended profile avoids new complement-equivalent duplicates beyond the fixed baseline.
 
 This design provides several advantages over other encoding approaches:
 

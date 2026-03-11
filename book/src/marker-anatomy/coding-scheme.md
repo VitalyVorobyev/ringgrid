@@ -3,9 +3,9 @@
 Each ringgrid marker carries a unique identity encoded as a binary pattern in
 the annular **code band** between its inner and outer rings. The code band is
 divided into 16 equal angular sectors, each rendered as either black or white,
-forming a 16-bit codeword. A pre-computed codebook of 893 codewords allows the
-detector to identify markers robustly despite noise, blur, and unknown
-orientation.
+forming a 16-bit codeword. The detector ships with a stable 893-codeword
+baseline profile and an opt-in extended profile for larger ID spaces, while
+still handling unknown orientation through cyclic matching.
 
 ## Sector layout
 
@@ -24,24 +24,37 @@ codebook matching algorithm handles this by trying all 16 cyclic rotations
 
 ## The codebook
 
-The codebook contains **893 codewords**, each a 16-bit value. These codewords
-are selected to maximize the **minimum cyclic Hamming distance** between any
-pair, which determines the code's error tolerance.
+ringgrid embeds two related profiles:
+
+| Profile | Size | Minimum cyclic Hamming distance | Intended use |
+|----------|------|---------------------------------|--------------|
+| `base` | 893 codewords | 2 | Default shipped profile with stable IDs `0..892` |
+| `extended` | 2180 codewords | 1 | Explicit opt-in profile when ID capacity matters more than the baseline ambiguity guarantee |
 
 Key codebook properties:
 
 | Property | Value |
 |----------|-------|
 | Codeword length | 16 bits |
-| Codebook size | 893 codewords |
-| Minimum cyclic Hamming distance | 2 |
+| Baseline size | 893 codewords |
+| Extended size | 2180 codewords |
+| Baseline minimum cyclic Hamming distance | 2 |
+| Extended minimum cyclic Hamming distance | 1 |
 | Generator seed | 1 |
 
-The minimum cyclic Hamming distance of 2 means that for any two distinct
-codewords A and B, the Hamming distance between A and every cyclic rotation of
-B is at least 2. This guarantees that a single-bit error will not silently
-produce a different valid codeword, though it is not sufficient for guaranteed
-single-bit error *correction* (which would require a minimum distance of 3).
+The baseline minimum cyclic Hamming distance of 2 means that for any two
+distinct baseline codewords A and B, the Hamming distance between A and every
+cyclic rotation of B is at least 2. This guarantees that a single-bit error
+will not silently produce a different valid baseline codeword, though it is not
+sufficient for guaranteed single-bit error *correction* (which would require a
+minimum distance of 3).
+
+The `extended` profile keeps the same baseline prefix but appends the remaining
+rotationally unique 16-bit words whose complement classes are not already
+claimed by the shipped profile. That expands capacity substantially without
+introducing new polarity ambiguity beyond the fixed baseline, but still lowers
+the minimum cyclic Hamming distance to 1 and therefore weakens the baseline
+profile's ambiguity guarantee. This is why `extended` is explicit opt-in.
 
 Additional constraints enforced during codebook generation:
 
@@ -59,8 +72,14 @@ pub const CODEBOOK_BITS: usize = 16;
 pub const CODEBOOK_N: usize = 893;
 pub const CODEBOOK_MIN_CYCLIC_DIST: usize = 2;
 pub const CODEBOOK_SEED: u64 = 1;
+pub const CODEBOOK_EXTENDED_N: usize = 2180;
+pub const CODEBOOK_EXTENDED_MIN_CYCLIC_DIST: usize = 1;
 
 pub const CODEBOOK: [u16; 893] = [
+    0x035D, 0x1F95, 0x0B1D, /* ... */
+];
+
+pub const CODEBOOK_EXTENDED: [u16; 2180] = [
     0x035D, 0x1F95, 0x0B1D, /* ... */
 ];
 ```
@@ -89,6 +108,8 @@ points within the code band. Sampling is controlled by `DecodeConfig`:
 
 ```rust
 pub struct DecodeConfig {
+    /// Embedded codebook profile.
+    pub codebook_profile: CodebookProfile, // default: base
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     pub code_band_ratio: f32,        // default: 0.76
     /// Number of angular samples per sector.
@@ -138,7 +159,7 @@ bit 0. This produces a 16-bit **observed word**.
 
 ### 4. Codebook matching
 
-The observed word is matched against all 893 codebook entries. For each
+The observed word is matched against the selected embedded profile. For each
 codeword, all 16 cyclic rotations are tried, and the Hamming distance is
 computed for each:
 
@@ -155,23 +176,28 @@ The better of the normal and inverted matches is selected based on the
 confidence heuristic:
 
 ```
-confidence = clamp(1 - dist/6) * clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)
+confidence = clamp(1 - dist/6) * clamp(margin / active_profile_min_cyclic_dist)
 ```
 
 where `margin = second_best_dist - best_dist`. In the shipped baseline profile,
-`CODEBOOK_MIN_CYCLIC_DIST = 2`, so a perfect decode with margin 2 or greater
-scores 1.0. High confidence requires both a low distance to the best match and
-a comfortable gap to the runner-up.
+`active_profile_min_cyclic_dist = 2`, so a perfect decode with margin 2 or
+greater scores 1.0. In the opt-in `extended` profile that denominator is `1`,
+which makes exact matches easier to accept but reflects the profile's weaker
+minimum-distance guarantee. High confidence still requires both a low distance
+to the best match and a comfortable gap to the runner-up.
 
 A decode is accepted only if:
 - `best_dist <= max_decode_dist` (default: 3)
 - `margin >= min_decode_margin` (default: 1)
 - `confidence >= min_decode_confidence` (default: 0.30)
 
-The generator script starts from a higher target distance and relaxes it until
-it can reach the requested count. For the committed `--n 893 --seed 1`
-artifacts, the achieved minimum cyclic Hamming distance recorded in
-`tools/codebook.json` and `crates/ringgrid/src/marker/codebook.rs` is `2`.
+The generator preserves the committed baseline profile as the fixed prefix, then
+appends the remaining valid rotational equivalence classes whose complement
+classes are not already claimed by the shipped profile to form the `extended`
+profile. For the committed `--n 893 --seed 1` artifacts:
+
+- baseline minimum cyclic Hamming distance: `2`
+- extended minimum cyclic Hamming distance: `1`
 
 ## Decode metrics
 
@@ -230,6 +256,10 @@ fixed polarity, the decoder tries both:
 2. Match `!observed_word` (bitwise complement) against the codebook (inverted
    polarity).
 3. Select whichever match yields higher confidence.
+
+The appended profile entries exclude new complement-equivalent duplicates, so
+enabling `extended` does not widen the baseline profile's existing polarity
+ambiguity.
 
 The `DecodeDiagnostics` struct records whether the inverted polarity was used
 via the `inverted_used` flag.

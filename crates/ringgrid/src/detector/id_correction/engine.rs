@@ -1,6 +1,7 @@
 use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
 use crate::detector::marker_build::DetectedMarker;
+use crate::marker::codec::{Codebook, CodebookProfile};
 
 use super::bootstrap::bootstrap_trust_anchors;
 use super::cleanup::{cleanup_unverified_markers, finalize_correction_stats};
@@ -18,8 +19,10 @@ pub(crate) fn verify_and_correct_ids(
     markers: &mut Vec<DetectedMarker>,
     board: &BoardLayout,
     config: &IdCorrectionConfig,
+    codebook_profile: CodebookProfile,
 ) -> IdCorrectionStats {
-    let mut ws = IdCorrectionWorkspace::new(markers, board, config);
+    let codebook_min_cyclic_dist = Codebook::from_profile(codebook_profile).min_cyclic_dist();
+    let mut ws = IdCorrectionWorkspace::new(markers, board, config, codebook_min_cyclic_dist);
     if !config.enable || ws.markers.is_empty() {
         return ws.stats;
     }
@@ -64,7 +67,7 @@ mod tests {
     use super::*;
     use crate::conic::Ellipse;
     use crate::detector::id_correction::index::BoardIndex;
-    use crate::marker::codebook::CODEBOOK_MIN_CYCLIC_DIST;
+    use crate::marker::codec::Codebook;
     use crate::marker::decode::DecodeMetrics;
 
     fn marker_with_id(
@@ -122,7 +125,12 @@ mod tests {
         ];
         let cfg = IdCorrectionConfig::default();
 
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
+        let ws = IdCorrectionWorkspace::new(
+            &mut markers,
+            &board,
+            &cfg,
+            Codebook::default().min_cyclic_dist(),
+        );
         assert_eq!(ws.markers.len(), 2);
         assert_eq!(ws.trust.len(), 2);
         assert_eq!(ws.outer_radii_px.len(), 2);
@@ -137,7 +145,12 @@ mod tests {
             marker_no_id([30.0, 40.0], 0.2),
         ];
 
-        let stats = verify_and_correct_ids(&mut markers, &board, &IdCorrectionConfig::default());
+        let stats = verify_and_correct_ids(
+            &mut markers,
+            &board,
+            &IdCorrectionConfig::default(),
+            CodebookProfile::Base,
+        );
         assert_eq!(stats.n_verified, 0);
         assert_eq!(stats.n_ids_recovered, 0);
         assert!(markers.iter().all(|m| m.id.is_none()));
@@ -161,6 +174,7 @@ mod tests {
 
         let scale = 4.0f64;
         let mut markers = Vec::<DetectedMarker>::new();
+        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];
             markers.push(marker_with_id(
@@ -168,7 +182,7 @@ mod tests {
                 [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale],
                 0.95,
                 0,
-                CODEBOOK_MIN_CYCLIC_DIST as u8,
+                min_cyclic_dist,
             ));
         }
         let cxy = board_index.id_to_xy[&center_id];
@@ -188,7 +202,7 @@ mod tests {
             ..IdCorrectionConfig::default()
         };
 
-        let stats = verify_and_correct_ids(&mut markers, &board, &cfg);
+        let stats = verify_and_correct_ids(&mut markers, &board, &cfg, CodebookProfile::Base);
         assert!(stats.n_ids_cleared_inconsistent_pre >= 1);
         assert!(markers.iter().any(|m| m.id == Some(center_id)));
     }
@@ -205,6 +219,7 @@ mod tests {
 
         let scale = 4.0f64;
         let mut base = Vec::<DetectedMarker>::new();
+        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];
             base.push(marker_with_id(
@@ -212,7 +227,7 @@ mod tests {
                 [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale],
                 0.95,
                 0,
-                CODEBOOK_MIN_CYCLIC_DIST as u8,
+                min_cyclic_dist,
             ));
         }
         let cxy = board_index.id_to_xy[&center_id];
@@ -230,8 +245,8 @@ mod tests {
 
         let mut run_a = base.clone();
         let mut run_b = base;
-        let stats_a = verify_and_correct_ids(&mut run_a, &board, &cfg);
-        let stats_b = verify_and_correct_ids(&mut run_b, &board, &cfg);
+        let stats_a = verify_and_correct_ids(&mut run_a, &board, &cfg, CodebookProfile::Base);
+        let stats_b = verify_and_correct_ids(&mut run_b, &board, &cfg, CodebookProfile::Base);
 
         assert_eq!(
             run_a.iter().map(|m| m.id).collect::<Vec<_>>(),

@@ -333,8 +333,12 @@ pub(super) fn finalize_premerge(
     }
 
     if config.id_correction.enable {
-        let stats =
-            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        let stats = verify_and_correct_ids(
+            &mut corrected_markers,
+            &config.board,
+            &config.id_correction,
+            config.decode.codebook_profile,
+        );
         log_id_correction_summary(&stats);
     }
 
@@ -404,8 +408,12 @@ pub(super) fn run(
     }
 
     if config.id_correction.enable {
-        let stats =
-            verify_and_correct_ids(&mut corrected_markers, &config.board, &config.id_correction);
+        let stats = verify_and_correct_ids(
+            &mut corrected_markers,
+            &config.board,
+            &config.id_correction,
+            config.decode.codebook_profile,
+        );
         log_id_correction_summary(&stats);
     }
 

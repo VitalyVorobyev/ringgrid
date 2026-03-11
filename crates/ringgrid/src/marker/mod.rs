@@ -6,5 +6,6 @@ mod marker_spec;
 pub mod codebook;
 pub mod codec;
 
+pub use codec::CodebookProfile;
 pub use decode::{DecodeConfig, DecodeMetrics};
 pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};

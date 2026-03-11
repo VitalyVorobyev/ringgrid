@@ -57,7 +57,7 @@ These two structs provide detailed quality metrics for each detected marker. `Fi
 | Field | Type | Description |
 |-------|------|-------------|
 | `observed_word` | `u16` | Raw 16-bit word sampled from the code band. Each bit corresponds to one sector (bright = 1, dark = 0). |
-| `best_id` | `usize` | Index of the best-matching codebook entry (0--892). |
+| `best_id` | `usize` | Index of the best-matching codebook entry in the active profile. |
 | `best_rotation` | `u8` | Cyclic rotation (0--15) that produced the best match. Each unit is 22.5 degrees. |
 | `best_dist` | `u8` | Hamming distance between the observed word (at best rotation) and the codebook entry. |
 | `margin` | `u8` | Gap between the best and second-best Hamming distances: `second_best_dist - best_dist`. |
@@ -84,7 +84,7 @@ These two structs provide detailed quality metrics for each detected marker. `Fi
 | 1 | Risky -- two codewords are nearly tied |
 | 0 | Ambiguous -- the match could be wrong |
 
-**Decode confidence** (`decode_confidence`) is a composite heuristic in `[0, 1]` that accounts for both Hamming distance and margin. Higher values indicate more reliable decodes. The default minimum threshold is 0.15 (configurable via `DecodeConfig::min_decode_confidence`).
+**Decode confidence** (`decode_confidence`) is a composite heuristic in `[0, 1]` that accounts for both Hamming distance and margin. Higher values indicate more reliable decodes. The default minimum threshold is 0.30 (configurable via `DecodeConfig::min_decode_confidence`).
 
 ### Polarity handling
 

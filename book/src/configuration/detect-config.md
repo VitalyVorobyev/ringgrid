@@ -81,7 +81,7 @@ Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `Detect
 | `proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
 | `seed_proposals` | `SeedProposalParams` | merge=3.0, score=1e12, max=512 | Controls seed injection for multi-pass detection. |
 | `edge_sample` | `EdgeSampleConfig` | (derived from scale) | Radial edge sampling range and ray count. `r_min`, `r_max` are auto-derived. |
-| `decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry. |
+| `decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry; `codebook_profile` defaults to `base`. |
 | `marker_spec` | `MarkerSpec` | (derived from board) | Marker geometry specification. `r_inner_expected` is auto-derived from board inner/outer radius ratio. |
 | `inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
 | `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None` or `ProjectiveCenter`. |

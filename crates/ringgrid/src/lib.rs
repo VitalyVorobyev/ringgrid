@@ -3,7 +3,8 @@
 //! Pure-Rust detector for dense coded ring calibration targets on a hex lattice.
 //!
 //! ringgrid detects ring markers in grayscale images, decodes their 16-sector
-//! binary IDs from a 893-codeword codebook, fits subpixel ellipses via
+//! binary IDs from the shipped baseline 893-codeword profile (with an opt-in
+//! extended profile available for advanced use), fits subpixel ellipses via
 //! Fitzgibbon's direct method with RANSAC, and estimates a board-to-image
 //! homography. No OpenCV dependency — all image processing is in Rust.
 //!
@@ -84,7 +85,7 @@ pub use homography::RansacHomographyConfig;
 
 // Sub-configs not re-exported from detector::config
 pub use detector::ProposalConfig;
-pub use marker::DecodeConfig;
+pub use marker::{CodebookProfile, DecodeConfig};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 // Geometry

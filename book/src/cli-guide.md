@@ -189,8 +189,11 @@ CLI `ringgrid detect` uses the regular config-driven detect flow.
 
 ### `ringgrid codebook-info` -- Print codebook statistics
 
-Prints information about the embedded 16-bit codebook: number of codewords, minimum
-cyclic Hamming distance, and generator seed.
+Prints information about the embedded 16-bit codebook profiles. The output shows
+the shipped default `base` profile plus the opt-in `extended` profile.
+
+`ringgrid detect` continues to use `base` unless a config file sets
+`decode.codebook_profile` to `extended`.
 
 ```bash
 ringgrid codebook-info
@@ -198,14 +201,23 @@ ringgrid codebook-info
 
 Example output:
 
-```
-ringgrid embedded codebook
-  bits per codeword:    16
-  number of codewords:  893
-  min cyclic Hamming:   2
-  generator seed:       1
-  first codeword:       0x035D
-  last codeword:        0x0E63
+```text
+ringgrid embedded codebook profiles
+  default profile:      base
+  base:
+    bits per codeword:    16
+    number of codewords:  893
+    min cyclic Hamming:   2
+    generator seed:       1
+    first codeword:       0x035D
+    last codeword:        0x0E63
+  extended:
+    bits per codeword:    16
+    number of codewords:  2180
+    min cyclic Hamming:   1
+    generator seed:       1
+    first codeword:       0x035D
+    last codeword:        0x2CD3
 ```
 
 ### `ringgrid board-info` -- Print default board specification
@@ -219,24 +231,27 @@ ringgrid board-info
 
 ### `ringgrid decode-test` -- Decode a 16-bit word
 
-Tests a hex word against the embedded codebook and prints the best match with
-confidence metrics. Useful for debugging code sampling issues.
+Tests a hex word against the selected embedded codebook profile and prints the
+best match with confidence metrics. Useful for debugging code sampling issues.
 
 ```bash
-ringgrid decode-test --word 0xABCD
+ringgrid decode-test --word 0x035D
+# or:
+ringgrid decode-test --word 0x0001 --profile extended
 ```
 
 Example output:
 
-```
-Input word:   0xABCD (binary: 1010101111001101)
+```text
+Input word:   0x035D (binary: 0000001101011101)
+Profile:      base
 Best match:
-  id:         42
-  codeword:   0xABC5
+  id:         0
+  codeword:   0x035D
   rotation:   0 sectors
-  distance:   1 bits
+  distance:   0 bits
   margin:     2 bits
-  confidence: 0.875
+  confidence: 1.000
 ```
 
 ## Logging

@@ -99,8 +99,11 @@ pub(super) fn count_inconsistent_remaining(ws: &IdCorrectionWorkspace<'_>) -> us
             continue;
         }
         let evidence = consistency_evidence_for_id(ws, i, id);
-        let is_soft_locked =
-            is_soft_locked_assignment(&ws.markers[i], ws.config.soft_lock_exact_decode);
+        let is_soft_locked = is_soft_locked_assignment(
+            &ws.markers[i],
+            ws.config.soft_lock_exact_decode,
+            ws.codebook_min_cyclic_dist,
+        );
         if should_clear_by_consistency(evidence, is_soft_locked, ws.config) {
             n += 1;
         }

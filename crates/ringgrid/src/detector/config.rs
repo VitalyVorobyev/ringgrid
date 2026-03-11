@@ -48,8 +48,8 @@ pub struct CompletionParams {
     pub max_attempts: Option<usize>,
     /// Skip attempts whose projected center is too close to the image boundary.
     pub image_margin_px: f32,
-    /// Require a perfect decode (dist=0 and margin ≥ CODEBOOK_MIN_CYCLIC_DIST) for
-    /// a completion marker to be accepted.
+    /// Require a perfect decode (dist=0 and margin ≥ the active profile's
+    /// minimum cyclic Hamming distance) for a completion marker to be accepted.
     ///
     /// When homography prediction accuracy is low (e.g. significant lens distortion
     /// without a calibrated mapper), the H-projected seed can be several pixels off.

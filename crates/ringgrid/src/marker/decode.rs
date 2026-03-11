@@ -13,18 +13,19 @@ use crate::conic::Ellipse;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 
-use super::codec::Codebook;
+use super::codec::{Codebook, CodebookProfile};
 
 /// Decode quality metrics for a detected marker.
 ///
 /// Reports how confidently a 16-sector binary code was matched against the
-/// 893-codeword codebook. A `best_dist` of 0 means an exact match; `margin`
-/// measures how far the second-best codeword is (higher = more confident).
+/// active embedded codebook profile. A `best_dist` of 0 means an exact match;
+/// `margin` measures how far the second-best codeword is (higher = more
+/// confident).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeMetrics {
     /// Raw 16-bit word sampled from the code band.
     pub observed_word: u16,
-    /// Best-matching codebook entry index (0–892).
+    /// Best-matching codebook entry index within the active profile.
     pub best_id: usize,
     /// Cyclic rotation (0–15 sectors) that produced the best match.
     pub best_rotation: u8,
@@ -35,10 +36,10 @@ pub struct DecodeMetrics {
     pub margin: u8,
     /// Combined confidence heuristic in \[0, 1\].
     ///
-    /// Equals `clamp(1 - dist/6) * clamp(margin / CODEBOOK_MIN_CYCLIC_DIST)`.
-    /// A margin equal to `CODEBOOK_MIN_CYCLIC_DIST` (the minimum attainable for
-    /// a correct decode) yields `conf_margin = 1.0`, so a perfect decode scores
-    /// 1.0 regardless of the codebook density.
+    /// Equals `clamp(1 - dist/6) * clamp(margin / active_min_cyclic_dist)`.
+    /// A margin equal to the selected profile's minimum cyclic Hamming distance
+    /// yields `conf_margin = 1.0`, so a perfect decode scores 1.0 regardless of
+    /// that profile's density.
     pub decode_confidence: f32,
 }
 
@@ -46,6 +47,12 @@ pub struct DecodeMetrics {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct DecodeConfig {
+    /// Embedded codebook profile to match against.
+    ///
+    /// Default: [`CodebookProfile::Base`], which preserves the shipped stable
+    /// IDs `0..892`. `extended` is explicit opt-in and expands the codebook at
+    /// the cost of a weaker minimum cyclic Hamming distance.
+    pub codebook_profile: CodebookProfile,
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the
     /// ellipse coordinate frame.
@@ -68,8 +75,9 @@ pub struct DecodeConfig {
     /// A margin of 0 means the two closest codewords are equidistant from the
     /// observed word — genuinely ambiguous. Default rejects ties (margin = 0).
     /// For setups without homography validation (e.g. no camera intrinsics),
-    /// setting this to `CODEBOOK_MIN_CYCLIC_DIST` (= 2) accepts only matches
-    /// that are unambiguous within the codebook's minimum distance guarantee.
+    /// setting this to the selected profile's minimum cyclic Hamming distance
+    /// accepts only matches that are unambiguous within that profile's distance
+    /// guarantee. For the shipped baseline profile this value is `2`.
     ///
     /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_MARGIN`].
     #[serde(default = "DecodeConfig::default_min_decode_margin")]
@@ -99,9 +107,9 @@ impl DecodeConfig {
     /// Default maximum Hamming distance accepted by decode.
     pub const DEFAULT_MAX_DECODE_DIST: u8 = 3;
     /// Minimum decode confidence with the corrected formula
-    /// `clamp(1-dist/6) * clamp(margin/CODEBOOK_MIN_CYCLIC_DIST)`.
+    /// `clamp(1-dist/6) * clamp(margin/profile.min_cyclic_dist)`.
     /// A perfect decode (dist=0, margin≥2) scores 1.0; this threshold accepts
-    /// matches down to dist=2 with margin≥1.
+    /// matches down to dist=2 with margin≥1 on the shipped baseline profile.
     pub const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.3;
     /// Minimum Hamming margin required for a valid decode.
     ///
@@ -135,6 +143,7 @@ impl DecodeConfig {
 impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
+            codebook_profile: CodebookProfile::Base,
             code_band_ratio: Self::DEFAULT_CODE_BAND_RATIO,
             samples_per_sector: Self::DEFAULT_SAMPLES_PER_SECTOR,
             n_radial_rings: Self::DEFAULT_N_RADIAL_RINGS,
@@ -441,7 +450,7 @@ fn decode_marker_impl(
     }
 
     // Match against codebook (normal and inverted polarity)
-    let cb = Codebook::default();
+    let cb = Codebook::from_profile(config.codebook_profile);
     let m_normal = cb.match_word(word);
     let m_inverted = cb.match_word(!word);
 
@@ -530,7 +539,8 @@ fn decode_marker_impl(
 mod tests {
     use approx::assert_abs_diff_eq;
 
-    use super::super::codebook::CODEBOOK;
+    use super::super::codebook::{CODEBOOK, CODEBOOK_EXTENDED, CODEBOOK_N};
+    use super::super::codec::CodebookProfile;
     use super::*;
 
     /// Paint a synthetic ring marker with known code on a small image.
@@ -589,6 +599,7 @@ mod tests {
     #[test]
     fn decode_config_defaults_are_stable() {
         let cfg = DecodeConfig::default();
+        assert_eq!(cfg.codebook_profile, CodebookProfile::Base);
         assert_abs_diff_eq!(
             cfg.code_band_ratio,
             DecodeConfig::DEFAULT_CODE_BAND_RATIO,
@@ -637,6 +648,7 @@ mod tests {
 
         let cfg: DecodeConfig =
             serde_json::from_str(json).expect("decode config json should parse");
+        assert_eq!(cfg.codebook_profile, CodebookProfile::Base);
         assert_abs_diff_eq!(
             cfg.min_decode_contrast,
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
@@ -658,6 +670,17 @@ mod tests {
     }
 
     #[test]
+    fn decode_config_roundtrips_extended_profile() {
+        let cfg = DecodeConfig {
+            codebook_profile: CodebookProfile::Extended,
+            ..DecodeConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize decode config");
+        let decoded: DecodeConfig = serde_json::from_str(&json).expect("deserialize decode config");
+        assert_eq!(decoded.codebook_profile, CodebookProfile::Extended);
+    }
+
+    #[test]
     fn test_decode_known_codeword() {
         let cw = CODEBOOK[42];
         let ellipse = Ellipse {
@@ -676,6 +699,31 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.id, 42, "decoded id should be 42, got {}", result.id);
         assert!(!diag.inverted_used, "should not use inverted polarity");
+    }
+
+    #[test]
+    fn test_decode_known_codeword_stays_stable_in_extended_profile() {
+        let cw = CODEBOOK[42];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
+        let config = DecodeConfig {
+            codebook_profile: CodebookProfile::Extended,
+            ..DecodeConfig::default()
+        };
+
+        let (result, _) = decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        assert_eq!(
+            result
+                .expect("baseline word should decode in extended profile")
+                .id,
+            42
+        );
     }
 
     #[test]
@@ -701,6 +749,95 @@ mod tests {
         );
         let result = result.unwrap();
         assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
+        assert!(diag.inverted_used, "should use inverted polarity");
+    }
+
+    #[test]
+    fn test_decode_inverted_polarity_stays_stable_in_extended_profile() {
+        let cw = CODEBOOK[0];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
+        let config = DecodeConfig {
+            codebook_profile: CodebookProfile::Extended,
+            ..DecodeConfig::default()
+        };
+
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        assert!(
+            result.is_some(),
+            "should decode successfully with inverted polarity in extended mode"
+        );
+        let result = result.unwrap();
+        assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
+        assert!(diag.inverted_used, "should use inverted polarity");
+    }
+
+    #[test]
+    fn test_decode_appended_word_requires_extended_profile_for_appended_id() {
+        let cw = CODEBOOK_EXTENDED[CODEBOOK_N];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
+
+        let base_cfg = DecodeConfig::default();
+        let (base_result, _) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &base_cfg, None);
+        assert_ne!(base_result.map(|r| r.id), Some(CODEBOOK_N));
+
+        let extended_cfg = DecodeConfig {
+            codebook_profile: CodebookProfile::Extended,
+            ..DecodeConfig::default()
+        };
+        let (extended_result, _) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &extended_cfg, None);
+        assert_eq!(
+            extended_result
+                .expect("appended word should decode in extended profile")
+                .id,
+            CODEBOOK_N
+        );
+    }
+
+    #[test]
+    fn test_decode_appended_word_inverted_polarity_stays_stable_in_extended_profile() {
+        let cw = CODEBOOK_EXTENDED[CODEBOOK_N];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
+        let config = DecodeConfig {
+            codebook_profile: CodebookProfile::Extended,
+            ..DecodeConfig::default()
+        };
+
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        assert!(
+            result.is_some(),
+            "should decode appended word with inverted polarity in extended mode"
+        );
+        let result = result.unwrap();
+        assert_eq!(
+            result.id, CODEBOOK_N,
+            "decoded id should be {}, got {}",
+            CODEBOOK_N, result.id
+        );
         assert!(diag.inverted_used, "should use inverted polarity");
     }
 

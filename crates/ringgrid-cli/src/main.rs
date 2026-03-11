@@ -34,6 +34,9 @@ enum Commands {
         /// Observed 16-bit word (hex, e.g. 0xABCD).
         #[arg(long)]
         word: String,
+        /// Embedded codebook profile to use.
+        #[arg(long, value_enum, default_value_t = CodebookProfileArg::Base)]
+        profile: CodebookProfileArg,
     },
 }
 
@@ -111,7 +114,8 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_roi_radius: Option<f64>,
 
-    /// Require a perfect decode (dist=0, margin≥2) for completion markers.
+    /// Require a perfect decode (dist=0, margin≥active profile minimum distance)
+    /// for completion markers.
     ///
     /// Recommended for high-distortion setups without a calibrated camera model
     /// (e.g. Scheimpflug cameras), where H-projected seeds may be inaccurate and
@@ -315,6 +319,21 @@ impl CircleRefineMethodArg {
         match self {
             Self::None => ringgrid::CircleRefinementMethod::None,
             Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CodebookProfileArg {
+    Base,
+    Extended,
+}
+
+impl CodebookProfileArg {
+    fn to_core(self) -> ringgrid::CodebookProfile {
+        match self {
+            Self::Base => ringgrid::CodebookProfile::Base,
+            Self::Extended => ringgrid::CodebookProfile::Extended,
         }
     }
 }
@@ -677,24 +696,35 @@ fn main() -> CliResult<()> {
 
         Commands::BoardInfo => run_board_info(),
 
-        Commands::DecodeTest { word } => run_decode_test(&word),
+        Commands::DecodeTest { word, profile } => run_decode_test(&word, profile),
     }
 }
 
 // ── codebook-info ──────────────────────────────────────────────────────
 
 fn run_codebook_info() -> CliResult<()> {
-    use ringgrid::codebook::*;
+    use ringgrid::codec::{Codebook, CodebookProfile};
 
-    println!("ringgrid embedded codebook");
-    println!("  bits per codeword:    {}", CODEBOOK_BITS);
-    println!("  number of codewords:  {}", CODEBOOK_N);
-    println!("  min cyclic Hamming:   {}", CODEBOOK_MIN_CYCLIC_DIST);
-    println!("  generator seed:       {}", CODEBOOK_SEED);
+    println!("ringgrid embedded codebook profiles");
+    println!("  default profile:      {}", CodebookProfile::Base.as_str());
 
-    if CODEBOOK_N > 0 {
-        println!("  first codeword:       0x{:04X}", CODEBOOK[0]);
-        println!("  last codeword:        0x{:04X}", CODEBOOK[CODEBOOK_N - 1]);
+    for profile in [CodebookProfile::Base, CodebookProfile::Extended] {
+        let cb = Codebook::from_profile(profile);
+        println!("  {}:", profile.as_str());
+        println!("    bits per codeword:    {}", cb.bits());
+        println!("    number of codewords:  {}", cb.len());
+        println!("    min cyclic Hamming:   {}", cb.min_cyclic_dist());
+        println!("    generator seed:       {}", cb.seed());
+        if !cb.is_empty() {
+            println!(
+                "    first codeword:       0x{:04X}",
+                cb.word(0).unwrap_or(0)
+            );
+            println!(
+                "    last codeword:        0x{:04X}",
+                cb.word(cb.len() - 1).unwrap_or(0)
+            );
+        }
     }
 
     Ok(())
@@ -742,7 +772,7 @@ fn run_board_info() -> CliResult<()> {
 
 // ── decode-test ────────────────────────────────────────────────────────
 
-fn run_decode_test(word_str: &str) -> CliResult<()> {
+fn run_decode_test(word_str: &str, profile: CodebookProfileArg) -> CliResult<()> {
     use ringgrid::codec::{Codebook, Match};
 
     let word_str = word_str
@@ -752,10 +782,11 @@ fn run_decode_test(word_str: &str) -> CliResult<()> {
     let word = u16::from_str_radix(word_str, 16)
         .map_err(|e| -> CliError { format!("invalid hex word: {}", e).into() })?;
 
-    let cb = Codebook::default();
+    let cb = Codebook::from_profile(profile.to_core());
     let m: Match = cb.match_word(word);
 
     println!("Input word:   0x{:04X} (binary: {:016b})", word, word);
+    println!("Profile:      {}", cb.profile().as_str());
     println!("Best match:");
     println!("  id:         {}", m.id);
     println!("  codeword:   0x{:04X}", cb.word(m.id).unwrap_or(0));

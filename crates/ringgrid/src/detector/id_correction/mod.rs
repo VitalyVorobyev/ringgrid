@@ -27,4 +27,5 @@ mod vote;
 mod workspace;
 
 pub(crate) use engine::verify_and_correct_ids;
+pub(crate) use math::{affine_to_image, fit_local_affine};
 pub(crate) use types::IdCorrectionStats;

@@ -93,11 +93,12 @@ fallback (`20` for min, `56` for max).
 
 **Camera intrinsics:**
 
-All four intrinsic parameters (`fx`, `fy`, `cx`, `cy`) must be provided together. The
-distortion coefficients are optional and default to zero.
+You can provide an external camera model either inline via `--cam-*` or from a
+JSON file via `--calibration <file.json>`.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--calibration <file.json>` | -- | Load a Brown-Conrady `CameraModel` from JSON. Accepts either direct `{ "intrinsics": ..., "distortion": ... }` or wrapped `{ "camera": { ... } }` shapes. |
 | `--cam-fx <f>` | -- | Focal length x (pixels). |
 | `--cam-fy <f>` | -- | Focal length y (pixels). |
 | `--cam-cx <f>` | -- | Principal point x (pixels). |
@@ -108,12 +109,17 @@ distortion coefficients are optional and default to zero.
 | `--cam-p2 <f>` | 0.0 | Tangential distortion p2. |
 | `--cam-k3 <f>` | 0.0 | Radial distortion k3. |
 
-Camera intrinsics and `--self-undistort` are **mutually exclusive**. Providing both
-will produce an error.
+For inline parameters, all four intrinsic parameters (`fx`, `fy`, `cx`, `cy`)
+must be provided together. The distortion coefficients are optional and default
+to zero.
 
-When camera intrinsics are provided, the detector runs a two-pass pipeline: pass 1
-without distortion mapping to find initial markers, then pass 2 with the camera model
-applied.
+`--calibration` and inline `--cam-*` parameters are **mutually exclusive**.
+Any external camera model and `--self-undistort` are also **mutually exclusive**.
+Providing both will produce an error.
+
+When a camera model is provided, the detector runs a two-pass pipeline: pass 1
+without distortion mapping to find initial markers, then pass 2 with the camera
+model applied.
 
 ### Usage Examples
 
@@ -150,6 +156,15 @@ ringgrid detect \
     --out result.json \
     --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
     --cam-k1 -0.15 --cam-k2 0.05
+```
+
+With a calibration JSON file:
+
+```bash
+ringgrid detect \
+    --image photo.png \
+    --out result.json \
+    --calibration camera_model.json
 ```
 
 With self-undistort estimation:

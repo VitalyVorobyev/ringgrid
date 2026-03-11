@@ -47,7 +47,7 @@ pub(super) fn solve_3x3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
 ///
 /// Returns a `[2 × 3]` matrix `A` such that `image ≈ A × [board_x, board_y, 1]ᵀ`.
 /// Uses normal equations (least squares when N > 3, exact when N = 3).
-pub(super) fn fit_local_affine(
+pub(crate) fn fit_local_affine(
     board_pts: &[[f64; 2]],
     image_pts: &[[f64; 2]],
 ) -> Option<[[f64; 3]; 2]> {
@@ -74,6 +74,15 @@ pub(super) fn fit_local_affine(
     let row_u = solve_3x3(&xtx, &xtu)?;
     let row_v = solve_3x3(&xtx, &xtv)?;
     Some([row_u, row_v])
+}
+
+/// Apply a `[2 × 3]` affine transform that maps board-mm coordinates to image
+/// or working-frame pixel coordinates.
+pub(crate) fn affine_to_image(affine: &[[f64; 3]; 2], board_xy: [f64; 2]) -> [f64; 2] {
+    [
+        affine[0][0] * board_xy[0] + affine[0][1] * board_xy[1] + affine[0][2],
+        affine[1][0] * board_xy[0] + affine[1][1] * board_xy[1] + affine[1][2],
+    ]
 }
 
 /// Invert the 2×3 affine and apply it to an image-space point to recover the

@@ -1,6 +1,7 @@
 use image::GrayImage;
 
 use crate::conic::Ellipse;
+use crate::detector::id_correction::{affine_to_image, fit_local_affine};
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
 use crate::marker::codec::Codebook;
@@ -145,6 +146,55 @@ fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
     }
     let variance = radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32;
     variance.sqrt() / mean
+}
+
+fn local_affine_completion_seed(
+    target_board_xy: [f64; 2],
+    markers: &[DetectedMarker],
+    board: &crate::board_layout::BoardLayout,
+) -> Option<[f64; 2]> {
+    const MAX_NEIGHBORS: usize = 4;
+
+    let mut neighbors: Vec<([f64; 2], [f64; 2], f64)> = markers
+        .iter()
+        .filter_map(|marker| {
+            let id = marker.id?;
+            let board_xy = board.xy_mm(id)?;
+            let center = marker.center;
+            if !(center[0].is_finite() && center[1].is_finite()) {
+                return None;
+            }
+            let board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];
+            let dx = board_xy[0] - target_board_xy[0];
+            let dy = board_xy[1] - target_board_xy[1];
+            let d2 = dx * dx + dy * dy;
+            d2.is_finite().then_some((board_xy, center, d2))
+        })
+        .collect();
+    if neighbors.len() < 3 {
+        return None;
+    }
+
+    neighbors.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    neighbors.truncate(MAX_NEIGHBORS);
+
+    let board_pts: Vec<[f64; 2]> = neighbors.iter().map(|(board_xy, _, _)| *board_xy).collect();
+    let image_pts: Vec<[f64; 2]> = neighbors.iter().map(|(_, center, _)| *center).collect();
+    let affine = fit_local_affine(&board_pts, &image_pts)?;
+    let seed = affine_to_image(&affine, target_board_xy);
+    (seed[0].is_finite() && seed[1].is_finite()).then_some(seed)
+}
+
+fn projected_completion_seed(
+    id: usize,
+    h: &nalgebra::Matrix3<f64>,
+    markers: &[DetectedMarker],
+    board: &crate::board_layout::BoardLayout,
+) -> Option<[f64; 2]> {
+    let board_xy = board.xy_mm(id)?;
+    let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];
+    local_affine_completion_seed(target_board_xy, markers, board)
+        .or_else(|| Some(project(h, target_board_xy[0], target_board_xy[1])))
 }
 
 fn compute_candidate_quality(
@@ -296,8 +346,8 @@ pub(crate) fn complete_with_h(
     let mut attempted_fits = 0usize;
 
     for id in board.marker_ids() {
-        let projected_center = match board.xy_mm(id) {
-            Some(xy) => project(h, xy[0] as f64, xy[1] as f64),
+        let projected_center = match projected_completion_seed(id, h, markers, board) {
+            Some(center) => center,
             None => continue,
         };
 
@@ -453,6 +503,8 @@ pub(crate) fn complete_with_h(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conic::Ellipse;
+    use crate::detector::marker_build::FitMetrics;
 
     #[test]
     fn completion_gate_reason_serialization_is_stable() {
@@ -487,5 +539,74 @@ mod tests {
             }
             other => panic!("unexpected completion gate context: {other:?}"),
         }
+    }
+
+    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
+        DetectedMarker {
+            id: Some(id),
+            confidence: 1.0,
+            center,
+            ellipse_outer: Some(Ellipse {
+                cx: center[0],
+                cy: center[1],
+                a: 10.0,
+                b: 10.0,
+                angle: 0.0,
+            }),
+            fit: FitMetrics::default(),
+            source: DetectionSource::FitDecoded,
+            ..DetectedMarker::default()
+        }
+    }
+
+    #[test]
+    fn local_affine_completion_seed_uses_nearest_decoded_neighbors() {
+        let board = crate::BoardLayout::default();
+        let target_id = 16usize;
+        let neighbor_ids = [0usize, 1usize, 14usize, 15usize];
+        let affine = [[2.0, 0.1, 5.0], [-0.2, 1.5, 7.0]];
+        let markers: Vec<DetectedMarker> = neighbor_ids
+            .iter()
+            .map(|&id| {
+                let board_xy = board.xy_mm(id).expect("board xy");
+                let center =
+                    affine_to_image(&affine, [f64::from(board_xy[0]), f64::from(board_xy[1])]);
+                marker_with_id(id, center)
+            })
+            .collect();
+
+        let target_board_xy = board.xy_mm(target_id).expect("target board xy");
+        let seed = local_affine_completion_seed(
+            [f64::from(target_board_xy[0]), f64::from(target_board_xy[1])],
+            &markers,
+            &board,
+        )
+        .expect("local affine seed");
+        let expected = affine_to_image(
+            &affine,
+            [f64::from(target_board_xy[0]), f64::from(target_board_xy[1])],
+        );
+        assert!((seed[0] - expected[0]).abs() < 1e-6);
+        assert!((seed[1] - expected[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn projected_completion_seed_falls_back_to_h_with_fewer_than_three_neighbors() {
+        let board = crate::BoardLayout::default();
+        let target_id = 16usize;
+        let markers = vec![
+            marker_with_id(0, [11.0, 7.0]),
+            marker_with_id(1, [19.0, 7.5]),
+        ];
+        let h = nalgebra::Matrix3::new(1.0, 0.0, 3.0, 0.0, 1.0, -4.0, 0.0, 0.0, 1.0);
+        let target_board_xy = board.xy_mm(target_id).expect("target board xy");
+        let seed = projected_completion_seed(target_id, &h, &markers, &board).expect("seed");
+        let expected = project(
+            &h,
+            f64::from(target_board_xy[0]),
+            f64::from(target_board_xy[1]),
+        );
+        assert!((seed[0] - expected[0]).abs() < 1e-9);
+        assert!((seed[1] - expected[1]).abs() < 1e-9);
     }
 }

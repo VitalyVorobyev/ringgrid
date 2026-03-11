@@ -29,12 +29,7 @@ _None currently assigned._
 
 ## Backlog
 
-| ID | Status | Priority | Type | Title | Role | Notes |
-|----|--------|----------|------|-------|------|-------|
-| ALGO-009 | todo | P2 | algo | Local affine seed for completion (share affine from ALGO-013) | algo | For each missing board ID, reuse `fit_local_affine` from `detector/id_correction.rs`; find 3-4 nearest decoded neighbors in board-mm space, use affine-projected position as seed; fall back to global H with fewer than 3 neighbors; absorbs non-radial Scheimpflug residuals |
-| INFRA-008 | todo | P2 | infra | CLI flag to load Brown-Conrady calibration JSON as mapper | infra | Add `--calibration <file.json>` to ringgrid-cli; deserialize `RadialTangentialDistortion` from JSON; construct `CameraModel`-based `PixelMapper`; `RadialTangentialDistortion` struct already exists in `pixelmap/distortion.rs` |
-| ALGO-010 | todo | P3 | algo | Pre-screen contaminated outer rays before RANSAC | algo | In outer edge collection, filter rays where `\|r_ray - r_expected\| > 0.4 * r_expected` before RANSAC; discards rays that landed on wrong ring, complementing RANSAC's Sampson-distance inlier gate |
-| ALGO-011 | todo | P3 | algo | Enforce inner/outer axis ratio consistency as post-filter | algo | After all markers collected, compute global median `(inner.mean_axis / outer.mean_axis)` from fit-decoded markers; flag or reject markers where ratio deviates >25%; catches cases where "outer" fit anchored to inner ring |
+_None currently assigned._
 
 ## API / Interface Tracking
 
@@ -47,6 +42,7 @@ _None currently assigned._
 
 - `INFRA-009`: microbenchmark for `DetectConfig` hot getters/setters must show at least 4x improvement; overlay and `to_dict()` parity must hold.
 - `INFRA-010`/`INFRA-011`/`INFRA-012`: JSON/SVG/PNG generation parity tests against current `gen_synth.py` geometry semantics for identical board args.
+- `INFRA-013`: `CHANGELOG.md` must cover all user-visible deltas since `v0.4.0`, all publishable package metadata must read `0.5.0`, and the standard release validation baseline must pass before tagging.
 - `ALGO-014`: compatibility tests show IDs `0..892` decode identically in default mode; extension profile remains explicitly opt-in.
 - `DOCS-001`/`DOCS-002`/`DOCS-003`: documentation consistency pass must match shipped constants and supported API surfaces.
 
@@ -58,10 +54,21 @@ _None currently assigned._
 - Codebook extension policy: stable base + optional extension, 16-bit only, target extension size = max feasible.
 - Root README policy: user-quickstart-first with links to separate developer/performance docs.
 
+## Historical Notes
+
+- `FEAT-001` and `PERF-001` through `PERF-005` were completed before the current `docs/backlog.md`
+  structure was normalized. Canonical closure notes remain in `docs/sessions/` and should be
+  treated as done historical work, not open backlog debt.
+
 ## Done
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| INFRA-013 | 2026-03-11 | infra | Finalize `v0.5.0` release readiness and publication | Closed after implementing `INFRA-008` + `ALGO-009/010/011`, aligning the Python package metadata on `0.5.0`, updating the changelog/docs, rerunning the full release baseline (`fmt`, `clippy -D warnings`, workspace tests, rustdoc, doctests, `mdbook`, typing-artifact check, `maturin develop`, Python tests), and cutting the local `v0.5.0` release tag. |
+| INFRA-008 | 2026-03-11 | infra | CLI flag to load Brown-Conrady calibration JSON as mapper | Added `--calibration <file.json>` as an additive alternative to inline `--cam-*`; accepts direct `CameraModel` JSON or detector-output wrapper JSON, rejects mixed camera inputs, and documents the JSON path in the CLI guide, tuning guide, and external-mapper docs. |
+| ALGO-011 | 2026-03-11 | algo | Enforce inner/outer axis ratio consistency as post-filter | Added a final consistency pass that clears marker IDs whose inner/outer mean-axis ratio deviates more than 25% from the global fit-decoded median, catching residual inner-as-outer failures after collection; added finalize regression tests. |
+| ALGO-010 | 2026-03-11 | algo | Pre-screen contaminated outer rays before RANSAC | Outer-edge sampling now rejects rays whose recovered radius differs from the expected outer radius by more than 40% before ellipse fitting, screening inner-ring contamination earlier in the pipeline; added synthetic sampling regression coverage. |
+| ALGO-009 | 2026-03-11 | algo | Local affine seed for completion (share affine from ALGO-013) | Completion now fits a local board-mm affine from the 3-4 nearest decoded neighbors and uses that projected seed before falling back to the global homography, improving missing-ID recovery under local projective distortion; added completion seed/fallback unit tests. |
 | DOCS-002 | 2026-03-11 | docs | Main README user-first refactor + split dev/perf notes | Accepted via `TASK-016`: refactored the root `README.md` into a user-first landing page centered on install, quickstart, interface routing, and documentation navigation; moved maintainer-focused material into `docs/development.md`; moved scoring/benchmark detail into `docs/performance.md`; added the missing synth/eval Python dependency note for the optional repo workflow; reviewer approval reproduced the full Rust/doc/mdBook/Python validation baseline. |
 | DOCS-001 | 2026-03-11 | docs | ringgrid-py README: complete DetectConfig field guide | Accepted via `TASK-015`: expanded `crates/ringgrid-py/README.md` with a full Python-facing `DetectConfig` field guide covering sections, top-level controls, aliases, derived defaults, and tuning notes; exposed `DecodeConfig.codebook_profile` through the typed Python/stub surface with backward-compatible defaulting for legacy payloads; added decode-parity and README surface-drift regression coverage; reviewer approval reproduced the full Rust/doc/Python validation baseline. |
 | ALGO-014 | 2026-03-11 | algo | Optional extended codebook mode beyond 893, stable base IDs | Accepted via `TASK-014`: added explicit `base`/`extended` codebook profiles while preserving shipped IDs `0..892`, threaded profile selection through decode and profile-local exact-match gates, regenerated artifacts/docs/CLI for the approved additive `extended` profile (`2180` total, `1287` appended), fixed loaded-baseline seed provenance when `--base_json` is used, added Rust/Python regression coverage for inverted-polarity stability and generator provenance, and reviewer approval reproduced the full local CI baseline plus the former polarity and mismatched-seed blocker repros. |

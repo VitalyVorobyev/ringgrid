@@ -49,6 +49,18 @@ OpenCV and most calibration toolboxes:
 - **k1, k2, k3** -- radial distortion coefficients.
 - **p1, p2** -- tangential (decentering) distortion coefficients.
 
+The CLI accepts the same camera model via `ringgrid detect --calibration camera_model.json`.
+The JSON can be either the direct serde shape:
+
+```json
+{
+  "intrinsics": { "fx": 900.0, "fy": 900.0, "cx": 640.0, "cy": 480.0 },
+  "distortion": { "k1": -0.15, "k2": 0.05, "p1": 0.001, "p2": -0.001, "k3": 0.0 }
+}
+```
+
+or a detector-output wrapper with a top-level `camera` field.
+
 Undistortion is performed iteratively (fixed-point iteration in normalized
 coordinates, up to 15 iterations by default with 1e-12 convergence threshold).
 

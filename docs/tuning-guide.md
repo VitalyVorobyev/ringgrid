@@ -112,7 +112,7 @@ shape error. Use projective center correction or a calibrated camera model.
 | Approach | CLI Flag / Setting | Notes |
 |---|---|---|
 | Projective center correction | `--circle-refine-method projective-center` | Recommended first step; no calibration file needed |
-| Calibrated camera model | `--camera-model <intrinsics.json>` | Enables two-pass distortion-corrected detection |
+| Calibrated camera model | `--calibration <camera_model.json>` or inline `--cam-*` | Enables two-pass distortion-corrected detection |
 | Self-undistort | `self_undistort.enable: true` in config | Estimates division-model distortion from detected ellipses |
 
 ```json

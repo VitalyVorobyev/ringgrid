@@ -7,10 +7,75 @@ use super::{
     CompletionStats, DetectConfig,
 };
 use crate::board_layout::BoardLayout;
-use crate::detector::DetectedMarker;
+use crate::detector::{DetectedMarker, DetectionSource};
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
 use crate::pixelmap::PixelMapper;
+
+const AXIS_RATIO_RELATIVE_TOLERANCE: f64 = 0.25;
+
+fn marker_inner_outer_axis_ratio(marker: &DetectedMarker) -> Option<f64> {
+    let inner = marker.ellipse_inner?;
+    let outer = marker.ellipse_outer?;
+    let inner_axis = inner.mean_axis();
+    let outer_axis = outer.mean_axis();
+    if !inner_axis.is_finite() || !outer_axis.is_finite() || inner_axis <= 0.0 || outer_axis <= 0.0
+    {
+        return None;
+    }
+    Some(inner_axis / outer_axis)
+}
+
+fn median_f64(mut values: Vec<f64>) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = values.len() / 2;
+    Some(if values.len().is_multiple_of(2) {
+        0.5 * (values[mid - 1] + values[mid])
+    } else {
+        values[mid]
+    })
+}
+
+fn clear_axis_ratio_outlier_ids(markers: &mut [DetectedMarker]) -> usize {
+    let reference = median_f64(
+        markers
+            .iter()
+            .filter(|marker| marker.id.is_some() && marker.source != DetectionSource::Completion)
+            .filter_map(marker_inner_outer_axis_ratio)
+            .collect(),
+    );
+    let Some(reference) = reference.filter(|ratio| ratio.is_finite() && *ratio > 0.0) else {
+        return 0;
+    };
+
+    let mut cleared = 0usize;
+    for marker in markers.iter_mut() {
+        let Some(id) = marker.id else {
+            continue;
+        };
+        let Some(ratio) = marker_inner_outer_axis_ratio(marker) else {
+            continue;
+        };
+        let rel_err = (ratio - reference).abs() / reference;
+        if rel_err > AXIS_RATIO_RELATIVE_TOLERANCE {
+            tracing::warn!(
+                id,
+                observed_ratio = ratio,
+                reference_ratio = reference,
+                rel_err,
+                "clearing marker id due to inner/outer axis-ratio inconsistency"
+            );
+            marker.id = None;
+            marker.board_xy_mm = None;
+            marker.fit.h_reproj_err_px = None;
+            cleared += 1;
+        }
+    }
+    cleared
+}
 
 struct FilterPhaseOutput {
     markers: Vec<DetectedMarker>,
@@ -156,6 +221,12 @@ fn apply_post_filter_fixup(
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.board);
         annotate_neighbor_radius_ratios(markers, k);
+    }
+    let cleared = clear_axis_ratio_outlier_ids(markers);
+    if cleared > 0 {
+        sync_marker_board_correspondence(markers, &config.board);
+        annotate_neighbor_radius_ratios(markers, k);
+        tracing::info!(cleared, "axis-ratio consistency filter cleared marker ids");
     }
 }
 
@@ -435,6 +506,63 @@ pub(super) fn run(
         homography_frame,
         image_size,
     )
+}
+
+#[cfg(test)]
+mod axis_ratio_tests {
+    use super::*;
+    use crate::conic::Ellipse;
+
+    fn marker_with_ratio(id: usize, ratio: f64, source: DetectionSource) -> DetectedMarker {
+        let outer = Ellipse {
+            cx: 0.0,
+            cy: 0.0,
+            a: 20.0,
+            b: 20.0,
+            angle: 0.0,
+        };
+        let inner = Ellipse {
+            cx: 0.0,
+            cy: 0.0,
+            a: 20.0 * ratio,
+            b: 20.0 * ratio,
+            angle: 0.0,
+        };
+        DetectedMarker {
+            id: Some(id),
+            confidence: 1.0,
+            center: [id as f64, 0.0],
+            ellipse_outer: Some(outer),
+            ellipse_inner: Some(inner),
+            source,
+            ..DetectedMarker::default()
+        }
+    }
+
+    #[test]
+    fn axis_ratio_filter_clears_strong_outliers() {
+        let mut markers = vec![
+            marker_with_ratio(0, 0.50, DetectionSource::FitDecoded),
+            marker_with_ratio(1, 0.49, DetectionSource::FitDecoded),
+            marker_with_ratio(2, 0.51, DetectionSource::SeededPass),
+            marker_with_ratio(3, 0.30, DetectionSource::Completion),
+        ];
+        let cleared = clear_axis_ratio_outlier_ids(&mut markers);
+        assert_eq!(cleared, 1);
+        assert_eq!(markers[3].id, None);
+    }
+
+    #[test]
+    fn axis_ratio_filter_keeps_in_family_markers() {
+        let mut markers = vec![
+            marker_with_ratio(0, 0.50, DetectionSource::FitDecoded),
+            marker_with_ratio(1, 0.49, DetectionSource::FitDecoded),
+            marker_with_ratio(2, 0.52, DetectionSource::Completion),
+        ];
+        let cleared = clear_axis_ratio_outlier_ids(&mut markers);
+        assert_eq!(cleared, 0);
+        assert!(markers.iter().all(|marker| marker.id.is_some()));
+    }
 }
 
 #[cfg(test)]

@@ -2,6 +2,8 @@ use crate::detector::DetectedMarker;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig};
 use crate::ring::inner_estimate::Polarity;
 
+const MAX_EXPECTED_RADIUS_DEVIATION_FRAC: f32 = 0.4;
+
 pub(crate) fn median_outer_radius_from_neighbors_px(
     projected_center: [f64; 2],
     markers: &[DetectedMarker],
@@ -124,6 +126,7 @@ pub(super) fn collect_outer_edge_points_near_radius(
     sampler: DistortionAwareSampler<'_>,
     center_prior: [f32; 2],
     r0: f32,
+    r_expected: f32,
     pol: Polarity,
     edge_cfg: &EdgeSampleConfig,
     refine_halfwidth_px: f32,
@@ -148,6 +151,10 @@ pub(super) fn collect_outer_edge_points_near_radius(
         ) else {
             continue;
         };
+
+        if (r - r_expected).abs() > r_expected.max(1.0) * MAX_EXPECTED_RADIUS_DEVIATION_FRAC {
+            continue;
+        }
 
         if !passes_ring_depth_gate(
             sampler,
@@ -263,6 +270,41 @@ mod tests {
             Polarity::Pos,
             0.01,
         ));
+    }
+
+    #[test]
+    fn collect_outer_edge_points_rejects_rays_far_from_expected_radius() {
+        let center = [64.0f32, 64.0f32];
+        let outer_radius = 24.0f32;
+        let inner_radius = 12.0f32;
+        let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
+        let sampler = DistortionAwareSampler::new(&img, None);
+        let edge_cfg = EdgeSampleConfig {
+            r_min: 1.5,
+            r_max: 40.0,
+            r_step: 0.5,
+            n_rays: 24,
+            ..EdgeSampleConfig::default()
+        };
+
+        let (points, radii) = collect_outer_edge_points_near_radius(
+            sampler,
+            center,
+            inner_radius,
+            outer_radius,
+            Polarity::Pos,
+            &edge_cfg,
+            2.0,
+        );
+
+        assert!(
+            points.is_empty(),
+            "contaminated inner-ring rays should be rejected"
+        );
+        assert!(
+            radii.is_empty(),
+            "no radii should survive the expected-radius gate"
+        );
     }
 
     #[test]

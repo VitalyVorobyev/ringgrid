@@ -242,6 +242,17 @@ struct CliDetectArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 struct CliCameraArgs {
+    /// Path to a JSON camera calibration file.
+    ///
+    /// Supported shapes:
+    /// - direct `CameraModel` JSON:
+    ///   `{ "intrinsics": { ... }, "distortion": { ... } }`
+    /// - detector-output wrapper:
+    ///   `{ "camera": { "intrinsics": { ... }, "distortion": { ... } } }`
+    ///
+    /// `distortion` may be omitted and defaults to zero coefficients.
+    #[arg(long)]
+    calibration: Option<PathBuf>,
     /// Camera intrinsic fx (pixels). If set, fy/cx/cy are required too.
     #[arg(long)]
     cam_fx: Option<f64>,
@@ -271,10 +282,88 @@ struct CliCameraArgs {
     cam_k3: f64,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+struct CameraModelJson {
+    intrinsics: ringgrid::CameraIntrinsics,
+    distortion: ringgrid::RadialTangentialDistortion,
+}
+
+impl Default for CameraModelJson {
+    fn default() -> Self {
+        Self {
+            intrinsics: ringgrid::CameraIntrinsics {
+                fx: 0.0,
+                fy: 0.0,
+                cx: 0.0,
+                cy: 0.0,
+            },
+            distortion: ringgrid::RadialTangentialDistortion::default(),
+        }
+    }
+}
+
+impl From<CameraModelJson> for ringgrid::CameraModel {
+    fn from(value: CameraModelJson) -> Self {
+        Self {
+            intrinsics: value.intrinsics,
+            distortion: value.distortion,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum CameraCalibrationFile {
+    Direct(CameraModelJson),
+    Wrapped { camera: CameraModelJson },
+}
+
+fn load_camera_model_from_file(path: &std::path::Path) -> CliResult<ringgrid::CameraModel> {
+    let text = std::fs::read_to_string(path).map_err(|e| -> CliError {
+        format!("Failed to read calibration file {}: {}", path.display(), e).into()
+    })?;
+    let parsed: CameraCalibrationFile = serde_json::from_str(&text).map_err(|e| -> CliError {
+        format!(
+            "Failed to parse calibration file {} as CameraModel JSON: {}",
+            path.display(),
+            e
+        )
+        .into()
+    })?;
+    let model: ringgrid::CameraModel = match parsed {
+        CameraCalibrationFile::Direct(model) => model.into(),
+        CameraCalibrationFile::Wrapped { camera } => camera.into(),
+    };
+    if !model.intrinsics.is_valid() {
+        return Err(format!(
+            "invalid calibration file {}: fx/fy must be finite and non-zero",
+            path.display()
+        )
+        .into());
+    }
+    Ok(model)
+}
+
 impl CliCameraArgs {
     fn to_core(&self) -> CliResult<Option<ringgrid::CameraModel>> {
         let intr = [self.cam_fx, self.cam_fy, self.cam_cx, self.cam_cy];
         let any_intr = intr.iter().any(Option::is_some);
+        let any_dist = self.cam_k1 != 0.0
+            || self.cam_k2 != 0.0
+            || self.cam_p1 != 0.0
+            || self.cam_p2 != 0.0
+            || self.cam_k3 != 0.0;
+        if let Some(path) = &self.calibration {
+            if any_intr || any_dist {
+                return Err(
+                    "camera calibration file (--calibration) and inline --cam-* parameters are mutually exclusive"
+                        .into(),
+                );
+            }
+            return load_camera_model_from_file(path).map(Some);
+        }
         if !any_intr {
             return Ok(None);
         }
@@ -1011,6 +1100,20 @@ mod tests {
         }
     }
 
+    fn write_temp_json_file(filename: &str, body: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ringgrid_cli_test_{}_{}_{}.json",
+            filename,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        std::fs::write(&path, body).expect("write temp json");
+        path
+    }
+
     #[test]
     fn validate_correction_compat_rejects_camera_plus_self_undistort() {
         let mut overrides = base_overrides();
@@ -1095,5 +1198,78 @@ mod tests {
         assert_eq!(cfg.decode.max_decode_dist, 1);
         assert!((cfg.decode.min_decode_confidence - 0.5).abs() < 1e-6);
         assert!((cfg.outer_fit.size_score_weight - 0.33).abs() < 1e-6);
+    }
+
+    #[test]
+    fn calibration_file_loads_direct_camera_model_shape() {
+        let path = write_temp_json_file(
+            "direct_camera_model",
+            r#"{
+  "intrinsics": { "fx": 900.0, "fy": 920.0, "cx": 640.0, "cy": 480.0 },
+  "distortion": { "k1": -0.1, "k2": 0.02, "p1": 0.001, "p2": -0.002, "k3": 0.0 }
+}"#,
+        );
+        let args = CliCameraArgs {
+            calibration: Some(path.clone()),
+            ..CliCameraArgs::default()
+        };
+        let model = args
+            .to_core()
+            .expect("load direct camera model")
+            .expect("camera present");
+        assert!((model.intrinsics.fx - 900.0).abs() < 1e-12);
+        assert!((model.intrinsics.fy - 920.0).abs() < 1e-12);
+        assert!((model.distortion.k1 + 0.1).abs() < 1e-12);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn calibration_file_loads_detector_output_wrapper_shape() {
+        let path = write_temp_json_file(
+            "wrapped_camera_model",
+            r#"{
+  "camera": {
+    "intrinsics": { "fx": 700.0, "fy": 710.0, "cx": 320.0, "cy": 240.0 }
+  }
+}"#,
+        );
+        let args = CliCameraArgs {
+            calibration: Some(path.clone()),
+            ..CliCameraArgs::default()
+        };
+        let model = args
+            .to_core()
+            .expect("load wrapped camera model")
+            .expect("camera present");
+        assert!((model.intrinsics.fx - 700.0).abs() < 1e-12);
+        assert_eq!(
+            model.distortion,
+            ringgrid::RadialTangentialDistortion::default()
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn calibration_file_rejects_mixed_inline_camera_flags() {
+        let path = write_temp_json_file(
+            "mixed_camera_flags",
+            r#"{
+  "intrinsics": { "fx": 900.0, "fy": 900.0, "cx": 640.0, "cy": 480.0 }
+}"#,
+        );
+        let args = CliCameraArgs {
+            calibration: Some(path.clone()),
+            cam_fx: Some(900.0),
+            cam_fy: Some(900.0),
+            cam_cx: Some(640.0),
+            cam_cy: Some(480.0),
+            ..CliCameraArgs::default()
+        };
+        let err = args.to_core().expect_err("mixed camera inputs must fail");
+        assert!(
+            err.to_string().contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
+        std::fs::remove_file(path).ok();
     }
 }

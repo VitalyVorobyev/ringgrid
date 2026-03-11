@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.5.0] — 2026-03-08
+## [0.5.0] — 2026-03-11
+
+### Added
+
+**Rust target generation**
+- `BoardLayout` now exposes file-oriented target generation for canonical `ringgrid.target.v3`
+  JSON plus printable SVG/PNG output from the Rust crate.
+- Added deterministic JSON/SVG/PNG fixtures and integration coverage for the new generator
+  surface.
+
+**Python target generation**
+- `ringgrid-py` now exposes installed-package target-generation helpers on `BoardLayout`:
+  `to_spec_json()`, `write_svg()`, and `write_png()`.
+- Added dedicated repo CLI `tools/gen_target.py` for print-target generation without going
+  through the synth pipeline.
+
+**Codebook profiles**
+- Added opt-in `extended` codebook profile while preserving shipped `base` IDs `0..892`.
+- Surfaced profile selection through CLI helpers, Rust/Python config, and regenerated
+  codebook artifacts/docs.
+
+**CLI calibration loading**
+- `ringgrid detect --calibration <file.json>` now loads a Brown-Conrady `CameraModel`
+  from JSON as an additive alternative to inline `--cam-*` flags.
+- The CLI accepts either the direct serde camera-model shape or detector-output JSON with
+  a top-level `camera` wrapper.
 
 ### Changed
 
@@ -31,11 +56,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated benchmark/test support code to compile cleanly with `-D warnings`
   under the new dependency set.
 
+**Python config performance**
+- `ringgrid-py` `DetectConfig` now caches resolved JSON snapshots for hot getter/setter paths
+  while preserving `to_dict()` output and overlay semantics.
+
+**Completion and fit robustness**
+- Completion now seeds missing IDs from a local board-mm affine fit when 3-4 nearby decoded
+  neighbors are available, falling back to the global homography otherwise.
+- Outer-edge sampling now drops rays whose recovered radius differs from the expected outer
+  radius by more than 40%, screening inner-ring contamination before ellipse fitting.
+- Final marker cleanup now clears IDs whose inner/outer mean-axis ratio deviates strongly from
+  the global fit-decoded median, catching residual inner-as-outer failures missed earlier in
+  the pipeline.
+
+**Documentation and onboarding**
+- Refactored the root `README.md` into a user-first landing page with quickstart and interface
+  routing.
+- Split maintainer-focused material into `docs/development.md` and scoring/benchmark guidance
+  into `docs/performance.md`.
+- Expanded `crates/ringgrid-py/README.md` with a full Python-facing `DetectConfig` field guide.
+- Reconciled codebook docs and decision records with shipped baseline invariants and the new
+  `extended` profile contract.
+
 ### Fixed
 
 - `hotpaths` benchmark build now passes with latest `rand`/`criterion` APIs.
+- `tools/gen_codebook.py --base_json ...` now preserves source-seed provenance in emitted JSON
+  and Rust metadata.
+- Legacy Python decode-config payloads missing `codebook_profile` now default to `"base"`.
+- The `extended` codebook appendix excludes new complement-collision exact matches under
+  inverted polarity.
 
-## v0.4.0
+## [0.4.0] — 2026-03-01
 
 ### Added
 

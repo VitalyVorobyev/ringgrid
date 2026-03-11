@@ -151,6 +151,7 @@ fn evaluate_hypothesis(
         ctx.sampler,
         ctx.center_prior,
         hyp.r_outer_px,
+        ctx.r_expected,
         ctx.pol,
         ctx.edge_cfg,
         ctx.config.outer_estimation.refine_halfwidth_px,

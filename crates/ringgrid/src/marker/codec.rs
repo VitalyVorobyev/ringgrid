@@ -36,8 +36,8 @@ pub fn canonical_16(word: u16) -> u16 {
     (0..16).map(|k| rotate_left_16(word, k)).min().unwrap()
 }
 
+#[cfg(test)]
 #[inline]
-#[cfg_attr(not(test), allow(dead_code))]
 fn cyclic_distance(a: u16, b: u16) -> u8 {
     (0u32..CODEBOOK_BITS as u32)
         .map(|k| popcount(a ^ rotate_left_16(b, k)))

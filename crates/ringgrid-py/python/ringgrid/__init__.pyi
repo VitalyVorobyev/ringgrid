@@ -436,6 +436,7 @@ class EdgeSampleConfig:
     def to_dict(self) -> dict[str, Any]: ...
 
 class DecodeConfig:
+    codebook_profile: str
     code_band_ratio: float
     samples_per_sector: int
     n_radial_rings: int
@@ -447,6 +448,7 @@ class DecodeConfig:
     threshold_convergence_eps: float
     def __init__(
         self,
+        codebook_profile: str = ...,
         code_band_ratio: float = ...,
         samples_per_sector: int = ...,
         n_radial_rings: int = ...,

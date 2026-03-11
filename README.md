@@ -6,8 +6,16 @@
 
 # ringgrid
 
-`ringgrid` is a pure-Rust detector for dense coded ring calibration targets on a hex lattice.
-It detects markers, decodes IDs, estimates homography, and exports structured JSON.
+`ringgrid` is a pure-Rust detector for dense coded ring calibration targets on a hex lattice. It detects markers with subpixel precision, decodes stable baseline IDs from the shipped 893-codeword profile, estimates homography, and can generate printable target artifacts without OpenCV bindings.
+
+## At a Glance
+
+- Subpixel ring-marker detection using direct ellipse fitting and projective center correction
+- Stable shipped `base` profile (`893` IDs, minimum cyclic Hamming distance `2`) plus opt-in `extended`
+- Rust library, CLI workflow, and Python bindings in one workspace
+- Canonical `board_spec.json` plus printable SVG/PNG target generation
+
+Pipeline at a glance: proposals -> local fit/decode -> dedup -> projective center -> `id_correction` -> optional global filter -> optional completion -> final homography refit.
 
 ## Visual Overview
 
@@ -19,31 +27,21 @@ Detection overlay example:
 
 ![Detection overlay example](docs/assets/det_overlay_0002.png)
 
-## How It Works
+## Quick Links
 
-ringgrid uses dual concentric ring markers with a 16-sector binary code band between the inner and outer rings. Each marker encodes a unique ID from the shipped baseline 893-codeword profile with minimum cyclic Hamming distance 2. An additive opt-in extended profile grows that to 2180 codewords with minimum cyclic Hamming distance 1 for advanced workflows that need more IDs without introducing new polarity ambiguity beyond the shipped baseline. The shipped codebook artifacts are generated reproducibly by `tools/gen_codebook.py --n 893 --seed 1`.
+| I want to... | Start here |
+|---|---|
+| Print a target and run first detection from this repo | [Quick Start](#quick-start-from-the-repo) |
+| Read the full user guide | [mdBook User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) |
+| Use the CLI | [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html) |
+| Use the Rust crate | [crates/ringgrid/README.md](crates/ringgrid/README.md) |
+| Use the Python package | [crates/ringgrid-py/README.md](crates/ringgrid-py/README.md) |
+| Work on the repo itself | [docs/development.md](docs/development.md) |
+| Inspect scoring and benchmark context | [docs/performance.md](docs/performance.md) |
 
-**Why rings?** Circles project to ellipses under perspective, and ellipse boundaries can be localized to subpixel precision via gradient-based edge sampling and direct algebraic fitting (Fitzgibbon's method). The dual-ring design enables projective center correction — recovering the true projected center from the inner/outer conic pencil, which corrects the systematic bias inherent in ellipse-fit centers. This yields significantly better accuracy than corner-based targets (checkerboards, ArUco) at oblique viewing angles.
+## Quick Start From the Repo
 
-**Detection pipeline** (named stages): Scharr gradient voting proposals → radial outer-radius estimation → outer ellipse fit → 16-sector decode → inner ellipse fit → deduplication → projective center correction → structural `id_correction` (clear contradictions + recover safe holes) → optional RANSAC global filter → optional completion at missing IDs (+ projective center for new markers) → final homography refit.
-
-## Documentation
-
-- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) — comprehensive mdbook covering marker design, the named detection pipeline (including structural `id_correction`), mathematical foundations (Fitzgibbon fitting, DLT homography, RANSAC, projective center recovery, division distortion model), configuration, and usage
-- [API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) — rustdoc for all public types
-- [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) — one-command generation of `board_spec.json` + printable SVG/PNG
-- [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) — full configuration reference for JSON/SVG/PNG generation
-- [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) — `detect_adaptive`, hint-based adaptive, and explicit multi-scale tiers
-
-## Diligence Statement
-
-This project is developed with AI coding assistants (`Codex` and `Claude Code`) as implementation tools. Not every code path is manually line-reviewed by a human before merge. The project author is an expert in computer vision, validates algorithmic behavior and numerical results, and enforces quality gates (`fmt`/`clippy`/tests/docs/Python checks) before release. This is engineering-assisted development, not "vibe coding."
-
-## Fast Start (Create JSON + SVG + PNG Target Files)
-
-From repository root:
-
-### 1. Build the local Python binding
+### 1. Build the local Python binding used by repo tools
 
 ```bash
 python3 -m venv .venv
@@ -51,7 +49,7 @@ python3 -m venv .venv
 ./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
-### 2. Generate target config JSON and printable files
+### 2. Generate `board_spec.json` plus printable SVG/PNG
 
 ```bash
 ./.venv/bin/python tools/gen_target.py \
@@ -66,27 +64,13 @@ python3 -m venv .venv
   --margin_mm 5
 ```
 
-Key generation knobs:
-
-| Flag | What it controls | Typical value |
-|---|---|---|
-| `--pitch_mm` | Marker center spacing (mm) | `8` |
-| `--rows` / `--long_row_cols` | Hex-lattice board shape | `15` / `14` |
-| `--marker_outer_radius_mm` / `--marker_inner_radius_mm` | Ring radii in mm | `4.8` / `3.2` |
-| `--dpi` | PNG raster resolution | `300` or `600` |
-| `--margin_mm` | Extra white border for printer margins | `3-10` |
-| `--basename` | Output base filename for SVG/PNG | `target_print` |
-| `--no-scale-bar` | Omit the default scale bar from print files | unset |
-
 Generated files:
 
-- `tools/out/target_faststart/board_spec.json` (detector target config)
-- `tools/out/target_faststart/target_print.svg` (vector print file)
-- `tools/out/target_faststart/target_print.png` (raster print file with DPI metadata)
+- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_print.svg`
+- `tools/out/target_faststart/target_print.png`
 
-If you also need synthetic images or ground-truth JSON, keep using `tools/gen_synth.py`.
-
-### 3. Run detection against this target config
+### 3. Run detection
 
 ```bash
 cargo run -- detect \
@@ -95,47 +79,21 @@ cargo run -- detect \
   --out tools/out/target_faststart/detect.json
 ```
 
-Detailed step-by-step tutorial and all generation flags:
-- https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
+### 4. Optional synthetic eval loop
 
-## Detection Quick Start (Synthetic Eval Loop)
-
-### 1. Build
+Install the extra Python deps used by the synth/eval/viz tools before running this loop:
 
 ```bash
-cargo build --release
-```
-
-### 2. Install Python tooling deps (for synth/eval/viz)
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
 ./.venv/bin/python -m pip install numpy matplotlib
 ```
 
-### 3. Generate one synthetic sample
-
 ```bash
 ./.venv/bin/python tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 1.0
-```
 
-### 4. Run detection
-
-```bash
-target/release/ringgrid detect \
+cargo run -- detect \
   --image tools/out/synth_001/img_0000.png \
   --out tools/out/synth_001/det_0000.json
 
-# Optional scale prior tuning:
-#   --marker-diameter-min 18 --marker-diameter-max 48
-# Legacy fixed-size mode:
-#   --marker-diameter 32
-```
-
-### 5. Score against ground truth
-
-```bash
 ./.venv/bin/python tools/score_detect.py \
   --gt tools/out/synth_001/gt_0000.json \
   --pred tools/out/synth_001/det_0000.json \
@@ -143,445 +101,35 @@ target/release/ringgrid detect \
   --out tools/out/synth_001/score_0000.json
 ```
 
-### 6. Render detection overlay
+If you want the full generate -> detect -> score loop in one command, use `./.venv/bin/python tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_run`.
 
-```bash
-tools/run_synth_viz.sh tools/out/synth_001 0
-```
+## Choose an Interface
 
-`tools/run_synth_viz.sh` auto-uses `.venv/bin/python` when present.
+### CLI
 
-## Python Bindings (maturin)
+Use `ringgrid detect` or `cargo run -- detect ...` when you want file-oriented workflows over images and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
 
-The repo includes native Python bindings in `crates/ringgrid-py` exposed as the
-`ringgrid` package.
+### Rust crate
 
-Build and install locally:
+The core detector lives in [`crates/ringgrid/README.md`](crates/ringgrid/README.md). That README covers Rust-library usage, target generation APIs, adaptive detection modes, and camera-model integration in more detail than this front page should.
 
-```bash
-python3 -m pip install -U pip maturin
-maturin develop -m crates/ringgrid-py/Cargo.toml --release
-```
+### Python package
 
-Install with plotting extras:
+The Python bindings live in [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md). Use them when you want installed-package target generation, Python-side detector configuration, or plotting helpers.
 
-```bash
-python3 -m pip install -e crates/ringgrid-py[viz]
-```
+## Documentation Map
 
-Minimal Python usage:
+- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) - full mdBook covering marker design, pipeline stages, math, configuration, target generation, and usage
+- [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) - repo-oriented first-run path for target generation and detection
+- [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) - JSON/SVG/PNG generation details and flags
+- [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) - multi-scale detection modes and tier selection
+- [Rust API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) - rustdoc for the public Rust surface
+- [Rust crate README](crates/ringgrid/README.md) - crate-level Rust examples and API-oriented guidance
+- [Python package README](crates/ringgrid-py/README.md) - installed-package usage and Python `DetectConfig` field guide
+- [Development Guide](docs/development.md) - repo layout, contributor workflows, generated assets, and validation commands
+- [Performance & Evaluation](docs/performance.md) - scoring semantics, benchmark commands, and published snapshot tables
+- [Tuning Guide](docs/tuning-guide.md) - symptom-to-config tuning notes for difficult image conditions
 
-```python
-import ringgrid
+## Diligence Statement
 
-board = ringgrid.BoardLayout.default()
-cfg = ringgrid.DetectConfig(board)
-detector = ringgrid.Detector(cfg)
-# Convenience defaults: detector = ringgrid.Detector.from_board(board)
-
-result = detector.detect("testdata/target_3_split_00.png")
-print(len(result.detected_markers))
-```
-
-Installed-package target generation:
-
-```python
-import ringgrid
-
-board = ringgrid.BoardLayout.from_geometry(8.0, 15, 14, 4.8, 3.2)
-board.to_spec_json("target.json")
-board.write_svg("target.svg", margin_mm=5.0)
-board.write_png("target.png", dpi=600.0, margin_mm=5.0)
-```
-
-Runnable examples:
-
-```bash
-python crates/ringgrid-py/examples/basic_detect.py --image testdata/target_3_split_00.png
-python crates/ringgrid-py/examples/detect_with_camera.py --image testdata/target_3_split_00.png
-python crates/ringgrid-py/examples/plot_detection.py --image testdata/target_3_split_00.png --out testdata/target_3_split_00_overlay_py.png
-```
-
-## Public API (v1)
-
-All detection goes through `Detector` methods. No public free functions.
-
-Stable surface (library users):
-- `Detector` — entry point
-- `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
-- `ScaleTier`, `ScaleTiers` — multi-scale tier configuration
-- `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
-- `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
-- `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
-- `Ellipse` — conic geometry
-
-Design constraints in v1:
-- Target JSON is mandatory for high-level detector construction:
-  `BoardLayout::from_json_file(...)` + `Detector::new(...)`.
-- `Detector::detect(...)` is config-driven:
-  `self_undistort.enable=false` runs single-pass, `true` runs self-undistort orchestration.
-- `Detector::detect_with_mapper(...)` always uses the provided mapper and ignores
-  `self_undistort` config.
-- `DetectedMarker.center` is always image-space; mapper-frame center is optional in
-  `DetectedMarker.center_mapped`.
-- `DetectionResult` includes explicit `center_frame` / `homography_frame` metadata.
-- Low-level math/pipeline modules are internal.
-- Example target JSON: `crates/ringgrid/examples/target.json`.
-
-Minimal usage:
-
-```rust
-use ringgrid::{BoardLayout, Detector};
-use std::path::Path;
-
-let board = BoardLayout::from_json_file(Path::new("crates/ringgrid/examples/target.json"))?;
-let detector = Detector::new(board);
-// let result = detector.detect(&gray_image);
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-## Project Layout
-
-```text
-crates/
-  ringgrid/
-    src/
-      lib.rs       # re-exports only (public API surface)
-      api.rs       # Detector facade
-      pipeline/    # stage orchestration: single_pass, multi_pass, run, fit_decode, finalize
-      detector/    # per-marker primitives: proposal, fit, decode, dedup, filter, center correction, completion
-      ring/        # ring-level sampling: edge, radius, projective center
-      marker/      # codebook, decode, marker spec
-      homography/  # DLT + RANSAC, refit utilities
-      conic/       # ellipse types, fitting, RANSAC, eigenvalue solver
-      pixelmap/    # camera models, PixelMapper trait, self-undistort
-    examples/      # concise library usage examples
-  ringgrid-cli/    # CLI binary: ringgrid
-tools/
-  gen_synth.py         # synthetic dataset generator
-  run_synth_eval.py    # generate -> detect -> score
-  score_detect.py      # scoring utility
-  viz_detect.py        # DetectionResult overlay rendering
-docs/
-  assets/
-  module_structure.md
-  pipeline_analysis.md  # detailed pipeline architecture analysis
-```
-
-Module ownership and dependency direction are documented in `docs/module_structure.md`.
-Detailed pipeline architecture is in `docs/pipeline_analysis.md`.
-
-## Examples
-
-Run crate examples from workspace root:
-
-```bash
-cargo run -p ringgrid --example basic_detect -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
-
-cargo run -p ringgrid --example detect_with_camera -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
-
-cargo run -p ringgrid --example detect_with_self_undistort -- \
-  crates/ringgrid/examples/target.json tools/out/synth_001/img_0000.png
-```
-
-## Detection Modes
-
-### Rust API
-
-**Simple detection** (no distortion correction):
-
-```rust,no_run
-use ringgrid::{BoardLayout, Detector};
-use std::path::Path;
-
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-let detector = Detector::new(board);
-let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
-```
-
-**With camera model** (two-pass distortion-aware pipeline):
-
-```rust,no_run
-use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
-use std::path::Path;
-
-let camera = CameraModel {
-    intrinsics: CameraIntrinsics { fx: 900.0, fy: 900.0, cx: 640.0, cy: 480.0 },
-    distortion: RadialTangentialDistortion { k1: -0.15, k2: 0.05, p1: 0.0, p2: 0.0, k3: 0.0 },
-};
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-let detector = Detector::new(board);
-let result = detector.detect_with_mapper(&image::open("photo.png").unwrap().to_luma8(), &camera);
-```
-
-**Self-undistort** (estimates distortion from markers, no calibration needed):
-
-```rust,no_run
-use ringgrid::{BoardLayout, DetectConfig, Detector};
-use std::path::Path;
-
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-let mut cfg = DetectConfig::from_target(board);
-cfg.self_undistort.enable = true;
-let detector = Detector::with_config(cfg);
-let result = detector.detect(&image::open("photo.png").unwrap().to_luma8());
-```
-
-**Adaptive multi-scale detection** (markers spanning a wide range of apparent sizes):
-
-The default `MarkerScalePrior` covers **14–66 px** diameter, which works well for most scenes.
-For scenes where marker apparent size varies dramatically, use the multi-scale API:
-
-```rust,no_run
-use ringgrid::{BoardLayout, Detector, ScaleTiers};
-use std::path::Path;
-
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-let detector = Detector::new(board);
-let image = image::open("photo.png").unwrap().to_luma8();
-
-// Automatic: scale probe selects tiers from image content
-let result = detector.detect_adaptive(&image);
-
-// With a nominal diameter hint (skips probe, builds a 2-tier bracket)
-let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
-
-// Explicit tiers for direct control
-let tiers = ScaleTiers::four_tier_wide();   // [8,24] ∪ [20,60] ∪ [50,130] ∪ [110,220] px
-let tiers = ScaleTiers::two_tier_standard(); // [14,42] ∪ [36,100] px
-let result = detector.detect_multiscale(&image, &tiers);
-
-// Inspect tiers selected by adaptive logic, then reuse exactly those tiers
-let tiers = detector.adaptive_tiers(&image, Some(32.0));
-let result = detector.detect_multiscale(&image, &tiers);
-```
-
-Practical method selection:
-
-| Situation | Recommended call | Why |
-|---|---|---|
-| Unknown marker scale / mixed near-far markers | `detect_adaptive` | Probe + auto tier selection |
-| Approximate diameter known | `detect_adaptive_with_hint(..., Some(d))` | Skip probe, focused two-tier bracket around `d` |
-| Reproducible experiments with fixed policy | `detect_multiscale(..., tiers)` | Full explicit tier control |
-| Tight size range, throughput priority | `detect` | Single-pass and fastest |
-
-`ScaleTiers` presets:
-
-| Preset | Tiers | Diameter range | Use case |
-|---|---|---:|---|
-| `four_tier_wide()` | 4 | 8–220 px | 27:1 range, mixed near/far |
-| `two_tier_standard()` | 2 | 14–100 px | 7:1 range, typical multi-distance |
-| `single(prior)` | 1 | custom | single-pass, no merge overhead |
-
-Multi-scale pipeline: each tier runs fit/decode + projective center correction independently,
-then results are merged with **size-consistency-aware NMS** (markers whose outer radius matches
-the neighborhood median are preferred over same-location detections from a mismatched tier),
-followed by a single global filter + completion + homography refit pass.
-
-Validation on the `rtv3d` dataset (102 tiles, 8–120 px diameter range):
-
-| Strategy | Decoded markers | vs. old default |
-|---|---:|---:|
-| Old default [20, 56] px | 4 264 | — |
-| **New default [14, 66] px** | **4 752** | **+11.4 %** |
-| Wide single [8, 220] px | 4 429 | +3.9 % |
-
-The new default is a free +11% with no API changes required. Multi-scale detection further
-closes the gap on scenes with very small markers (< 14 px).
-
-### CLI Flags
-
-- `--circle-refine-method none|projective-center` (default: projective-center)
-- `--no-global-filter` — disable global homography filtering
-- `--no-complete` — disable H-guided completion
-- `--marker-diameter-min <px>` / `--marker-diameter-max <px>` — scale search range
-- `--self-undistort` — enable self-undistort estimation (mutually exclusive with `--cam-*`)
-- `--cam-fx/fy/cx/cy` + `--cam-k1/k2/k3/p1/p2` — external camera model
-
-## Distortion Correction
-
-ringgrid supports three distortion correction modes:
-
-| Mode | Requires | Method |
-|---|---|---|
-| None | — | Single-pass in image coordinates |
-| External camera | Calibrated intrinsics + distortion | Two-pass with `CameraModel` implementing `PixelMapper` |
-| Self-undistort | Nothing | Estimates 1-parameter division model from detected markers |
-
-Camera model and self-undistort are mutually exclusive. See the [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for details.
-
-## Metrics (Synthetic Scoring)
-
-`tools/score_detect.py` reports several geometric metrics; the three key ones are:
-
-- `center_error`: TP-only error between predicted `marker.center` and GT center in the selected frame (`--center-gt-key image|working|auto`).
-- `homography_self_error`: homography self-consistency error (`project(H_est, board_xy_mm)` vs predicted marker center) in the selected evaluation frame.
-- `homography_error_vs_gt`: absolute error between estimated `H` and GT projection (`project(H_est, board_xy_mm)` vs GT center in selected frame via `--homography-gt-key`).
-
-Interpretation:
-
-- Lower is better for all three.
-- `homography_self_error` can be lower than `center_error`, because it measures consistency of `H` with detected centers, not absolute GT center error.
-- For cross-run comparisons, evaluate all metrics in distorted image space.
-- Use `--center-gt-key image --homography-gt-key image`.
-- Prefer `--pred-center-frame auto --pred-homography-frame auto` so scorer uses detector-emitted `center_frame` / `homography_frame` metadata.
-
-Distortion-aware eval example:
-
-```bash
-./.venv/bin/python tools/run_synth_eval.py \
-  --n 3 \
-  --blur_px 0.8 \
-  --out_dir tools/out/r4_distortion_eval \
-  --marker_diameter 32.0 \
-  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
-  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
-  --pass_camera_to_detector
-```
-
-Self-undistort eval example:
-
-```bash
-./.venv/bin/python tools/run_synth_eval.py \
-  --n 3 \
-  --blur_px 0.8 \
-  --out_dir tools/out/r4_self_undistort_eval \
-  --marker_diameter 32.0 \
-  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
-  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
-  --self_undistort
-```
-
-Self-undistort implementation notes:
-- Two-pass flow: pass-1 detection, estimate division-model `lambda`, pass-2 with mapper if accepted.
-- Primary objective is homography self-consistency in mapped working space (when enough decoded IDs exist).
-- Fallback objective is robust conic-consistency (inner/outer Sampson residuals).
-- Apply gates require meaningful improvement, non-trivial `|lambda|`, and reject boundary solutions.
-- Default lambda search range is `[-8e-7, 8e-7]`.
-
-## Performance Snapshots (Synthetic)
-
-### Distortion Benchmark (Projective-Center, 3 Images)
-
-Source:
-- `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json`
-
-Example distorted sample used in this benchmark:
-
-![Distortion benchmark sample](docs/assets/distortion_benchmark_sample.png)
-
-Run command:
-
-```bash
-./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline \
-  --n_images 3 --blur_px 0.8 --noise_sigma 0.0 --marker_diameter 32.0 \
-  --cam-fx 900 --cam-fy 900 --cam-cx 640 --cam-cy 480 \
-  --cam-k1 -0.15 --cam-k2 0.05 --cam-p1 0.001 --cam-p2 -0.001 --cam-k3 0.0 \
-  --corrections none external self_undistort \
-  --modes projective_center
-```
-
-Benchmark script defaults to `cargo run` (source-of-truth build). Use
-`--use-prebuilt-binary` only when you intentionally want to benchmark an existing binary artifact.
-
-Image-space metric snapshot:
-
-| Correction | Precision | Recall | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
-|---|---:|---:|---:|---:|---:|
-| `none` | 1.000 | 0.974 | 0.232 | 1.030 / 2.961 | 1.345 / 3.611 |
-| `external` | 1.000 | 1.000 | 0.078 | 0.075 / 0.146 | 0.020 / 0.029 |
-| `self_undistort` | 1.000 | 1.000 | 0.078 | 0.210 / 0.426 | 0.193 / 0.408 |
-
-Notes:
-- Scripts now score in distorted image space for all three correction variants.
-- For `self_undistort`, scoring frame is selected per-image from `self_undistort.applied` in detection JSON.
-- On this synthetic distortion setup, self-undistort is much better than no correction, but still less accurate than external calibration parameters.
-
-### Reference Benchmark (Clean, 3 Images)
-
-Source: `tools/out/reference_benchmark_post_pipeline/summary.json`
-
-Run command:
-
-```bash
-./.venv/bin/python tools/run_reference_benchmark.py \
-  --out_dir tools/out/reference_benchmark_post_pipeline \
-  --n_images 3 \
-  --blur_px 0.8 \
-  --noise_sigma 0.0 \
-  --marker_diameter 32.0 \
-  --modes none projective_center
-```
-
-| Mode | Center mean (px) | H self mean/p95 (px) | H vs GT mean/p95 (px) |
-|---|---:|---:|---:|
-| `none` | 0.072 | 0.065 / 0.132 | 0.033 / 0.049 |
-| `projective-center` | 0.054 | 0.051 / 0.098 | 0.019 / 0.030 |
-
-### Regression Batch (10 images)
-
-Source: `tools/out/regress_r2_batch/det/aggregate.json`
-
-This set is intentionally harder (`blur_px=3.0`), and markers are visibly weak/blurred.
-
-Example image from this stress set:
-
-![Regression blur=3.0 sample](docs/assets/regression_blur3_sample.png)
-
-Run command:
-
-```bash
-./.venv/bin/python tools/run_synth_eval.py \
-  --n 10 \
-  --blur_px 3.0 \
-  --out_dir tools/out/regress_r2_batch \
-  --marker_diameter 32.0
-```
-
-Snapshot:
-
-| Metric | Value |
-|---|---:|
-| Images | 10 |
-| Avg precision | 1.000 |
-| Avg recall | 0.949 |
-| Avg TP / image | 192.6 |
-| Avg FP / image | 0.0 |
-| Avg center error (px) | 0.278 |
-| Avg H vs GT error (px) | 0.147 |
-| Avg H self error (px) | 0.235 |
-
-## Regenerate Embedded Assets
-
-The committed codebook artifacts live in `tools/codebook.json` and `crates/ringgrid/src/marker/codebook.rs`. They are generated by `tools/gen_codebook.py` with seed `1`; the generator relaxes its target minimum distance as needed to reach the requested codebook size, so the committed achieved value (`2`) is the shipped truth.
-
-```bash
-python3 tools/gen_codebook.py \
-  --n 893 --seed 1 \
-  --out_json tools/codebook.json \
-  --out_rs crates/ringgrid/src/marker/codebook.rs
-
-# Board target is runtime JSON (`ringgrid.target.v3`), no generated Rust module.
-python3 tools/gen_board_spec.py \
-  --pitch_mm 8.0 \
-  --rows 15 --long_row_cols 14 \
-  --board_mm 200.0 \
-  --json_out tools/board/board_spec.json
-```
-
-Then rebuild:
-
-```bash
-cargo build --release
-```
-
-## Development Checks
-
-```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-```
+This project is developed with AI coding assistants (`Codex` and `Claude Code`) as implementation tools. Not every code path is manually line-reviewed by a human before merge. The project author validates algorithmic behavior and numerical results and enforces quality gates before release.

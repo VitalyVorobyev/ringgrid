@@ -25,9 +25,7 @@ _None currently assigned._
 
 ## Up Next
 
-| ID | Status | Priority | Type | Title | Role | Notes |
-|----|--------|----------|------|-------|------|-------|
-| DOCS-002 | todo | P1 | docs | Main README user-first refactor + split dev/perf notes | docs | Refocus root `README.md` on workspace users (install/quickstart/usage), move deep developer/performance material into dedicated docs, and add links from README. Acceptance: user-first README with clear links to developer/performance docs. |
+_None currently assigned._
 
 ## Backlog
 
@@ -64,6 +62,7 @@ _None currently assigned._
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| DOCS-002 | 2026-03-11 | docs | Main README user-first refactor + split dev/perf notes | Accepted via `TASK-016`: refactored the root `README.md` into a user-first landing page centered on install, quickstart, interface routing, and documentation navigation; moved maintainer-focused material into `docs/development.md`; moved scoring/benchmark detail into `docs/performance.md`; added the missing synth/eval Python dependency note for the optional repo workflow; reviewer approval reproduced the full Rust/doc/mdBook/Python validation baseline. |
 | DOCS-001 | 2026-03-11 | docs | ringgrid-py README: complete DetectConfig field guide | Accepted via `TASK-015`: expanded `crates/ringgrid-py/README.md` with a full Python-facing `DetectConfig` field guide covering sections, top-level controls, aliases, derived defaults, and tuning notes; exposed `DecodeConfig.codebook_profile` through the typed Python/stub surface with backward-compatible defaulting for legacy payloads; added decode-parity and README surface-drift regression coverage; reviewer approval reproduced the full Rust/doc/Python validation baseline. |
 | ALGO-014 | 2026-03-11 | algo | Optional extended codebook mode beyond 893, stable base IDs | Accepted via `TASK-014`: added explicit `base`/`extended` codebook profiles while preserving shipped IDs `0..892`, threaded profile selection through decode and profile-local exact-match gates, regenerated artifacts/docs/CLI for the approved additive `extended` profile (`2180` total, `1287` appended), fixed loaded-baseline seed provenance when `--base_json` is used, added Rust/Python regression coverage for inverted-polarity stability and generator provenance, and reviewer approval reproduced the full local CI baseline plus the former polarity and mismatched-seed blocker repros. |
 | INFRA-012 | 2026-03-10 | infra | Create dedicated tools/gen_target.py | Accepted via `TASK-013`: added thin repo-root `tools/gen_target.py` over the shipped Python target-generation API, added deterministic subprocess parity/error coverage in `tools/tests/test_gen_target.py`, updated README/mdbook guidance to route print-only users to the dedicated tool while preserving `gen_synth.py` for synth workflows, and reviewer approval reproduced the dedicated tool tests, Rust target-generation integration tests, `mdbook build`, and invalid-DPI CLI failure behavior. |

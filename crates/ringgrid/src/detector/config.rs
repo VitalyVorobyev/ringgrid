@@ -756,8 +756,6 @@ pub struct DetectConfig {
     pub h_reproj_confidence_alpha: f32,
 }
 
-const EDGE_EXPANSION_FRAC_OUTER: f32 = 0.12;
-
 impl DetectConfig {
     /// Build a configuration with scale-dependent parameters derived from a
     /// marker diameter range and a runtime target layout.
@@ -867,11 +865,17 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
     let outer = config.board.marker_outer_radius_mm();
     let inner = config.board.marker_inner_radius_mm();
-    if !(outer.is_finite() && inner.is_finite()) || outer <= 0.0 || inner <= 0.0 || inner >= outer {
+    let ring_width = config.board.marker_ring_width_mm();
+    if !(outer.is_finite() && inner.is_finite() && ring_width.is_finite())
+        || outer <= 0.0
+        || inner <= 0.0
+        || ring_width <= 0.0
+        || inner >= outer
+    {
         return;
     }
 
-    let edge_pad = (outer * EDGE_EXPANSION_FRAC_OUTER).max(0.0);
+    let edge_pad = 0.5 * ring_width;
     let inner_edge = (inner - edge_pad).max(outer * 0.05);
     let outer_edge = outer + edge_pad;
     if inner_edge > 0.0 && inner_edge < outer_edge {

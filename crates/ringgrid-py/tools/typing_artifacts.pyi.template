@@ -31,6 +31,7 @@ class BoardLayout:
     long_row_cols: int
     marker_outer_radius_mm: float
     marker_inner_radius_mm: float
+    marker_ring_width_mm: float
     markers: list[BoardMarker]
     @classmethod
     def default(cls) -> BoardLayout: ...
@@ -44,6 +45,7 @@ class BoardLayout:
         long_row_cols: int,
         marker_outer_radius_mm: float,
         marker_inner_radius_mm: float,
+        marker_ring_width_mm: float,
         *,
         name: str | None = ...,
     ) -> BoardLayout: ...

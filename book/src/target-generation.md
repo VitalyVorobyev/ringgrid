@@ -68,6 +68,7 @@ cargo run -p ringgrid-cli -- gen-target \
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5
@@ -83,6 +84,7 @@ Python script:
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5
@@ -100,7 +102,7 @@ Rust API:
 use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
 use std::path::Path;
 
-let board = BoardLayout::with_name("ringgrid_200mm_hex", 8.0, 15, 14, 4.8, 3.2).unwrap();
+let board = BoardLayout::with_name("ringgrid_200mm_hex", 8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
 
 board
     .write_json_file(Path::new("tools/out/target_print_200mm/board_spec.json"))
@@ -170,6 +172,7 @@ hyphenated aliases such as `--pitch-mm` are also accepted.
 | `--long_row_cols` | required | Number of markers in long rows. |
 | `--marker_outer_radius_mm` | required | Outer ring radius in mm. |
 | `--marker_inner_radius_mm` | required | Inner ring radius in mm. |
+| `--marker_ring_width_mm` | required | Full printed ring width in mm for both inner and outer dark rings. |
 | `--name` | auto | Optional board name. Omitted uses deterministic geometry-derived naming. |
 | `--out_dir` | `tools/out/target` | Output directory for `board_spec.json`, SVG, and PNG. |
 | `--basename` | `target_print` | Base filename for SVG/PNG outputs. |
@@ -181,7 +184,7 @@ hyphenated aliases such as `--pitch-mm` are also accepted.
 
 | Rust API surface | Equivalent shared option |
 |---|---|
-| `BoardLayout::new(...)` / `BoardLayout::with_name(...)` | geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, optional name) |
+| `BoardLayout::new(...)` / `BoardLayout::with_name(...)` | geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, ring width, optional name) |
 | `write_json_file(path)` | `board_spec.json` output |
 | `SvgTargetOptions { margin_mm, include_scale_bar }` | `--margin_mm`, `--no-scale-bar` |
 | `PngTargetOptions { dpi, margin_mm, include_scale_bar }` | `--dpi`, `--margin_mm`, `--no-scale-bar` |
@@ -227,21 +230,23 @@ Notes:
 | `--name` | auto | Board name. Default: `ringgrid_{board_mm}mm_hex`. |
 | `--marker_outer_radius_mm` | `pitch_mm * 0.6` | Outer ring radius. |
 | `--marker_inner_radius_mm` | `pitch_mm * 0.4` | Inner ring radius. |
+| `--marker_ring_width_mm` | `marker_outer_radius_mm * 0.24` | Full dark-ring width. |
 | `--json_out` | `tools/board/board_spec.json` | Output JSON path. |
 
-## Board JSON Schema (`ringgrid.target.v3`)
+## Board JSON Schema (`ringgrid.target.v4`)
 
 Minimal example:
 
 ```json
 {
-  "schema": "ringgrid.target.v3",
+  "schema": "ringgrid.target.v4",
   "name": "ringgrid_200mm_hex",
   "pitch_mm": 8.0,
   "rows": 15,
   "long_row_cols": 14,
   "marker_outer_radius_mm": 4.8,
-  "marker_inner_radius_mm": 3.2
+  "marker_inner_radius_mm": 3.2,
+  "marker_ring_width_mm": 1.152
 }
 ```
 
@@ -249,24 +254,26 @@ Field reference:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema` | string | Must be `ringgrid.target.v3`. |
+| `schema` | string | Must be `ringgrid.target.v4`. |
 | `name` | string | Human-readable board name. |
 | `pitch_mm` | float | Marker center spacing in mm. |
 | `rows` | int | Number of lattice rows. |
 | `long_row_cols` | int | Marker count for long rows. |
 | `marker_outer_radius_mm` | float | Outer ring radius in mm. |
 | `marker_inner_radius_mm` | float | Inner ring radius in mm (`0 < inner < outer`). |
+| `marker_ring_width_mm` | float | Full printed width of the dark inner and outer rings in mm. |
 
 ## Validation Rules
 
 The Rust loader validates:
 
-- `schema == "ringgrid.target.v3"`
+- `schema == "ringgrid.target.v4"`
 - finite positive `pitch_mm`
 - `rows >= 1`
 - `long_row_cols >= 1` (`>= 2` when `rows > 1`)
-- finite positive radii with `marker_inner_radius_mm < marker_outer_radius_mm`
-- marker outer diameter smaller than minimum center spacing
+- finite positive radii and ring width with `marker_inner_radius_mm < marker_outer_radius_mm`
+- a positive code-band gap between the inner and outer ring strokes
+- printed marker diameter (including ring stroke width) smaller than minimum center spacing
 
 ## Quick Validation in Rust
 

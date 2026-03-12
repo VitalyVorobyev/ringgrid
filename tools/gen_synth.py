@@ -1601,14 +1601,16 @@ def main() -> None:
     # Emit board_spec.json alongside generated images
     marker_outer_radius = args.pitch_mm * 0.6
     marker_inner_radius = args.pitch_mm * 0.4
+    marker_ring_width = marker_outer_radius * 0.24
     board_spec = {
-        "schema": "ringgrid.target.v3",
+        "schema": "ringgrid.target.v4",
         "name": f"ringgrid_{int(args.board_mm)}mm_hex",
         "rows": rows,
         "long_row_cols": long_row_cols,
         "pitch_mm": args.pitch_mm,
         "marker_outer_radius_mm": marker_outer_radius,
         "marker_inner_radius_mm": marker_inner_radius,
+        "marker_ring_width_mm": marker_ring_width,
     }
     board_spec_path = out_dir / "board_spec.json"
     with open(board_spec_path, "w") as f:

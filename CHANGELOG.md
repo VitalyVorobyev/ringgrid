@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-03-12
+
 ### Added
 
 **Rust target generation**
-- `BoardLayout` now exposes file-oriented target generation for canonical `ringgrid.target.v3`
+- `BoardLayout` now exposes file-oriented target generation for canonical `ringgrid.target.v4`
   JSON plus printable SVG/PNG output from the Rust crate.
 - Added deterministic JSON/SVG/PNG fixtures and integration coverage for the new generator
   surface.
@@ -88,6 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reworked README and mdBook target-generation guidance so Rust API, Rust CLI,
   and Python script workflows are documented as equivalent paths over the same
   target-generation engine.
+- Canonical target JSON moved to `ringgrid.target.v4` with explicit
+  `marker_ring_width_mm`; the runtime loader no longer accepts `v3`.
 
 ### Fixed
 

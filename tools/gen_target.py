@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--long_row_cols", type=int, required=True)
     parser.add_argument("--marker_outer_radius_mm", type=float, required=True)
     parser.add_argument("--marker_inner_radius_mm", type=float, required=True)
+    parser.add_argument("--marker_ring_width_mm", type=float, required=True)
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--out_dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--basename", type=str, default=DEFAULT_BASENAME)
@@ -70,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             args.long_row_cols,
             args.marker_outer_radius_mm,
             args.marker_inner_radius_mm,
+            args.marker_ring_width_mm,
             name=args.name,
         )
         include_scale_bar = not args.no_scale_bar

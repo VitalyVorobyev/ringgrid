@@ -36,7 +36,7 @@ The library can generate canonical target JSON plus printable SVG/PNG directly:
 use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
 use std::path::Path;
 
-let board = BoardLayout::with_name("ringgrid_demo", 8.0, 15, 14, 4.8, 3.2).unwrap();
+let board = BoardLayout::with_name("ringgrid_demo", 8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
 
 board.write_json_file(Path::new("target.json")).unwrap();
 board
@@ -70,6 +70,7 @@ cargo run -p ringgrid-cli -- gen-target \
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5
@@ -88,6 +89,7 @@ python3 -m venv .venv
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5

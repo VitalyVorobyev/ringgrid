@@ -37,6 +37,7 @@ board = ringgrid.BoardLayout.from_geometry(
     14,
     4.8,
     3.2,
+    1.152,
     name="ringgrid_200mm_hex",
 )
 
@@ -49,7 +50,7 @@ Key knobs:
 
 | API | What it controls | Typical value |
 |---|---|---|
-| `BoardLayout.from_geometry(...)` | Board geometry (`pitch_mm`, `rows`, `long_row_cols`, radii) | `8.0`, `15`, `14`, `4.8`, `3.2` |
+| `BoardLayout.from_geometry(...)` | Board geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, ring width) | `8.0`, `15`, `14`, `4.8`, `3.2`, `1.152` |
 | `name=` | Optional explicit board name; omitted uses deterministic geometry-derived name | `"ringgrid_200mm_hex"` |
 | `write_svg(..., margin_mm=...)` | Extra white border around the printable page | `3-10` |
 | `write_png(..., dpi=...)` | PNG raster resolution and embedded print metadata | `300` or `600` |
@@ -63,7 +64,7 @@ Outputs:
 
 Equivalent paths for the same geometry and output set:
 
-- Rust CLI: `ringgrid gen-target --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
+- Rust CLI: `ringgrid gen-target --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --marker_ring_width_mm 1.152 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
 - Python script from the repo: `tools/gen_target.py` with the same arguments
 - Rust API: `BoardLayout::new` / `BoardLayout::with_name` plus `write_json_file`, `write_target_svg`, and `write_target_png`
 

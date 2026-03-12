@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
-const TARGET_SCHEMA_V3: &str = "ringgrid.target.v3";
+const TARGET_SCHEMA_V4: &str = "ringgrid.target.v4";
 
 #[derive(Debug, Clone, Serialize)]
 struct BoardSnapshot {
@@ -15,6 +15,7 @@ struct BoardSnapshot {
     long_row_cols: usize,
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
+    marker_ring_width_mm: f32,
     markers: Vec<ringgrid::BoardMarker>,
 }
 
@@ -116,13 +117,14 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
 
 fn board_snapshot(board: &ringgrid::BoardLayout) -> BoardSnapshot {
     BoardSnapshot {
-        schema: TARGET_SCHEMA_V3.to_string(),
+        schema: TARGET_SCHEMA_V4.to_string(),
         name: board.name.clone(),
         pitch_mm: board.pitch_mm,
         rows: board.rows,
         long_row_cols: board.long_row_cols,
         marker_outer_radius_mm: board.marker_outer_radius_mm,
         marker_inner_radius_mm: board.marker_inner_radius_mm,
+        marker_ring_width_mm: board.marker_ring_width_mm,
         markers: board.markers().to_vec(),
     }
 }
@@ -137,6 +139,7 @@ fn board_from_geometry(
     long_row_cols: usize,
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
+    marker_ring_width_mm: f32,
     name: Option<&str>,
 ) -> PyResult<ringgrid::BoardLayout> {
     match name {
@@ -147,6 +150,7 @@ fn board_from_geometry(
             long_row_cols,
             marker_outer_radius_mm,
             marker_inner_radius_mm,
+            marker_ring_width_mm,
         ),
         None => ringgrid::BoardLayout::new(
             pitch_mm,
@@ -154,6 +158,7 @@ fn board_from_geometry(
             long_row_cols,
             marker_outer_radius_mm,
             marker_inner_radius_mm,
+            marker_ring_width_mm,
         ),
     }
     .map_err(py_value_error)
@@ -605,13 +610,14 @@ fn canonical_board_spec_json(spec_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (pitch_mm, rows, long_row_cols, marker_outer_radius_mm, marker_inner_radius_mm, name=None))]
+#[pyo3(signature = (pitch_mm, rows, long_row_cols, marker_outer_radius_mm, marker_inner_radius_mm, marker_ring_width_mm, name=None))]
 fn board_spec_json_from_geometry(
     pitch_mm: f32,
     rows: usize,
     long_row_cols: usize,
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
+    marker_ring_width_mm: f32,
     name: Option<&str>,
 ) -> PyResult<String> {
     let board = board_from_geometry(
@@ -620,6 +626,7 @@ fn board_spec_json_from_geometry(
         long_row_cols,
         marker_outer_radius_mm,
         marker_inner_radius_mm,
+        marker_ring_width_mm,
         name,
     )?;
     Ok(board.to_json_string())

@@ -1,3 +1,6 @@
+use crate::board_layout::{
+    marker_code_band_bounds_mm, marker_outer_draw_radius_mm, marker_ring_half_thickness_mm,
+};
 use crate::marker::codebook::CODEBOOK;
 use crate::BoardLayout;
 use image::{GrayImage, Luma};
@@ -8,9 +11,6 @@ use std::io::BufWriter;
 use std::path::Path;
 
 const CODE_SECTORS: usize = 16;
-const CODE_BAND_OUTER_RATIO: f64 = 0.58;
-const CODE_BAND_INNER_RATIO: f64 = 0.42;
-const RING_HALF_THICKNESS_RATIO: f64 = 0.12;
 const MM_PER_INCH: f64 = 25.4;
 const DEFAULT_PNG_DPI: f32 = 300.0;
 
@@ -403,16 +403,23 @@ fn encode_png<W: std::io::Write>(
 fn render_geometry(board: &BoardLayout) -> RenderGeometry {
     let outer_radius_mm = f64::from(board.marker_outer_radius_mm);
     let inner_radius_mm = f64::from(board.marker_inner_radius_mm);
-    let code_band_outer_mm = f64::from(board.pitch_mm) * CODE_BAND_OUTER_RATIO;
-    let code_band_inner_mm = f64::from(board.pitch_mm) * CODE_BAND_INNER_RATIO;
-    let ring_half_thickness_mm = outer_radius_mm * RING_HALF_THICKNESS_RATIO;
-    let outer_draw_extent_mm = (outer_radius_mm + ring_half_thickness_mm).max(code_band_outer_mm);
+    let (code_band_inner_mm, code_band_outer_mm) = marker_code_band_bounds_mm(
+        board.marker_outer_radius_mm,
+        board.marker_inner_radius_mm,
+        board.marker_ring_width_mm,
+    );
+    let ring_half_thickness_mm =
+        f64::from(marker_ring_half_thickness_mm(board.marker_ring_width_mm));
+    let outer_draw_extent_mm = f64::from(marker_outer_draw_radius_mm(
+        board.marker_outer_radius_mm,
+        board.marker_ring_width_mm,
+    ));
 
     RenderGeometry {
         outer_radius_mm,
         inner_radius_mm,
-        code_band_outer_mm,
-        code_band_inner_mm,
+        code_band_outer_mm: f64::from(code_band_outer_mm),
+        code_band_inner_mm: f64::from(code_band_inner_mm),
         ring_half_thickness_mm,
         outer_draw_extent_mm,
     }
@@ -790,5 +797,23 @@ mod tests {
             })
             .expect_err("non-positive dpi must fail");
         assert!(matches!(err, TargetGenerationError::InvalidDpi { .. }));
+    }
+
+    #[test]
+    fn render_geometry_uses_ring_edges_for_code_band() {
+        let board = BoardLayout::with_name("fixture_gap_free", 7.0, 3, 4, 4.8, 2.8, 1.152)
+            .expect("valid geometry");
+        let geometry = render_geometry(&board);
+        let (expected_inner, expected_outer) = marker_code_band_bounds_mm(
+            board.marker_outer_radius_mm,
+            board.marker_inner_radius_mm,
+            board.marker_ring_width_mm,
+        );
+        let expected_draw_extent =
+            marker_outer_draw_radius_mm(board.marker_outer_radius_mm, board.marker_ring_width_mm);
+
+        assert!((geometry.code_band_inner_mm - f64::from(expected_inner)).abs() < 1e-6);
+        assert!((geometry.code_band_outer_mm - f64::from(expected_outer)).abs() < 1e-6);
+        assert!((geometry.outer_draw_extent_mm - f64::from(expected_draw_extent)).abs() < 1e-6);
     }
 }

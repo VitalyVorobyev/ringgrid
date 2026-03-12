@@ -14,7 +14,7 @@ fn normalize_text_newlines(text: &str) -> String {
 }
 
 fn fixture_board() -> BoardLayout {
-    BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2)
+    BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2, 1.152)
         .expect("fixture board must be valid")
 }
 

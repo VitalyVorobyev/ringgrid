@@ -1,9 +1,10 @@
 {
-  "schema": "ringgrid.target.v3",
+  "schema": "ringgrid.target.v4",
   "name": "ringgrid_example_hex_200mm",
   "pitch_mm": 8.0,
   "rows": 15,
   "long_row_cols": 14,
   "marker_outer_radius_mm": 4.8,
-  "marker_inner_radius_mm": 3.2
+  "marker_inner_radius_mm": 3.2,
+  "marker_ring_width_mm": 1.152
 }

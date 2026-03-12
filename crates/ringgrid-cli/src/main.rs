@@ -7,7 +7,7 @@ type CliError = Box<dyn std::error::Error>;
 type CliResult<T> = Result<T, CliError>;
 const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
 const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
-const TARGET_SPEC_SCHEMA_V3: &str = "ringgrid.target.v3";
+const TARGET_SPEC_SCHEMA_V4: &str = "ringgrid.target.v4";
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
@@ -74,6 +74,10 @@ struct CliGenTargetArgs {
     )]
     marker_inner_radius_mm: f32,
 
+    /// Ring width in millimeters.
+    #[arg(long = "marker_ring_width_mm", visible_alias = "marker-ring-width-mm")]
+    marker_ring_width_mm: f32,
+
     /// Optional explicit board name. Omitted uses a deterministic geometry-derived name.
     #[arg(long)]
     name: Option<String>,
@@ -113,6 +117,7 @@ impl CliGenTargetArgs {
                 self.long_row_cols,
                 self.marker_outer_radius_mm,
                 self.marker_inner_radius_mm,
+                self.marker_ring_width_mm,
             )
         } else {
             ringgrid::BoardLayout::new(
@@ -121,6 +126,7 @@ impl CliGenTargetArgs {
                 self.long_row_cols,
                 self.marker_outer_radius_mm,
                 self.marker_inner_radius_mm,
+                self.marker_ring_width_mm,
             )
         };
         board.map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
@@ -1003,7 +1009,7 @@ fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
     println!(
         "Board: {}, schema={}, rows={}, long_row_cols={}, markers={}, pitch={}mm",
         board.name,
-        TARGET_SPEC_SCHEMA_V3,
+        TARGET_SPEC_SCHEMA_V4,
         board.rows,
         board.long_row_cols,
         board.n_markers(),
@@ -1257,6 +1263,7 @@ mod tests {
             long_row_cols: 4,
             marker_outer_radius_mm: 4.8,
             marker_inner_radius_mm: 3.2,
+            marker_ring_width_mm: 1.152,
             name: Some("fixture_compact_hex".to_string()),
             out_dir,
             basename: "fixture_compact_hex".to_string(),
@@ -1505,6 +1512,8 @@ mod tests {
             "4.8",
             "--marker_inner_radius_mm",
             "3.2",
+            "--marker_ring_width_mm",
+            "1.152",
             "--out_dir",
             "tools/out/fixture",
         ])
@@ -1555,6 +1564,19 @@ mod tests {
     }
 
     #[test]
+    fn gen_target_rejects_geometry_without_code_band_gap() {
+        let out_dir = temp_output_dir("invalid_geometry");
+        let mut args = fixture_gen_target_args(out_dir);
+        args.marker_inner_radius_mm = 4.1;
+
+        let err = run_gen_target(&args).expect_err("invalid geometry must fail");
+        assert!(
+            err.to_string().contains("no code band between rings"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn gen_target_uses_generated_name_when_name_is_omitted() {
         let out_dir = temp_output_dir("generated_name");
         let mut args = fixture_gen_target_args(out_dir.clone());
@@ -1568,7 +1590,7 @@ mod tests {
         .expect("parse spec");
         assert_eq!(
             spec.get("name").and_then(|v| v.as_str()),
-            Some("ringgrid_hex_r3_c4_p8.000_o4.800_i3.200")
+            Some("ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152")
         );
 
         let _ = std::fs::remove_dir_all(out_dir);

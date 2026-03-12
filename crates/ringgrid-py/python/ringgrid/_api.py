@@ -122,7 +122,7 @@ class BoardLayout:
     """Board layout specification and generated marker list.
 
     The board object carries both:
-    - the compact board spec (`schema`, `rows`, `pitch_mm`, radii), and
+    - the compact board spec (`schema`, `rows`, `pitch_mm`, radii, ring width), and
     - the generated marker list (`markers`) with board coordinates.
     """
 
@@ -133,6 +133,7 @@ class BoardLayout:
     long_row_cols: int
     marker_outer_radius_mm: float
     marker_inner_radius_mm: float
+    marker_ring_width_mm: float
     markers: list[BoardMarker] = field(default_factory=list)
     _spec_json: str = field(default="", repr=False)
 
@@ -144,7 +145,7 @@ class BoardLayout:
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> "BoardLayout":
-        """Load a board layout from a `ringgrid.target.v3` JSON file."""
+        """Load a board layout from a `ringgrid.target.v4` JSON file."""
         spec_json = _load_board_spec_json(_coerce_path(path))
         return cls._from_spec_json(spec_json)
 
@@ -156,6 +157,7 @@ class BoardLayout:
         long_row_cols: int,
         marker_outer_radius_mm: float,
         marker_inner_radius_mm: float,
+        marker_ring_width_mm: float,
         *,
         name: str | None = None,
     ) -> "BoardLayout":
@@ -170,6 +172,7 @@ class BoardLayout:
             int(long_row_cols),
             float(marker_outer_radius_mm),
             float(marker_inner_radius_mm),
+            float(marker_ring_width_mm),
             name,
         )
         return cls._from_spec_json(spec_json)
@@ -186,6 +189,7 @@ class BoardLayout:
             "long_row_cols": int(data["long_row_cols"]),
             "marker_outer_radius_mm": float(data["marker_outer_radius_mm"]),
             "marker_inner_radius_mm": float(data["marker_inner_radius_mm"]),
+            "marker_ring_width_mm": float(data["marker_ring_width_mm"]),
         }
         spec_json = _canonical_board_spec_json(json.dumps(spec))
         return cls._from_spec_json(spec_json)
@@ -206,6 +210,7 @@ class BoardLayout:
             long_row_cols=int(snapshot["long_row_cols"]),
             marker_outer_radius_mm=float(snapshot["marker_outer_radius_mm"]),
             marker_inner_radius_mm=float(snapshot["marker_inner_radius_mm"]),
+            marker_ring_width_mm=float(snapshot["marker_ring_width_mm"]),
             markers=markers,
             _spec_json=spec_json,
         )
@@ -230,6 +235,11 @@ class BoardLayout:
             "marker_inner_radius_mm",
             refreshed.marker_inner_radius_mm,
         )
+        object.__setattr__(
+            self,
+            "marker_ring_width_mm",
+            refreshed.marker_ring_width_mm,
+        )
         object.__setattr__(self, "markers", refreshed.markers)
         object.__setattr__(self, "_spec_json", refreshed._spec_json)
         return refreshed._spec_json
@@ -244,6 +254,7 @@ class BoardLayout:
             "long_row_cols": int(self.long_row_cols),
             "marker_outer_radius_mm": float(self.marker_outer_radius_mm),
             "marker_inner_radius_mm": float(self.marker_inner_radius_mm),
+            "marker_ring_width_mm": float(self.marker_ring_width_mm),
             "markers": [m.to_dict() for m in self.markers],
         }
 
@@ -257,10 +268,11 @@ class BoardLayout:
             "long_row_cols": int(self.long_row_cols),
             "marker_outer_radius_mm": float(self.marker_outer_radius_mm),
             "marker_inner_radius_mm": float(self.marker_inner_radius_mm),
+            "marker_ring_width_mm": float(self.marker_ring_width_mm),
         }
 
     def to_spec_json(self, path: str | Path | None = None) -> str | None:
-        """Serialize canonical `ringgrid.target.v3` spec JSON.
+        """Serialize canonical `ringgrid.target.v4` spec JSON.
 
         This is spec-only JSON and intentionally does not include the expanded
         `markers` snapshot that :meth:`to_dict` returns.

@@ -76,6 +76,7 @@ def _fixture_board() -> ringgrid.BoardLayout:
         4,
         4.8,
         3.2,
+        1.152,
         name="fixture_compact_hex",
     )
 
@@ -123,26 +124,29 @@ def _png_pixels(path: Path) -> np.ndarray:
 
 def test_board_layout_default_and_from_json() -> None:
     board_default = ringgrid.BoardLayout.default()
-    assert board_default.schema == "ringgrid.target.v3"
+    assert board_default.schema == "ringgrid.target.v4"
     assert board_default.rows > 0
     assert board_default.long_row_cols > 0
+    assert board_default.marker_ring_width_mm > 0.0
     assert len(board_default.markers) > 0
 
     board_file = ringgrid.BoardLayout.from_json_file(BOARD_JSON)
-    assert board_file.schema == "ringgrid.target.v3"
+    assert board_file.schema == "ringgrid.target.v4"
     assert board_file.rows == 15
     assert board_file.long_row_cols == 14
+    assert board_file.marker_ring_width_mm == pytest.approx(1.152)
     assert len(board_file.markers) > 0
 
 
 def test_board_layout_from_geometry_matches_fixture_and_generated_name() -> None:
     board = _fixture_board()
-    assert board.schema == "ringgrid.target.v3"
+    assert board.schema == "ringgrid.target.v4"
     assert board.name == "fixture_compact_hex"
+    assert board.marker_ring_width_mm == pytest.approx(1.152)
     assert board.to_spec_dict() == json.loads(TARGET_FIXTURE_JSON.read_text())
 
-    generated = ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2)
-    assert generated.name == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200"
+    generated = ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2, 1.152)
+    assert generated.name == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152"
 
 
 def test_board_layout_spec_json_roundtrip_and_file_write(tmp_path: Path) -> None:
@@ -217,13 +221,19 @@ def test_board_layout_target_generation_rejects_invalid_geometry_and_options(
     tmp_path: Path,
 ) -> None:
     with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 0, 4, 4.8, 3.2)
+        ringgrid.BoardLayout.from_geometry(8.0, 0, 4, 4.8, 3.2, 1.152)
 
     with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 2, 1, 4.8, 3.2)
+        ringgrid.BoardLayout.from_geometry(8.0, 2, 1, 4.8, 3.2, 1.152)
 
     with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.8)
+        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.8, 1.152)
+
+    with pytest.raises(ValueError, match="no code band between rings"):
+        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.1, 1.152)
+
+    with pytest.raises(ValueError, match="marker_ring_width_mm"):
+        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2, 0.0)
 
     board = _fixture_board()
 

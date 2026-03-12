@@ -138,7 +138,7 @@ generation. The `q` and `r` fields store the axial hex coordinates.
 
 ## JSON schema
 
-Board layouts are specified in JSON files using the `ringgrid.target.v3`
+Board layouts are specified in JSON files using the `ringgrid.target.v4`
 schema. The schema is deliberately **parametric**: it contains only the
 lattice parameters, and marker positions are generated at runtime. This
 avoids the maintenance burden and potential inconsistencies of storing
@@ -148,13 +148,14 @@ Example JSON for the default board:
 
 ```json
 {
-    "schema": "ringgrid.target.v3",
+    "schema": "ringgrid.target.v4",
     "name": "ringgrid_200mm_hex",
     "pitch_mm": 8.0,
     "rows": 15,
     "long_row_cols": 14,
     "marker_outer_radius_mm": 4.8,
-    "marker_inner_radius_mm": 3.2
+    "marker_inner_radius_mm": 3.2,
+    "marker_ring_width_mm": 1.152
 }
 ```
 
@@ -162,13 +163,14 @@ Schema fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema` | string | Must be `"ringgrid.target.v3"` |
+| `schema` | string | Must be `"ringgrid.target.v4"` |
 | `name` | string | Human-readable target name |
 | `pitch_mm` | float | Center-to-center marker spacing |
 | `rows` | int | Number of rows in the lattice |
 | `long_row_cols` | int | Markers per long row |
 | `marker_outer_radius_mm` | float | Outer ring radius |
 | `marker_inner_radius_mm` | float | Inner ring radius |
+| `marker_ring_width_mm` | float | Full printed ring width |
 
 The loader enforces strict validation via `#[serde(deny_unknown_fields)]`:
 any extra fields (such as legacy `origin_mm`, `board_size_mm`, or explicit
@@ -179,13 +181,18 @@ board specifications.
 
 The `BoardLayout` loader validates several geometric constraints:
 
-1. **Positive dimensions**: `pitch_mm`, `marker_outer_radius_mm`, and
-   `marker_inner_radius_mm` must all be finite and positive.
+1. **Positive dimensions**: `pitch_mm`, `marker_outer_radius_mm`,
+   `marker_inner_radius_mm`, and `marker_ring_width_mm` must all be finite
+   and positive.
 2. **Inner < outer**: The inner radius must be strictly less than the outer
    radius.
-3. **Non-overlapping markers**: The marker outer diameter must be smaller than
-   the nearest-neighbor distance (`pitch * sqrt(3)`).
-4. **Sufficient columns**: When `rows > 1`, `long_row_cols` must be at least 2
+3. **Positive code band**: The outer edge of the inner ring must stay inside
+   the inner edge of the outer ring, so the annular code band has non-zero
+   width.
+4. **Non-overlapping printed markers**: The full printed marker diameter,
+   including ring stroke width, must be smaller than the nearest-neighbor
+   distance (`pitch * sqrt(3)`).
+5. **Sufficient columns**: When `rows > 1`, `long_row_cols` must be at least 2
    (to allow short rows with `long_row_cols - 1 >= 1` markers).
 
 ## Board generation

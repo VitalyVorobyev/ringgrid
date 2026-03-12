@@ -86,6 +86,8 @@ def test_gen_target_matches_committed_fixture_outputs(tmp_path: Path) -> None:
         "4.8",
         "--marker_inner_radius_mm",
         "3.2",
+        "--marker_ring_width_mm",
+        "1.152",
         "--name",
         "fixture_compact_hex",
         "--out_dir",
@@ -132,13 +134,15 @@ def test_gen_target_uses_generated_name_when_name_is_omitted(tmp_path: Path) -> 
         "4.8",
         "--marker_inner_radius_mm",
         "3.2",
+        "--marker_ring_width_mm",
+        "1.152",
         "--out_dir",
         str(out_dir),
     )
 
     assert result.returncode == 0, result.stderr
     spec = json.loads((out_dir / "board_spec.json").read_text())
-    assert spec["name"] == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200"
+    assert spec["name"] == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152"
 
 
 def test_gen_target_rejects_invalid_geometry_and_options(tmp_path: Path) -> None:
@@ -153,6 +157,8 @@ def test_gen_target_rejects_invalid_geometry_and_options(tmp_path: Path) -> None
         "4.8",
         "--marker_inner_radius_mm",
         "3.2",
+        "--marker_ring_width_mm",
+        "1.152",
         "--out_dir",
         str(tmp_path / "bad_rows"),
     )
@@ -170,6 +176,8 @@ def test_gen_target_rejects_invalid_geometry_and_options(tmp_path: Path) -> None
         "4.8",
         "--marker_inner_radius_mm",
         "3.2",
+        "--marker_ring_width_mm",
+        "1.152",
         "--margin_mm",
         "-1.0",
         "--out_dir",

@@ -36,14 +36,15 @@ pub enum AngularAggregator {
 /// NOTE: Defaults are derived from the synthetic renderer in `tools/gen_synth.py`
 /// *and* the current edge sampler semantics in `ring::edge_sample::sample_edges`.
 ///
-/// In `gen_synth.py` the marker uses:
-/// - outer_radius = pitch_mm * 0.6
-/// - inner_radius = pitch_mm * 0.4
-/// - ring_width   = outer_radius * 0.12  (non-stress default)
+/// In `gen_synth.py` the default synthetic marker uses:
+/// - outer_radius         = pitch_mm * 0.6
+/// - inner_radius         = pitch_mm * 0.4
+/// - ring_half_thickness  = outer_radius * 0.12
 ///
 /// The edge sampler finds the boundary of the merged dark band under blur, so
 /// the expected (inner_edge / outer_edge) ratio in *outer-normalized* units is:
-///   r_inner_expected = (inner_radius - ring_width) / (outer_radius + ring_width)
+///   r_inner_expected =
+///       (inner_radius - ring_half_thickness) / (outer_radius + ring_half_thickness)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MarkerSpec {
@@ -90,12 +91,12 @@ pub struct MarkerSpec {
 impl Default for MarkerSpec {
     fn default() -> Self {
         // From tools/gen_synth.py (default, non-stress):
-        //   outer_radius = pitch_mm * 0.6
-        //   inner_radius = pitch_mm * 0.4
-        //   ring_width   = outer_radius * 0.12 = pitch_mm * 0.072
+        //   outer_radius        = pitch_mm * 0.6
+        //   inner_radius        = pitch_mm * 0.4
+        //   ring_half_thickness = outer_radius * 0.12 = pitch_mm * 0.072
         // and the edge sampler targets the *boundary* of the merged dark band:
-        //   r_inner_edge = inner_radius - ring_width = pitch_mm * 0.328
-        //   r_outer_edge = outer_radius + ring_width = pitch_mm * 0.672
+        //   r_inner_edge = inner_radius - ring_half_thickness = pitch_mm * 0.328
+        //   r_outer_edge = outer_radius + ring_half_thickness = pitch_mm * 0.672
         // so ratio is 0.328 / 0.672.
         let r_inner_expected = 0.328f32 / 0.672f32;
 

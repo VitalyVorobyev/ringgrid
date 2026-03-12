@@ -40,12 +40,6 @@ _None currently assigned._
 
 ## Acceptance Scenarios (Attached to Tasks)
 
-- `INFRA-009`: microbenchmark for `DetectConfig` hot getters/setters must show at least 4x improvement; overlay and `to_dict()` parity must hold.
-- `INFRA-010`/`INFRA-011`/`INFRA-012`: JSON/SVG/PNG generation parity tests against current `gen_synth.py` geometry semantics for identical board args.
-- `INFRA-013`: `CHANGELOG.md` must cover all user-visible deltas since `v0.4.0`, all publishable package metadata must read `0.5.0`, and the standard release validation baseline must pass before tagging.
-- `ALGO-014`: compatibility tests show IDs `0..892` decode identically in default mode; extension profile remains explicitly opt-in.
-- `DOCS-001`/`DOCS-002`/`DOCS-003`: documentation consistency pass must match shipped constants and supported API surfaces.
-
 ## Locked Defaults
 
 - ID convention: keep existing `ALGO`/`INFRA` streams and add `DOCS-*` for docs-focused backlog work.

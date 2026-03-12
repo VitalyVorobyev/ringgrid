@@ -1,0 +1,11 @@
+cargo run -p ringgrid-cli -- gen-target \
+  --out_dir targets \
+  --pitch_mm 6.5 \
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.5 \
+  --marker_inner_radius_mm 2.5 \
+  --marker_ring_width_mm 0.6 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5

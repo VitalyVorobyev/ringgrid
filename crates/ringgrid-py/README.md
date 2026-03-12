@@ -61,6 +61,12 @@ Outputs:
 - `target_print.svg`
 - `target_print.png`
 
+Equivalent paths for the same geometry and output set:
+
+- Rust CLI: `ringgrid gen-target --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
+- Python script from the repo: `tools/gen_target.py` with the same arguments
+- Rust API: `BoardLayout::new` / `BoardLayout::with_name` plus `write_json_file`, `write_target_svg`, and `write_target_png`
+
 Load this board in Python:
 
 ```python
@@ -76,7 +82,8 @@ detector = ringgrid.Detector(cfg)
 If you are working from a repository checkout and also need synthetic images or
 ground truth, the repo tools under `tools/` still provide the combined
 generation/evaluation workflow. The installed package target-generation API is
-for board JSON + printable SVG/PNG only.
+for board JSON + printable SVG/PNG only. The repo-level `tools/gen_target.py`
+is a thin wrapper over this same installed-package surface.
 
 Complete target-generation tutorial and full flag reference:
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html

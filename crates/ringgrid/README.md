@@ -25,7 +25,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.1"
+ringgrid = "0.5"
 ```
 
 ## Rust Target Generation
@@ -55,38 +55,45 @@ board
 
 `render_target_svg` returns the SVG as a string, and `render_target_png` returns an in-memory grayscale `image::GrayImage` when you want to avoid file I/O. `write_target_png` embeds the requested DPI as PNG print metadata.
 
-## Python Fast Start: Generate Target JSON + Printable SVG/PNG
+## Equivalent Command-Line Workflows
 
-Target generation scripts are in the repository root (`tools/`).
+The Rust API above is equivalent to these command-line paths when you want the
+same artifact set from the terminal instead of from application code.
+
+Rust CLI:
+
+```bash
+cargo run -p ringgrid-cli -- gen-target \
+  --out_dir tools/out/target_faststart \
+  --pitch_mm 8 \
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
+```
+
+Python script from a repository checkout:
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip
-./.venv/bin/python -m pip install numpy
-
-./.venv/bin/python tools/gen_synth.py \
+./.venv/bin/python -m pip install -U pip maturin
+./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+./.venv/bin/python tools/gen_target.py \
   --out_dir tools/out/target_faststart \
-  --n_images 0 \
-  --board_mm 200 \
   --pitch_mm 8 \
-  --print \
-  --print_dpi 600 \
-  --print_margin_mm 5 \
-  --print_basename target_print
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
 ```
 
-Key knobs:
-
-| Flag | What it controls | Typical value |
-|---|---|---|
-| `--board_mm` | Physical board side length (mm) | `200` |
-| `--pitch_mm` | Marker spacing (mm) | `8` |
-| `--n_images` | Number of synthetic images (`0` for print-only) | `0` |
-| `--print_dpi` | PNG raster resolution | `300` or `600` |
-| `--print_margin_mm` | Extra white border | `3-10` |
-| `--print_basename` | Output file basename | `target_print` |
-
-This generates:
+All three paths generate:
 
 - `tools/out/target_faststart/board_spec.json`
 - `tools/out/target_faststart/target_print.svg`
@@ -102,7 +109,7 @@ let board = BoardLayout::from_json_file(Path::new("tools/out/target_faststart/bo
 let detector = Detector::new(board);
 ```
 
-Complete step-by-step target generation docs (all flags/config fields):
+Complete step-by-step target generation docs (Rust API, Rust CLI, Python script, and helper tools):
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
 
 ## Simple Detection

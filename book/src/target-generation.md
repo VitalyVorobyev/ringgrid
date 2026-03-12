@@ -10,23 +10,37 @@ for physical calibration boards.
 
 ## Overview
 
-There are three supported generation paths:
+There are three equivalent canonical target-generation paths:
 
-1. `tools/gen_target.py` (dedicated JSON/SVG/PNG path)
+1. Rust CLI: `ringgrid gen-target`
    - emits `board_spec.json`, `.svg`, and `.png` in one run
-   - routes directly through the shipped `ringgrid` Python API
-2. `tools/gen_synth.py` (synth + optional print path)
-   - can emit `board_spec.json`, `.svg`, and `.png`
-   - can also generate synthetic images and ground truth
-3. `tools/gen_board_spec.py` (JSON-only)
-   - emits only `board_spec.json`
-   - use when you want an explicit parametric board spec without printable outputs
+   - best when you want a pure-Rust command-line workflow
+2. Python script: `tools/gen_target.py`
+   - emits the same `board_spec.json`, `.svg`, and `.png` set
+   - best when you are already using the repo's Python tooling
+3. Rust API: `BoardLayout` + `write_json_file` / `write_target_svg` / `write_target_png`
+   - emits the same canonical artifacts from application code
+   - best when target generation is embedded in a Rust program
+
+All three paths use the same Rust target-generation engine. For the same geometry
+and print options, they generate the same canonical board JSON, SVG, and PNG.
+
+Additional specialized repo helpers remain available:
+
+- `tools/gen_synth.py` for synth images + ground truth + optional print files
+- `tools/gen_board_spec.py` for JSON-only board-spec generation
 
 ## Prerequisites
 
 From repository root:
 
-For the dedicated `gen_target.py` path:
+For the Rust CLI path:
+
+```bash
+cargo build -p ringgrid-cli
+```
+
+For the dedicated Python script path:
 
 ```bash
 python3 -m venv .venv
@@ -40,9 +54,26 @@ For `gen_synth.py` synthetic generation:
 ./.venv/bin/python -m pip install numpy
 ```
 
-## Fastest Dedicated Workflow (One Command)
+For the Rust API path, add `ringgrid` to your Rust project dependencies.
 
-Generate JSON + SVG + PNG without synthetic images:
+## Equivalent One-Command Workflows
+
+Rust CLI:
+
+```bash
+cargo run -p ringgrid-cli -- gen-target \
+  --out_dir tools/out/target_print_200mm \
+  --pitch_mm 8 \
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
+```
+
+Python script:
 
 ```bash
 ./.venv/bin/python tools/gen_target.py \
@@ -63,6 +94,38 @@ Outputs:
 - `tools/out/target_print_200mm/target_print.svg`
 - `tools/out/target_print_200mm/target_print.png`
 
+Rust API:
+
+```rust,no_run
+use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
+use std::path::Path;
+
+let board = BoardLayout::with_name("ringgrid_200mm_hex", 8.0, 15, 14, 4.8, 3.2).unwrap();
+
+board
+    .write_json_file(Path::new("tools/out/target_print_200mm/board_spec.json"))
+    .unwrap();
+board
+    .write_target_svg(
+        Path::new("tools/out/target_print_200mm/target_print.svg"),
+        &SvgTargetOptions {
+            margin_mm: 5.0,
+            include_scale_bar: true,
+        },
+    )
+    .unwrap();
+board
+    .write_target_png(
+        Path::new("tools/out/target_print_200mm/target_print.png"),
+        &PngTargetOptions {
+            dpi: 600.0,
+            margin_mm: 5.0,
+            include_scale_bar: true,
+        },
+    )
+    .unwrap();
+```
+
 ## Combined Synth + Print Workflow
 
 Use `tools/gen_synth.py` when you want print outputs and synthetic images from
@@ -80,22 +143,10 @@ one command:
   --print_basename target_print
 ```
 
-## Step-by-Step Custom Workflow
+## Detection From The Generated Board
 
-### Step 1: Generate `board_spec.json` + matching print files
-
-```bash
-./.venv/bin/python tools/gen_target.py \
-  --pitch_mm 8.0 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --name ringgrid_200mm_hex \
-  --out_dir tools/out/target_print_custom
-```
-
-### Step 2: Use the generated JSON in detection
+All three canonical generation paths above emit the same `board_spec.json` schema.
+Use that generated JSON directly in detection:
 
 ```bash
 cargo run -- detect \
@@ -106,7 +157,11 @@ cargo run -- detect \
 
 ## Configuration Reference
 
-### `tools/gen_target.py` options
+### Shared `ringgrid gen-target` / `tools/gen_target.py` options
+
+The Rust CLI intentionally mirrors the dedicated Python script's geometry and
+print-output arguments. The Rust CLI accepts the underscore names shown below;
+hyphenated aliases such as `--pitch-mm` are also accepted.
 
 | Argument | Default | Description |
 |---|---|---|
@@ -121,6 +176,15 @@ cargo run -- detect \
 | `--dpi` | `300.0` | Raster DPI for PNG export (also embedded in PNG metadata). |
 | `--margin_mm` | `0.0` | Extra white margin around the board in print outputs. |
 | `--no-scale-bar` | `false` | Omit the default scale bar from SVG/PNG outputs. |
+
+### Equivalent Rust API mapping
+
+| Rust API surface | Equivalent shared option |
+|---|---|
+| `BoardLayout::new(...)` / `BoardLayout::with_name(...)` | geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, optional name) |
+| `write_json_file(path)` | `board_spec.json` output |
+| `SvgTargetOptions { margin_mm, include_scale_bar }` | `--margin_mm`, `--no-scale-bar` |
+| `PngTargetOptions { dpi, margin_mm, include_scale_bar }` | `--dpi`, `--margin_mm`, `--no-scale-bar` |
 
 ### `tools/gen_synth.py` geometry options
 

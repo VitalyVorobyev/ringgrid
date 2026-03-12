@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.5.0] — 2026-03-11
+## [Unreleased]
 
 ### Added
 
@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from JSON as an additive alternative to inline `--cam-*` flags.
 - The CLI accepts either the direct serde camera-model shape or detector-output JSON with
   a top-level `camera` wrapper.
+
+**Rust CLI target generation**
+- Added `ringgrid gen-target` to generate canonical `board_spec.json` plus
+  printable SVG/PNG directly from the Rust CLI.
+- The Rust CLI generation command matches the dedicated `tools/gen_target.py`
+  geometry/print options and writes the same artifact set.
 
 ### Changed
 
@@ -77,6 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded `crates/ringgrid-py/README.md` with a full Python-facing `DetectConfig` field guide.
 - Reconciled codebook docs and decision records with shipped baseline invariants and the new
   `extended` profile contract.
+
+**Target-generation documentation**
+- Reworked README and mdBook target-generation guidance so Rust API, Rust CLI,
+  and Python script workflows are documented as equivalent paths over the same
+  target-generation engine.
 
 ### Fixed
 

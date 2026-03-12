@@ -21,6 +21,61 @@ The binary is named `ringgrid`.
 
 ## Commands
 
+### `ringgrid gen-target` -- Generate canonical target JSON + printable SVG/PNG
+
+This command generates:
+
+- `board_spec.json`
+- `<basename>.svg`
+- `<basename>.png`
+
+from direct board geometry arguments.
+
+It is the Rust CLI equivalent of `tools/gen_target.py` and uses the same practical
+geometry/print options. For the same geometry, DPI, margin, and scale-bar setting,
+the generated artifacts are equivalent to the Python script and the Rust API writers.
+
+**Geometry and output flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--pitch_mm <mm>` | required | Marker center spacing in mm. |
+| `--rows <n>` | required | Number of hex lattice rows. |
+| `--long_row_cols <n>` | required | Number of markers in long rows. |
+| `--marker_outer_radius_mm <mm>` | required | Outer ring radius in mm. |
+| `--marker_inner_radius_mm <mm>` | required | Inner ring radius in mm. |
+| `--name <string>` | auto | Optional board name. Omitted uses deterministic geometry-derived naming. |
+| `--out_dir <path>` | `tools/out/target` | Output directory for `board_spec.json`, SVG, and PNG. |
+| `--basename <string>` | `target_print` | Base filename for SVG and PNG outputs. |
+| `--dpi <f>` | `300.0` | PNG raster DPI (also embedded in PNG metadata). |
+| `--margin_mm <mm>` | `0.0` | Extra white border around the board in SVG/PNG outputs. |
+| `--no-scale-bar` | `false` | Omit the default scale bar from SVG/PNG outputs. |
+
+The Rust CLI accepts the underscore flag names above for parity with `tools/gen_target.py`.
+Hyphenated aliases such as `--pitch-mm`, `--long-row-cols`, and `--margin-mm`
+are also accepted.
+
+Example:
+
+```bash
+ringgrid gen-target \
+    --out_dir tools/out/target_faststart \
+    --pitch_mm 8 \
+    --rows 15 \
+    --long_row_cols 14 \
+    --marker_outer_radius_mm 4.8 \
+    --marker_inner_radius_mm 3.2 \
+    --name ringgrid_200mm_hex \
+    --dpi 600 \
+    --margin_mm 5
+```
+
+Generated files:
+
+- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_print.svg`
+- `tools/out/target_faststart/target_print.png`
+
 ### `ringgrid detect` -- Detect markers in an image
 
 This is the primary command. It loads an image, runs the detection pipeline, and writes

@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 type CliError = Box<dyn std::error::Error>;
 type CliResult<T> = Result<T, CliError>;
+const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
+const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
+const TARGET_SPEC_SCHEMA_V3: &str = "ringgrid.target.v3";
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
@@ -17,11 +20,14 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Detect markers in an image.
     Detect(CliDetectArgs),
+
+    /// Generate canonical board_spec.json plus printable SVG/PNG target files.
+    GenTarget(CliGenTargetArgs),
 
     /// Print embedded codebook statistics.
     CodebookInfo,
@@ -38,6 +44,94 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = CodebookProfileArg::Base)]
         profile: CodebookProfileArg,
     },
+}
+
+#[derive(Debug, Clone, Args)]
+struct CliGenTargetArgs {
+    /// Marker center spacing in millimeters.
+    #[arg(long = "pitch_mm", visible_alias = "pitch-mm")]
+    pitch_mm: f32,
+
+    /// Number of rows in the hex lattice.
+    #[arg(long = "rows")]
+    rows: usize,
+
+    /// Number of markers in long rows.
+    #[arg(long = "long_row_cols", visible_alias = "long-row-cols")]
+    long_row_cols: usize,
+
+    /// Outer ring radius in millimeters.
+    #[arg(
+        long = "marker_outer_radius_mm",
+        visible_alias = "marker-outer-radius-mm"
+    )]
+    marker_outer_radius_mm: f32,
+
+    /// Inner ring radius in millimeters.
+    #[arg(
+        long = "marker_inner_radius_mm",
+        visible_alias = "marker-inner-radius-mm"
+    )]
+    marker_inner_radius_mm: f32,
+
+    /// Optional explicit board name. Omitted uses a deterministic geometry-derived name.
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Output directory for board_spec.json, SVG, and PNG.
+    #[arg(
+        long = "out_dir",
+        visible_alias = "out-dir",
+        default_value = DEFAULT_GEN_TARGET_OUT_DIR
+    )]
+    out_dir: PathBuf,
+
+    /// Base filename for SVG/PNG outputs.
+    #[arg(long, default_value = DEFAULT_GEN_TARGET_BASENAME)]
+    basename: String,
+
+    /// PNG raster DPI (also embedded in PNG metadata).
+    #[arg(long, default_value_t = 300.0)]
+    dpi: f32,
+
+    /// Extra white margin around the board in millimeters.
+    #[arg(long = "margin_mm", visible_alias = "margin-mm", default_value_t = 0.0)]
+    margin_mm: f32,
+
+    /// Omit the default scale bar from SVG/PNG outputs.
+    #[arg(long)]
+    no_scale_bar: bool,
+}
+
+impl CliGenTargetArgs {
+    fn to_board(&self) -> CliResult<ringgrid::BoardLayout> {
+        let board = if let Some(name) = &self.name {
+            ringgrid::BoardLayout::with_name(
+                name.clone(),
+                self.pitch_mm,
+                self.rows,
+                self.long_row_cols,
+                self.marker_outer_radius_mm,
+                self.marker_inner_radius_mm,
+            )
+        } else {
+            ringgrid::BoardLayout::new(
+                self.pitch_mm,
+                self.rows,
+                self.long_row_cols,
+                self.marker_outer_radius_mm,
+                self.marker_inner_radius_mm,
+            )
+        };
+        board.map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
+    }
+
+    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf) {
+        let json_path = self.out_dir.join("board_spec.json");
+        let svg_path = self.out_dir.join(format!("{}.svg", self.basename));
+        let png_path = self.out_dir.join(format!("{}.png", self.basename));
+        (json_path, svg_path, png_path)
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -781,6 +875,7 @@ fn main() -> CliResult<()> {
 
     match cli.command {
         Commands::Detect(args) => run_detect(&args),
+        Commands::GenTarget(args) => run_gen_target(&args),
         Commands::CodebookInfo => run_codebook_info(),
 
         Commands::BoardInfo => run_board_info(),
@@ -856,6 +951,64 @@ fn run_board_info() -> CliResult<()> {
         );
     }
 
+    Ok(())
+}
+
+// ── gen-target ────────────────────────────────────────────────────────
+
+fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
+    let board = args.to_board()?;
+    let include_scale_bar = !args.no_scale_bar;
+    let (json_path, svg_path, png_path) = args.output_paths();
+
+    board.write_json_file(&json_path).map_err(|e| -> CliError {
+        format!(
+            "Failed to write board spec JSON {}: {}",
+            json_path.display(),
+            e
+        )
+        .into()
+    })?;
+    board
+        .write_target_svg(
+            &svg_path,
+            &ringgrid::SvgTargetOptions {
+                margin_mm: args.margin_mm,
+                include_scale_bar,
+            },
+        )
+        .map_err(|e| -> CliError {
+            format!("Failed to write target SVG {}: {}", svg_path.display(), e).into()
+        })?;
+    board
+        .write_target_png(
+            &png_path,
+            &ringgrid::PngTargetOptions {
+                dpi: args.dpi,
+                margin_mm: args.margin_mm,
+                include_scale_bar,
+            },
+        )
+        .map_err(|e| -> CliError {
+            format!("Failed to write target PNG {}: {}", png_path.display(), e).into()
+        })?;
+
+    println!("Board spec JSON written to {}", json_path.display());
+    println!("Print SVG written to {}", svg_path.display());
+    println!(
+        "Print PNG written to {} ({:.1} dpi)",
+        png_path.display(),
+        args.dpi
+    );
+    println!(
+        "Board: {}, schema={}, rows={}, long_row_cols={}, markers={}, pitch={}mm",
+        board.name,
+        TARGET_SPEC_SCHEMA_V3,
+        board.rows,
+        board.long_row_cols,
+        board.n_markers(),
+        board.pitch_mm
+    );
     Ok(())
 }
 
@@ -1048,6 +1201,70 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::load_from_memory;
+
+    const EXPECTED_TARGET_JSON: &str =
+        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.json");
+    const EXPECTED_TARGET_SVG: &str =
+        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.svg");
+    const EXPECTED_TARGET_PNG: &[u8] =
+        include_bytes!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.png");
+
+    fn normalize_text_newlines(text: &str) -> String {
+        text.replace("\r\n", "\n")
+    }
+
+    fn temp_output_dir(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ringgrid_cli_{}_{}_{}",
+            prefix,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ))
+    }
+
+    fn png_phys(path: &std::path::Path) -> (u32, u32, u8) {
+        let data = std::fs::read(path).expect("read png bytes");
+        assert!(data.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let mut offset = 8usize;
+        while offset + 12 <= data.len() {
+            let length =
+                u32::from_be_bytes(data[offset..offset + 4].try_into().expect("chunk length"))
+                    as usize;
+            let chunk_type = &data[offset + 4..offset + 8];
+            let chunk_data_start = offset + 8;
+            let chunk_data_end = chunk_data_start + length;
+            if chunk_type == b"pHYs" {
+                let chunk = &data[chunk_data_start..chunk_data_end];
+                return (
+                    u32::from_be_bytes(chunk[0..4].try_into().expect("xppu")),
+                    u32::from_be_bytes(chunk[4..8].try_into().expect("yppu")),
+                    chunk[8],
+                );
+            }
+            offset = chunk_data_end + 4;
+        }
+        panic!("missing pHYs chunk");
+    }
+
+    fn fixture_gen_target_args(out_dir: std::path::PathBuf) -> CliGenTargetArgs {
+        CliGenTargetArgs {
+            pitch_mm: 8.0,
+            rows: 3,
+            long_row_cols: 4,
+            marker_outer_radius_mm: 4.8,
+            marker_inner_radius_mm: 3.2,
+            name: Some("fixture_compact_hex".to_string()),
+            out_dir,
+            basename: "fixture_compact_hex".to_string(),
+            dpi: 96.0,
+            margin_mm: 0.0,
+            no_scale_bar: false,
+        }
+    }
 
     fn base_overrides() -> DetectOverrides {
         DetectOverrides {
@@ -1271,5 +1488,119 @@ mod tests {
             "unexpected error: {err}"
         );
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn gen_target_subcommand_parses_python_style_flags() {
+        let cli = Cli::try_parse_from([
+            "ringgrid",
+            "gen-target",
+            "--pitch_mm",
+            "8.0",
+            "--rows",
+            "3",
+            "--long_row_cols",
+            "4",
+            "--marker_outer_radius_mm",
+            "4.8",
+            "--marker_inner_radius_mm",
+            "3.2",
+            "--out_dir",
+            "tools/out/fixture",
+        ])
+        .expect("parse gen-target cli");
+        match cli.command {
+            Commands::GenTarget(args) => {
+                assert_eq!(args.pitch_mm, 8.0);
+                assert_eq!(args.rows, 3);
+                assert_eq!(args.long_row_cols, 4);
+                assert_eq!(args.out_dir, std::path::PathBuf::from("tools/out/fixture"));
+            }
+            _ => panic!("unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn gen_target_writes_committed_fixture_outputs() {
+        let out_dir = temp_output_dir("fixture_outputs").join("nested/fixture");
+        let args = fixture_gen_target_args(out_dir.clone());
+        run_gen_target(&args).expect("generate fixture outputs");
+
+        let json_path = out_dir.join("board_spec.json");
+        let svg_path = out_dir.join("fixture_compact_hex.svg");
+        let png_path = out_dir.join("fixture_compact_hex.png");
+
+        assert_eq!(
+            normalize_text_newlines(&std::fs::read_to_string(&json_path).expect("read json")),
+            normalize_text_newlines(EXPECTED_TARGET_JSON)
+        );
+        assert_eq!(
+            normalize_text_newlines(&std::fs::read_to_string(&svg_path).expect("read svg")),
+            normalize_text_newlines(EXPECTED_TARGET_SVG)
+        );
+
+        let expected_ppm = (96.0_f64 * 1000.0 / 25.4).round() as u32;
+        assert_eq!(png_phys(&png_path), (expected_ppm, expected_ppm, 1));
+
+        let written_png = load_from_memory(&std::fs::read(&png_path).expect("read png"))
+            .expect("decode written png")
+            .into_luma8();
+        let expected_png = load_from_memory(EXPECTED_TARGET_PNG)
+            .expect("decode expected png")
+            .into_luma8();
+        assert_eq!(written_png.dimensions(), expected_png.dimensions());
+        assert_eq!(written_png.as_raw(), expected_png.as_raw());
+
+        let _ = std::fs::remove_dir_all(out_dir.parent().expect("nested dir"));
+    }
+
+    #[test]
+    fn gen_target_uses_generated_name_when_name_is_omitted() {
+        let out_dir = temp_output_dir("generated_name");
+        let mut args = fixture_gen_target_args(out_dir.clone());
+        args.name = None;
+        args.basename = DEFAULT_GEN_TARGET_BASENAME.to_string();
+        run_gen_target(&args).expect("generate target with auto name");
+
+        let spec: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join("board_spec.json")).expect("read spec"),
+        )
+        .expect("parse spec");
+        assert_eq!(
+            spec.get("name").and_then(|v| v.as_str()),
+            Some("ringgrid_hex_r3_c4_p8.000_o4.800_i3.200")
+        );
+
+        let _ = std::fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn gen_target_rejects_invalid_geometry_and_options() {
+        let err = run_gen_target(&CliGenTargetArgs {
+            rows: 0,
+            out_dir: temp_output_dir("bad_rows"),
+            ..fixture_gen_target_args(temp_output_dir("bad_rows_unused"))
+        })
+        .expect_err("rows=0 must fail");
+        assert!(err.to_string().contains("rows"), "unexpected error: {err}");
+
+        let err = run_gen_target(&CliGenTargetArgs {
+            margin_mm: -1.0,
+            out_dir: temp_output_dir("bad_margin"),
+            ..fixture_gen_target_args(temp_output_dir("bad_margin_unused"))
+        })
+        .expect_err("negative margin must fail");
+        assert!(
+            err.to_string().contains("margin"),
+            "unexpected error: {err}"
+        );
+
+        let err = run_gen_target(&CliGenTargetArgs {
+            dpi: 0.0,
+            out_dir: temp_output_dir("bad_dpi"),
+            ..fixture_gen_target_args(temp_output_dir("bad_dpi_unused"))
+        })
+        .expect_err("non-positive dpi must fail");
+        assert!(err.to_string().contains("dpi"), "unexpected error: {err}");
     }
 }

@@ -41,17 +41,31 @@ Detection overlay example:
 
 ## Quick Start From the Repo
 
-### 1. Build the local Python binding used by repo tools
+### 1. Generate `board_spec.json` plus printable SVG/PNG
+
+Choose one of the three equivalent target-generation paths.
+
+Rust CLI:
+
+```bash
+cargo run -p ringgrid-cli -- gen-target \
+  --out_dir tools/out/target_faststart \
+  --pitch_mm 8 \
+  --rows 15 \
+  --long_row_cols 14 \
+  --marker_outer_radius_mm 4.8 \
+  --marker_inner_radius_mm 3.2 \
+  --name ringgrid_200mm_hex \
+  --dpi 600 \
+  --margin_mm 5
+```
+
+Python script (same geometry, same artifact set):
 
 ```bash
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -U pip maturin
 ./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
-```
-
-### 2. Generate `board_spec.json` plus printable SVG/PNG
-
-```bash
 ./.venv/bin/python tools/gen_target.py \
   --out_dir tools/out/target_faststart \
   --pitch_mm 8 \
@@ -64,13 +78,17 @@ python3 -m venv .venv
   --margin_mm 5
 ```
 
+Rust API:
+
+- Use [`BoardLayout::new` / `BoardLayout::with_name`](crates/ringgrid/README.md) plus `write_json_file`, `write_target_svg`, and `write_target_png` when generation is part of your application code.
+
 Generated files:
 
 - `tools/out/target_faststart/board_spec.json`
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
 
-### 3. Run detection
+### 2. Run detection
 
 ```bash
 cargo run -- detect \
@@ -79,7 +97,7 @@ cargo run -- detect \
   --out tools/out/target_faststart/detect.json
 ```
 
-### 4. Optional synthetic eval loop
+### 3. Optional synthetic eval loop
 
 Install the extra Python deps used by the synth/eval/viz tools before running this loop:
 
@@ -107,11 +125,11 @@ If you want the full generate -> detect -> score loop in one command, use `./.ve
 
 ### CLI
 
-Use `ringgrid detect` or `cargo run -- detect ...` when you want file-oriented workflows over images and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
+Use `ringgrid gen-target` / `ringgrid detect` or `cargo run -- gen-target ...` / `cargo run -- detect ...` when you want file-oriented workflows over printable targets, images, and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
 
 ### Rust crate
 
-The core detector lives in [`crates/ringgrid/README.md`](crates/ringgrid/README.md). That README covers Rust-library usage, target generation APIs, adaptive detection modes, and camera-model integration in more detail than this front page should.
+The core detector lives in [`crates/ringgrid/README.md`](crates/ringgrid/README.md). That README covers Rust-library usage, Rust target-generation APIs, adaptive detection modes, and camera-model integration in more detail than this front page should.
 
 ### Python package
 

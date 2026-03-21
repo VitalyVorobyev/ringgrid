@@ -8,6 +8,12 @@ use crate::detector::proposal::find_proposals;
 use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
 use std::collections::HashSet;
+use std::time::Instant;
+
+#[inline]
+fn duration_ms(duration: std::time::Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
 
 pub(super) fn run(
     gray: &GrayImage,
@@ -16,8 +22,27 @@ pub(super) fn run(
     proposals: Vec<Proposal>,
     source: DetectionSource,
 ) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let fit_decode_start = Instant::now();
     let fit_markers = super::fit_decode::run(gray, config, mapper, proposals, source);
-    super::finalize::run(gray, fit_markers, config, mapper)
+    let fit_decode_elapsed = fit_decode_start.elapsed();
+    let fit_marker_count = fit_markers.len();
+
+    let finalize_start = Instant::now();
+    let result = super::finalize::run(gray, fit_markers, config, mapper);
+    let finalize_elapsed = finalize_start.elapsed();
+
+    tracing::info!(
+        markers_after_fit_decode = fit_marker_count,
+        markers_final = result.detected_markers.len(),
+        fit_decode_ms = duration_ms(fit_decode_elapsed),
+        finalize_ms = duration_ms(finalize_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "pipeline timing summary"
+    );
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +69,30 @@ fn run_pass2(
 // Public entry points
 // ---------------------------------------------------------------------------
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+    let total_start = Instant::now();
+    let (image_width, image_height) = gray.dimensions();
+
+    let proposal_start = Instant::now();
     let proposals = find_proposals(gray, &config.proposal);
-    run(gray, config, None, proposals, DetectionSource::FitDecoded)
+    let proposal_elapsed = proposal_start.elapsed();
+    let proposal_count = proposals.len();
+
+    let downstream_start = Instant::now();
+    let result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
+    let downstream_elapsed = downstream_start.elapsed();
+
+    tracing::info!(
+        image_width,
+        image_height,
+        proposals = proposal_count,
+        markers = result.detected_markers.len(),
+        proposal_ms = duration_ms(proposal_elapsed),
+        downstream_ms = duration_ms(downstream_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "detect_single_pass timing summary"
+    );
+
+    result
 }
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
@@ -59,8 +106,26 @@ pub fn detect_with_mapper(
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
 ) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let pass1_start = Instant::now();
     let pass1 = detect_single_pass(gray, config);
-    run_pass2(gray, config, mapper, &pass1)
+    let pass1_elapsed = pass1_start.elapsed();
+
+    let pass2_start = Instant::now();
+    let result = run_pass2(gray, config, mapper, &pass1);
+    let pass2_elapsed = pass2_start.elapsed();
+
+    tracing::info!(
+        pass1_markers = pass1.detected_markers.len(),
+        markers_final = result.detected_markers.len(),
+        pass1_ms = duration_ms(pass1_elapsed),
+        pass2_ms = duration_ms(pass2_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "detect_with_mapper timing summary"
+    );
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +459,11 @@ pub fn detect_adaptive_with_hint(
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
 pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let pass1_start = Instant::now();
     let mut result = detect_single_pass(gray, config);
+    let pass1_elapsed = pass1_start.elapsed();
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
         return result;
@@ -412,7 +481,15 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> De
 
     if su_result.applied {
         let model = su_result.model;
+        let pass2_start = Instant::now();
         result = run_pass2(gray, config, &model, &result);
+        tracing::info!(
+            pass1_ms = duration_ms(pass1_elapsed),
+            pass2_ms = duration_ms(pass2_start.elapsed()),
+            total_ms = duration_ms(total_start.elapsed()),
+            markers_final = result.detected_markers.len(),
+            "detect_with_self_undistort timing summary"
+        );
     }
 
     result.self_undistort = Some(su_result);

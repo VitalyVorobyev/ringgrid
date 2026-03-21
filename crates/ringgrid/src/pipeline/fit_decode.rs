@@ -1,6 +1,7 @@
 use image::GrayImage;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use super::inner_fit;
 use super::marker_build::{
@@ -14,12 +15,36 @@ use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 
+#[inline]
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
+
+#[inline]
+fn mean_duration_ms(duration: Duration, n: usize) -> f64 {
+    if n == 0 {
+        0.0
+    } else {
+        duration_ms(duration) / n as f64
+    }
+}
+
 struct CandidateProcessContext<'a> {
     gray: &'a GrayImage,
     config: &'a DetectConfig,
     mapper: Option<&'a dyn PixelMapper>,
     sampler: DistortionAwareSampler<'a>,
     source: DetectionSource,
+}
+
+#[derive(Default)]
+struct CandidateTimingStats {
+    n_candidates: usize,
+    n_outer_fit_attempted: usize,
+    n_inner_fit_attempted: usize,
+    outer_fit: Duration,
+    inner_fit: Duration,
+    candidate_total: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -64,11 +89,14 @@ fn select_proposals_for_fit(
 fn process_candidate(
     proposal: Proposal,
     ctx: &CandidateProcessContext<'_>,
+    timing: &mut CandidateTimingStats,
 ) -> Result<DetectedMarker, CandidateRejectReason> {
     let Some(center_prior) = ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) else {
         return Err(CandidateRejectReason::ProposalUnmappable);
     };
 
+    timing.n_outer_fit_attempted += 1;
+    let outer_fit_start = Instant::now();
     let fit = match fit_outer_candidate_from_prior(
         ctx.gray,
         center_prior,
@@ -78,6 +106,7 @@ fn process_candidate(
     ) {
         Ok(v) => v,
         Err(reject) => {
+            timing.outer_fit += outer_fit_start.elapsed();
             tracing::trace!(
                 "outer fit rejected at proposal ({:.1},{:.1}): reason={} context={:?}",
                 proposal.x,
@@ -88,6 +117,7 @@ fn process_candidate(
             return Err(CandidateRejectReason::OuterFit(reject.reason));
         }
     };
+    timing.outer_fit += outer_fit_start.elapsed();
 
     let OuterFitCandidate {
         edge,
@@ -98,6 +128,8 @@ fn process_candidate(
     } = fit;
 
     let center = outer.center();
+    timing.n_inner_fit_attempted += 1;
+    let inner_fit_start = Instant::now();
     let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
         ctx.gray,
         &outer,
@@ -106,6 +138,7 @@ fn process_candidate(
         &ctx.config.inner_fit,
         false,
     );
+    timing.inner_fit += inner_fit_start.elapsed();
     if inner_fit.status != inner_fit::InnerFitStatus::Ok {
         let reason_code = inner_fit.reason.map(|reason| reason.code());
         tracing::trace!(
@@ -158,9 +191,13 @@ pub(super) fn run(
     proposals: Vec<Proposal>,
     source: DetectionSource,
 ) -> Vec<DetectedMarker> {
+    let total_start = Instant::now();
     let input_count = proposals.len();
     tracing::info!("{} proposals found", input_count);
+
+    let select_start = Instant::now();
     let proposals = select_proposals_for_fit(proposals, config.proposal.max_candidates);
+    let select_elapsed = select_start.elapsed();
     if proposals.len() != input_count {
         tracing::info!(
             "proposal cap active: evaluating {} / {} proposals",
@@ -181,11 +218,15 @@ pub(super) fn run(
 
     let mut markers: Vec<DetectedMarker> = Vec::new();
     let mut reject_reasons: HashMap<CandidateRejectReason, usize> = HashMap::new();
+    let mut timing = CandidateTimingStats::default();
     for proposal in proposals {
-        match process_candidate(proposal, &ctx) {
+        timing.n_candidates += 1;
+        let candidate_start = Instant::now();
+        match process_candidate(proposal, &ctx, &mut timing) {
             Ok(marker) => markers.push(marker),
             Err(reason) => *reject_reasons.entry(reason).or_insert(0) += 1,
         }
+        timing.candidate_total += candidate_start.elapsed();
     }
     if !reject_reasons.is_empty() {
         let mut summary: Vec<(CandidateRejectReason, usize)> = reject_reasons.into_iter().collect();
@@ -204,10 +245,33 @@ pub(super) fn run(
         );
     }
 
+    let accepted_before_dedup = markers.len();
+    let dedup_start = Instant::now();
     markers = dedup_markers(markers, config.dedup_radius);
     dedup_by_id(&mut markers);
+    let dedup_elapsed = dedup_start.elapsed();
 
     tracing::info!("{} markers detected after dedup", markers.len());
+    let outer_inner_total = timing.outer_fit + timing.inner_fit;
+    tracing::info!(
+        input_proposals = input_count,
+        evaluated_proposals = timing.n_candidates,
+        accepted_before_dedup,
+        markers_after_dedup = markers.len(),
+        outer_fit_attempted = timing.n_outer_fit_attempted,
+        inner_fit_attempted = timing.n_inner_fit_attempted,
+        select_ms = duration_ms(select_elapsed),
+        candidate_loop_ms = duration_ms(timing.candidate_total),
+        candidate_overhead_ms =
+            duration_ms(timing.candidate_total.saturating_sub(outer_inner_total)),
+        outer_fit_ms = duration_ms(timing.outer_fit),
+        mean_outer_fit_ms = mean_duration_ms(timing.outer_fit, timing.n_outer_fit_attempted),
+        inner_fit_ms = duration_ms(timing.inner_fit),
+        mean_inner_fit_ms = mean_duration_ms(timing.inner_fit, timing.n_inner_fit_attempted),
+        dedup_ms = duration_ms(dedup_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "fit/decode timing summary"
+    );
 
     markers
 }

@@ -11,8 +11,14 @@ use crate::detector::{DetectedMarker, DetectionSource};
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
 use crate::pixelmap::PixelMapper;
+use std::time::Instant;
 
 const AXIS_RATIO_RELATIVE_TOLERANCE: f64 = 0.25;
+
+#[inline]
+fn duration_ms(duration: std::time::Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
 
 fn marker_inner_outer_axis_ratio(marker: &DetectedMarker) -> Option<f64> {
     let inner = marker.ellipse_inner?;
@@ -260,6 +266,10 @@ fn finalize_no_global_filter_result(
     homography_frame: DetectionFrame,
     image_size: [u32; 2],
 ) -> DetectionResult {
+    let total_start = Instant::now();
+    let markers_in = corrected_markers.len();
+
+    let map_to_image_start = Instant::now();
     if let Some(mapper) = mapper {
         let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
         if dropped > 0 {
@@ -270,21 +280,41 @@ fn finalize_no_global_filter_result(
         }
         map_centers_to_image(&mut corrected_markers, mapper);
     }
+    let map_to_image_elapsed = map_to_image_start.elapsed();
+
+    let sync_start = Instant::now();
     let cleared_invalid_ids =
         sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+    let sync_elapsed = sync_start.elapsed();
     tracing::debug!(
         cleared_invalid_ids,
         n_markers = corrected_markers.len(),
         "synchronized marker id/board correspondence"
     );
+
+    let post_fixup_start = Instant::now();
     apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
-    DetectionResult {
+    let post_fixup_elapsed = post_fixup_start.elapsed();
+
+    let result = DetectionResult {
         detected_markers: corrected_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
         image_size,
         ..DetectionResult::default()
-    }
+    };
+
+    tracing::info!(
+        markers_in,
+        markers_out = result.detected_markers.len(),
+        map_to_image_ms = duration_ms(map_to_image_elapsed),
+        sync_board_ms = duration_ms(sync_elapsed),
+        post_fixup_ms = duration_ms(post_fixup_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "finalize(no global filter) timing summary"
+    );
+
+    result
 }
 
 fn finalize_global_filter_result(
@@ -295,12 +325,22 @@ fn finalize_global_filter_result(
     homography_frame: DetectionFrame,
     image_size: [u32; 2],
 ) -> DetectionResult {
+    let total_start = Instant::now();
+    let markers_in = corrected_markers.len();
+
+    let filter_start = Instant::now();
     let mut filter_phase = filter_with_h(corrected_markers, config);
+    let filter_elapsed = filter_start.elapsed();
     let mut final_markers = filter_phase.markers;
+    let markers_after_filter = final_markers.len();
     let h_current = filter_phase.h_current;
     let n_before_completion = final_markers.len();
+
+    let completion_start = Instant::now();
     let completion_stats =
         phase_completion(gray, &mut final_markers, h_current.as_ref(), config, mapper);
+    let completion_elapsed = completion_start.elapsed();
+    let markers_after_completion = final_markers.len();
 
     if config.circle_refinement.uses_projective_center()
         && final_markers.len() > n_before_completion
@@ -317,16 +357,24 @@ fn finalize_global_filter_result(
         }
     }
 
+    let final_h_start = Instant::now();
     let (final_h, final_ransac) = phase_final_h(
         &final_markers,
         h_current,
         filter_phase.ransac_stats.take(),
         config,
     );
+    let final_h_elapsed = final_h_start.elapsed();
+
+    let map_to_image_start = Instant::now();
     if let Some(mapper) = mapper {
         map_centers_to_image(&mut final_markers, mapper);
     }
+    let map_to_image_elapsed = map_to_image_start.elapsed();
+
+    let sync_start = Instant::now();
     let cleared_invalid_ids = sync_marker_board_correspondence(&mut final_markers, &config.board);
+    let sync_elapsed = sync_start.elapsed();
     tracing::debug!(
         cleared_invalid_ids,
         n_markers = final_markers.len(),
@@ -335,6 +383,7 @@ fn finalize_global_filter_result(
 
     // Annotate per-marker H-reprojection error and apply confidence soft-penalty
     // now that board_xy_mm and image-space centers are both available.
+    let reproj_annotate_start = Instant::now();
     if let Some(h) = final_h {
         let alpha = config.h_reproj_confidence_alpha;
         for m in &mut final_markers {
@@ -359,6 +408,7 @@ fn finalize_global_filter_result(
             }
         }
     }
+    let reproj_annotate_elapsed = reproj_annotate_start.elapsed();
 
     tracing::info!(
         "{} markers after global filter/completion",
@@ -372,9 +422,11 @@ fn finalize_global_filter_result(
         completion_stats.n_failed_gate
     );
 
+    let post_fixup_start = Instant::now();
     apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
+    let post_fixup_elapsed = post_fixup_start.elapsed();
 
-    DetectionResult {
+    let result = DetectionResult {
         detected_markers: final_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
@@ -382,7 +434,25 @@ fn finalize_global_filter_result(
         homography: final_h,
         ransac: final_ransac,
         ..DetectionResult::default()
-    }
+    };
+
+    tracing::info!(
+        markers_in,
+        markers_after_filter,
+        markers_after_completion,
+        markers_out = result.detected_markers.len(),
+        global_filter_ms = duration_ms(filter_elapsed),
+        completion_ms = duration_ms(completion_elapsed),
+        final_h_ms = duration_ms(final_h_elapsed),
+        map_to_image_ms = duration_ms(map_to_image_elapsed),
+        sync_board_ms = duration_ms(sync_elapsed),
+        reproj_annotate_ms = duration_ms(reproj_annotate_elapsed),
+        post_fixup_ms = duration_ms(post_fixup_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "finalize(global filter) timing summary"
+    );
+
+    result
 }
 
 /// Apply projective-center correction and ID correction to `fit_markers`.
@@ -463,6 +533,7 @@ pub(super) fn run(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> DetectionResult {
+    let total_start = Instant::now();
     let (w, h) = gray.dimensions();
     let image_size = [w, h];
     let homography_frame = if mapper.is_some() {
@@ -470,14 +541,18 @@ pub(super) fn run(
     } else {
         DetectionFrame::Image
     };
+    let markers_in = fit_markers.len();
 
     warn_center_correction_without_intrinsics(config, mapper.is_some());
 
     let mut corrected_markers = fit_markers;
+    let projective_center_start = Instant::now();
     if config.circle_refinement.uses_projective_center() {
         apply_projective_centers(&mut corrected_markers, config);
     }
+    let projective_center_elapsed = projective_center_start.elapsed();
 
+    let id_correction_start = Instant::now();
     if config.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
@@ -487,9 +562,11 @@ pub(super) fn run(
         );
         log_id_correction_summary(&stats);
     }
+    let id_correction_elapsed = id_correction_start.elapsed();
 
+    let tail_start = Instant::now();
     if !config.use_global_filter {
-        return finalize_no_global_filter_result(
+        let result = finalize_no_global_filter_result(
             gray,
             corrected_markers,
             config,
@@ -497,15 +574,35 @@ pub(super) fn run(
             homography_frame,
             image_size,
         );
+        tracing::info!(
+            markers_in,
+            markers_out = result.detected_markers.len(),
+            projective_center_ms = duration_ms(projective_center_elapsed),
+            id_correction_ms = duration_ms(id_correction_elapsed),
+            tail_ms = duration_ms(tail_start.elapsed()),
+            total_ms = duration_ms(total_start.elapsed()),
+            "finalize stage timing summary"
+        );
+        return result;
     }
-    finalize_global_filter_result(
+    let result = finalize_global_filter_result(
         gray,
         corrected_markers,
         config,
         mapper,
         homography_frame,
         image_size,
-    )
+    );
+    tracing::info!(
+        markers_in,
+        markers_out = result.detected_markers.len(),
+        projective_center_ms = duration_ms(projective_center_elapsed),
+        id_correction_ms = duration_ms(id_correction_elapsed),
+        tail_ms = duration_ms(tail_start.elapsed()),
+        total_ms = duration_ms(total_start.elapsed()),
+        "finalize stage timing summary"
+    );
+    result
 }
 
 #[cfg(test)]

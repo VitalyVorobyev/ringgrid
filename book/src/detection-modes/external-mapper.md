@@ -59,7 +59,8 @@ The JSON can be either the direct serde shape:
 }
 ```
 
-or a detector-output wrapper with a top-level `camera` field.
+or a detector-output wrapper with a top-level `camera` field as documented in
+[Detection Output Format](../output-format.md).
 
 Undistortion is performed iteratively (fixed-point iteration in normalized
 coordinates, up to 15 iterations by default with 1e-12 convergence threshold).

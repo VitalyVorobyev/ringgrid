@@ -133,6 +133,11 @@ for marker in &result.detected_markers {
 }
 ```
 
+`result` is a `DetectionResult`. It contains the final marker list plus image
+size, frame metadata, optional homography/RANSAC stats, and optional
+`self_undistort` output. For the serialized JSON shape and field meanings, see:
+- https://vitalyvorobyev.github.io/ringgrid/book/output-format.html
+
 With a marker diameter hint for better scale tuning:
 
 ```rust,no_run
@@ -141,6 +146,40 @@ With a marker diameter hint for better scale tuning:
 # let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
 let detector = Detector::with_marker_diameter_hint(board, 32.0);
 ```
+
+## Proposal-Only Diagnostics
+
+When you want to inspect candidate centers before fit/decode, use the proposal
+API directly:
+
+```rust,no_run
+use ringgrid::{BoardLayout, Detector, ProposalConfig, propose_diagnostics};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let image = image::open("photo.png").unwrap().to_luma8();
+
+let detector = Detector::with_marker_diameter_hint(board, 32.0);
+let proposals = detector.propose(&image);
+let diagnostics = detector.propose_diagnostics(&image);
+
+let explicit = propose_diagnostics(
+    &image,
+    &ProposalConfig {
+        r_min: 4.0,
+        r_max: 18.0,
+        ..ProposalConfig::default()
+    },
+);
+
+println!("{}", proposals.len());
+println!("{:?}", diagnostics.image_size);
+println!("{:?}", explicit.nms_accumulator.len());
+```
+
+`ProposalDiagnostics.nms_accumulator` is the post-Gaussian-smoothed heatmap
+used for thresholding and NMS. Proposal tutorial and Python plotting workflow:
+- https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html
 
 ## Adaptive Scale Detection
 

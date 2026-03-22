@@ -109,7 +109,9 @@ std::fs::write("output.json", json)?;
 ```
 
 The output JSON contains detected markers with their IDs, centers, ellipse
-parameters, fit metrics, and (when available) the board-to-image homography.
+parameters, fit metrics, detection source, and (when available) the
+board-to-image homography. See [Detection Output Format](../output-format.md)
+for the full serialized schema.
 
 ## Source Files
 

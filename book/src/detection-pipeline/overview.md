@@ -115,6 +115,9 @@ The pipeline produces a `DetectionResult` containing:
 - `homography_frame`: `Image` or `Working` depending on mapper presence.
 - `self_undistort`: Optional self-undistort estimation result.
 
+For the serialized JSON shape used by the CLI and examples, see
+[Detection Output Format](../output-format.md).
+
 <!-- TODO: Pipeline flow diagram -->
 
 **Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize.rs`

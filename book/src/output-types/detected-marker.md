@@ -19,6 +19,15 @@
 | `edge_points_inner` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel inner edge inlier points used for ellipse fitting. |
 | `fit` | `FitMetrics` | Fit quality metrics. See [FitMetrics](fit-metrics.md). |
 | `decode` | `Option<DecodeMetrics>` | Decode quality metrics. Present when decoding was attempted. See [FitMetrics & DecodeMetrics](fit-metrics.md). |
+| `source` | `DetectionSource` | Pipeline path that produced the final marker: `fit_decoded`, `completion`, or `seeded_pass`. |
+
+## DetectionSource
+
+`DetectedMarker.source` tells you how the marker entered the final result:
+
+- `fit_decoded` -- the normal proposal -> fit -> decode path
+- `completion` -- the homography-guided completion stage filled a missing board marker
+- `seeded_pass` -- the marker was re-fitted during mapper-based pass-2 detection
 
 ## Center coordinate frames
 
@@ -69,6 +78,7 @@ A fully decoded marker:
 ```json
 {
   "id": 127,
+  "board_xy_mm": [40.0, 24.0],
   "confidence": 0.92,
   "center": [800.5, 600.2],
   "ellipse_outer": {
@@ -94,7 +104,8 @@ A fully decoded marker:
     "best_dist": 0,
     "margin": 4,
     "decode_confidence": 0.92
-  }
+  },
+  "source": "fit_decoded"
 }
 ```
 
@@ -114,6 +125,7 @@ A marker that was detected but not decoded:
     "n_points_inner": 0,
     "ransac_inlier_ratio_outer": 0.72,
     "rms_residual_outer": 0.89
-  }
+  },
+  "source": "fit_decoded"
 }
 ```

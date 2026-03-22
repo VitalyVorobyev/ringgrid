@@ -1,5 +1,5 @@
-use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
+use crate::proposal::Proposal;
 use std::cmp::Ordering;
 
 /// Coordinate frame used by serialized detection outputs.

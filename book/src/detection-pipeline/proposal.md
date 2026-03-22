@@ -2,6 +2,8 @@
 
 The proposal stage identifies candidate marker center positions in the image using gradient-based radial symmetry voting. Ring markers produce strong radially-symmetric gradient patterns at their centers, making gradient voting an effective detector that does not require template matching or multi-scale search.
 
+The proposal module lives in `crates/ringgrid/src/proposal/` and has a standalone API with no ringgrid-specific dependencies in its core types. For the public proposal-only API and heatmap workflow, see [Proposal Diagnostics](../detection-modes/proposal-diagnostics.md).
+
 ## Algorithm
 
 ### Scharr Gradient Computation
@@ -15,6 +17,16 @@ Kx =    [ -10  0  10 ]    Ky =    [  0    0   0 ]
 ```
 
 The implementation uses `imageproc::gradients::horizontal_scharr` and `vertical_scharr` to produce i16 gradient images `gx` and `gy`.
+
+### Edge Thinning (Canny-style Gradient NMS)
+
+When `edge_thinning` is enabled (default: `true`), a Canny-style non-maximum suppression pass thins multi-pixel edge bands down to single-pixel ridges before voting. For each pixel with non-zero gradient:
+
+1. Quantize the gradient direction to one of 4 directions (0, 45, 90, 135 degrees) using integer ratio tests — no `atan2` needed.
+2. Compare the pixel's gradient magnitude squared against its two neighbors along the quantized direction.
+3. Suppress (zero out) pixels that are not local maxima along the gradient direction.
+
+This typically reduces the strong-edge count by 60–80%, which proportionally reduces the cost of the voting loop — the dominant expense in proposal generation. The thinning uses integer `i32` magnitude-squared comparisons throughout to avoid floating-point overhead.
 
 ### Gradient Magnitude Thresholding
 
@@ -45,16 +57,37 @@ Voting in both directions (positive and negative gradient) ensures that both the
 
 The raw accumulator is smoothed with a Gaussian blur (sigma controlled by `accum_sigma`, default: 2.0 px). This merges nearby votes that are slightly misaligned due to discretization, producing cleaner peaks.
 
-### Non-Maximum Suppression (NMS)
+### Two-Step Non-Maximum Suppression
 
-Peaks are extracted from the smoothed accumulator via local NMS:
+Peaks are extracted from the smoothed accumulator in two steps, controlled by a single user-facing parameter `min_distance`:
 
-1. Scan all pixels outside a border margin of `nms_radius` pixels.
-2. Skip pixels below `min_vote_frac * max_accumulator_value` (default: 10% of max).
-3. For each candidate pixel, check all neighbors within a circular region of radius `nms_radius`. A pixel is a local maximum if no neighbor has a strictly higher value (ties are broken by pixel index for determinism).
-4. Accepted peaks become `Proposal` structs with `(x, y, score)`.
+**Step 1 — Local NMS peak extraction:**
 
-Proposals are sorted by score in descending order. If `max_candidates` is set, the list is truncated.
+1. Use an internal NMS radius of `min(min_distance, 10.0)` pixels, capped for efficiency (offset count scales as pi * r^2).
+2. Scan all pixels outside a border margin. Skip pixels below `min_vote_frac * max_accumulator_value` (default: 10% of max).
+3. A pixel is a local maximum if no neighbor within the NMS radius has a strictly higher value (ties broken by pixel index for determinism).
+
+**Step 2 — Greedy distance suppression:**
+
+4. Sort NMS survivors by score (descending).
+5. Greedily accept proposals, rejecting any that fall within `min_distance` pixels of an already-accepted proposal.
+6. Accepted peaks become `Proposal` structs with `(x, y, score)`.
+
+If `max_candidates` is set, the list is truncated after greedy suppression.
+
+## Optional Downscaling
+
+When the ringgrid pipeline uses a wide marker diameter prior, the proposal stage can optionally downscale the image before voting to reduce cost. This is controlled by `ProposalDownscale` on `DetectConfig`:
+
+| Variant | Behavior |
+|---------|----------|
+| `Auto` | Factor from `floor(d_min / 20.0)` clamped to `[1, 4]` |
+| `Off` (default) | No downscaling |
+| `Factor(n)` | Explicit integer factor (1–4) |
+
+When active, the image is resized with bilinear interpolation, proposal config parameters (`r_min`, `r_max`, `min_distance`) are scaled down proportionally, and resulting proposal coordinates are scaled back to full resolution. All downstream stages (fit, decode) operate at full resolution.
+
+CLI: `--proposal-downscale auto|off|2|4`
 
 ## Seed Injection in Two-Pass Modes
 
@@ -78,22 +111,35 @@ The `ProposalConfig` struct controls all proposal parameters:
 |-----------|---------|-------------|
 | `r_min` | 3.0 | Minimum voting radius in pixels |
 | `r_max` | 12.0 | Maximum voting radius in pixels |
+| `min_distance` | 10.0 | Minimum distance between output proposals (pixels) |
 | `grad_threshold` | 0.05 | Gradient magnitude threshold (fraction of max) |
-| `nms_radius` | 7.0 | NMS radius for peak extraction in pixels |
 | `min_vote_frac` | 0.1 | Minimum accumulator value (fraction of max) |
 | `accum_sigma` | 2.0 | Gaussian sigma for accumulator smoothing |
+| `edge_thinning` | true | Apply Canny-style gradient NMS before voting |
 | `max_candidates` | None | Optional cap on proposals returned |
 
 These defaults are overridden by `DetectConfig` when a `MarkerScalePrior` is set. The scale prior drives:
 
-- `r_min = max(diameter_min * 0.2, 2.0)`
-- `r_max = diameter_max * 0.85`
-- `nms_radius = max(diameter_min * 0.4, 2.0)`
+- `r_min = max(0.4 * radius_min_px, 2.0)`
+- `r_max = 1.7 * radius_max_px`
+- `min_distance` — derived from marker spacing and diameter prior
 
 Additionally, `max_candidates` in `ProposalConfig` limits the total proposals emitted, while `max_candidates` in `fit_decode.rs` separately caps how many proposals enter the fit-decode loop (sorted by score, highest first).
+
+## Standalone API
+
+The proposal module exposes a standalone API for general-purpose ellipse/circle center detection, independent of ringgrid's marker-specific pipeline:
+
+```rust
+use ringgrid::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap, ProposalConfig};
+
+let config = ProposalConfig { r_min: 5.0, r_max: 30.0, min_distance: 15.0, ..Default::default() };
+let proposals = find_ellipse_centers(&gray_image, &config);
+let result = find_ellipse_centers_with_heatmap(&gray_image, &config);  // includes heatmap
+```
 
 ## Connection to Next Stage
 
 Each accepted proposal provides a candidate center position `(x, y)` and a score. In the fit-decode phase, each proposal is passed through the [outer radius estimation](outer-estimate.md) stage to determine the expected ring size before edge sampling and ellipse fitting.
 
-**Source:** `detector/proposal.rs`
+**Source:** `proposal/` module (`mod.rs`, `config.rs`, `gradient.rs`, `voting.rs`, `nms.rs`)

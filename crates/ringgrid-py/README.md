@@ -104,6 +104,46 @@ Complete target-generation tutorial and full flag reference:
   - image file path (`str` or `pathlib.Path`)
 - Other dtypes/shapes raise `TypeError`.
 
+## Proposal-Only Diagnostics
+
+You can run just the proposal stage and inspect the heatmap used for proposal
+localization:
+
+```python
+import ringgrid
+from ringgrid import viz
+
+proposals = ringgrid.propose("photo.png")
+diagnostics = ringgrid.propose_with_heatmap("photo.png")
+
+print(len(proposals))
+print(diagnostics.heatmap.shape)  # (H, W), float32
+
+viz.plot_proposal_diagnostics(
+    image="photo.png",
+    diagnostics=diagnostics,
+    out="proposal_diagnostics.png",
+)
+```
+
+If you want proposal generation to follow the detector's existing scale tuning,
+use the detector-bound methods instead:
+
+```python
+board = ringgrid.BoardLayout.default()
+cfg = ringgrid.DetectConfig(board)
+detector = ringgrid.Detector(cfg)
+
+diagnostics = detector.propose_with_heatmap("photo.png")
+```
+
+`ProposalResult.heatmap` is the post-Gaussian-smoothed vote accumulator
+that the proposal stage uses for thresholding and NMS.
+
+Full tutorial and repo tool workflow:
+- [Book: Proposal Diagnostics](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html)
+- `python tools/plot_proposal.py --image ... --gt ... --out ...`
+
 ## DetectConfig Field Guide
 
 `DetectConfig` is the full Python tuning surface for `Detector.detect(...)`,
@@ -151,7 +191,7 @@ Default `marker_scale` derivations for `DetectConfig(BoardLayout.default())`:
 
 - `proposal.r_min = max(0.4 * radius_min_px, 2.0)` -> `2.8`
 - `proposal.r_max = 1.7 * radius_max_px` -> `56.100002`
-- `proposal.nms_radius = max(0.8 * radius_min_px, 2.0)` -> `5.6`
+- `proposal.min_distance` — derived from marker spacing and diameter prior
 - `edge_sample.r_max = 2.0 * radius_max_px` -> `66.0`
 - `outer_estimation.search_halfwidth_px = max(max((radius_max_px - radius_min_px) * 0.5, 2.0), 13.0)` -> `13.0`
 - `completion.roi_radius_px = clamp(0.75 * nominal_diameter_px, 24.0, 80.0)` -> `30.0`
@@ -229,10 +269,11 @@ centers before local fitting.
 | `r_min` | derived -> `2.8` | Minimum vote radius. Lower only for genuinely tiny markers. Re-derived from `cfg.marker_scale`. |
 | `r_max` | derived -> `56.100002` | Maximum vote radius. Raise only if markers exceed your current size prior. Re-derived from `cfg.marker_scale`. |
 | `grad_threshold` | `0.05` | Fraction of max gradient magnitude used to keep votes. Raise it in noisy scenes; lower it for low-contrast imagery. |
-| `nms_radius` | derived -> `5.6` | Proposal dedup radius. Re-derived from `cfg.marker_scale`. |
+| `min_distance` | derived | Minimum distance between proposals (px). Re-derived from `cfg.marker_scale`. |
 | `min_vote_frac` | `0.1` | Minimum accumulator peak fraction relative to the best proposal. Raise to be stricter, lower to keep weaker peaks. |
 | `accum_sigma` | `2.0` | Gaussian blur on the accumulator before NMS. Higher values smooth noisy peaks but can merge close candidates. |
 | `max_candidates` | `None` | Optional hard cap on proposals. Use only when you must bound runtime in cluttered scenes. |
+| `edge_thinning` | `false` | Apply Canny-style gradient NMS before voting. Reduces strong-edge count by 60-80%, speeding up the vote loop. |
 
 ### `edge_sample`
 

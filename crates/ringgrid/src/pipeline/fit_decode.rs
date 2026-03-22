@@ -10,9 +10,9 @@ use super::marker_build::{
 use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate, OuterFitRejectReason};
 use super::{dedup_by_id, dedup_markers, DetectConfig};
 use crate::detector::marker_build::DetectionSource;
-use crate::detector::proposal::Proposal;
 use crate::detector::DetectedMarker;
 use crate::pixelmap::PixelMapper;
+use crate::proposal::Proposal;
 use crate::ring::edge_sample::DistortionAwareSampler;
 
 #[inline]

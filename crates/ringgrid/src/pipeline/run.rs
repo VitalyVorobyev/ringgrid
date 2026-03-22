@@ -4,9 +4,8 @@ use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
-use crate::detector::proposal::find_proposals;
-use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
+use crate::proposal::{find_ellipse_centers, Proposal, ProposalConfig};
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -66,14 +65,63 @@ fn run_pass2(
 }
 
 // ---------------------------------------------------------------------------
+// Downscaled proposal generation
+// ---------------------------------------------------------------------------
+
+/// Run proposal generation, optionally on a downscaled image copy.
+///
+/// When `factor > 1`, the image is resized to `(w/factor, h/factor)` using
+/// triangle (bilinear) interpolation, proposals are found on the smaller image,
+/// and coordinates are scaled back to original image space.
+fn find_proposals_with_downscale(
+    gray: &GrayImage,
+    proposal_config: &ProposalConfig,
+    factor: u32,
+) -> Vec<Proposal> {
+    if factor <= 1 {
+        return find_ellipse_centers(gray, proposal_config);
+    }
+
+    let (w, h) = gray.dimensions();
+    let small_w = (w / factor).max(4);
+    let small_h = (h / factor).max(4);
+    let scale = factor as f32;
+
+    let small = image::imageops::resize(
+        gray,
+        small_w,
+        small_h,
+        image::imageops::FilterType::Triangle,
+    );
+
+    let mut scaled_config = proposal_config.clone();
+    scaled_config.r_min /= scale;
+    scaled_config.r_max /= scale;
+    scaled_config.min_distance /= scale;
+
+    let proposals = find_ellipse_centers(&small, &scaled_config);
+
+    proposals
+        .into_iter()
+        .map(|p| Proposal {
+            x: p.x * scale,
+            y: p.y * scale,
+            score: p.score,
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
     let total_start = Instant::now();
     let (image_width, image_height) = gray.dimensions();
 
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+
     let proposal_start = Instant::now();
-    let proposals = find_proposals(gray, &config.proposal);
+    let proposals = find_proposals_with_downscale(gray, &config.proposal, factor);
     let proposal_elapsed = proposal_start.elapsed();
     let proposal_count = proposals.len();
 
@@ -85,6 +133,7 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
         image_width,
         image_height,
         proposals = proposal_count,
+        proposal_downscale_factor = factor,
         markers = result.detected_markers.len(),
         proposal_ms = duration_ms(proposal_elapsed),
         downstream_ms = duration_ms(downstream_elapsed),
@@ -141,7 +190,8 @@ pub(crate) fn detect_premerge(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> Vec<crate::DetectedMarker> {
-    let proposals = find_proposals(gray, &config.proposal);
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    let proposals = find_proposals_with_downscale(gray, &config.proposal, factor);
     let fit_markers =
         super::fit_decode::run(gray, config, None, proposals, DetectionSource::FitDecoded);
     super::finalize::finalize_premerge(fit_markers, config)

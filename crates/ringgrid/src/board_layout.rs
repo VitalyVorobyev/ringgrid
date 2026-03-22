@@ -348,6 +348,11 @@ impl BoardLayout {
         self.marker_outer_radius_mm
     }
 
+    /// Minimum center-to-center spacing between adjacent markers (mm).
+    pub(crate) fn min_center_spacing_mm(&self) -> f32 {
+        hex_row_spacing_mm(self.pitch_mm)
+    }
+
     /// Marker inner radius in board units (mm).
     pub fn marker_inner_radius_mm(&self) -> f32 {
         self.marker_inner_radius_mm
@@ -700,6 +705,13 @@ mod tests {
             assert_eq!(xy, marker.xy_mm);
         }
         assert_eq!(board.xy_mm(999), None);
+    }
+
+    #[test]
+    fn default_board_min_center_spacing_matches_hex_pitch() {
+        let board = BoardLayout::default();
+        let expected = board.pitch_mm * f32::sqrt(3.0);
+        assert!((board.min_center_spacing_mm() - expected).abs() < 1.0e-6);
     }
 
     #[test]

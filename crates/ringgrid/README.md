@@ -153,7 +153,7 @@ When you want to inspect candidate centers before fit/decode, use the proposal
 API directly:
 
 ```rust,no_run
-use ringgrid::{BoardLayout, Detector, ProposalConfig, propose_diagnostics};
+use ringgrid::{BoardLayout, Detector, ProposalConfig};
 use std::path::Path;
 
 let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
@@ -161,23 +161,24 @@ let image = image::open("photo.png").unwrap().to_luma8();
 
 let detector = Detector::with_marker_diameter_hint(board, 32.0);
 let proposals = detector.propose(&image);
-let diagnostics = detector.propose_diagnostics(&image);
+let diagnostics = detector.propose_with_heatmap(&image);
 
-let explicit = propose_diagnostics(
+let result = ringgrid::proposal::find_ellipse_centers_with_heatmap(
     &image,
     &ProposalConfig {
         r_min: 4.0,
         r_max: 18.0,
+        min_distance: 12.0,
         ..ProposalConfig::default()
     },
 );
 
 println!("{}", proposals.len());
 println!("{:?}", diagnostics.image_size);
-println!("{:?}", explicit.nms_accumulator.len());
+println!("{:?}", result.heatmap.len());
 ```
 
-`ProposalDiagnostics.nms_accumulator` is the post-Gaussian-smoothed heatmap
+`ProposalResult.heatmap` is the post-Gaussian-smoothed vote accumulator
 used for thresholding and NMS. Proposal tutorial and Python plotting workflow:
 - https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html
 

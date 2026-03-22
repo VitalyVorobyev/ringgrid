@@ -12,3 +12,5 @@ Cargo.lock
 data
 out
 py
+lib_ringgrid.dylib.dSYM
+uv.lock

@@ -12,7 +12,7 @@
 
 use image::GrayImage;
 
-use crate::detector::proposal::{find_proposals, ProposalConfig};
+use crate::proposal::{find_ellipse_centers, ProposalConfig};
 
 // Geometric series of candidate probe radii covering diameters ~8–220 px.
 // 20 values from r=4 to r=110, factor ≈ 1.196 per step.
@@ -135,14 +135,15 @@ pub(crate) fn scale_probe(gray: &GrayImage, k_proposals: usize, n_theta: usize) 
     let probe_proposal_cfg = ProposalConfig {
         r_min: 2.0,
         r_max: 100.0,
+        min_distance: 4.0,
         grad_threshold: 0.05,
-        nms_radius: 4.0,
         min_vote_frac: 0.05,
         accum_sigma: 2.0,
         max_candidates: Some(k_proposals),
+        edge_thinning: false,
     };
 
-    let proposals = find_proposals(gray, &probe_proposal_cfg);
+    let proposals = find_ellipse_centers(gray, &probe_proposal_cfg);
     let candidates = probe_radii();
     let n_theta = n_theta.max(4);
 

@@ -4,7 +4,42 @@ use crate::marker::{DecodeConfig, MarkerSpec};
 use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
-use super::proposal::ProposalConfig;
+use crate::proposal::ProposalConfig;
+
+fn proposal_spacing_ratio_for_board(board: &BoardLayout) -> f32 {
+    let outer_diameter_mm = 2.0 * board.marker_outer_radius_mm();
+    if !(outer_diameter_mm.is_finite() && outer_diameter_mm > 0.0) {
+        return 1.0;
+    }
+
+    let spacing_mm = board.min_center_spacing_mm();
+    if !(spacing_mm.is_finite() && spacing_mm > 0.0) {
+        return 1.0;
+    }
+
+    spacing_mm / outer_diameter_mm
+}
+
+pub(crate) fn derive_proposal_config(
+    board: &BoardLayout,
+    marker_scale: MarkerScalePrior,
+    base: &ProposalConfig,
+) -> ProposalConfig {
+    let [d_min, d_max] = marker_scale.diameter_range_px();
+    let outer_radius_max_px = d_max * 0.5;
+    let spacing_ratio = proposal_spacing_ratio_for_board(board);
+    let spacing_min_px = spacing_ratio * d_min;
+    let spacing_max_px = spacing_ratio * d_max;
+
+    let nms_radius = (0.16 * d_min).max(4.0);
+
+    let mut proposal = base.clone();
+    proposal.r_min = (0.15 * spacing_min_px).max(2.0);
+    proposal.r_max = (0.45 * spacing_max_px).min(1.35 * outer_radius_max_px);
+    proposal.min_distance = nms_radius.max(0.85 * spacing_min_px);
+
+    proposal
+}
 
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -684,6 +719,42 @@ impl Default for InnerAsOuterRecoveryConfig {
     }
 }
 
+/// Controls optional image downscaling before proposal generation.
+///
+/// When markers are large in the image, the proposal stage can be run on a
+/// downscaled copy for significant speedup. All downstream stages (outer fit,
+/// decode, inner fit) still operate at full resolution.
+///
+/// Proposal coordinates are automatically scaled back to original image space.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalDownscale {
+    /// Auto-select downscale factor from `marker_scale.diameter_min_px`.
+    ///
+    /// `factor = clamp(floor(d_min / 20.0), 1, 4)`. Ensures markers remain
+    /// at least ~10 px diameter after downscaling.
+    Auto,
+    /// No downscaling (full resolution proposals).
+    #[default]
+    Off,
+    /// Explicit integer downscale factor (clamped to `[1, 4]`).
+    Factor(u32),
+}
+
+impl ProposalDownscale {
+    /// Resolve the concrete integer factor given the current marker scale prior.
+    pub fn resolve(&self, marker_scale: MarkerScalePrior) -> u32 {
+        match self {
+            Self::Auto => {
+                let d_min = marker_scale.diameter_range_px()[0];
+                (d_min / 20.0).floor().clamp(1.0, 4.0) as u32
+            }
+            Self::Off => 1,
+            Self::Factor(f) => (*f).clamp(1, 4),
+        }
+    }
+}
+
 /// Top-level detection configuration.
 ///
 /// Contains all parameters that control the detection pipeline. Use one of the
@@ -754,6 +825,12 @@ pub struct DetectConfig {
     ///
     /// Set to `0.0` to disable the penalty. Default: `0.2`.
     pub h_reproj_confidence_alpha: f32,
+    /// Optional image downscaling before proposal generation.
+    ///
+    /// When markers are large, running proposals on a smaller image is much
+    /// faster while proposal coordinates are approximate anyway (downstream
+    /// stages refine at full resolution). Default: `Off`.
+    pub proposal_downscale: ProposalDownscale,
 }
 
 impl DetectConfig {
@@ -796,6 +873,23 @@ impl DetectConfig {
     pub fn set_marker_diameter_hint_px(&mut self, diameter_px: f32) {
         self.set_marker_scale_prior(MarkerScalePrior::from_nominal_diameter_px(diameter_px));
     }
+
+    #[cfg(test)]
+    fn proposal_spacing_ratio(&self) -> f32 {
+        proposal_spacing_ratio_for_board(&self.board)
+    }
+
+    #[cfg(test)]
+    fn proposal_spacing_min_px(&self) -> f32 {
+        let [d_min, _] = self.marker_scale.diameter_range_px();
+        self.proposal_spacing_ratio() * d_min
+    }
+
+    #[cfg(test)]
+    fn proposal_spacing_max_px(&self) -> f32 {
+        let [_, d_max] = self.marker_scale.diameter_range_px();
+        self.proposal_spacing_ratio() * d_max
+    }
 }
 
 impl Default for DetectConfig {
@@ -824,6 +918,7 @@ impl Default for DetectConfig {
             id_correction: IdCorrectionConfig::default(),
             inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
             h_reproj_confidence_alpha: 0.2,
+            proposal_downscale: ProposalDownscale::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -835,25 +930,21 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     config.marker_scale = config.marker_scale.normalized();
     let [d_min, d_max] = config.marker_scale.diameter_range_px();
     let d_nom = config.marker_scale.nominal_diameter_px();
-    let r_min = d_min * 0.5;
-    let r_max = d_max * 0.5;
+    let outer_radius_min_px = d_min * 0.5;
+    let outer_radius_max_px = d_max * 0.5;
     let r_nom = d_nom * 0.5;
-
-    // Proposal search radii
-    config.proposal.r_min = (r_min * 0.4).max(2.0);
-    config.proposal.r_max = r_max * 1.7;
-    config.proposal.nms_radius = (r_min * 0.8).max(2.0);
+    config.proposal = derive_proposal_config(&config.board, config.marker_scale, &config.proposal);
 
     // Edge sampling range
-    config.edge_sample.r_max = r_max * 2.0;
+    config.edge_sample.r_max = outer_radius_max_px * 2.0;
     config.edge_sample.r_min = 1.5;
-    let desired_halfwidth = ((r_max - r_min) * 0.5).max(2.0);
+    let desired_halfwidth = ((outer_radius_max_px - outer_radius_min_px) * 0.5).max(2.0);
     let base_halfwidth = OuterEstimationConfig::default().search_halfwidth_px;
     config.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);
 
     // Ellipse validation bounds
-    config.min_semi_axis = (r_min as f64 * 0.3).max(2.0);
-    config.max_semi_axis = (r_max as f64 * 2.5).max(config.min_semi_axis);
+    config.min_semi_axis = (outer_radius_min_px as f64 * 0.3).max(2.0);
+    config.max_semi_axis = (outer_radius_max_px as f64 * 2.5).max(config.min_semi_axis);
 
     // Completion ROI
     config.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
@@ -949,6 +1040,37 @@ mod tests {
         assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
         assert_eq!(cfg.outer_fit.min_direct_fit_points, 6);
         assert_eq!(cfg.outer_fit.ransac.min_inliers, 6);
+    }
+
+    #[test]
+    fn marker_scale_prior_derives_spacing_aware_proposal_geometry() {
+        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let spacing_ratio =
+            cfg.board.min_center_spacing_mm() / (2.0 * cfg.board.marker_outer_radius_mm());
+        let [d_min, d_max] = cfg.marker_scale.diameter_range_px();
+        let spacing_min_px = spacing_ratio * d_min;
+        let spacing_max_px = spacing_ratio * d_max;
+        let outer_radius_max_px = 0.5 * d_max;
+
+        assert!((cfg.proposal_spacing_ratio() - spacing_ratio).abs() < 1.0e-6);
+        assert!((cfg.proposal_spacing_min_px() - spacing_min_px).abs() < 1.0e-6);
+        assert!((cfg.proposal_spacing_max_px() - spacing_max_px).abs() < 1.0e-6);
+        assert!((cfg.proposal.r_min - (0.15 * spacing_min_px).max(2.0)).abs() < 1.0e-6);
+        assert!(
+            (cfg.proposal.r_max - (0.45 * spacing_max_px).min(1.35 * outer_radius_max_px)).abs()
+                < 1.0e-6
+        );
+        let expected_nms = (0.16 * d_min).max(4.0);
+        let expected_min_dist = expected_nms.max(0.85 * spacing_min_px);
+        assert!((cfg.proposal.min_distance - expected_min_dist).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn fixed_marker_hint_keeps_spacing_aware_seed_distance() {
+        let cfg = DetectConfig::from_target_and_marker_diameter(BoardLayout::default(), 32.0);
+        assert!((cfg.proposal.r_min - 6.928203).abs() < 1.0e-5);
+        assert!((cfg.proposal.r_max - 20.784609).abs() < 1.0e-5);
+        assert!((cfg.proposal.min_distance - 39.259_815).abs() < 1.0e-5);
     }
 
     #[test]

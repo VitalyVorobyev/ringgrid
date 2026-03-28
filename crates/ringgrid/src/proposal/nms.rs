@@ -74,7 +74,6 @@ pub(crate) fn extract_proposals_from_smoothed(
     }
 
     proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    truncate_proposals(&mut proposals, config.max_candidates);
     proposals
 }
 

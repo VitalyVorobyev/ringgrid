@@ -250,6 +250,50 @@ fn suppress_proposals_by_distance_keeps_candidates_at_threshold() {
 }
 
 #[test]
+fn max_candidates_is_applied_after_distance_suppression() {
+    let w = 80u32;
+    let h = 40u32;
+    let y = 16usize;
+    let mut smoothed = vec![0.0f32; (w * h) as usize];
+    for (x, score) in [(12usize, 10.0f32), (23, 9.0), (40, 8.0), (51, 7.0)] {
+        smoothed[y * w as usize + x] = score;
+    }
+
+    let config = ProposalConfig {
+        min_distance: 20.0,
+        min_vote_frac: 0.05,
+        max_candidates: Some(2),
+        ..ProposalConfig::default()
+    };
+
+    let extracted = nms::extract_proposals_from_smoothed(&smoothed, w, h, &config);
+    assert_eq!(
+        extracted.len(),
+        4,
+        "peak extraction should not pre-truncate"
+    );
+
+    let mut final_proposals = nms::suppress_proposals_by_distance(&extracted, config.min_distance);
+    nms::truncate_proposals(&mut final_proposals, config.max_candidates);
+
+    assert_eq!(
+        final_proposals,
+        vec![
+            Proposal {
+                x: 12.0,
+                y: y as f32,
+                score: 10.0,
+            },
+            Proposal {
+                x: 40.0,
+                y: y as f32,
+                score: 8.0,
+            },
+        ]
+    );
+}
+
+#[test]
 fn min_distance_enforced_on_fixture() {
     let img = load_fixture_image();
     let config = ProposalConfig {

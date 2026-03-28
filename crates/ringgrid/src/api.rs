@@ -126,15 +126,17 @@ impl Detector {
     /// This exposes the detector-backed proposal seeds used by single-pass
     /// detection after spacing-aware post-NMS suppression.
     pub fn propose(&self, image: &GrayImage) -> Vec<Proposal> {
-        find_ellipse_centers(image, &self.config.proposal)
+        pipeline::proposal_seeds_for_config(image, &self.config)
     }
 
     /// Generate pass-1 proposals with the vote heatmap in image coordinates.
     ///
     /// The returned heatmap is the post-Gaussian-smoothed vote map used
     /// for thresholding and non-maximum suppression in the proposal stage.
+    /// When proposal downscaling is enabled, the heatmap is resampled back into
+    /// the original image frame together with the returned proposals.
     pub fn propose_with_heatmap(&self, image: &GrayImage) -> ProposalResult {
-        find_ellipse_centers_with_heatmap(image, &self.config.proposal)
+        pipeline::proposal_result_for_config(image, &self.config)
     }
 
     /// Detect markers with robust adaptive scale selection.
@@ -421,5 +423,22 @@ mod tests {
         let detector_diag = detector.propose_with_heatmap(&img);
         assert_eq!(free_diag.proposals, detector_diag.proposals);
         assert_eq!(free_diag.heatmap, detector_diag.heatmap);
+    }
+
+    #[test]
+    fn detector_proposal_apis_honor_proposal_downscale() {
+        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        cfg.proposal_downscale = crate::ProposalDownscale::Factor(4);
+        let detector = Detector::with_config(cfg.clone());
+        let img = draw_ring_image(101, 98, [50.0, 49.0], 20.0, 10.0);
+
+        let proposals = detector.propose(&img);
+        let result = detector.propose_with_heatmap(&img);
+        let expected = pipeline::proposal_result_for_config(&img, &cfg);
+
+        assert_eq!(proposals, expected.proposals);
+        assert_eq!(result, expected);
+        assert_eq!(result.image_size, [101, 98]);
+        assert_eq!(result.heatmap.len(), 101 * 98);
     }
 }

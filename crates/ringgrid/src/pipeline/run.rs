@@ -5,7 +5,10 @@ use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
-use crate::proposal::{find_ellipse_centers, Proposal, ProposalConfig};
+use crate::proposal::{
+    find_ellipse_centers_with_heatmap, Proposal, ProposalConfig, ProposalResult,
+};
+use image::{ImageBuffer, Luma};
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -73,19 +76,48 @@ fn run_pass2(
 /// When `factor > 1`, the image is resized to `(w/factor, h/factor)` using
 /// triangle (bilinear) interpolation, proposals are found on the smaller image,
 /// and coordinates are scaled back to original image space.
-fn find_proposals_with_downscale(
+fn rescale_proposals_to_image_space(
+    proposals: Vec<Proposal>,
+    scale_x: f32,
+    scale_y: f32,
+) -> Vec<Proposal> {
+    proposals
+        .into_iter()
+        .map(|p| Proposal {
+            x: p.x * scale_x,
+            y: p.y * scale_y,
+            score: p.score,
+        })
+        .collect()
+}
+
+fn resize_heatmap_to_image_space(
+    heatmap: Vec<f32>,
+    small_w: u32,
+    small_h: u32,
+    w: u32,
+    h: u32,
+) -> Vec<f32> {
+    let heatmap_img = ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(small_w, small_h, heatmap)
+        .expect("proposal heatmap dimensions match");
+    image::imageops::resize(&heatmap_img, w, h, image::imageops::FilterType::Triangle).into_raw()
+}
+
+fn proposal_result_with_downscale(
     gray: &GrayImage,
     proposal_config: &ProposalConfig,
     factor: u32,
-) -> Vec<Proposal> {
+) -> ProposalResult {
     if factor <= 1 {
-        return find_ellipse_centers(gray, proposal_config);
+        return find_ellipse_centers_with_heatmap(gray, proposal_config);
     }
 
     let (w, h) = gray.dimensions();
     let small_w = (w / factor).max(4);
     let small_h = (h / factor).max(4);
-    let scale = factor as f32;
+    let scale_x = w as f32 / small_w as f32;
+    let scale_y = h as f32 / small_h as f32;
+    let distance_scale = 0.5 * (scale_x + scale_y);
 
     let small = image::imageops::resize(
         gray,
@@ -95,20 +127,40 @@ fn find_proposals_with_downscale(
     );
 
     let mut scaled_config = proposal_config.clone();
-    scaled_config.r_min /= scale;
-    scaled_config.r_max /= scale;
-    scaled_config.min_distance /= scale;
+    scaled_config.r_min /= distance_scale;
+    scaled_config.r_max /= distance_scale;
+    scaled_config.min_distance /= distance_scale;
 
-    let proposals = find_ellipse_centers(&small, &scaled_config);
+    let small_result = find_ellipse_centers_with_heatmap(&small, &scaled_config);
+    let proposals = rescale_proposals_to_image_space(small_result.proposals, scale_x, scale_y);
+    let heatmap = resize_heatmap_to_image_space(small_result.heatmap, small_w, small_h, w, h);
 
-    proposals
-        .into_iter()
-        .map(|p| Proposal {
-            x: p.x * scale,
-            y: p.y * scale,
-            score: p.score,
-        })
-        .collect()
+    ProposalResult {
+        image_size: [w, h],
+        proposals,
+        heatmap,
+    }
+}
+
+fn find_proposals_with_downscale(
+    gray: &GrayImage,
+    proposal_config: &ProposalConfig,
+    factor: u32,
+) -> Vec<Proposal> {
+    proposal_result_with_downscale(gray, proposal_config, factor).proposals
+}
+
+pub(crate) fn proposal_seeds_for_config(gray: &GrayImage, config: &DetectConfig) -> Vec<Proposal> {
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    find_proposals_with_downscale(gray, &config.proposal, factor)
+}
+
+pub(crate) fn proposal_result_for_config(
+    gray: &GrayImage,
+    config: &DetectConfig,
+) -> ProposalResult {
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    proposal_result_with_downscale(gray, &config.proposal, factor)
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +173,7 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
     let factor = config.proposal_downscale.resolve(config.marker_scale);
 
     let proposal_start = Instant::now();
-    let proposals = find_proposals_with_downscale(gray, &config.proposal, factor);
+    let proposals = proposal_seeds_for_config(gray, config);
     let proposal_elapsed = proposal_start.elapsed();
     let proposal_count = proposals.len();
 
@@ -190,8 +242,7 @@ pub(crate) fn detect_premerge(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> Vec<crate::DetectedMarker> {
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
-    let proposals = find_proposals_with_downscale(gray, &config.proposal, factor);
+    let proposals = proposal_seeds_for_config(gray, config);
     let fit_markers =
         super::fit_decode::run(gray, config, None, proposals, DetectionSource::FitDecoded);
     super::finalize::finalize_premerge(fit_markers, config)
@@ -599,5 +650,22 @@ mod tests {
         let a = score_from(12, 12, true, 10, 0.6);
         let b = score_from(12, 12, false, 0, 0.0);
         assert!(a.is_better_than(&b));
+    }
+
+    #[test]
+    fn proposal_rescaling_uses_actual_resize_ratios() {
+        let proposals = vec![Proposal {
+            x: 24.0,
+            y: 23.0,
+            score: 7.0,
+        }];
+
+        let scaled = rescale_proposals_to_image_space(proposals, 101.0 / 25.0, 98.0 / 24.0);
+        let best = scaled[0];
+
+        assert!((best.x - 96.96).abs() < 1.0e-5);
+        assert!((best.y - (23.0 * 98.0 / 24.0)).abs() < 1.0e-5);
+        assert_ne!(best.x.to_bits(), (24.0f32 * 4.0f32).to_bits());
+        assert_ne!(best.y.to_bits(), (23.0f32 * 4.0f32).to_bits());
     }
 }

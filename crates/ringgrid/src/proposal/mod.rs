@@ -287,8 +287,8 @@ fn compute_proposals(
     // Apply greedy distance suppression if min_distance exceeds the NMS radius
     if config.min_distance > config.nms_radius() {
         proposals = suppress_proposals_by_distance(&proposals, config.min_distance);
-        truncate_proposals(&mut proposals, config.max_candidates);
     }
+    truncate_proposals(&mut proposals, config.max_candidates);
 
     timing.nms = nms_start.elapsed();
     log_timing(&timing, proposals.len(), voting_mode_label, parallel_chunks);

@@ -15,8 +15,11 @@ jobs:
   publish:
     name: Build and publish release assets
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,8 +53,9 @@ jobs:
           sha256sum dist/* > dist/SHA256SUMS.txt
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           generate_release_notes: true
           files: |
             dist/*.tar.gz

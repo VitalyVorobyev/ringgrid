@@ -9,13 +9,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   rust-quality:
     name: Rust Quality (ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -41,9 +50,12 @@ jobs:
     name: Synthetic Smoke Eval (ubuntu)
     runs-on: ubuntu-latest
     needs: rust-quality
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -52,7 +64,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -60,7 +72,7 @@ jobs:
         run: python -m pip install --upgrade pip numpy matplotlib
 
       - name: Build CLI
-        run: cargo build --workspace
+        run: cargo build --workspace --all-features
 
       - name: Run end-to-end synthetic smoke eval
         run: python tools/run_synth_eval.py --n 1 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/ci_smoke
@@ -69,9 +81,12 @@ jobs:
     name: Python Binding (ubuntu)
     runs-on: ubuntu-latest
     needs: rust-quality
+    timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -80,7 +95,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -101,9 +116,12 @@ jobs:
   check-docs:
     name: Documentation (ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -115,18 +133,9 @@ jobs:
         run: python3 tools/ci/maintainability_guardrails.py --check rustdoc
 
       - name: Install mdbook
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.cargo/bin"
-          tag="$(curl -fsSL https://api.github.com/repos/rust-lang/mdBook/releases/latest \
-            | sed -nE 's/^[[:space:]]*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' \
-            | head -n1)"
-          if [ -z "$tag" ]; then
-            echo "failed to resolve mdBook release tag" >&2
-            exit 1
-          fi
-          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C "$HOME/.cargo/bin"
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook
 
       - name: Build book
         run: mdbook build book
@@ -146,9 +155,12 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -157,7 +169,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace --all-features
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features

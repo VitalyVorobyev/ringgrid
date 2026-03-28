@@ -17,7 +17,7 @@ structs, no duplicated defaults.
 2. **Scale-dependent parameters are auto-derived.** When `MarkerScalePrior`
    changes (via `set_marker_scale_prior` or constructors), all coupled
    parameters are recomputed by `apply_marker_scale_prior()`:
-   - Proposal search radii (`r_min`, `r_max`, `nms_radius`)
+   - Proposal search radii (`r_min`, `r_max`, `min_distance`)
    - Edge sampling range (`edge_sample.r_max`, `edge_sample.r_min`)
    - Outer estimation window (`search_halfwidth_px`, `theta_samples`)
    - Ellipse validation bounds (`min_semi_axis`, `max_semi_axis`)

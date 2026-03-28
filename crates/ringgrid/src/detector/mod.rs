@@ -12,7 +12,6 @@ pub(crate) mod inner_as_outer_recovery;
 pub(crate) mod inner_fit;
 pub(crate) mod marker_build;
 pub(crate) mod outer_fit;
-pub(crate) mod proposal;
 
 pub(crate) mod config;
 
@@ -23,7 +22,7 @@ pub(crate) use completion::{complete_with_h, CompletionStats};
 pub use config::{
     CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
     InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
-    ProjectiveCenterParams, ScaleTier, ScaleTiers, SeedProposalParams,
+    ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers, SeedProposalParams,
 };
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::global_filter;
@@ -37,4 +36,3 @@ pub(crate) use outer_fit::{
     fit_outer_candidate_from_prior_for_completion, median_outer_radius_from_neighbors_px,
     OuterFitCandidate,
 };
-pub use proposal::{Proposal, ProposalConfig};

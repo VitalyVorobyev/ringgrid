@@ -33,6 +33,14 @@ from ._ringgrid import (
     default_board_spec_json as _default_board_spec_json,
     load_board_spec_json as _load_board_spec_json,
     package_version as _package_version,
+    proposal_result_payload_array as _proposal_result_payload_array,
+    proposal_result_payload_path as _proposal_result_payload_path,
+    proposal_result_with_scale_payload_array as _proposal_result_with_scale_payload_array,
+    proposal_result_with_scale_payload_path as _proposal_result_with_scale_payload_path,
+    proposal_json_array as _proposal_json_array,
+    proposal_json_path as _proposal_json_path,
+    proposal_with_scale_json_array as _proposal_with_scale_json_array,
+    proposal_with_scale_json_path as _proposal_with_scale_json_path,
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
     write_board_spec_json as _write_board_spec_json,
@@ -71,6 +79,27 @@ def _json_loads_path_or_text(path_or_json: str | Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
 
     return json.loads(text)
+
+
+def _coerce_board_layout(value: "BoardLayout | str | Path") -> "BoardLayout":
+    if isinstance(value, BoardLayout):
+        return value
+    if isinstance(value, (str, Path)):
+        text = str(value)
+        if text.lstrip().startswith("{"):
+            return BoardLayout.from_dict(_json_loads_path_or_text(text))
+        return BoardLayout.from_json_file(text)
+    raise TypeError("target must be BoardLayout, str, or Path")
+
+
+def _proposal_result_from_payload(
+    result_json: str,
+    accumulator: np.ndarray,
+) -> "ProposalResult":
+    payload = _require_mapping(json.loads(result_json), name="result")
+    payload = dict(payload)
+    payload["heatmap"] = np.ascontiguousarray(np.asarray(accumulator, dtype=np.float32))
+    return ProposalResult.from_dict(payload)
 
 
 class DetectionFrame(str, Enum):
@@ -744,6 +773,96 @@ class DetectedMarker:
 
 
 @dataclass(slots=True)
+class Proposal:
+    """Single proposal-stage candidate center."""
+
+    x: float
+    y: float
+    score: float
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Proposal":
+        data = _require_mapping(data, name="data")
+        return cls(
+            x=float(data["x"]),
+            y=float(data["y"]),
+            score=float(data["score"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "x": float(self.x),
+            "y": float(self.y),
+            "score": float(self.score),
+        }
+
+
+@dataclass(slots=True)
+class ProposalResult:
+    """Proposal-stage result including the vote heatmap."""
+
+    image_size: list[int]
+    proposals: list[Proposal]
+    heatmap: np.ndarray
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ProposalResult":
+        data = _require_mapping(data, name="data")
+        image_size = [int(data["image_size"][0]), int(data["image_size"][1])]
+        heatmap = np.asarray(data["heatmap"], dtype=np.float32)
+        if heatmap.ndim == 1:
+            heatmap = heatmap.reshape((image_size[1], image_size[0]))
+        elif heatmap.ndim == 2:
+            if heatmap.shape != (image_size[1], image_size[0]):
+                raise ValueError(
+                    "heatmap shape does not match image_size: "
+                    f"{heatmap.shape} vs {(image_size[1], image_size[0])}"
+                )
+        else:
+            raise ValueError("heatmap must be a 1D row-major buffer or a 2D array")
+
+        return cls(
+            image_size=image_size,
+            proposals=[Proposal.from_dict(p) for p in data.get("proposals", [])],
+            heatmap=np.ascontiguousarray(heatmap, dtype=np.float32),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "image_size": [int(self.image_size[0]), int(self.image_size[1])],
+            "proposals": [p.to_dict() for p in self.proposals],
+            "heatmap": self.heatmap.tolist(),
+        }
+
+    def plot(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        out: str | Path | None = None,
+        gt_points: np.ndarray | list[list[float]] | None = None,
+        gt_hits: np.ndarray | list[bool] | None = None,
+        title: str | None = None,
+        alpha: float = 0.8,
+    ) -> None:
+        """Plot proposal candidates and the vote heatmap using :mod:`ringgrid.viz`."""
+        from .viz import plot_proposal_diagnostics
+
+        plot_proposal_diagnostics(
+            image=image,
+            diagnostics=self,
+            out=out,
+            gt_points=gt_points,
+            gt_hits=gt_hits,
+            title=title,
+            alpha=alpha,
+        )
+
+
+# Backward-compatible alias for code using the old name.
+ProposalDiagnostics = ProposalResult
+
+
+@dataclass(slots=True)
 class RansacStats:
     """Homography RANSAC diagnostics."""
 
@@ -1090,13 +1209,14 @@ class SeedProposalParams:
 
 @dataclass(slots=True)
 class ProposalConfig:
-    r_min: float = 2.8
-    r_max: float = 56.100002
+    r_min: float = 3.0310888
+    r_max: float = 42.86825
     grad_threshold: float = 0.05
-    nms_radius: float = 5.6
+    min_distance: float = 10.0
     min_vote_frac: float = 0.1
     accum_sigma: float = 2.0
     max_candidates: int | None = None
+    edge_thinning: bool = False
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ProposalConfig":
@@ -1105,10 +1225,11 @@ class ProposalConfig:
             r_min=float(data["r_min"]),
             r_max=float(data["r_max"]),
             grad_threshold=float(data["grad_threshold"]),
-            nms_radius=float(data["nms_radius"]),
+            min_distance=float(data["min_distance"]),
             min_vote_frac=float(data["min_vote_frac"]),
             accum_sigma=float(data["accum_sigma"]),
             max_candidates=_optional_int(data.get("max_candidates")),
+            edge_thinning=bool(data.get("edge_thinning", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1116,9 +1237,10 @@ class ProposalConfig:
             "r_min": float(self.r_min),
             "r_max": float(self.r_max),
             "grad_threshold": float(self.grad_threshold),
-            "nms_radius": float(self.nms_radius),
+            "min_distance": float(self.min_distance),
             "min_vote_frac": float(self.min_vote_frac),
             "accum_sigma": float(self.accum_sigma),
+            "edge_thinning": bool(self.edge_thinning),
         }
         _set_optional(
             out, "max_candidates", None if self.max_candidates is None else int(self.max_candidates)
@@ -1858,6 +1980,16 @@ class Detector:
     def config(self) -> DetectConfig:
         return self._config
 
+    def propose(self, image: np.ndarray | str | Path) -> list[Proposal]:
+        """Run the proposal stage only and return candidate centers."""
+        proposals_json = self._propose_impl(image=image)
+        return [Proposal.from_dict(p) for p in json.loads(proposals_json)]
+
+    def propose_with_heatmap(self, image: np.ndarray | str | Path) -> ProposalResult:
+        """Run the proposal stage and return the proposals plus vote heatmap."""
+        diagnostics_json, accumulator = self._propose_with_heatmap_impl(image=image)
+        return _proposal_result_from_payload(diagnostics_json, accumulator)
+
     def detect(self, image: np.ndarray | str | Path) -> DetectionResult:
         """Run detection on a NumPy image or image path.
 
@@ -1951,6 +2083,34 @@ class Detector:
         parsed_hint = _parse_nominal_diameter_hint(nominal_diameter_px)
         tiers_json = self._adaptive_tiers_impl(image=image, nominal_diameter_px=parsed_hint)
         return ScaleTiers._from_wire(json.loads(tiers_json))
+
+    def _propose_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+    ) -> str:
+        self._refresh_core_if_needed()
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            return self._core.propose_array(image)
+
+        image_path = _coerce_path(image)
+        return self._core.propose_path(image_path)
+
+    def _propose_with_heatmap_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+    ) -> tuple[str, np.ndarray]:
+        self._refresh_core_if_needed()
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            proposals_json, accumulator = self._core.propose_with_heatmap_array(image)
+            return proposals_json, np.asarray(accumulator, dtype=np.float32)
+
+        image_path = _coerce_path(image)
+        proposals_json, accumulator = self._core.propose_with_heatmap_path(image_path)
+        return proposals_json, np.asarray(accumulator, dtype=np.float32)
 
     def _detect_impl(
         self,
@@ -2116,6 +2276,184 @@ def _circle_refinement_to_wire(value: CircleRefinementMethod) -> str:
     raise ValueError(f"unsupported circle refinement value: {value!r}")
 
 
+def _proposal_marker_scale_prior(
+    marker_diameter: float | None,
+    marker_diameter_min: float | None,
+    marker_diameter_max: float | None,
+) -> MarkerScalePrior | None:
+    if marker_diameter is not None:
+        if marker_diameter_min is not None or marker_diameter_max is not None:
+            raise ValueError(
+                "marker_diameter cannot be combined with marker_diameter_min/max"
+            )
+        return MarkerScalePrior.from_nominal_diameter_px(
+            _require_finite_positive_float(marker_diameter, name="marker_diameter")
+        )
+
+    if marker_diameter_min is None and marker_diameter_max is None:
+        return None
+
+    if marker_diameter_min is None:
+        marker_diameter_min = marker_diameter_max
+    if marker_diameter_max is None:
+        marker_diameter_max = marker_diameter_min
+
+    return MarkerScalePrior(
+        _require_finite_positive_float(marker_diameter_min, name="marker_diameter_min"),
+        _require_finite_positive_float(marker_diameter_max, name="marker_diameter_max"),
+    )
+
+
+def _resolve_size_aware_proposal_inputs(
+    *,
+    target: BoardLayout | str | Path | None,
+    marker_diameter: float | None,
+    marker_diameter_min: float | None,
+    marker_diameter_max: float | None,
+) -> tuple[BoardLayout, MarkerScalePrior] | None:
+    marker_scale = _proposal_marker_scale_prior(
+        marker_diameter, marker_diameter_min, marker_diameter_max
+    )
+    if target is None and marker_scale is None:
+        return None
+    if target is None:
+        raise ValueError("target is required when marker_diameter* is provided")
+    board = _coerce_board_layout(target)
+    if marker_scale is None:
+        marker_scale = DetectConfig(board).marker_scale
+    return board, marker_scale
+
+
+def _propose_free_impl(
+    image: np.ndarray | str | Path,
+    *,
+    config: ProposalConfig | None,
+    target: BoardLayout | str | Path | None,
+    marker_diameter: float | None,
+    marker_diameter_min: float | None,
+    marker_diameter_max: float | None,
+) -> list[Proposal]:
+    size_aware = _resolve_size_aware_proposal_inputs(
+        target=target,
+        marker_diameter=marker_diameter,
+        marker_diameter_min=marker_diameter_min,
+        marker_diameter_max=marker_diameter_max,
+    )
+    if config is not None and size_aware is not None:
+        raise ValueError("config cannot be combined with target or marker_diameter*")
+    if config is not None and not isinstance(config, ProposalConfig):
+        raise TypeError("config must be ProposalConfig or None")
+
+    if size_aware is not None:
+        board, marker_scale = size_aware
+        marker_scale_json = json.dumps(marker_scale.to_dict())
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            proposals_json = _proposal_with_scale_json_array(
+                image, board._spec_json, marker_scale_json
+            )
+        else:
+            proposals_json = _proposal_with_scale_json_path(
+                _coerce_path(image), board._spec_json, marker_scale_json
+            )
+        return [Proposal.from_dict(p) for p in json.loads(proposals_json)]
+
+    active_config = ProposalConfig() if config is None else config
+    config_json = json.dumps(active_config.to_dict())
+    if isinstance(image, np.ndarray):
+        _validate_image_array(image)
+        proposals_json = _proposal_json_array(image, config_json)
+    else:
+        proposals_json = _proposal_json_path(_coerce_path(image), config_json)
+    return [Proposal.from_dict(p) for p in json.loads(proposals_json)]
+
+
+def _propose_with_heatmap_free_impl(
+    image: np.ndarray | str | Path,
+    *,
+    config: ProposalConfig | None,
+    target: BoardLayout | str | Path | None,
+    marker_diameter: float | None,
+    marker_diameter_min: float | None,
+    marker_diameter_max: float | None,
+) -> ProposalResult:
+    size_aware = _resolve_size_aware_proposal_inputs(
+        target=target,
+        marker_diameter=marker_diameter,
+        marker_diameter_min=marker_diameter_min,
+        marker_diameter_max=marker_diameter_max,
+    )
+    if config is not None and size_aware is not None:
+        raise ValueError("config cannot be combined with target or marker_diameter*")
+    if config is not None and not isinstance(config, ProposalConfig):
+        raise TypeError("config must be ProposalConfig or None")
+
+    if size_aware is not None:
+        board, marker_scale = size_aware
+        marker_scale_json = json.dumps(marker_scale.to_dict())
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            diagnostics_json, accumulator = _proposal_result_with_scale_payload_array(
+                image, board._spec_json, marker_scale_json
+            )
+        else:
+            diagnostics_json, accumulator = _proposal_result_with_scale_payload_path(
+                _coerce_path(image), board._spec_json, marker_scale_json
+            )
+        return _proposal_result_from_payload(diagnostics_json, accumulator)
+
+    active_config = ProposalConfig() if config is None else config
+    config_json = json.dumps(active_config.to_dict())
+    if isinstance(image, np.ndarray):
+        _validate_image_array(image)
+        diagnostics_json, accumulator = _proposal_result_payload_array(image, config_json)
+    else:
+        diagnostics_json, accumulator = _proposal_result_payload_path(
+            _coerce_path(image), config_json
+        )
+    return _proposal_result_from_payload(diagnostics_json, accumulator)
+
+
+def propose(
+    image: np.ndarray | str | Path,
+    config: ProposalConfig | None = None,
+    *,
+    target: BoardLayout | str | Path | None = None,
+    marker_diameter: float | None = None,
+    marker_diameter_min: float | None = None,
+    marker_diameter_max: float | None = None,
+) -> list[Proposal]:
+    """Run the proposal stage without explicitly constructing a detector."""
+    return _propose_free_impl(
+        image,
+        config=config,
+        target=target,
+        marker_diameter=marker_diameter,
+        marker_diameter_min=marker_diameter_min,
+        marker_diameter_max=marker_diameter_max,
+    )
+
+
+def propose_with_heatmap(
+    image: np.ndarray | str | Path,
+    config: ProposalConfig | None = None,
+    *,
+    target: BoardLayout | str | Path | None = None,
+    marker_diameter: float | None = None,
+    marker_diameter_min: float | None = None,
+    marker_diameter_max: float | None = None,
+) -> ProposalResult:
+    """Run proposal-stage diagnostics without explicitly constructing a detector."""
+    return _propose_with_heatmap_free_impl(
+        image,
+        config=config,
+        target=target,
+        marker_diameter=marker_diameter,
+        marker_diameter_min=marker_diameter_min,
+        marker_diameter_max=marker_diameter_max,
+    )
+
+
 __all__ = [
     "BoardLayout",
     "BoardMarker",
@@ -2144,6 +2482,11 @@ __all__ = [
     "RadialTangentialDistortion",
     "CameraModel",
     "DivisionModel",
+    "Proposal",
+    "ProposalResult",
+    "ProposalDiagnostics",
+    "propose",
+    "propose_with_heatmap",
     "DetectionResult",
     "DetectedMarker",
     "FitMetrics",

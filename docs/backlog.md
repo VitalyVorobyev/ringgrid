@@ -37,6 +37,7 @@ _None currently assigned._
 - Python API backlog direction: expose the same target-generation capability in `ringgrid-py` package surface (installed-package usable).
 - `DetectConfig` backlog direction: internal Python caching/refactor only; no intentional public behavior changes.
 - Codebook backlog direction: default profile unchanged; optional extension profile additive and opt-in.
+- Proposal module direction: standalone `proposal/` module with no ringgrid-type dependencies in core API; `ProposalConfig` with unified `min_distance`; `find_ellipse_centers()` entry points; `ProposalResult` with `heatmap` field.
 
 ## Acceptance Scenarios (Attached to Tasks)
 
@@ -58,6 +59,10 @@ _None currently assigned._
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| INFRA-015 | 2026-03-22 | infra | Update public API surface and Python bindings for proposal refactor | Updated `lib.rs` re-exports for `proposal` module; `ringgrid-py` bindings renamed `ProposalDiagnostics` → `ProposalResult`, `nms_accumulator` → `heatmap`; added `edge_thinning`/`min_distance`/`proposal_downscale` to Python surface; added `--proposal-downscale` CLI flag; backward-compat `ProposalDiagnostics` alias kept. |
+| PERF-006 | 2026-03-22 | perf | Optional proposal-stage image downscaling | Added `ProposalDownscale` enum (`Auto`/`Off`/`Factor(u32)`) on `DetectConfig`; auto factor from `floor(d_min/20)` clamped `[1,4]`; downscale before proposals in `pipeline/run.rs`, upscale coordinates after; downstream stages at full resolution; CLI `--proposal-downscale` flag. |
+| ALGO-016 | 2026-03-22 | algo | Canny-style edge thinning for proposal gradient NMS | Added gradient-direction NMS in `proposal/gradient.rs` before strong-edge collection; 4-direction quantization without `atan2` using integer `mag_sq`; `edge_thinning: bool` config flag (default `true` in standalone API); reduces strong-edge count, proportional voting speedup. |
+| ALGO-015 | 2026-03-22 | algo | Extract proposal module with standalone ellipse-center API | Moved `detector/proposal.rs` → `proposal/` module (`mod.rs`, `config.rs`, `gradient.rs`, `voting.rs`, `nms.rs`, `tests.rs`); unified `nms_radius` + `min_seed_distance_px` into `min_distance`; entry points `find_ellipse_centers()` / `find_ellipse_centers_with_heatmap()`; renamed `ProposalDiagnostics` → `ProposalResult` with `heatmap` field. |
 | INFRA-013 | 2026-03-11 | infra | Finalize `v0.5.0` release readiness and publication | Closed after implementing `INFRA-008` + `ALGO-009/010/011`, aligning the Python package metadata on `0.5.0`, updating the changelog/docs, rerunning the full release baseline (`fmt`, `clippy -D warnings`, workspace tests, rustdoc, doctests, `mdbook`, typing-artifact check, `maturin develop`, Python tests), and cutting the local `v0.5.0` release tag. |
 | INFRA-008 | 2026-03-11 | infra | CLI flag to load Brown-Conrady calibration JSON as mapper | Added `--calibration <file.json>` as an additive alternative to inline `--cam-*`; accepts direct `CameraModel` JSON or detector-output wrapper JSON, rejects mixed camera inputs, and documents the JSON path in the CLI guide, tuning guide, and external-mapper docs. |
 | ALGO-011 | 2026-03-11 | algo | Enforce inner/outer axis ratio consistency as post-filter | Added a final consistency pass that clears marker IDs whose inner/outer mean-axis ratio deviates more than 25% from the global fit-decoded median, catching residual inner-as-outer failures after collection; added finalize regression tests. |

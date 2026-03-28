@@ -33,7 +33,7 @@ Notes:
 ## 3. Pipeline Stages
 
 ### Stage 0: Proposal generation
-File: `pipeline/run.rs` + `detector/proposal.rs`
+File: `pipeline/run.rs` + `proposal/`
 
 - Scharr gradient voting + NMS produces initial proposals.
 - In pass-2 modes, pass-1 markers are converted into seed proposals.

@@ -58,6 +58,7 @@ mod homography;
 mod marker;
 mod pipeline;
 mod pixelmap;
+pub mod proposal;
 mod ring;
 mod target_generation;
 #[cfg(test)]
@@ -65,11 +66,17 @@ pub(crate) mod test_utils;
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-// High-level detector facade
-pub use api::Detector;
+// High-level detector facade and proposal-only convenience helpers
+pub use api::{
+    propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
+    propose_with_marker_diameter, propose_with_marker_scale, Detector,
+};
+
+// Proposal module (standalone ellipse center detection)
+pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
+pub use proposal::{Proposal, ProposalConfig, ProposalResult};
 
 // Result types
-pub use detector::Proposal;
 pub use detector::{DetectedMarker, DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
@@ -79,12 +86,11 @@ pub use pipeline::{DetectionFrame, DetectionResult};
 pub use detector::{
     CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
     InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
-    ProjectiveCenterParams, ScaleTier, ScaleTiers, SeedProposalParams,
+    ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers, SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
 
-// Sub-configs not re-exported from detector::config
-pub use detector::ProposalConfig;
+// Sub-configs
 pub use marker::{CodebookProfile, DecodeConfig};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 

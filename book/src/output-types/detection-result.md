@@ -1,6 +1,13 @@
 # DetectionResult
 
-`DetectionResult` is the top-level output returned by `Detector::detect()` and `Detector::detect_with_mapper()`. It contains all detected markers, the fitted board-to-image homography (when available), and metadata describing the coordinate frames used.
+`DetectionResult` is the top-level output returned by `Detector::detect()` and
+`Detector::detect_with_mapper()`. It contains all detected markers, the fitted
+board-to-image homography (when available), and metadata describing the
+coordinate frames used.
+
+For the full CLI JSON file shape written by `ringgrid detect`, including
+optional top-level `camera` and proposal-diagnostics fields, see
+[Detection Output Format](../output-format.md).
 
 **Source:** `crates/ringgrid/src/pipeline/result.rs`
 

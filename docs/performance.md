@@ -157,5 +157,6 @@ Snapshot:
 ## Related Docs
 
 - [docs/tuning-guide.md](tuning-guide.md) for symptom-driven tuning notes
+- [docs/proposal-performance-analysis.md](proposal-performance-analysis.md) for proposal-stage cost structure and alternative approaches
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for pipeline, math, and configuration detail
 - [Development Guide](development.md) for repo-maintainer workflows and validation commands

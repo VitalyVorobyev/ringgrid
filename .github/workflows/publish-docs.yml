@@ -14,12 +14,18 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build-docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -33,18 +39,9 @@ jobs:
           cache-on-failure: true
 
       - name: Install mdbook
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.cargo/bin"
-          tag="$(curl -fsSL https://api.github.com/repos/rust-lang/mdBook/releases/latest \
-            | sed -nE 's/^[[:space:]]*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' \
-            | head -n1)"
-          if [ -z "$tag" ]; then
-            echo "failed to resolve mdBook release tag" >&2
-            exit 1
-          fi
-          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C "$HOME/.cargo/bin"
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook
 
       - name: Build mdbook
         run: mdbook build book
@@ -83,7 +80,7 @@ jobs:
           EOF
 
       - name: Upload artifact for Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: target/site
 
@@ -93,6 +90,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build-docs
+    timeout-minutes: 10
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

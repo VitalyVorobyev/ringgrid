@@ -161,9 +161,6 @@ mod inner_estimate;
 #[path = "../src/ring/outer_estimate.rs"]
 mod outer_estimate;
 #[allow(dead_code, unused_imports)]
-#[path = "../src/detector/proposal.rs"]
-mod proposal_impl;
-#[allow(dead_code, unused_imports)]
 #[path = "../src/ring/radial_estimator.rs"]
 mod radial_estimator;
 #[allow(dead_code, unused_imports)]
@@ -295,15 +292,16 @@ fn make_proposal_fixture(width: u32, height: u32, seed: u64) -> GrayImage {
     img
 }
 
-fn proposal_config() -> proposal_impl::ProposalConfig {
-    proposal_impl::ProposalConfig {
+fn proposal_config() -> ringgrid::ProposalConfig {
+    ringgrid::ProposalConfig {
         r_min: 4.0,
         r_max: 18.0,
         grad_threshold: 0.04,
-        nms_radius: 5.0,
+        min_distance: 5.0,
         min_vote_frac: 0.06,
         accum_sigma: 1.5,
         max_candidates: Some(600),
+        edge_thinning: false,
     }
 }
 
@@ -314,14 +312,14 @@ fn bench_proposal(c: &mut Criterion) {
 
     c.bench_function("proposal_1280x1024", |b| {
         b.iter(|| {
-            let proposals = proposal_impl::find_proposals(black_box(&img_1280), black_box(&cfg));
+            let proposals = ringgrid::find_ellipse_centers(black_box(&img_1280), black_box(&cfg));
             black_box(proposals.len())
         })
     });
 
     c.bench_function("proposal_1920x1080", |b| {
         b.iter(|| {
-            let proposals = proposal_impl::find_proposals(black_box(&img_1920), black_box(&cfg));
+            let proposals = ringgrid::find_ellipse_centers(black_box(&img_1920), black_box(&cfg));
             black_box(proposals.len())
         })
     });

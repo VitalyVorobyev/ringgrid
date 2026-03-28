@@ -25,7 +25,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.5"
+ringgrid = "0.5.1"
 ```
 
 ## Rust Target Generation
@@ -133,6 +133,11 @@ for marker in &result.detected_markers {
 }
 ```
 
+`result` is a `DetectionResult`. It contains the final marker list plus image
+size, frame metadata, optional homography/RANSAC stats, and optional
+`self_undistort` output. For the serialized JSON shape and field meanings, see:
+- https://vitalyvorobyev.github.io/ringgrid/book/output-format.html
+
 With a marker diameter hint for better scale tuning:
 
 ```rust,no_run
@@ -141,6 +146,41 @@ With a marker diameter hint for better scale tuning:
 # let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
 let detector = Detector::with_marker_diameter_hint(board, 32.0);
 ```
+
+## Proposal-Only Diagnostics
+
+When you want to inspect candidate centers before fit/decode, use the proposal
+API directly:
+
+```rust,no_run
+use ringgrid::{BoardLayout, Detector, ProposalConfig};
+use std::path::Path;
+
+let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let image = image::open("photo.png").unwrap().to_luma8();
+
+let detector = Detector::with_marker_diameter_hint(board, 32.0);
+let proposals = detector.propose(&image);
+let diagnostics = detector.propose_with_heatmap(&image);
+
+let result = ringgrid::proposal::find_ellipse_centers_with_heatmap(
+    &image,
+    &ProposalConfig {
+        r_min: 4.0,
+        r_max: 18.0,
+        min_distance: 12.0,
+        ..ProposalConfig::default()
+    },
+);
+
+println!("{}", proposals.len());
+println!("{:?}", diagnostics.image_size);
+println!("{:?}", result.heatmap.len());
+```
+
+`ProposalResult.heatmap` is the post-Gaussian-smoothed vote accumulator
+used for thresholding and NMS. Proposal tutorial and Python plotting workflow:
+- https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html
 
 ## Adaptive Scale Detection
 

@@ -5,9 +5,13 @@ on:
     tags:
       - "v*"
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     # Needed for OIDC -> crates.io token exchange
     permissions:
@@ -18,25 +22,33 @@ jobs:
     environment: crates-io
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Verify versions match tag (vX.Y.Z)
-        shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER="${TAG#v}"
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import tomllib
 
-          MAIN_VER="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="ringgrid") | .version')"
+          root = pathlib.Path(".")
+          tag = os.environ["GITHUB_REF_NAME"]
+          tag_version = tag[1:] if tag.startswith("v") else tag
+          package_version = tomllib.loads((root / "crates/ringgrid/Cargo.toml").read_text())["package"]["version"]
 
-          echo "tag version:   $VER"
-          echo "main version:  $MAIN_VER"
+          print(f"tag version:     {tag_version}")
+          print(f"crate version:   {package_version}")
 
-          test "$MAIN_VER" = "$VER"
+          if package_version != tag_version:
+              raise SystemExit("version mismatch between tag and crates/ringgrid/Cargo.toml")
+          PY
 
       - name: Guard first release (manual publish required once)
         shell: bash
@@ -64,7 +76,7 @@ jobs:
           fi
 
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       - name: Authenticate to crates.io via Trusted Publishing (OIDC)
         id: cratesio

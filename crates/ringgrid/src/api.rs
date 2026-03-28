@@ -8,12 +8,12 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
-use crate::detector::config::ScaleTiers;
-use crate::detector::proposal::find_proposals;
+use crate::detector::config::{derive_proposal_config, ScaleTiers};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
-use crate::{DetectionResult, Proposal};
+use crate::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
+use crate::{DetectionResult, Proposal, ProposalResult};
 
 /// Primary detection interface.
 ///
@@ -123,9 +123,20 @@ impl Detector {
 
     /// Generate pass-1 center proposals in image coordinates.
     ///
-    /// This exposes the same proposal stage used by single-pass detection.
+    /// This exposes the detector-backed proposal seeds used by single-pass
+    /// detection after spacing-aware post-NMS suppression.
     pub fn propose(&self, image: &GrayImage) -> Vec<Proposal> {
-        find_proposals(image, &self.config.proposal)
+        pipeline::proposal_seeds_for_config(image, &self.config)
+    }
+
+    /// Generate pass-1 proposals with the vote heatmap in image coordinates.
+    ///
+    /// The returned heatmap is the post-Gaussian-smoothed vote map used
+    /// for thresholding and non-maximum suppression in the proposal stage.
+    /// When proposal downscaling is enabled, the heatmap is resampled back into
+    /// the original image frame together with the returned proposals.
+    pub fn propose_with_heatmap(&self, image: &GrayImage) -> ProposalResult {
+        pipeline::proposal_result_for_config(image, &self.config)
     }
 
     /// Detect markers with robust adaptive scale selection.
@@ -211,6 +222,56 @@ impl Detector {
     ) -> DetectionResult {
         pipeline::detect_with_mapper(image, &self.config, mapper)
     }
+}
+
+/// Generate pass-1 center proposals using board geometry and an explicit
+/// marker-scale prior.
+pub fn propose_with_marker_scale(
+    image: &GrayImage,
+    board: &BoardLayout,
+    marker_scale: MarkerScalePrior,
+) -> Vec<Proposal> {
+    let config = derive_proposal_config(board, marker_scale, &crate::ProposalConfig::default());
+    find_ellipse_centers(image, &config)
+}
+
+/// Generate pass-1 proposals with heatmap using board geometry and an explicit
+/// marker-scale prior.
+pub fn propose_with_heatmap_and_marker_scale(
+    image: &GrayImage,
+    board: &BoardLayout,
+    marker_scale: MarkerScalePrior,
+) -> ProposalResult {
+    let config = derive_proposal_config(board, marker_scale, &crate::ProposalConfig::default());
+    find_ellipse_centers_with_heatmap(image, &config)
+}
+
+/// Generate pass-1 center proposals using board geometry and a fixed marker
+/// diameter hint.
+pub fn propose_with_marker_diameter(
+    image: &GrayImage,
+    board: &BoardLayout,
+    marker_diameter_px: f32,
+) -> Vec<Proposal> {
+    propose_with_marker_scale(
+        image,
+        board,
+        MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
+    )
+}
+
+/// Generate pass-1 proposals with heatmap using board geometry and a fixed
+/// marker diameter hint.
+pub fn propose_with_heatmap_and_marker_diameter(
+    image: &GrayImage,
+    board: &BoardLayout,
+    marker_diameter_px: f32,
+) -> ProposalResult {
+    propose_with_heatmap_and_marker_scale(
+        image,
+        board,
+        MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
+    )
 }
 
 #[cfg(test)]
@@ -330,5 +391,54 @@ mod tests {
             assert_eq!(a.y.to_bits(), b.y.to_bits());
             assert_eq!(a.score.to_bits(), b.score.to_bits());
         }
+    }
+
+    #[test]
+    fn detector_proposal_methods_consistent() {
+        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let detector = Detector::with_config(cfg);
+        let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
+
+        let proposals = detector.propose(&img);
+        let result = detector.propose_with_heatmap(&img);
+
+        assert_eq!(proposals, result.proposals);
+        assert_eq!(
+            result.heatmap.len(),
+            img.width() as usize * img.height() as usize
+        );
+    }
+
+    #[test]
+    fn size_aware_free_proposal_apis_match_detector_with_marker_hint() {
+        let board = BoardLayout::default();
+        let detector = Detector::with_marker_diameter_hint(board.clone(), 32.0);
+        let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
+
+        let free = propose_with_marker_diameter(&img, &board, 32.0);
+        let detector_out = detector.propose(&img);
+        assert_eq!(free, detector_out);
+
+        let free_diag = propose_with_heatmap_and_marker_diameter(&img, &board, 32.0);
+        let detector_diag = detector.propose_with_heatmap(&img);
+        assert_eq!(free_diag.proposals, detector_diag.proposals);
+        assert_eq!(free_diag.heatmap, detector_diag.heatmap);
+    }
+
+    #[test]
+    fn detector_proposal_apis_honor_proposal_downscale() {
+        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        cfg.proposal_downscale = crate::ProposalDownscale::Factor(4);
+        let detector = Detector::with_config(cfg.clone());
+        let img = draw_ring_image(101, 98, [50.0, 49.0], 20.0, 10.0);
+
+        let proposals = detector.propose(&img);
+        let result = detector.propose_with_heatmap(&img);
+        let expected = pipeline::proposal_result_for_config(&img, &cfg);
+
+        assert_eq!(proposals, expected.proposals);
+        assert_eq!(result, expected);
+        assert_eq!(result.image_size, [101, 98]);
+        assert_eq!(result.heatmap.len(), 101 * 98);
     }
 }

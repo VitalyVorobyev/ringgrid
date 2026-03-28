@@ -1,6 +1,6 @@
 [package]
 name = "ringgrid"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Pure-Rust detector for coded ring calibration targets"
 license = "MIT OR Apache-2.0"
@@ -34,4 +34,8 @@ criterion = "0.8"
 
 [[bench]]
 name = "hotpaths"
+harness = false
+
+[[bench]]
+name = "detect_fixture"
 harness = false

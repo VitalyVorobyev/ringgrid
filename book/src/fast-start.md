@@ -71,6 +71,10 @@ cargo run -- detect \
   --out tools/out/target_faststart/detect.json
 ```
 
+`detect.json` contains the final marker list, coordinate-frame metadata,
+optional homography/RANSAC statistics, and optional mapper diagnostics. See
+[Detection Output Format](output-format.md).
+
 ## 4. Scale handling
 
 - Start with default detection first (`Detector::detect` or CLI `detect`).
@@ -85,4 +89,5 @@ See [Adaptive Scale Detection](detection-modes/adaptive-scale.md).
 
 - Full configuration and flag reference: [Target Generation](target-generation.md)
 - CLI usage and detection flags: [CLI Guide](cli-guide.md)
+- Detection JSON schema: [Detection Output Format](output-format.md)
 - Adaptive scale details: [Adaptive Scale Detection](detection-modes/adaptive-scale.md)

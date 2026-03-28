@@ -1,5 +1,6 @@
 use image::GrayImage;
-use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
+use numpy::ndarray::Array2;
+use numpy::{IntoPyArray, PyArray2, PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,12 @@ struct ScaleTierWire {
 #[serde(deny_unknown_fields)]
 struct ScaleTiersWire {
     tiers: Vec<ScaleTierWire>,
+}
+
+#[derive(Serialize)]
+struct ProposalResultPayload {
+    image_size: [u32; 2],
+    proposals: Vec<ringgrid::Proposal>,
 }
 
 fn py_value_error<E: std::fmt::Display>(err: E) -> PyErr {
@@ -366,6 +373,17 @@ fn parse_scale_tiers(tiers_json: &str) -> PyResult<ringgrid::ScaleTiers> {
     scale_tiers_from_wire(wire)
 }
 
+fn parse_proposal_config(config_json: Option<&str>) -> PyResult<ringgrid::ProposalConfig> {
+    match config_json {
+        Some(config_json) => serde_json::from_str(config_json).map_err(py_value_error),
+        None => Ok(ringgrid::ProposalConfig::default()),
+    }
+}
+
+fn parse_marker_scale(marker_scale_json: &str) -> PyResult<ringgrid::MarkerScalePrior> {
+    serde_json::from_str(marker_scale_json).map_err(py_value_error)
+}
+
 fn load_gray_image(path: &str) -> PyResult<GrayImage> {
     image::open(path)
         .map(|img| img.to_luma8())
@@ -414,6 +432,34 @@ fn gray_image_from_array(array: PyReadonlyArrayDyn<'_, u8>) -> PyResult<GrayImag
             "expected image array with shape (H, W) or (H, W, 3|4)",
         )),
     }
+}
+
+fn proposal_json(proposals: &[ringgrid::Proposal]) -> PyResult<String> {
+    serde_json::to_string(proposals).map_err(py_value_error)
+}
+
+fn proposal_result_payload<'py>(
+    py: Python<'py>,
+    result: ringgrid::ProposalResult,
+) -> PyResult<(String, Py<PyArray2<f32>>)> {
+    let ringgrid::ProposalResult {
+        image_size,
+        proposals,
+        heatmap,
+    } = result;
+    let [width, height] = image_size;
+    let payload_json = serde_json::to_string(&ProposalResultPayload {
+        image_size,
+        proposals,
+    })
+    .map_err(py_value_error)?;
+    let accumulator = Array2::from_shape_vec(
+        (height as usize, width as usize),
+        heatmap,
+    )
+    .expect("proposal accumulator shape matches image size");
+    let accumulator = accumulator.into_pyarray(py).unbind();
+    Ok((payload_json, accumulator))
 }
 
 #[pyclass(module = "ringgrid._ringgrid")]
@@ -470,6 +516,40 @@ impl DetectorCore {
         let gray = gray_image_from_array(image)?;
         let result = detector.detect(&gray);
         serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    fn propose_path(&self, image_path: &str) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let proposals = detector.propose(&gray);
+        proposal_json(&proposals)
+    }
+
+    fn propose_array(&self, image: PyReadonlyArrayDyn<'_, u8>) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let proposals = detector.propose(&gray);
+        proposal_json(&proposals)
+    }
+
+    fn propose_with_heatmap_path<'py>(
+        &self,
+        py: Python<'py>,
+        image_path: &str,
+    ) -> PyResult<(String, Py<PyArray2<f32>>)> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        proposal_result_payload(py, detector.propose_with_heatmap(&gray))
+    }
+
+    fn propose_with_heatmap_array<'py>(
+        &self,
+        py: Python<'py>,
+        image: PyReadonlyArrayDyn<'py, u8>,
+    ) -> PyResult<(String, Py<PyArray2<f32>>)> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        proposal_result_payload(py, detector.propose_with_heatmap(&gray))
     }
 
     fn detect_with_mapper_path(&self, image_path: &str, mapper_json: &str) -> PyResult<String> {
@@ -680,6 +760,106 @@ fn write_target_png(
 }
 
 #[pyfunction]
+#[pyo3(signature = (image_path, config_json=None))]
+fn proposal_json_path(image_path: &str, config_json: Option<&str>) -> PyResult<String> {
+    let gray = load_gray_image(image_path)?;
+    let config = parse_proposal_config(config_json)?;
+    let proposals = ringgrid::find_ellipse_centers(&gray, &config);
+    proposal_json(&proposals)
+}
+
+#[pyfunction]
+#[pyo3(signature = (image, config_json=None))]
+fn proposal_json_array(image: PyReadonlyArrayDyn<'_, u8>, config_json: Option<&str>) -> PyResult<String> {
+    let gray = gray_image_from_array(image)?;
+    let config = parse_proposal_config(config_json)?;
+    let proposals = ringgrid::find_ellipse_centers(&gray, &config);
+    proposal_json(&proposals)
+}
+
+#[pyfunction]
+#[pyo3(signature = (image_path, config_json=None))]
+fn proposal_result_payload_path<'py>(
+    py: Python<'py>,
+    image_path: &str,
+    config_json: Option<&str>,
+) -> PyResult<(String, Py<PyArray2<f32>>)> {
+    let gray = load_gray_image(image_path)?;
+    let config = parse_proposal_config(config_json)?;
+    proposal_result_payload(py, ringgrid::find_ellipse_centers_with_heatmap(&gray, &config))
+}
+
+#[pyfunction]
+#[pyo3(signature = (image, config_json=None))]
+fn proposal_result_payload_array<'py>(
+    py: Python<'py>,
+    image: PyReadonlyArrayDyn<'py, u8>,
+    config_json: Option<&str>,
+) -> PyResult<(String, Py<PyArray2<f32>>)> {
+    let gray = gray_image_from_array(image)?;
+    let config = parse_proposal_config(config_json)?;
+    proposal_result_payload(py, ringgrid::find_ellipse_centers_with_heatmap(&gray, &config))
+}
+
+#[pyfunction]
+fn proposal_with_scale_json_path(
+    image_path: &str,
+    board_spec_json: &str,
+    marker_scale_json: &str,
+) -> PyResult<String> {
+    let gray = load_gray_image(image_path)?;
+    let board = board_from_spec_json(board_spec_json)?;
+    let marker_scale = parse_marker_scale(marker_scale_json)?;
+    let proposals = ringgrid::propose_with_marker_scale(&gray, &board, marker_scale);
+    proposal_json(&proposals)
+}
+
+#[pyfunction]
+fn proposal_with_scale_json_array(
+    image: PyReadonlyArrayDyn<'_, u8>,
+    board_spec_json: &str,
+    marker_scale_json: &str,
+) -> PyResult<String> {
+    let gray = gray_image_from_array(image)?;
+    let board = board_from_spec_json(board_spec_json)?;
+    let marker_scale = parse_marker_scale(marker_scale_json)?;
+    let proposals = ringgrid::propose_with_marker_scale(&gray, &board, marker_scale);
+    proposal_json(&proposals)
+}
+
+#[pyfunction]
+fn proposal_result_with_scale_payload_path<'py>(
+    py: Python<'py>,
+    image_path: &str,
+    board_spec_json: &str,
+    marker_scale_json: &str,
+) -> PyResult<(String, Py<PyArray2<f32>>)> {
+    let gray = load_gray_image(image_path)?;
+    let board = board_from_spec_json(board_spec_json)?;
+    let marker_scale = parse_marker_scale(marker_scale_json)?;
+    proposal_result_payload(
+        py,
+        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &board, marker_scale),
+    )
+}
+
+#[pyfunction]
+fn proposal_result_with_scale_payload_array<'py>(
+    py: Python<'py>,
+    image: PyReadonlyArrayDyn<'py, u8>,
+    board_spec_json: &str,
+    marker_scale_json: &str,
+) -> PyResult<(String, Py<PyArray2<f32>>)> {
+    let gray = gray_image_from_array(image)?;
+    let board = board_from_spec_json(board_spec_json)?;
+    let marker_scale = parse_marker_scale(marker_scale_json)?;
+    proposal_result_payload(
+        py,
+        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &board, marker_scale),
+    )
+}
+
+#[pyfunction]
 #[pyo3(signature = (board_spec_json, overlay_json=None))]
 fn resolve_config_json(board_spec_json: &str, overlay_json: Option<&str>) -> PyResult<String> {
     let board = board_from_spec_json(board_spec_json)?;
@@ -734,6 +914,14 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_png, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_json_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_json_array, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_result_payload_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_result_payload_array, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_with_scale_json_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_with_scale_json_array, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_result_with_scale_payload_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proposal_result_with_scale_payload_array, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_config_json, m)?)?;
     m.add_function(wrap_pyfunction!(update_config_json, m)?)?;
     m.add_function(wrap_pyfunction!(scale_tiers_four_tier_wide_json, m)?)?;

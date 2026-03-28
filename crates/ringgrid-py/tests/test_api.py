@@ -548,6 +548,30 @@ def _make_detector() -> ringgrid.Detector:
     return ringgrid.Detector(cfg)
 
 
+def _make_proposal_detector(
+    proposal_config: ringgrid.ProposalConfig | None = None,
+) -> ringgrid.Detector:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+    cfg.proposal = ringgrid.ProposalConfig() if proposal_config is None else proposal_config
+    return ringgrid.Detector(cfg)
+
+
+def _sample_image_array() -> np.ndarray:
+    import matplotlib.image as mpimg
+
+    image = np.asarray(mpimg.imread(SAMPLE_IMAGE))
+    if image.dtype.kind == "f":
+        image = np.rint(image * 255.0).astype(np.uint8)
+    else:
+        image = image.astype(np.uint8, copy=False)
+    return image
+
+
+def _proposal_signature(proposals: list[ringgrid.Proposal]) -> list[tuple[float, float, float]]:
+    return [(float(p.x), float(p.y), float(p.score)) for p in proposals]
+
+
 def test_detect_accepts_grayscale_rgb_rgba_uint8_arrays() -> None:
     detector = _make_detector()
 
@@ -582,6 +606,158 @@ def test_detect_path_smoke() -> None:
     assert isinstance(result, ringgrid.DetectionResult)
     assert result.image_size[0] > 0
     assert result.image_size[1] > 0
+
+
+def test_propose_path_array_and_module_level_parity() -> None:
+    proposal_config = ringgrid.ProposalConfig()
+    detector = _make_proposal_detector(proposal_config)
+    image_array = _sample_image_array()
+
+    path_proposals = detector.propose(SAMPLE_IMAGE)
+    array_proposals = detector.propose(image_array)
+    module_path_proposals = ringgrid.propose(SAMPLE_IMAGE, config=proposal_config)
+    module_array_proposals = ringgrid.propose(image_array, config=proposal_config)
+
+    assert path_proposals
+    assert _proposal_signature(array_proposals) == _proposal_signature(path_proposals)
+    assert _proposal_signature(module_array_proposals) == _proposal_signature(
+        module_path_proposals
+    )
+
+
+def test_propose_with_heatmap_shape_dtype_and_parity() -> None:
+    proposal_config = ringgrid.ProposalConfig(max_candidates=64)
+    detector = _make_proposal_detector(proposal_config)
+    diagnostics = detector.propose_with_heatmap(SAMPLE_IMAGE)
+    module_diagnostics = ringgrid.propose_with_heatmap(SAMPLE_IMAGE, config=proposal_config)
+    plain = detector.propose(SAMPLE_IMAGE)
+    raw_plain = ringgrid.propose(SAMPLE_IMAGE, config=proposal_config)
+
+    assert diagnostics.image_size[0] > 0
+    assert diagnostics.image_size[1] > 0
+    assert diagnostics.heatmap.shape == (
+        diagnostics.image_size[1],
+        diagnostics.image_size[0],
+    )
+    assert diagnostics.heatmap.dtype == np.float32
+    assert np.ascontiguousarray(diagnostics.heatmap).flags["C_CONTIGUOUS"]
+    assert _proposal_signature(diagnostics.proposals) == _proposal_signature(plain)
+    assert _proposal_signature(module_diagnostics.proposals) == _proposal_signature(raw_plain)
+    assert np.array_equal(module_diagnostics.heatmap, diagnostics.heatmap)
+
+
+def test_raw_module_default_matches_explicit_proposal_config() -> None:
+    implicit = ringgrid.propose_with_heatmap(SAMPLE_IMAGE)
+    explicit = ringgrid.propose_with_heatmap(
+        SAMPLE_IMAGE,
+        config=ringgrid.ProposalConfig(),
+    )
+
+    assert _proposal_signature(implicit.proposals) == _proposal_signature(explicit.proposals)
+    assert np.array_equal(implicit.heatmap, explicit.heatmap)
+
+
+def test_size_aware_module_proposals_match_detector_with_marker_hint() -> None:
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+    cfg.marker_scale = ringgrid.MarkerScalePrior.from_nominal_diameter_px(32.0)
+    detector = ringgrid.Detector(cfg)
+
+    module_proposals = ringgrid.propose(
+        SAMPLE_IMAGE,
+        target=board,
+        marker_diameter=32.0,
+    )
+    module_diagnostics = ringgrid.propose_with_heatmap(
+        SAMPLE_IMAGE,
+        target=board,
+        marker_diameter=32.0,
+    )
+    detector_proposals = detector.propose(SAMPLE_IMAGE)
+    detector_diagnostics = detector.propose_with_heatmap(SAMPLE_IMAGE)
+
+    assert _proposal_signature(module_proposals) == _proposal_signature(detector_proposals)
+    assert _proposal_signature(module_diagnostics.proposals) == _proposal_signature(
+        detector_diagnostics.proposals
+    )
+    assert np.array_equal(module_diagnostics.heatmap, detector_diagnostics.heatmap)
+
+
+def test_size_aware_module_target_only_matches_detector_defaults() -> None:
+    board = ringgrid.BoardLayout.default()
+    detector = ringgrid.Detector(ringgrid.DetectConfig(board))
+
+    module_proposals = ringgrid.propose(SAMPLE_IMAGE, target=board)
+    module_diagnostics = ringgrid.propose_with_heatmap(SAMPLE_IMAGE, target=board)
+    detector_proposals = detector.propose(SAMPLE_IMAGE)
+    detector_diagnostics = detector.propose_with_heatmap(SAMPLE_IMAGE)
+
+    assert _proposal_signature(module_proposals) == _proposal_signature(detector_proposals)
+    assert _proposal_signature(module_diagnostics.proposals) == _proposal_signature(
+        detector_diagnostics.proposals
+    )
+    assert np.array_equal(module_diagnostics.heatmap, detector_diagnostics.heatmap)
+
+
+def test_module_proposal_rejects_mixed_raw_and_size_aware_args() -> None:
+    with pytest.raises(ValueError, match="config cannot be combined"):
+        ringgrid.propose(
+            SAMPLE_IMAGE,
+            config=ringgrid.ProposalConfig(),
+            target=ringgrid.BoardLayout.default(),
+            marker_diameter=32.0,
+        )
+
+
+def test_proposal_models_roundtrip_and_plot(tmp_path: Path) -> None:
+    detector = _make_proposal_detector(ringgrid.ProposalConfig(max_candidates=32))
+    diagnostics = detector.propose_with_heatmap(SAMPLE_IMAGE)
+    proposal = diagnostics.proposals[0]
+    proposal_roundtrip = ringgrid.Proposal.from_dict(proposal.to_dict())
+    assert proposal_roundtrip.to_dict() == proposal.to_dict()
+
+    diagnostics_roundtrip = ringgrid.ProposalResult.from_dict(diagnostics.to_dict())
+    assert diagnostics_roundtrip.image_size == diagnostics.image_size
+    assert _proposal_signature(diagnostics_roundtrip.proposals) == _proposal_signature(
+        diagnostics.proposals
+    )
+    assert np.array_equal(diagnostics_roundtrip.heatmap, diagnostics.heatmap)
+
+    gt_points = np.asarray([[proposal.x, proposal.y]], dtype=np.float32)
+    gt_hits = np.asarray([True], dtype=bool)
+
+    out_plot_1 = tmp_path / "proposal_plot_method.png"
+    diagnostics.plot(image=SAMPLE_IMAGE, out=out_plot_1, gt_points=gt_points, gt_hits=gt_hits)
+    assert out_plot_1.exists()
+    assert out_plot_1.stat().st_size > 0
+
+    out_plot_2 = tmp_path / "proposal_plot_func.png"
+    viz.plot_proposal_diagnostics(
+        image=SAMPLE_IMAGE,
+        diagnostics=diagnostics,
+        out=out_plot_2,
+        gt_points=gt_points,
+        gt_hits=gt_hits,
+    )
+    assert out_plot_2.exists()
+    assert out_plot_2.stat().st_size > 0
+
+    out_plot_3 = tmp_path / "proposal_plot_split.png"
+    out_plot_4 = tmp_path / "proposal_plot_split_heatmap.png"
+    viz.plot_proposal_diagnostics(
+        image=SAMPLE_IMAGE,
+        diagnostics=diagnostics,
+        out=out_plot_3,
+        heatmap_out=out_plot_4,
+        gt_points=gt_points,
+        gt_hits=gt_hits,
+        separate_figures=True,
+        show_proposals_on_heatmap=False,
+    )
+    assert out_plot_3.exists()
+    assert out_plot_3.stat().st_size > 0
+    assert out_plot_4.exists()
+    assert out_plot_4.stat().st_size > 0
 
 
 def test_detect_with_mapper_camera_and_division() -> None:

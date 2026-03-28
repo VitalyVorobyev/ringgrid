@@ -34,6 +34,7 @@ Detection overlay example:
 | Print a target and run first detection from this repo | [Quick Start](#quick-start-from-the-repo) |
 | Read the full user guide | [mdBook User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) |
 | Use the CLI | [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html) |
+| Understand `detect.json` | [Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) |
 | Use the Rust crate | [crates/ringgrid/README.md](crates/ringgrid/README.md) |
 | Use the Python package | [crates/ringgrid-py/README.md](crates/ringgrid-py/README.md) |
 | Work on the repo itself | [docs/development.md](docs/development.md) |
@@ -97,6 +98,11 @@ cargo run -- detect \
   --out tools/out/target_faststart/detect.json
 ```
 
+The written `detect.json` contains the final `detected_markers` list plus image
+size, coordinate-frame metadata, optional `homography` / `ransac`, and optional
+diagnostic blocks such as `self_undistort`, CLI `camera`, and proposal data.
+The full schema is documented in [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
+
 ### 3. Optional synthetic eval loop
 
 Install the extra Python deps used by the synth/eval/viz tools before running this loop:
@@ -135,17 +141,33 @@ The core detector lives in [`crates/ringgrid/README.md`](crates/ringgrid/README.
 
 The Python bindings live in [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md). Use them when you want installed-package target generation, Python-side detector configuration, or plotting helpers.
 
+## Detection Output
+
+The detector output is centered on `detected_markers`. Each marker can contain a
+decoded `id`, `board_xy_mm`, image-space `center`, optional `center_mapped`,
+ellipse fits, fit/decode metrics, and a `source` telling you whether it came
+from the main fit/decode path, completion, or a seeded mapper pass.
+
+At the top level, you always get `image_size`, `center_frame`, and
+`homography_frame`. When enough valid IDs exist, you also get `homography` and
+`ransac`. Self-undistort runs add `self_undistort`. CLI runs with camera input
+echo the top-level `camera`, and `--include-proposals` adds proposal
+diagnostics. Full reference: [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
+
 ## Documentation Map
 
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) - full mdBook covering marker design, pipeline stages, math, configuration, target generation, and usage
 - [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) - repo-oriented first-run path for target generation and detection
+- [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) - exact `detect.json` structure, marker fields, and CLI-only wrapper fields
 - [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) - JSON/SVG/PNG generation details and flags
+- [Book: Proposal Diagnostics](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html) - proposal-only API, accumulator heatmap, and tuning workflow
 - [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) - multi-scale detection modes and tier selection
 - [Rust API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) - rustdoc for the public Rust surface
 - [Rust crate README](crates/ringgrid/README.md) - crate-level Rust examples and API-oriented guidance
 - [Python package README](crates/ringgrid-py/README.md) - installed-package usage and Python `DetectConfig` field guide
 - [Development Guide](docs/development.md) - repo layout, contributor workflows, generated assets, and validation commands
 - [Performance & Evaluation](docs/performance.md) - scoring semantics, benchmark commands, and published snapshot tables
+- [Proposal Performance Analysis](docs/proposal-performance-analysis.md) - proposal-stage hotspot analysis and alternative algorithms
 - [Tuning Guide](docs/tuning-guide.md) - symptom-to-config tuning notes for difficult image conditions
 
 ## Diligence Statement

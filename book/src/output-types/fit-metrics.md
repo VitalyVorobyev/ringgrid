@@ -20,6 +20,14 @@ These two structs provide detailed quality metrics for each detected marker. `Fi
 | `ransac_inlier_ratio_inner` | `Option<f32>` | Fraction of inner edge points classified as RANSAC inliers. |
 | `rms_residual_outer` | `Option<f64>` | RMS Sampson distance of outer edge points to the fitted ellipse (in pixels). |
 | `rms_residual_inner` | `Option<f64>` | RMS Sampson distance of inner edge points to the fitted ellipse (in pixels). |
+| `max_angular_gap_outer` | `Option<f64>` | Largest angular gap between consecutive outer-edge samples (radians). Large gaps indicate missing ring coverage or occlusion. |
+| `max_angular_gap_inner` | `Option<f64>` | Largest angular gap between consecutive inner-edge samples (radians). |
+| `inner_fit_status` | `Option<InnerFitStatus>` | Outcome of the inner-fit stage: `ok`, `rejected`, or `failed`. |
+| `inner_fit_reason` | `Option<InnerFitReason>` | Stable reason code explaining why inner fitting was rejected or failed. |
+| `neighbor_radius_ratio` | `Option<f32>` | Ratio of this marker's outer radius to nearby decoded neighbors. Low values can indicate inner-as-outer contamination. |
+| `inner_theta_consistency` | `Option<f32>` | Fraction of angular samples that agree on the inner-edge location. |
+| `radii_std_outer_px` | `Option<f32>` | Standard deviation of per-ray outer radii. High spread suggests unstable outer-edge sampling. |
+| `h_reproj_err_px` | `Option<f32>` | Final homography reprojection error for this marker in pixels. Present when a global homography is available. |
 
 ### Interpreting FitMetrics
 
@@ -47,6 +55,20 @@ These two structs provide detailed quality metrics for each detected marker. `Fi
 | > 0.85 | Full ring visible, high confidence |
 | 0.5 -- 0.85 | Partial occlusion or edge-of-frame |
 | < 0.5 | Severely occluded, likely unreliable |
+
+**Angular gaps** (`max_angular_gap_outer`, `max_angular_gap_inner`) help detect
+partial arcs. Even with a decent point count, a single large missing sector can
+make a fit less trustworthy than the residual alone suggests.
+
+**Neighbor radius ratio** (`neighbor_radius_ratio`) is a structural sanity
+check added late in the pipeline. Values well below `1.0` compared with nearby
+decoded markers often indicate that some rays latched onto the inner ring
+instead of the outer one.
+
+**Homography reprojection error** (`h_reproj_err_px`) is the most directly
+useful per-marker global consistency metric once a homography exists. Higher
+values mean the marker's center disagrees with the board layout even if the
+local ellipse fit looked good.
 
 ## DecodeMetrics
 

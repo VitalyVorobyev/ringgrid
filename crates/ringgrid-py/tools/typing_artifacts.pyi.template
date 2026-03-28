@@ -228,6 +228,41 @@ class DetectedMarker:
     def from_dict(cls, data: Mapping[str, Any]) -> DetectedMarker: ...
     def to_dict(self) -> dict[str, Any]: ...
 
+class Proposal:
+    x: float
+    y: float
+    score: float
+    def __init__(self, x: float, y: float, score: float) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Proposal: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class ProposalResult:
+    image_size: list[int]
+    proposals: list[Proposal]
+    heatmap: np.ndarray
+    def __init__(
+        self,
+        image_size: list[int],
+        proposals: list[Proposal],
+        heatmap: np.ndarray,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProposalResult: ...
+    def to_dict(self) -> dict[str, Any]: ...
+    def plot(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        out: str | Path | None = ...,
+        gt_points: np.ndarray | list[list[float]] | None = ...,
+        gt_hits: np.ndarray | list[bool] | None = ...,
+        title: str | None = ...,
+        alpha: float = ...,
+    ) -> None: ...
+
+ProposalDiagnostics = ProposalResult
+
 class RansacStats:
     n_candidates: int
     n_inliers: int
@@ -399,19 +434,21 @@ class ProposalConfig:
     r_min: float
     r_max: float
     grad_threshold: float
-    nms_radius: float
+    min_distance: float
     min_vote_frac: float
     accum_sigma: float
     max_candidates: int | None
+    edge_thinning: bool
     def __init__(
         self,
         r_min: float = ...,
         r_max: float = ...,
         grad_threshold: float = ...,
-        nms_radius: float = ...,
+        min_distance: float = ...,
         min_vote_frac: float = ...,
         accum_sigma: float = ...,
         max_candidates: int | None = ...,
+        edge_thinning: bool = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProposalConfig: ...
@@ -745,12 +782,33 @@ class Detector:
     def board(self) -> BoardLayout: ...
     @property
     def config(self) -> DetectConfig: ...
+    def propose(self, image: np.ndarray | str | Path) -> list[Proposal]: ...
+    def propose_with_heatmap(self, image: np.ndarray | str | Path) -> ProposalResult: ...
     def detect(self, image: np.ndarray | str | Path) -> DetectionResult: ...
     def detect_with_mapper(self, image: np.ndarray | str | Path, mapper: CameraModel | DivisionModel) -> DetectionResult: ...
     def detect_adaptive(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
     def detect_adaptive_with_hint(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
     def detect_multiscale(self, image: np.ndarray | str | Path, tiers: ScaleTiers) -> DetectionResult: ...
     def adaptive_tiers(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> ScaleTiers: ...
+
+def propose(
+    image: np.ndarray | str | Path,
+    config: ProposalConfig | None = ...,
+    *,
+    target: BoardLayout | str | Path | None = ...,
+    marker_diameter: float | None = ...,
+    marker_diameter_min: float | None = ...,
+    marker_diameter_max: float | None = ...,
+) -> list[Proposal]: ...
+def propose_with_heatmap(
+    image: np.ndarray | str | Path,
+    config: ProposalConfig | None = ...,
+    *,
+    target: BoardLayout | str | Path | None = ...,
+    marker_diameter: float | None = ...,
+    marker_diameter_min: float | None = ...,
+    marker_diameter_max: float | None = ...,
+) -> ProposalResult: ...
 
 __version__: str
 

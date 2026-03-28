@@ -30,10 +30,14 @@ The detector returns a `DetectionResult` containing:
 - A list of `DetectedMarker` structs, each with:
   - Decoded ID (from the active codebook profile; baseline by default)
   - Subpixel center in image coordinates
+  - Board coordinates in millimeters when the ID is valid for the active layout
   - Fitted outer and inner ellipses
-  - Quality metrics (fit residuals, decode confidence)
+  - Quality metrics (fit residuals, decode confidence) and detection source
 - A board-to-image homography (when enough markers are decoded)
 - Coordinate frame metadata describing the output conventions
+
+See [Detection Output Format](output-format.md) for the exact JSON shape written
+by the CLI and the corresponding Rust `DetectionResult` fields.
 
 ## Detection Modes
 

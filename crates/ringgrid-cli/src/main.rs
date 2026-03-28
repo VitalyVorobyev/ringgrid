@@ -304,6 +304,14 @@ struct CliDetectArgs {
     #[arg(long)]
     no_inner_as_outer_recovery: bool,
 
+    /// Proposal-stage image downscale mode.
+    ///
+    /// `auto` selects a factor from marker diameter (factor = floor(d_min/20),
+    /// clamped [1,4]). `off` disables downscaling. A number (1–4) sets an
+    /// explicit factor. Default: `off`.
+    #[arg(long, default_value = "off")]
+    proposal_downscale: ProposalDownscaleArg,
+
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
@@ -527,6 +535,37 @@ impl CodebookProfileArg {
     }
 }
 
+/// CLI representation of [`ringgrid::ProposalDownscale`].
+///
+/// Accepts `auto`, `off`, or an integer factor (1–4).
+#[derive(Debug, Clone, Copy)]
+struct ProposalDownscaleArg(ringgrid::ProposalDownscale);
+
+impl std::fmt::Display for ProposalDownscaleArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            ringgrid::ProposalDownscale::Auto => write!(f, "auto"),
+            ringgrid::ProposalDownscale::Off => write!(f, "off"),
+            ringgrid::ProposalDownscale::Factor(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+impl std::str::FromStr for ProposalDownscaleArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self(ringgrid::ProposalDownscale::Auto)),
+            "off" | "none" => Ok(Self(ringgrid::ProposalDownscale::Off)),
+            other => other
+                .parse::<u32>()
+                .map(|n| Self(ringgrid::ProposalDownscale::Factor(n)))
+                .map_err(|_| format!("expected 'auto', 'off', or integer 1-4, got '{s}'")),
+        }
+    }
+}
+
 /// JSON-loadable detection configuration overlay.
 ///
 /// Each section is optional. When present, the entire sub-config is replaced
@@ -556,6 +595,7 @@ struct DetectConfigFile {
     dedup_radius: Option<f64>,
     max_aspect_ratio: Option<f64>,
     use_global_filter: Option<bool>,
+    proposal_downscale: Option<ringgrid::ProposalDownscale>,
 }
 
 /// Serializable snapshot of all tunable detection parameters, excluding
@@ -582,6 +622,7 @@ struct DetectConfigDump {
     dedup_radius: f64,
     max_aspect_ratio: f64,
     use_global_filter: bool,
+    proposal_downscale: ringgrid::ProposalDownscale,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -619,6 +660,7 @@ struct DetectOverrides {
     self_undistort_enable: bool,
     self_undistort_lambda_range: [f64; 2],
     self_undistort_min_markers: usize,
+    proposal_downscale: ringgrid::ProposalDownscale,
 }
 
 impl CliDetectArgs {
@@ -681,6 +723,7 @@ impl CliDetectArgs {
                 self.self_undistort_lambda_max,
             ],
             self_undistort_min_markers: self.self_undistort_min_markers,
+            proposal_downscale: self.proposal_downscale.0,
         })
     }
 }
@@ -748,6 +791,9 @@ fn build_detect_config(
         }
         if let Some(v) = file.use_global_filter {
             config.use_global_filter = v;
+        }
+        if let Some(v) = file.proposal_downscale {
+            config.proposal_downscale = v;
         }
     }
 
@@ -827,6 +873,9 @@ fn build_detect_config(
     config.self_undistort.enable = overrides.self_undistort_enable;
     config.self_undistort.lambda_range = overrides.self_undistort_lambda_range;
     config.self_undistort.min_markers = overrides.self_undistort_min_markers;
+
+    // Proposal downscale
+    config.proposal_downscale = overrides.proposal_downscale;
 
     config
 }
@@ -1092,6 +1141,7 @@ fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
         dedup_radius: config.dedup_radius,
         max_aspect_ratio: config.max_aspect_ratio,
         use_global_filter: config.use_global_filter,
+        proposal_downscale: config.proposal_downscale,
     };
     println!("{}", serde_json::to_string_pretty(&dump)?);
     Ok(())
@@ -1303,6 +1353,7 @@ mod tests {
             self_undistort_enable: false,
             self_undistort_lambda_range: [-8e-7, 8e-7],
             self_undistort_min_markers: 6,
+            proposal_downscale: ringgrid::ProposalDownscale::Off,
         }
     }
 

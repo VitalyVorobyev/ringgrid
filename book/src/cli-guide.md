@@ -88,6 +88,12 @@ results as JSON.
 | `--image <path>` | Path to the input image file. |
 | `--out <path>` | Path to write detection results (JSON). |
 
+**Output and diagnostics:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--include-proposals` | false | Add pass-1 proposal diagnostics to the output JSON as top-level `proposal_frame`, `proposal_count`, and `proposals` fields. |
+
 **Board target:**
 
 | Flag | Default | Description |
@@ -351,9 +357,23 @@ At the default `info` level, the detector logs:
 
 ## Output Format
 
-The detection result JSON contains the detected markers, homography statistics, and
-optionally the camera model used. See the [Output Format](./output-format.md) chapter
-for the full schema.
+`ringgrid detect` writes the serialized `DetectionResult` fields at the top
+level:
+
+- `detected_markers`
+- `center_frame`
+- `homography_frame`
+- `image_size`
+- optional `homography`, `ransac`, and `self_undistort`
+
+The CLI may add extra top-level fields:
+
+- `camera` when a camera model was supplied
+- `proposal_frame`, `proposal_count`, and `proposals` when
+  `--include-proposals` is enabled
+
+The full file shape, nested marker fields, and frame semantics are documented in
+[Output Format](./output-format.md).
 
 ## Source Files
 

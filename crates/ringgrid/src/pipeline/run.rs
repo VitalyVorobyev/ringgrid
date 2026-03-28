@@ -4,10 +4,18 @@ use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
-use crate::detector::proposal::find_proposals;
-use crate::detector::proposal::Proposal;
 use crate::pixelmap::{estimate_self_undistort, PixelMapper};
+use crate::proposal::{
+    find_ellipse_centers_with_heatmap, Proposal, ProposalConfig, ProposalResult,
+};
+use image::{ImageBuffer, Luma};
 use std::collections::HashSet;
+use std::time::Instant;
+
+#[inline]
+fn duration_ms(duration: std::time::Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
 
 pub(super) fn run(
     gray: &GrayImage,
@@ -16,8 +24,27 @@ pub(super) fn run(
     proposals: Vec<Proposal>,
     source: DetectionSource,
 ) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let fit_decode_start = Instant::now();
     let fit_markers = super::fit_decode::run(gray, config, mapper, proposals, source);
-    super::finalize::run(gray, fit_markers, config, mapper)
+    let fit_decode_elapsed = fit_decode_start.elapsed();
+    let fit_marker_count = fit_markers.len();
+
+    let finalize_start = Instant::now();
+    let result = super::finalize::run(gray, fit_markers, config, mapper);
+    let finalize_elapsed = finalize_start.elapsed();
+
+    tracing::info!(
+        markers_after_fit_decode = fit_marker_count,
+        markers_final = result.detected_markers.len(),
+        fit_decode_ms = duration_ms(fit_decode_elapsed),
+        finalize_ms = duration_ms(finalize_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "pipeline timing summary"
+    );
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -41,11 +68,132 @@ fn run_pass2(
 }
 
 // ---------------------------------------------------------------------------
+// Downscaled proposal generation
+// ---------------------------------------------------------------------------
+
+/// Run proposal generation, optionally on a downscaled image copy.
+///
+/// When `factor > 1`, the image is resized to `(w/factor, h/factor)` using
+/// triangle (bilinear) interpolation, proposals are found on the smaller image,
+/// and coordinates are scaled back to original image space.
+fn rescale_proposals_to_image_space(
+    proposals: Vec<Proposal>,
+    scale_x: f32,
+    scale_y: f32,
+) -> Vec<Proposal> {
+    proposals
+        .into_iter()
+        .map(|p| Proposal {
+            x: p.x * scale_x,
+            y: p.y * scale_y,
+            score: p.score,
+        })
+        .collect()
+}
+
+fn resize_heatmap_to_image_space(
+    heatmap: Vec<f32>,
+    small_w: u32,
+    small_h: u32,
+    w: u32,
+    h: u32,
+) -> Vec<f32> {
+    let heatmap_img = ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(small_w, small_h, heatmap)
+        .expect("proposal heatmap dimensions match");
+    image::imageops::resize(&heatmap_img, w, h, image::imageops::FilterType::Triangle).into_raw()
+}
+
+fn proposal_result_with_downscale(
+    gray: &GrayImage,
+    proposal_config: &ProposalConfig,
+    factor: u32,
+) -> ProposalResult {
+    if factor <= 1 {
+        return find_ellipse_centers_with_heatmap(gray, proposal_config);
+    }
+
+    let (w, h) = gray.dimensions();
+    let small_w = (w / factor).max(4);
+    let small_h = (h / factor).max(4);
+    let scale_x = w as f32 / small_w as f32;
+    let scale_y = h as f32 / small_h as f32;
+    let distance_scale = 0.5 * (scale_x + scale_y);
+
+    let small = image::imageops::resize(
+        gray,
+        small_w,
+        small_h,
+        image::imageops::FilterType::Triangle,
+    );
+
+    let mut scaled_config = proposal_config.clone();
+    scaled_config.r_min /= distance_scale;
+    scaled_config.r_max /= distance_scale;
+    scaled_config.min_distance /= distance_scale;
+
+    let small_result = find_ellipse_centers_with_heatmap(&small, &scaled_config);
+    let proposals = rescale_proposals_to_image_space(small_result.proposals, scale_x, scale_y);
+    let heatmap = resize_heatmap_to_image_space(small_result.heatmap, small_w, small_h, w, h);
+
+    ProposalResult {
+        image_size: [w, h],
+        proposals,
+        heatmap,
+    }
+}
+
+fn find_proposals_with_downscale(
+    gray: &GrayImage,
+    proposal_config: &ProposalConfig,
+    factor: u32,
+) -> Vec<Proposal> {
+    proposal_result_with_downscale(gray, proposal_config, factor).proposals
+}
+
+pub(crate) fn proposal_seeds_for_config(gray: &GrayImage, config: &DetectConfig) -> Vec<Proposal> {
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    find_proposals_with_downscale(gray, &config.proposal, factor)
+}
+
+pub(crate) fn proposal_result_for_config(
+    gray: &GrayImage,
+    config: &DetectConfig,
+) -> ProposalResult {
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    proposal_result_with_downscale(gray, &config.proposal, factor)
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
-    let proposals = find_proposals(gray, &config.proposal);
-    run(gray, config, None, proposals, DetectionSource::FitDecoded)
+    let total_start = Instant::now();
+    let (image_width, image_height) = gray.dimensions();
+
+    let factor = config.proposal_downscale.resolve(config.marker_scale);
+
+    let proposal_start = Instant::now();
+    let proposals = proposal_seeds_for_config(gray, config);
+    let proposal_elapsed = proposal_start.elapsed();
+    let proposal_count = proposals.len();
+
+    let downstream_start = Instant::now();
+    let result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
+    let downstream_elapsed = downstream_start.elapsed();
+
+    tracing::info!(
+        image_width,
+        image_height,
+        proposals = proposal_count,
+        proposal_downscale_factor = factor,
+        markers = result.detected_markers.len(),
+        proposal_ms = duration_ms(proposal_elapsed),
+        downstream_ms = duration_ms(downstream_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "detect_single_pass timing summary"
+    );
+
+    result
 }
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
@@ -59,8 +207,26 @@ pub fn detect_with_mapper(
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
 ) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let pass1_start = Instant::now();
     let pass1 = detect_single_pass(gray, config);
-    run_pass2(gray, config, mapper, &pass1)
+    let pass1_elapsed = pass1_start.elapsed();
+
+    let pass2_start = Instant::now();
+    let result = run_pass2(gray, config, mapper, &pass1);
+    let pass2_elapsed = pass2_start.elapsed();
+
+    tracing::info!(
+        pass1_markers = pass1.detected_markers.len(),
+        markers_final = result.detected_markers.len(),
+        pass1_ms = duration_ms(pass1_elapsed),
+        pass2_ms = duration_ms(pass2_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "detect_with_mapper timing summary"
+    );
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +242,7 @@ pub(crate) fn detect_premerge(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> Vec<crate::DetectedMarker> {
-    let proposals = find_proposals(gray, &config.proposal);
+    let proposals = proposal_seeds_for_config(gray, config);
     let fit_markers =
         super::fit_decode::run(gray, config, None, proposals, DetectionSource::FitDecoded);
     super::finalize::finalize_premerge(fit_markers, config)
@@ -394,7 +560,11 @@ pub fn detect_adaptive_with_hint(
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
 pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+    let total_start = Instant::now();
+
+    let pass1_start = Instant::now();
     let mut result = detect_single_pass(gray, config);
+    let pass1_elapsed = pass1_start.elapsed();
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
         return result;
@@ -412,7 +582,15 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> De
 
     if su_result.applied {
         let model = su_result.model;
+        let pass2_start = Instant::now();
         result = run_pass2(gray, config, &model, &result);
+        tracing::info!(
+            pass1_ms = duration_ms(pass1_elapsed),
+            pass2_ms = duration_ms(pass2_start.elapsed()),
+            total_ms = duration_ms(total_start.elapsed()),
+            markers_final = result.detected_markers.len(),
+            "detect_with_self_undistort timing summary"
+        );
     }
 
     result.self_undistort = Some(su_result);
@@ -472,5 +650,22 @@ mod tests {
         let a = score_from(12, 12, true, 10, 0.6);
         let b = score_from(12, 12, false, 0, 0.0);
         assert!(a.is_better_than(&b));
+    }
+
+    #[test]
+    fn proposal_rescaling_uses_actual_resize_ratios() {
+        let proposals = vec![Proposal {
+            x: 24.0,
+            y: 23.0,
+            score: 7.0,
+        }];
+
+        let scaled = rescale_proposals_to_image_space(proposals, 101.0 / 25.0, 98.0 / 24.0);
+        let best = scaled[0];
+
+        assert!((best.x - 96.96).abs() < 1.0e-5);
+        assert!((best.y - (23.0 * 98.0 / 24.0)).abs() < 1.0e-5);
+        assert_ne!(best.x.to_bits(), (24.0f32 * 4.0f32).to_bits());
+        assert_ne!(best.y.to_bits(), (23.0f32 * 4.0f32).to_bits());
     }
 }

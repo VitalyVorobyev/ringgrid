@@ -167,7 +167,12 @@ Run locally:
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+python3 tools/ci/maintainability_guardrails.py --check static
 ```
+
+When touching hot Rust modules under `crates/ringgrid/src/{detector,ring,marker,pipeline,homography,pixelmap}`,
+run the static maintainability guardrail before wrapping up. It enforces the
+baseline-locked oversized-function and allow-attribute rules used in CI.
 
 ## Do / Don’t
 

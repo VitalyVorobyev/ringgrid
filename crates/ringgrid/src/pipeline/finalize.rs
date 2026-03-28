@@ -181,6 +181,22 @@ fn drop_unmappable_markers(markers: &mut Vec<DetectedMarker>, mapper: &dyn Pixel
     before.saturating_sub(markers.len())
 }
 
+fn drop_unmappable_markers_with_warning(
+    markers: &mut Vec<DetectedMarker>,
+    mapper: Option<&dyn PixelMapper>,
+) {
+    let Some(mapper) = mapper else {
+        return;
+    };
+    let dropped = drop_unmappable_markers(markers, mapper);
+    if dropped > 0 {
+        tracing::warn!(
+            dropped,
+            "dropping markers whose mapped centers cannot be converted to image frame"
+        );
+    }
+}
+
 fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper) {
     for marker in markers.iter_mut() {
         let center_mapped = marker.center;
@@ -210,6 +226,52 @@ fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &Boar
         }
     }
     cleared_invalid_ids
+}
+
+fn sync_marker_board_correspondence_with_logging(
+    markers: &mut [DetectedMarker],
+    board: &BoardLayout,
+) {
+    let cleared_invalid_ids = sync_marker_board_correspondence(markers, board);
+    tracing::debug!(
+        cleared_invalid_ids,
+        n_markers = markers.len(),
+        "synchronized marker id/board correspondence"
+    );
+}
+
+fn annotate_h_reprojection_and_adjust_confidence(
+    markers: &mut [DetectedMarker],
+    final_h: Option<[[f64; 3]; 3]>,
+    alpha: f32,
+) {
+    let Some(h) = final_h else {
+        return;
+    };
+
+    for marker in markers {
+        let Some(board_xy) = marker.board_xy_mm.as_ref() else {
+            continue;
+        };
+        let x = board_xy[0];
+        let y = board_xy[1];
+        let pw = h[0][0] * x + h[0][1] * y + h[0][2];
+        let ph = h[1][0] * x + h[1][1] * y + h[1][2];
+        let pz = h[2][0] * x + h[2][1] * y + h[2][2];
+        if pz.abs() <= 1e-15 {
+            continue;
+        }
+
+        let px = pw / pz;
+        let py = ph / pz;
+        let dx = px - marker.center[0];
+        let dy = py - marker.center[1];
+        let err = (dx * dx + dy * dy).sqrt() as f32;
+        marker.fit.h_reproj_err_px = Some(err);
+        if alpha > 0.0 {
+            marker.confidence *= 1.0 / (1.0 + alpha * err);
+        }
+    }
 }
 
 /// Runs `annotate_neighbor_radius_ratios`, then optionally runs
@@ -270,27 +332,15 @@ fn finalize_no_global_filter_result(
     let markers_in = corrected_markers.len();
 
     let map_to_image_start = Instant::now();
+    drop_unmappable_markers_with_warning(&mut corrected_markers, mapper);
     if let Some(mapper) = mapper {
-        let dropped = drop_unmappable_markers(&mut corrected_markers, mapper);
-        if dropped > 0 {
-            tracing::warn!(
-                dropped,
-                "dropping markers whose mapped centers cannot be converted to image frame"
-            );
-        }
         map_centers_to_image(&mut corrected_markers, mapper);
     }
     let map_to_image_elapsed = map_to_image_start.elapsed();
 
     let sync_start = Instant::now();
-    let cleared_invalid_ids =
-        sync_marker_board_correspondence(&mut corrected_markers, &config.board);
+    sync_marker_board_correspondence_with_logging(&mut corrected_markers, &config.board);
     let sync_elapsed = sync_start.elapsed();
-    tracing::debug!(
-        cleared_invalid_ids,
-        n_markers = corrected_markers.len(),
-        "synchronized marker id/board correspondence"
-    );
 
     let post_fixup_start = Instant::now();
     apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
@@ -347,15 +397,7 @@ fn finalize_global_filter_result(
     {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
-    if let Some(mapper) = mapper {
-        let dropped = drop_unmappable_markers(&mut final_markers, mapper);
-        if dropped > 0 {
-            tracing::warn!(
-                dropped,
-                "dropping markers whose mapped centers cannot be converted to image frame"
-            );
-        }
-    }
+    drop_unmappable_markers_with_warning(&mut final_markers, mapper);
 
     let final_h_start = Instant::now();
     let (final_h, final_ransac) = phase_final_h(
@@ -373,41 +415,17 @@ fn finalize_global_filter_result(
     let map_to_image_elapsed = map_to_image_start.elapsed();
 
     let sync_start = Instant::now();
-    let cleared_invalid_ids = sync_marker_board_correspondence(&mut final_markers, &config.board);
+    sync_marker_board_correspondence_with_logging(&mut final_markers, &config.board);
     let sync_elapsed = sync_start.elapsed();
-    tracing::debug!(
-        cleared_invalid_ids,
-        n_markers = final_markers.len(),
-        "synchronized marker id/board correspondence"
-    );
 
     // Annotate per-marker H-reprojection error and apply confidence soft-penalty
     // now that board_xy_mm and image-space centers are both available.
     let reproj_annotate_start = Instant::now();
-    if let Some(h) = final_h {
-        let alpha = config.h_reproj_confidence_alpha;
-        for m in &mut final_markers {
-            if let Some(ref board_xy) = m.board_xy_mm {
-                // Project board point through H (row-major [[f64;3];3]).
-                let x = board_xy[0];
-                let y = board_xy[1];
-                let pw = h[0][0] * x + h[0][1] * y + h[0][2];
-                let ph = h[1][0] * x + h[1][1] * y + h[1][2];
-                let pz = h[2][0] * x + h[2][1] * y + h[2][2];
-                if pz.abs() > 1e-15 {
-                    let px = pw / pz;
-                    let py = ph / pz;
-                    let dx = px - m.center[0];
-                    let dy = py - m.center[1];
-                    let err = (dx * dx + dy * dy).sqrt() as f32;
-                    m.fit.h_reproj_err_px = Some(err);
-                    if alpha > 0.0 {
-                        m.confidence *= 1.0 / (1.0 + alpha * err);
-                    }
-                }
-            }
-        }
-    }
+    annotate_h_reprojection_and_adjust_confidence(
+        &mut final_markers,
+        final_h,
+        config.h_reproj_confidence_alpha,
+    );
     let reproj_annotate_elapsed = reproj_annotate_start.elapsed();
 
     tracing::info!(

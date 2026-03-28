@@ -9,6 +9,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Changes on `main` since `v0.5.0`.
+
+### Added
+
+**Rust CLI target generation**
+- Added `ringgrid gen-target` to generate canonical `board_spec.json` plus
+  printable SVG/PNG artifacts directly from board geometry arguments.
+- The Rust CLI path is now documented as equivalent to the Rust API writers and
+  the repo-local `tools/gen_target.py` workflow for the same geometry/print
+  settings.
+- Added `gentarget.sh` as a repo helper for common target-generation inputs.
+
+**Proposal diagnostics as public API**
+- Extracted proposal generation into a standalone public `ringgrid::proposal`
+  module with `find_ellipse_centers(...)` and
+  `find_ellipse_centers_with_heatmap(...)`.
+- Added detector-backed Rust helpers `Detector::propose(...)` and
+  `Detector::propose_with_heatmap(...)`, plus size-aware free functions that
+  derive proposal tuning from board geometry and marker scale hints.
+- Added Python proposal diagnostics surfaces:
+  `Detector.propose(...)`, `Detector.propose_with_heatmap(...)`,
+  module-level `ringgrid.propose(...)`, `ringgrid.propose_with_heatmap(...)`,
+  and the `ProposalResult` payload with proposals plus accumulator heatmap.
+- Added `ringgrid.viz.plot_proposal_diagnostics(...)` and the repo-local
+  `tools/plot_proposal.py` workflow for overlaying proposal peaks and heatmaps.
+- Added CLI output support for proposal diagnostics via
+  `ringgrid detect --include-proposals`, which writes top-level
+  `proposal_frame`, `proposal_count`, and `proposals` fields.
+
+**Performance instrumentation**
+- Added a dedicated `detect_fixture` benchmark and checked-in detection fixture
+  data for proposal-stage performance work and reproducible measurements.
+
+### Changed
+
+**Proposal stage architecture**
+- Refactored the old monolithic proposal implementation out of
+  `detector/proposal.rs` into a dedicated `proposal/` module split across
+  `config`, `gradient`, `voting`, `nms`, and focused tests.
+- This separation makes proposal generation usable as a standalone stage without
+  routing through the full detection pipeline and clarifies the ownership
+  boundary between pass-1 center finding and later fit/decode stages.
+
+**Proposal-stage tuning and throughput**
+- Optimized the proposal voting hot path and added benchmark coverage for the
+  dominant proposal-stage workload.
+- Added `ProposalDownscale` to `DetectConfig` so pass-1 proposals can run on a
+  downscaled image while all downstream fitting and decoding stays at full
+  resolution.
+- Surfaced proposal downscale and related proposal diagnostics controls through
+  the CLI/config plumbing, making proposal-cost tuning explicit instead of
+  implicit.
+
+**Documentation and interface framing**
+- Reworked the root `README.md` into a user-oriented entry point that routes
+  readers to the CLI guide, Rust crate docs, Python package docs, output-format
+  reference, and performance notes.
+- Expanded the Rust and Python READMEs so target generation, proposal-only
+  diagnostics, and output-contract references are documented consistently across
+  interfaces.
+
+### Documentation
+
+- Added a dedicated mdBook page for the detection output schema, covering
+  `DetectionResult`, top-level frame metadata, optional homography/RANSAC,
+  CLI-only `camera`, and CLI-only proposal diagnostics fields.
+- Added a dedicated mdBook page for proposal diagnostics, including standalone
+  Rust/Python proposal APIs, the accumulator heatmap contract, and the plotting
+  workflow.
+- Extended the CLI guide, fast-start docs, and target-generation docs to cover
+  `ringgrid gen-target`, printable artifact generation parity, and the
+  `--include-proposals` detection-output option.
+- Added `docs/proposal-performance-analysis.md` to capture the current proposal
+  hotspot profile, the rationale for the existing algorithm, and the most
+  credible future alternatives.
+
+### CI
+
+- Modernized GitHub Actions workflows to current stable major versions for core
+  checkout, Python setup, artifact upload/download, and GitHub release steps.
+- Replaced hand-rolled tool installation in CI with maintained installer
+  actions, added tighter default permissions and job timeouts, and added
+  Dependabot updates for GitHub Actions dependencies.
+
 ## [0.5.0] — 2026-03-12
 
 ### Added

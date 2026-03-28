@@ -346,15 +346,18 @@ def plot_proposal_diagnostics(
     heatmap_out: str | Path | None = None,
     gt_points: np.ndarray | list[list[float]] | None = None,
     gt_hits: np.ndarray | list[bool] | None = None,
+    title: str | None = None,
     alpha: float = 0.8,
     heatmap_cmap: str = "magma",
     show_proposals_on_heatmap: bool = True,
+    separate_figures: bool = False,
 ) -> None:
     """Render proposal candidates and the post-NMS accumulator heatmap."""
 
-    plt = _load_matplotlib(out)
+    plt = _load_matplotlib(out if out is not None else heatmap_out)
     image_arr = _to_image_array(image, plt)
     diagnostics_obj = _to_proposal_result(diagnostics)
+    _ = separate_figures
 
     proposals = diagnostics_obj.proposals
     accumulator = np.asarray(diagnostics_obj.heatmap, dtype=np.float32)
@@ -371,13 +374,10 @@ def plot_proposal_diagnostics(
         ax.set_ylim(img_h, 0)
         ax.set_aspect("equal")
 
-    def _save_or_close(fig, output_path: str | Path | None) -> None:
-        if output_path is None:
-            return
+    def _save(fig, output_path: str | Path) -> None:
         resolved = Path(output_path)
         resolved.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(resolved, dpi=140, bbox_inches="tight")
-        plt.close(fig)
 
     fig_image, ax_image = plt.subplots(figsize=(8, 6), dpi=140)
     if image_arr.ndim == 2:
@@ -386,6 +386,8 @@ def plot_proposal_diagnostics(
         ax_image.imshow(image_arr)
     _plot_proposals(ax_image, proposals, alpha=alpha)
     _plot_gt_points(ax_image, gt_points, gt_hits)
+    if title is not None:
+        ax_image.set_title(title)
     _finalize_axes(ax_image)
     fig_image.tight_layout()
 
@@ -394,6 +396,8 @@ def plot_proposal_diagnostics(
     if show_proposals_on_heatmap:
         _plot_proposals(ax_heatmap, proposals, alpha=alpha)
     _plot_gt_points(ax_heatmap, gt_points, gt_hits)
+    if title is not None:
+        ax_heatmap.set_title(f"{title} heatmap")
     _finalize_axes(ax_heatmap)
     fig_heatmap.colorbar(heat, ax=ax_heatmap, fraction=0.046, pad=0.04)
     fig_heatmap.tight_layout()
@@ -402,5 +406,10 @@ def plot_proposal_diagnostics(
         plt.show()
         return
 
-    _save_or_close(fig_image, out)
-    _save_or_close(fig_heatmap, heatmap_out)
+    if out is not None:
+        _save(fig_image, out)
+    if heatmap_out is not None:
+        _save(fig_heatmap, heatmap_out)
+
+    plt.close(fig_image)
+    plt.close(fig_heatmap)

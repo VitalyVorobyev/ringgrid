@@ -25,7 +25,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.5"
+ringgrid = "0.5.1"
 ```
 
 ## Rust Target Generation

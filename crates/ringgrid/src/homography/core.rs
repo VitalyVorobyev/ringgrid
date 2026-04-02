@@ -165,22 +165,28 @@ pub fn estimate_homography_dlt(
         a[(2 * i + 1, 8)] = -dx;
     }
 
-    // Solve via A^T A: the solution h is the eigenvector of the smallest
-    // eigenvalue of the 9×9 matrix A^T A. This avoids thin-SVD dimension issues.
-    let ata = a.transpose() * &a;
-    let eig = nalgebra::SymmetricEigen::new(ata);
-
-    // Find eigenvector with smallest eigenvalue
-    let mut min_idx = 0;
-    let mut min_val = eig.eigenvalues[0].abs();
-    for i in 1..9 {
-        let v = eig.eigenvalues[i].abs();
-        if v < min_val {
-            min_val = v;
-            min_idx = i;
+    // Solve via SVD: h is the right singular vector corresponding to the
+    // smallest singular value. This is numerically more stable than
+    // eigendecomposition of A^T A (which squares the condition number).
+    // For the 4-point case (8×9 matrix), pad to ensure full V^T is computed.
+    let rows = 2 * n;
+    let a_full = if rows < 9 {
+        let mut padded = DMatrix::zeros(9, 9);
+        for r in 0..rows {
+            for c in 0..9 {
+                padded[(r, c)] = a[(r, c)];
+            }
         }
-    }
-    let h_vec: Vec<f64> = (0..9).map(|j| eig.eigenvectors[(j, min_idx)]).collect();
+        padded
+    } else {
+        a
+    };
+    let svd = nalgebra::SVD::new(a_full, false, true);
+    let vt = svd.v_t.ok_or_else(|| {
+        HomographyError::NumericalFailure("SVD did not produce V^T".into())
+    })?;
+    let last_row = vt.nrows() - 1;
+    let h_vec: Vec<f64> = (0..9).map(|j| vt[(last_row, j)]).collect();
     let h_norm = Matrix3::new(
         h_vec[0], h_vec[1], h_vec[2], h_vec[3], h_vec[4], h_vec[5], h_vec[6], h_vec[7], h_vec[8],
     );
@@ -261,8 +267,14 @@ pub fn fit_homography_ransac(
     let mut best_inliers = 0usize;
     let mut best_mask: Vec<bool> = vec![false; n];
     let mut best_h = Matrix3::identity();
+    let mut mask = vec![false; n];
+    let mut adaptive_limit = config.max_iters;
 
-    for _ in 0..config.max_iters {
+    for iter in 0..config.max_iters {
+        if iter >= adaptive_limit {
+            break;
+        }
+
         // Sample 4 distinct indices
         let mut indices = [0usize; 4];
         let mut attempts = 0;
@@ -296,9 +308,9 @@ pub fn fit_homography_ransac(
             Err(_) => continue,
         };
 
-        // Count inliers
+        // Count inliers (reuse mask buffer)
+        mask.fill(false);
         let mut count = 0usize;
-        let mut mask = vec![false; n];
         for i in 0..n {
             let err = homography_reprojection_error(&h, &src[i], &dst[i]);
             if err < config.inlier_threshold {
@@ -309,8 +321,17 @@ pub fn fit_homography_ransac(
 
         if count > best_inliers {
             best_inliers = count;
-            best_mask = mask;
+            best_mask.copy_from_slice(&mask);
             best_h = h;
+
+            // Adaptive iteration limit (Hartley & Zisserman Algorithm 4.6)
+            // confidence = 99.99%, model DoF = 4 (homography from 4 points)
+            let w = count as f64 / n as f64;
+            if w > 0.0 {
+                let p_fail = (1.0 - w.powi(4)).max(1e-15);
+                let needed = (1e-4_f64.ln() / p_fail.ln()).ceil() as usize;
+                adaptive_limit = needed.max(50).min(config.max_iters);
+            }
 
             // Early exit if >90% inliers
             if count * 10 > n * 9 {

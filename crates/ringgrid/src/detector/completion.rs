@@ -1,4 +1,9 @@
+use std::collections::HashMap;
+
 use image::GrayImage;
+use nalgebra::Point2;
+use projective_grid::hex::hex_predict_grid_position;
+use projective_grid::GridIndex;
 
 use crate::conic::Ellipse;
 use crate::detector::id_correction::{affine_to_image, fit_local_affine};
@@ -185,15 +190,29 @@ fn local_affine_completion_seed(
     (seed[0].is_finite() && seed[1].is_finite()).then_some(seed)
 }
 
+fn hex_neighbor_seed(
+    id: usize,
+    hex_grid: &HashMap<GridIndex, Point2<f32>>,
+    board: &crate::board_layout::BoardLayout,
+) -> Option<[f64; 2]> {
+    let bm = board.marker(id)?;
+    let q = bm.q? as i32;
+    let r = bm.r? as i32;
+    let predicted = hex_predict_grid_position(hex_grid, GridIndex { i: q, j: r })?;
+    Some([f64::from(predicted.x), f64::from(predicted.y)])
+}
+
 fn projected_completion_seed(
     id: usize,
     h: &nalgebra::Matrix3<f64>,
     markers: &[DetectedMarker],
     board: &crate::board_layout::BoardLayout,
+    hex_grid: &HashMap<GridIndex, Point2<f32>>,
 ) -> Option<[f64; 2]> {
     let board_xy = board.xy_mm(id)?;
     let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];
-    local_affine_completion_seed(target_board_xy, markers, board)
+    hex_neighbor_seed(id, hex_grid, board)
+        .or_else(|| local_affine_completion_seed(target_board_xy, markers, board))
         .or_else(|| Some(project(h, target_board_xy[0], target_board_xy[1])))
 }
 
@@ -339,6 +358,8 @@ pub(crate) fn complete_with_h(
 
     let present_ids: HashSet<usize> = markers.iter().filter_map(|m| m.id).collect();
 
+    let hex_grid = crate::pipeline::build_hex_grid_map(markers, board);
+
     let mut stats = CompletionStats {
         n_candidates_total: board.n_markers(),
         ..Default::default()
@@ -346,7 +367,7 @@ pub(crate) fn complete_with_h(
     let mut attempted_fits = 0usize;
 
     for id in board.marker_ids() {
-        let projected_center = match projected_completion_seed(id, h, markers, board) {
+        let projected_center = match projected_completion_seed(id, h, markers, board, &hex_grid) {
             Some(center) => center,
             None => continue,
         };
@@ -600,7 +621,8 @@ mod tests {
         ];
         let h = nalgebra::Matrix3::new(1.0, 0.0, 3.0, 0.0, 1.0, -4.0, 0.0, 0.0, 1.0);
         let target_board_xy = board.xy_mm(target_id).expect("target board xy");
-        let seed = projected_completion_seed(target_id, &h, &markers, &board).expect("seed");
+        let hex_grid = crate::pipeline::build_hex_grid_map(&markers, &board);
+        let seed = projected_completion_seed(target_id, &h, &markers, &board, &hex_grid).expect("seed");
         let expected = project(
             &h,
             f64::from(target_board_xy[0]),

@@ -31,6 +31,8 @@ Controls the homography-guided completion stage. After the global homography fil
 | `min_arc_coverage` | `f32` | 0.35 | Minimum arc coverage (fraction of rays with both edges found). Low coverage indicates the marker is partially occluded or near the image boundary. |
 | `max_attempts` | `Option<usize>` | `None` | Optional cap on the number of completion fits attempted, in ID order. `None` means try all missing positions. |
 | `image_margin_px` | `f32` | 10.0 | Skip completion attempts whose projected center is closer than this to the image boundary. |
+| `require_perfect_decode` | `bool` | `false` | Require a perfect decode (dist=0 and margin >= min cyclic distance) for acceptance. Useful for Scheimpflug / high-distortion setups without a calibrated camera model. |
+| `max_radii_std_ratio` | `f32` | 0.35 | Maximum coefficient of variation (std/mean) of per-ray outer radii. Rejects completions with inconsistent edge sampling. |
 
 **Source:** `crates/ringgrid/src/detector/config.rs`
 
@@ -70,9 +72,10 @@ Controls projective center recovery from the inner/outer conic pencil. When enab
 
 Center correction is applied once per marker during the pipeline: before the global filter for fit-decode markers, and after completion for newly added markers.
 
+Projective center is enabled by setting `CircleRefinementMethod::ProjectiveCenter` (the default) in `DetectConfig`. Set `CircleRefinementMethod::None` to disable it.
+
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `enable` | `bool` | `true` | Enable projective center estimation. |
 | `use_expected_ratio` | `bool` | `true` | Use `marker_spec.r_inner_expected` as an eigenvalue prior when selecting among candidate centers. |
 | `ratio_penalty_weight` | `f64` | 1.0 | Weight of the eigenvalue-vs-expected-ratio penalty term in candidate selection. Higher values prefer candidates whose conic-pencil eigenvalue ratio matches the expected inner/outer ratio. |
 | `max_center_shift_px` | `Option<f64>` | `None` | Maximum allowed shift (px) from the pre-correction center. Large jumps are rejected and the original center is kept. Auto-derived from scale prior as `2 * r_nom`. |
@@ -95,6 +98,9 @@ Controls robust inner ellipse fitting. After the outer ellipse is fitted and the
 | `max_center_shift_px` | `f64` | 12.0 | Maximum allowed center shift (px) from the outer ellipse center to the inner ellipse center. |
 | `max_ratio_abs_error` | `f64` | 0.15 | Maximum absolute error between the recovered inner/outer scale ratio and the radial hint. |
 | `local_peak_halfwidth_idx` | `usize` | 3 | Half-width (in radius-sample indices) of the local search window around the radial hint peak. |
+| `miss_confidence_factor` | `f32` | 0.7 | Confidence multiplier when inner fit fails. Inner fit failure signals poor image quality, so confidence is discounted by 30%. |
+| `max_angular_gap_rad` | `f64` | π/2 | Maximum angular gap (radians) between consecutive inner edge points. Fits with larger gaps are rejected. |
+| `require_inner_fit` | `bool` | `false` | Hard-reject markers when inner fit fails (instead of just penalizing confidence). |
 
 ### Inner fit RANSAC sub-config
 

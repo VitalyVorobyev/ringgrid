@@ -50,11 +50,13 @@ When a `DetectConfig` is constructed (or `set_marker_scale_prior()` is called), 
 
 ### Proposal search radii
 
+Proposal parameters depend on both the marker scale and the board geometry. The derivation uses a **spacing ratio** `S = min_center_spacing_mm / (2 * outer_radius_mm)` from the active `BoardLayout`, which captures how densely markers are packed relative to their size. Let `spacing_min_px = S * d_min` and `spacing_max_px = S * d_max`:
+
 | Derived field | Formula |
 |---|---|
-| `proposal.r_min` | `max(0.4 * r_min, 2.0)` |
-| `proposal.r_max` | `1.7 * r_max` |
-| `proposal.nms_radius` | `max(0.8 * r_min, 2.0)` |
+| `proposal.r_min` | `max(0.15 * spacing_min_px, 2.0)` |
+| `proposal.r_max` | `min(0.45 * spacing_max_px, 1.35 * r_max)` |
+| `proposal.min_distance` | `max(0.16 * d_min, 0.85 * spacing_min_px)` |
 
 ### Edge sampling range
 
@@ -67,8 +69,9 @@ When a `DetectConfig` is constructed (or `set_marker_scale_prior()` is called), 
 
 | Derived field | Formula |
 |---|---|
-| `outer_estimation.theta_samples` | set to `edge_sample.n_rays` |
 | `outer_estimation.search_halfwidth_px` | `max(max((r_max - r_min) * 0.5, 2.0), base_default)` |
+
+Note: the number of angular rays for outer estimation is controlled by `EdgeSampleConfig::n_rays` (default 48), not by `OuterEstimationConfig`.
 
 ### Ellipse validation bounds
 

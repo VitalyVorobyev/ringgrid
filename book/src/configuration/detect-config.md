@@ -92,6 +92,7 @@ Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `Detect
 | `max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
 | `dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |
 | `use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |
+| `topology_filter_threshold_px` | `Option<f32>` | `None` | Hex-topology consistency filter threshold. After global filter, markers whose positions deviate from hex-neighbor midpoint predictions by more than this threshold are removed. `None` disables the filter. |
 | `ransac_homography` | `RansacHomographyConfig` | iters=2000, thresh=5.0 | RANSAC parameters for homography estimation. |
 | `board` | `BoardLayout` | empty | Board layout defining marker positions and geometry. |
 | `id_correction` | `IdCorrectionConfig` | enabled | Structural consistency verification/recovery of decoded IDs before global filter. |

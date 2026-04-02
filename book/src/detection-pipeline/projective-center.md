@@ -23,9 +23,12 @@ Each marker is corrected exactly once — fit-decode markers before the global f
 
 `ProjectiveCenterParams` controls the correction:
 
+Projective center is enabled by setting `CircleRefinementMethod::ProjectiveCenter` (the default) in `DetectConfig`. Set `CircleRefinementMethod::None` to disable it.
+
+`ProjectiveCenterParams` controls the correction details:
+
 | Parameter | Default | Purpose |
 |---|---|---|
-| `enable` | `true` | Master switch |
 | `use_expected_ratio` | `true` | Use `r_inner_expected` as eigenvalue prior |
 | `ratio_penalty_weight` | 1.0 | Weight for ratio-prior penalty |
 | `max_center_shift_px` | Derived from scale prior | Reject corrections that shift the center too far |

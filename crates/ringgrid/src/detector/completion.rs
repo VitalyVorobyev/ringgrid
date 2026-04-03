@@ -347,7 +347,11 @@ fn evaluate_completion_candidate(
 ) -> Result<CandidateQuality, ()> {
     let params = &config.completion;
     let quality = compute_candidate_quality(
-        &cand.edge, &cand.outer, cand.outer_ransac.as_ref(), projected_center, r_expected,
+        &cand.edge,
+        &cand.outer,
+        cand.outer_ransac.as_ref(),
+        projected_center,
+        r_expected,
     );
 
     if let Err(reject) = check_quality_gates(
@@ -367,7 +371,8 @@ fn evaluate_completion_candidate(
     }
 
     if params.require_perfect_decode {
-        let is_perfect = cand.decode_result
+        let is_perfect = cand
+            .decode_result
             .as_ref()
             .is_some_and(|d| d.dist == 0 && d.margin >= active_codebook_min_cyclic_dist);
         if !is_perfect {
@@ -406,10 +411,14 @@ fn assemble_completion_marker(
         &config.inner_fit,
         false,
     );
-    let fit = fit_metrics_with_inner(&cand.edge, &cand.outer, cand.outer_ransac.as_ref(), &inner_fit);
-    let decode_metrics = decode_metrics_from_result(
-        cand.decode_result.as_ref().filter(|d| d.id == id),
+    let fit = fit_metrics_with_inner(
+        &cand.edge,
+        &cand.outer,
+        cand.outer_ransac.as_ref(),
+        &inner_fit,
     );
+    let decode_metrics =
+        decode_metrics_from_result(cand.decode_result.as_ref().filter(|d| d.id == id));
     let confidence = decode_metrics
         .as_ref()
         .map(|d| d.decode_confidence)
@@ -473,8 +482,13 @@ fn try_complete_marker(
     };
 
     let quality = match evaluate_completion_candidate(
-        id, &cand, projected_center, r_expected,
-        config, active_codebook_min_cyclic_dist, stats,
+        id,
+        &cand,
+        projected_center,
+        r_expected,
+        config,
+        active_codebook_min_cyclic_dist,
+        stats,
     ) {
         Ok(q) => q,
         Err(()) => return None,
@@ -483,14 +497,23 @@ fn try_complete_marker(
     if let Some(notice) = check_decode_gate(cand.decode_result.as_ref(), id) {
         tracing::info!(
             "Completion id={} {} expected={} observed={}",
-            id, notice.reason, notice.expected_id, notice.observed_id
+            id,
+            notice.reason,
+            notice.expected_id,
+            notice.observed_id
         );
         stats.n_decode_mismatch += 1;
     }
 
-    tracing::debug!("Completion added id={} reproj_err={:.2}px", id, quality.reproj_err);
+    tracing::debug!(
+        "Completion added id={} reproj_err={:.2}px",
+        id,
+        quality.reproj_err
+    );
 
-    Some(assemble_completion_marker(gray, id, &cand, &quality, config, mapper))
+    Some(assemble_completion_marker(
+        gray, id, &cand, &quality, config, mapper,
+    ))
 }
 
 pub(crate) fn complete_with_h(
@@ -549,7 +572,13 @@ pub(crate) fn complete_with_h(
         stats.n_attempted += 1;
 
         let marker = match try_complete_marker(
-            gray, id, projected_center, markers, config, mapper, &mut stats,
+            gray,
+            id,
+            projected_center,
+            markers,
+            config,
+            mapper,
+            &mut stats,
         ) {
             Some(m) => m,
             None => continue,
@@ -669,7 +698,8 @@ mod tests {
         let h = nalgebra::Matrix3::new(1.0, 0.0, 3.0, 0.0, 1.0, -4.0, 0.0, 0.0, 1.0);
         let target_board_xy = board.xy_mm(target_id).expect("target board xy");
         let hex_grid = crate::pipeline::build_hex_grid_map(&markers, &board);
-        let seed = projected_completion_seed(target_id, &h, &markers, &board, &hex_grid).expect("seed");
+        let seed =
+            projected_completion_seed(target_id, &h, &markers, &board, &hex_grid).expect("seed");
         let expected = project(
             &h,
             f64::from(target_board_xy[0]),

@@ -136,7 +136,11 @@ pub(crate) fn build_hex_grid_map(
 
 /// Remove markers whose image-space positions are inconsistent with their hex
 /// neighbors (midpoint prediction). Returns the number of markers removed.
-fn topology_filter(markers: &mut Vec<DetectedMarker>, board: &BoardLayout, threshold_px: f32) -> usize {
+fn topology_filter(
+    markers: &mut Vec<DetectedMarker>,
+    board: &BoardLayout,
+    threshold_px: f32,
+) -> usize {
     let grid = build_hex_grid_map(markers, board);
     let inconsistent = hex_find_inconsistent_corners(&grid, threshold_px);
     if inconsistent.is_empty() {
@@ -147,9 +151,16 @@ fn topology_filter(markers: &mut Vec<DetectedMarker>, board: &BoardLayout, thres
     let before = markers.len();
     markers.retain(|m| {
         let Some(id) = m.id else { return true };
-        let Some(bm) = board.marker(id) else { return true };
-        let (Some(q), Some(r)) = (bm.q, bm.r) else { return true };
-        !bad_indices.contains(&GridIndex { i: q as i32, j: r as i32 })
+        let Some(bm) = board.marker(id) else {
+            return true;
+        };
+        let (Some(q), Some(r)) = (bm.q, bm.r) else {
+            return true;
+        };
+        !bad_indices.contains(&GridIndex {
+            i: q as i32,
+            j: r as i32,
+        })
     });
     let removed = before - markers.len();
     tracing::debug!(

@@ -168,10 +168,7 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
 fn setup_outer_search_window(
     r_outer_expected_px: f32,
     cfg: &OuterEstimationConfig,
-) -> Result<
-    ([f32; 2], Vec<Polarity>, bool, bool, RadialSampleGrid),
-    OuterEstimate,
-> {
+) -> Result<([f32; 2], Vec<Polarity>, bool, bool, RadialSampleGrid), OuterEstimate> {
     let r_expected = r_outer_expected_px.max(1.0);
     let hw = cfg.search_halfwidth_px.max(0.5);
     let mut window = [r_expected - hw, r_expected + hw];
@@ -377,8 +374,7 @@ pub fn estimate_outer_from_prior_with_mapper(
     let mut best: Option<(OuterEstimate, f32)> = None;
 
     for pol in polarity_candidates {
-        let hypotheses =
-            build_hypotheses_for_polarity(&agg_resp, pol, &scan, n_r, cfg);
+        let hypotheses = build_hypotheses_for_polarity(&agg_resp, pol, &scan, n_r, cfg);
 
         if hypotheses.is_empty() {
             continue;

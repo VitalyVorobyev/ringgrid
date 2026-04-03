@@ -131,7 +131,7 @@ jobs:
           manylinux: auto
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           compression-level: 0
           name: dist-${{ matrix.os }}-py${{ matrix.python-version }}

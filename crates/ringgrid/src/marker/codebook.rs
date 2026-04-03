@@ -5,14 +5,22 @@
 //! Extended profile achieved minimum cyclic Hamming distance: 1.
 //! Do not edit manually.
 
+/// Number of bits per codeword (one bit per sector).
 pub const CODEBOOK_BITS: usize = 16;
+/// Number of codewords in the baseline codebook.
 pub const CODEBOOK_N: usize = 893;
+/// Minimum cyclic Hamming distance in the baseline codebook.
 pub const CODEBOOK_MIN_CYCLIC_DIST: usize = 2;
+/// RNG seed used to generate the baseline codebook.
 pub const CODEBOOK_SEED: u64 = 1;
 
+/// Number of codewords in the extended codebook.
 pub const CODEBOOK_EXTENDED_N: usize = 2180;
+/// Minimum cyclic Hamming distance in the extended codebook.
 pub const CODEBOOK_EXTENDED_MIN_CYCLIC_DIST: usize = 1;
+/// RNG seed used to generate the extended codebook.
 pub const CODEBOOK_EXTENDED_SEED: u64 = 1;
+/// Number of codewords added beyond the baseline to form the extended codebook.
 pub const CODEBOOK_EXTENDED_EXTENSION_N: usize = 1287;
 
 /// Shipped baseline profile. This remains the default decode/codegen surface.

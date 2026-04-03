@@ -69,10 +69,12 @@ pub struct Ellipse {
 }
 
 impl Ellipse {
+    /// Returns the arithmetic mean of the semi-major and semi-minor axes.
     pub fn mean_axis(&self) -> f64 {
         (self.a + self.b) * 0.5
     }
 
+    /// Returns the ellipse center as `[cx, cy]`.
     pub fn center(&self) -> [f64; 2] {
         [self.cx, self.cy]
     }

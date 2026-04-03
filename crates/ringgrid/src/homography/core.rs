@@ -159,6 +159,29 @@ pub struct RansacHomographyResult {
     pub errors: Vec<f64>,
 }
 
+/// Sample 4 distinct random indices from `[0, n)`.
+fn sample_4_distinct(n: usize, rng: &mut rand::rngs::StdRng) -> [usize; 4] {
+    use rand::RngExt;
+    let mut indices = [0usize; 4];
+    for _ in 0..200 {
+        for idx in &mut indices {
+            *idx = rng.random_range(0..n);
+        }
+        let mut ok = true;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                if indices[i] == indices[j] {
+                    ok = false;
+                }
+            }
+        }
+        if ok {
+            return indices;
+        }
+    }
+    indices
+}
+
 /// Fit homography with RANSAC.
 ///
 /// `src`: source points (board coords).
@@ -173,8 +196,7 @@ pub fn fit_homography_ransac(
         return Err(HomographyError::TooFewPoints { needed: 4, got: n });
     }
 
-    use rand::prelude::*;
-    use rand::RngExt;
+    use rand::SeedableRng;
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
 
     let mut best_inliers = 0usize;
@@ -188,31 +210,7 @@ pub fn fit_homography_ransac(
             break;
         }
 
-        // Sample 4 distinct indices
-        let mut indices = [0usize; 4];
-        let mut attempts = 0;
-        loop {
-            for idx in &mut indices {
-                *idx = rng.random_range(0..n);
-            }
-            // Check distinct
-            let mut ok = true;
-            for i in 0..4 {
-                for j in (i + 1)..4 {
-                    if indices[i] == indices[j] {
-                        ok = false;
-                    }
-                }
-            }
-            if ok {
-                break;
-            }
-            attempts += 1;
-            if attempts > 100 {
-                break;
-            }
-        }
-
+        let indices = sample_4_distinct(n, &mut rng);
         let s4: Vec<[f64; 2]> = indices.iter().map(|&i| src[i]).collect();
         let d4: Vec<[f64; 2]> = indices.iter().map(|&i| dst[i]).collect();
 

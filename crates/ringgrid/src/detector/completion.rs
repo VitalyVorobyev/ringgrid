@@ -332,6 +332,167 @@ fn check_quality_gates(
     Ok(())
 }
 
+/// Evaluate the quality gates for a completion candidate.
+///
+/// Returns `Ok(quality)` if all gates pass, or `Err(())` if the candidate
+/// should be rejected (with appropriate stats and tracing already applied).
+fn evaluate_completion_candidate(
+    id: usize,
+    cand: &OuterFitCandidate,
+    projected_center: [f64; 2],
+    r_expected: f32,
+    config: &DetectConfig,
+    active_codebook_min_cyclic_dist: u8,
+    stats: &mut CompletionStats,
+) -> Result<CandidateQuality, ()> {
+    let params = &config.completion;
+    let quality = compute_candidate_quality(
+        &cand.edge, &cand.outer, cand.outer_ransac.as_ref(), projected_center, r_expected,
+    );
+
+    if let Err(reject) = check_quality_gates(
+        &quality,
+        params,
+        r_expected,
+        config.outer_fit.max_angular_gap_rad,
+    ) {
+        tracing::trace!(
+            "Completion id={} gate_reject={} context={:?}",
+            id,
+            reject.reason,
+            reject.context
+        );
+        stats.n_failed_gate += 1;
+        return Err(());
+    }
+
+    if params.require_perfect_decode {
+        let is_perfect = cand.decode_result
+            .as_ref()
+            .is_some_and(|d| d.dist == 0 && d.margin >= active_codebook_min_cyclic_dist);
+        if !is_perfect {
+            tracing::trace!(
+                "Completion id={} gate_reject={} (dist={:?}, margin={:?})",
+                id,
+                CompletionGateRejectReason::PerfectDecodeRequired.code(),
+                cand.decode_result.as_ref().map(|d| d.dist),
+                cand.decode_result.as_ref().map(|d| d.margin),
+            );
+            stats.n_failed_gate += 1;
+            return Err(());
+        }
+    }
+
+    Ok(quality)
+}
+
+/// Build the final `DetectedMarker` for an accepted completion candidate.
+///
+/// Performs inner ellipse fit, computes fit/decode metrics, and assembles the
+/// marker struct.
+fn assemble_completion_marker(
+    gray: &GrayImage,
+    id: usize,
+    cand: &OuterFitCandidate,
+    quality: &CandidateQuality,
+    config: &DetectConfig,
+    mapper: Option<&dyn crate::pixelmap::PixelMapper>,
+) -> DetectedMarker {
+    let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
+        gray,
+        &cand.outer,
+        &config.marker_spec,
+        mapper,
+        &config.inner_fit,
+        false,
+    );
+    let fit = fit_metrics_with_inner(&cand.edge, &cand.outer, cand.outer_ransac.as_ref(), &inner_fit);
+    let decode_metrics = decode_metrics_from_result(
+        cand.decode_result.as_ref().filter(|d| d.id == id),
+    );
+    let confidence = decode_metrics
+        .as_ref()
+        .map(|d| d.decode_confidence)
+        .unwrap_or(quality.fit_confidence);
+
+    DetectedMarker {
+        id: Some(id),
+        confidence,
+        center: quality.center,
+        ellipse_outer: Some(cand.outer),
+        ellipse_inner: inner_fit.ellipse_inner,
+        edge_points_outer: Some(cand.edge.outer_points.clone()),
+        edge_points_inner: Some(inner_fit.points_inner.clone()),
+        fit,
+        decode: decode_metrics,
+        source: DetectionSource::Completion,
+        ..DetectedMarker::default()
+    }
+}
+
+/// Check whether a projected center is valid and inside the image with margin.
+///
+/// Returns `true` if the center is finite and at least `safe_margin` pixels
+/// away from every image edge.
+fn is_center_in_bounds(center: [f64; 2], img_w: f64, img_h: f64, safe_margin: f64) -> bool {
+    center[0].is_finite()
+        && center[1].is_finite()
+        && center[0] >= safe_margin
+        && center[0] < (img_w - safe_margin)
+        && center[1] >= safe_margin
+        && center[1] < (img_h - safe_margin)
+}
+
+/// Attempt to fit and validate a single completion marker at a projected center.
+fn try_complete_marker(
+    gray: &GrayImage,
+    id: usize,
+    projected_center: [f64; 2],
+    markers: &[DetectedMarker],
+    config: &DetectConfig,
+    mapper: Option<&dyn crate::pixelmap::PixelMapper>,
+    stats: &mut CompletionStats,
+) -> Option<DetectedMarker> {
+    let active_codebook_min_cyclic_dist =
+        Codebook::from_profile(config.decode.codebook_profile).min_cyclic_dist() as u8;
+    let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
+        .unwrap_or(config.marker_scale.nominal_outer_radius_px());
+
+    let cand = match fit_outer_candidate_from_prior_for_completion(
+        gray,
+        [projected_center[0] as f32, projected_center[1] as f32],
+        r_expected,
+        config,
+        mapper,
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            stats.n_failed_fit += 1;
+            return None;
+        }
+    };
+
+    let quality = match evaluate_completion_candidate(
+        id, &cand, projected_center, r_expected,
+        config, active_codebook_min_cyclic_dist, stats,
+    ) {
+        Ok(q) => q,
+        Err(()) => return None,
+    };
+
+    if let Some(notice) = check_decode_gate(cand.decode_result.as_ref(), id) {
+        tracing::info!(
+            "Completion id={} {} expected={} observed={}",
+            id, notice.reason, notice.expected_id, notice.observed_id
+        );
+        stats.n_decode_mismatch += 1;
+    }
+
+    tracing::debug!("Completion added id={} reproj_err={:.2}px", id, quality.reproj_err);
+
+    Some(assemble_completion_marker(gray, id, &cand, &quality, config, mapper))
+}
+
 pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
@@ -346,8 +507,6 @@ pub(crate) fn complete_with_h(
     if !params.enable {
         return CompletionStats::default();
     }
-    let active_codebook_min_cyclic_dist =
-        Codebook::from_profile(config.decode.codebook_profile).min_cyclic_dist() as u8;
 
     let (w, h_img) = gray.dimensions();
     let w_f = w as f64;
@@ -376,14 +535,7 @@ pub(crate) fn complete_with_h(
             continue;
         }
 
-        if !projected_center[0].is_finite() || !projected_center[1].is_finite() {
-            continue;
-        }
-        if projected_center[0] < safe_margin
-            || projected_center[0] >= (w_f - safe_margin)
-            || projected_center[1] < safe_margin
-            || projected_center[1] >= (h_f - safe_margin)
-        {
+        if !is_center_in_bounds(projected_center, w_f, h_f, safe_margin) {
             continue;
         }
         stats.n_in_image += 1;
@@ -396,119 +548,14 @@ pub(crate) fn complete_with_h(
         attempted_fits += 1;
         stats.n_attempted += 1;
 
-        let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
-            .unwrap_or(config.marker_scale.nominal_outer_radius_px());
-
-        let fit_cand = match fit_outer_candidate_from_prior_for_completion(
-            gray,
-            [projected_center[0] as f32, projected_center[1] as f32],
-            r_expected,
-            config,
-            mapper,
+        let marker = match try_complete_marker(
+            gray, id, projected_center, markers, config, mapper, &mut stats,
         ) {
-            Ok(v) => v,
-            Err(_) => {
-                stats.n_failed_fit += 1;
-                continue;
-            }
+            Some(m) => m,
+            None => continue,
         };
-        let OuterFitCandidate {
-            edge,
-            outer,
-            outer_ransac,
-            decode_result,
-            ..
-        } = fit_cand;
-
-        let quality = compute_candidate_quality(
-            &edge,
-            &outer,
-            outer_ransac.as_ref(),
-            projected_center,
-            r_expected,
-        );
-
-        if let Err(reject) = check_quality_gates(
-            &quality,
-            params,
-            r_expected,
-            config.outer_fit.max_angular_gap_rad,
-        ) {
-            tracing::trace!(
-                "Completion id={} gate_reject={} context={:?}",
-                id,
-                reject.reason,
-                reject.context
-            );
-            stats.n_failed_gate += 1;
-            continue;
-        }
-
-        // Optional gate: require dist=0 and margin >= codebook min distance.
-        // Recommended when homography accuracy is low (no calibrated camera model).
-        if params.require_perfect_decode {
-            let is_perfect = decode_result
-                .as_ref()
-                .is_some_and(|d| d.dist == 0 && d.margin >= active_codebook_min_cyclic_dist);
-            if !is_perfect {
-                tracing::trace!(
-                    "Completion id={} gate_reject={} (dist={:?}, margin={:?})",
-                    id,
-                    CompletionGateRejectReason::PerfectDecodeRequired.code(),
-                    decode_result.as_ref().map(|d| d.dist),
-                    decode_result.as_ref().map(|d| d.margin),
-                );
-                stats.n_failed_gate += 1;
-                continue;
-            }
-        }
-
-        if let Some(notice) = check_decode_gate(decode_result.as_ref(), id) {
-            tracing::info!(
-                "Completion id={} {} expected={} observed={}",
-                id,
-                notice.reason,
-                notice.expected_id,
-                notice.observed_id
-            );
-            stats.n_decode_mismatch += 1;
-        }
-
-        let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
-            gray,
-            &outer,
-            &config.marker_spec,
-            mapper,
-            &config.inner_fit,
-            false,
-        );
-        let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
-        let decode_metrics =
-            decode_metrics_from_result(decode_result.as_ref().filter(|d| d.id == id));
-        let confidence = decode_metrics
-            .as_ref()
-            .map(|d| d.decode_confidence)
-            .unwrap_or(quality.fit_confidence);
-
-        markers.push(DetectedMarker {
-            id: Some(id),
-            confidence,
-            center: quality.center,
-            ellipse_outer: Some(outer),
-            ellipse_inner: inner_fit.ellipse_inner,
-            edge_points_outer: Some(edge.outer_points.clone()),
-            edge_points_inner: Some(inner_fit.points_inner.clone()),
-            fit,
-            decode: decode_metrics,
-            source: DetectionSource::Completion,
-            ..DetectedMarker::default()
-        });
+        markers.push(marker);
         stats.n_added += 1;
-        tracing::debug!(
-            "Completion added id={} reproj_err={:.2}px",
-            id,
-            quality.reproj_err
-        );
     }
 
     tracing::info!(

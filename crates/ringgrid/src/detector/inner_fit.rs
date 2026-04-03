@@ -26,14 +26,23 @@ pub enum InnerFitStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InnerFitReason {
+    /// Inner radius estimate returned a non-OK status.
     EstimateNotOk,
+    /// No radius hint was available for inner ring estimation.
     EstimateMissingHint,
+    /// Too few edge points to attempt a fit.
     InsufficientPoints,
+    /// Ellipse fitting algorithm did not converge.
     FitFailed,
+    /// RANSAC inlier ratio fell below the acceptance threshold.
     InlierRatioLow,
+    /// Fitted center shifted too far from the outer ellipse center.
     CenterShiftTooLarge,
+    /// Inner-to-outer axis ratio is outside the expected range.
     RatioMismatch,
+    /// RMS residual of the fit exceeded the threshold.
     RmsResidualHigh,
+    /// Largest angular gap between inlier edge points is too wide.
     AngularGapTooLarge,
 }
 
@@ -281,6 +290,81 @@ fn sample_inner_points_from_hint(
     points
 }
 
+/// Check quality gates on a fitted inner ellipse. Returns the first failing
+/// gate as `(reason, context)`, or `None` if all gates pass.
+fn check_inner_fit_gates(
+    inner: &Ellipse,
+    outer: &Ellipse,
+    inlier_ratio: Option<f32>,
+    rms_residual: f64,
+    angular_gap: f64,
+    r_hint: Option<f32>,
+    cfg: &InnerFitConfig,
+) -> Option<(InnerFitReason, InnerFitReasonContext)> {
+    if let Some(ir) = inlier_ratio {
+        if ir < cfg.min_inlier_ratio {
+            return Some((
+                InnerFitReason::InlierRatioLow,
+                InnerFitReasonContext::InlierRatioLow {
+                    observed_inlier_ratio: ir,
+                    min_required_inlier_ratio: cfg.min_inlier_ratio,
+                },
+            ));
+        }
+    }
+
+    let dx = inner.cx - outer.cx;
+    let dy = inner.cy - outer.cy;
+    let center_shift = (dx * dx + dy * dy).sqrt();
+    if center_shift > cfg.max_center_shift_px {
+        return Some((
+            InnerFitReason::CenterShiftTooLarge,
+            InnerFitReasonContext::CenterShiftTooLarge {
+                observed_shift_px: center_shift,
+                max_allowed_shift_px: cfg.max_center_shift_px,
+            },
+        ));
+    }
+
+    let mean_outer = ((outer.a + outer.b) * 0.5).max(1e-9);
+    let mean_inner = (inner.a + inner.b) * 0.5;
+    let ratio_meas = mean_inner / mean_outer;
+    if let Some(r_h) = r_hint {
+        if (ratio_meas - r_h as f64).abs() > cfg.max_ratio_abs_error {
+            return Some((
+                InnerFitReason::RatioMismatch,
+                InnerFitReasonContext::RatioMismatch {
+                    measured_ratio: ratio_meas,
+                    hint_ratio: r_h,
+                    max_allowed_abs_error: cfg.max_ratio_abs_error,
+                },
+            ));
+        }
+    }
+
+    if !rms_residual.is_finite() || rms_residual > cfg.max_rms_residual {
+        return Some((
+            InnerFitReason::RmsResidualHigh,
+            InnerFitReasonContext::RmsResidualHigh {
+                observed_rms_residual: rms_residual,
+                max_allowed_rms_residual: cfg.max_rms_residual,
+            },
+        ));
+    }
+
+    if angular_gap > cfg.max_angular_gap_rad {
+        return Some((
+            InnerFitReason::AngularGapTooLarge,
+            InnerFitReasonContext::AngularGapTooLarge {
+                observed_gap_rad: angular_gap,
+                max_allowed_gap_rad: cfg.max_angular_gap_rad,
+            },
+        ));
+    }
+
+    None
+}
+
 /// Robustly fit inner ellipse points using outer ellipse only as search prior.
 ///
 /// The radial hint/polarity stage is delegated to `estimate_inner_scale_from_outer`
@@ -360,73 +444,24 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
         }
     };
 
-    let mut reject_reason: Option<InnerFitReason> = None;
-    let mut reject_context: Option<InnerFitReasonContext> = None;
-    if let Some(ir) = inlier_ratio {
-        if ir < cfg.min_inlier_ratio {
-            reject_reason = Some(InnerFitReason::InlierRatioLow);
-            reject_context = Some(InnerFitReasonContext::InlierRatioLow {
-                observed_inlier_ratio: ir,
-                min_required_inlier_ratio: cfg.min_inlier_ratio,
-            });
-        }
-    }
-
-    let dx = ellipse_inner.cx - outer.cx;
-    let dy = ellipse_inner.cy - outer.cy;
-    let center_shift = (dx * dx + dy * dy).sqrt();
-    if reject_reason.is_none() && center_shift > cfg.max_center_shift_px {
-        reject_reason = Some(InnerFitReason::CenterShiftTooLarge);
-        reject_context = Some(InnerFitReasonContext::CenterShiftTooLarge {
-            observed_shift_px: center_shift,
-            max_allowed_shift_px: cfg.max_center_shift_px,
-        });
-    }
-
-    let mean_outer = ((outer.a + outer.b) * 0.5).max(1e-9);
-    let mean_inner = (ellipse_inner.a + ellipse_inner.b) * 0.5;
-    let ratio_meas = mean_inner / mean_outer;
-    if reject_reason.is_none() {
-        if let Some(r_hint) = estimate.r_inner_found {
-            if (ratio_meas - r_hint as f64).abs() > cfg.max_ratio_abs_error {
-                reject_reason = Some(InnerFitReason::RatioMismatch);
-                reject_context = Some(InnerFitReasonContext::RatioMismatch {
-                    measured_ratio: ratio_meas,
-                    hint_ratio: r_hint,
-                    max_allowed_abs_error: cfg.max_ratio_abs_error,
-                });
-            }
-        }
-    }
-
     let rms_residual_inner = conic::rms_sampson_distance(&ellipse_inner, &points_inner);
     let inner_angular_gap = crate::detector::outer_fit::max_angular_gap(
         [ellipse_inner.cx, ellipse_inner.cy],
         &points_inner,
     );
 
-    if reject_reason.is_none()
-        && (!rms_residual_inner.is_finite() || rms_residual_inner > cfg.max_rms_residual)
-    {
-        reject_reason = Some(InnerFitReason::RmsResidualHigh);
-        reject_context = Some(InnerFitReasonContext::RmsResidualHigh {
-            observed_rms_residual: rms_residual_inner,
-            max_allowed_rms_residual: cfg.max_rms_residual,
-        });
-    }
-
-    if reject_reason.is_none() && inner_angular_gap > cfg.max_angular_gap_rad {
-        reject_reason = Some(InnerFitReason::AngularGapTooLarge);
-        reject_context = Some(InnerFitReasonContext::AngularGapTooLarge {
-            observed_gap_rad: inner_angular_gap,
-            max_allowed_gap_rad: cfg.max_angular_gap_rad,
-        });
-    }
-
-    if let Some(reason) = reject_reason {
+    if let Some((reason, context)) = check_inner_fit_gates(
+        &ellipse_inner,
+        outer,
+        inlier_ratio,
+        rms_residual_inner,
+        inner_angular_gap,
+        estimate.r_inner_found,
+        cfg,
+    ) {
         return rejected_inner_fit(
             reason,
-            reject_context,
+            Some(context),
             points_inner,
             inlier_ratio,
             rms_residual_inner,

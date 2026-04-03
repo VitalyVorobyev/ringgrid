@@ -325,15 +325,16 @@ fn compute_iterative_two_means_threshold(
     threshold
 }
 
-fn decode_marker_impl(
-    gray: &GrayImage,
+/// Validate the outer ellipse and compute the code band sampling radius.
+///
+/// Returns `Ok((cx, cy, r_mean))` on success, or `Err(diagnostics)` if the
+/// ellipse is invalid or too small to sample.
+#[allow(clippy::result_large_err)]
+fn validate_decode_ellipse(
     outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    // Validate ellipse
+) -> Result<(f64, f64, f64), (Option<DecodeResult>, DecodeDiagnostics)> {
     if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
-        return (
+        return Err((
             None,
             DecodeDiagnostics {
                 sector_intensities: [0.0; 16],
@@ -353,22 +354,25 @@ fn decode_marker_impl(
                     min_allowed_semi_axis: 2.0,
                 }),
             },
-        );
+        ));
     }
-
     let cx = outer_ellipse.cx;
     let cy = outer_ellipse.cy;
-
-    // Use mean semi-axis as sampling radius (markers are nearly circular).
-    // The ellipse angle is NOT used: it reflects the perspective distortion
-    // axis, not the board-to-image rotation. Sector angular alignment is
-    // handled by the codebook's cyclic rotation matching.
     let r_mean = (outer_ellipse.a + outer_ellipse.b) / 2.0;
+    Ok((cx, cy, r_mean))
+}
 
-    // Sample sector intensities in image coordinates.
-    // The absolute angular reference doesn't matter: the codebook matcher
-    // tries all 16 cyclic rotations (each 22.5°) to find the best match.
-    let sampler = DistortionAwareSampler::new(gray, mapper);
+/// Sample the 16 sector intensities from the code band.
+///
+/// Each sector's intensity is the average of `samples_per_sector * n_radial_rings`
+/// bilinear samples taken along the code band annulus.
+fn sample_sector_intensities(
+    sampler: &DistortionAwareSampler<'_>,
+    cx: f64,
+    cy: f64,
+    r_mean: f64,
+    config: &DecodeConfig,
+) -> [f32; 16] {
     let mut sector_intensities = [0.0f32; 16];
 
     for s in 0..16u32 {
@@ -376,12 +380,10 @@ fn decode_marker_impl(
         let mut count = 0u32;
 
         for j in 0..config.samples_per_sector {
-            // Angular position within the sector
             let t = (j as f64 + 0.5) / config.samples_per_sector as f64;
             let theta = (s as f64 + t) / 16.0 * 2.0 * std::f64::consts::PI;
 
             for k in 0..config.n_radial_rings {
-                // Radial position within code band (±10% of center ratio)
                 let r_ratio = if config.n_radial_rings == 1 {
                     config.code_band_ratio as f64
                 } else {
@@ -390,7 +392,6 @@ fn decode_marker_impl(
                 };
                 let r = r_ratio * r_mean;
 
-                // Sample in working coordinates (distortion-aware when camera is provided).
                 let x_img = cx + r * theta.cos();
                 let y_img = cy + r * theta.sin();
 
@@ -404,6 +405,53 @@ fn decode_marker_impl(
         sector_intensities[s as usize] = if count > 0 { sum / count as f32 } else { 0.5 };
     }
 
+    sector_intensities
+}
+
+/// Check decode quality gates (distance, margin, confidence) and return the
+/// first failing reason, if any.
+fn check_decode_quality_gates(
+    best_match: &super::codec::Match,
+    config: &DecodeConfig,
+) -> Option<(DecodeRejectReason, DecodeRejectContext)> {
+    if best_match.dist > config.max_decode_dist {
+        return Some((
+            DecodeRejectReason::DistTooHigh,
+            DecodeRejectContext::DistTooHigh {
+                observed_dist: best_match.dist,
+                max_allowed_dist: config.max_decode_dist,
+            },
+        ));
+    }
+    if best_match.margin < config.min_decode_margin {
+        return Some((
+            DecodeRejectReason::MarginTooLow,
+            DecodeRejectContext::MarginTooLow {
+                observed_margin: best_match.margin,
+                min_required_margin: config.min_decode_margin,
+            },
+        ));
+    }
+    if best_match.confidence < config.min_decode_confidence {
+        return Some((
+            DecodeRejectReason::ConfidenceTooLow,
+            DecodeRejectContext::ConfidenceTooLow {
+                observed_confidence: best_match.confidence,
+                min_required_confidence: config.min_decode_confidence,
+            },
+        ));
+    }
+    None
+}
+
+/// Binarize sector intensities, match against the codebook in both polarities,
+/// and apply quality gates.
+///
+/// Returns the final `(Option<DecodeResult>, DecodeDiagnostics)` pair.
+fn threshold_and_match_codebook(
+    sector_intensities: [f32; 16],
+    config: &DecodeConfig,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
     // Check that there is reasonable contrast
     let (min_intensity, max_intensity) = intensity_range(&sector_intensities);
     let contrast = max_intensity - min_intensity;
@@ -434,14 +482,12 @@ fn decode_marker_impl(
         );
     }
 
-    // Threshold using iterative 2-means clustering (more robust than pure median).
     let threshold = compute_iterative_two_means_threshold(
         &sector_intensities,
         config.threshold_max_iters,
         config.threshold_convergence_eps,
     );
 
-    // Form word: bit=1 if intensity > threshold, bit=0 otherwise
     let mut word: u16 = 0;
     for (s, &intensity) in sector_intensities.iter().enumerate() {
         if intensity > threshold {
@@ -449,48 +495,17 @@ fn decode_marker_impl(
         }
     }
 
-    // Match against codebook (normal and inverted polarity)
     let cb = Codebook::from_profile(config.codebook_profile);
     let m_normal = cb.match_word(word);
     let m_inverted = cb.match_word(!word);
 
-    // Pick the better match
     let (best_match, used_word, inverted) = if m_normal.confidence >= m_inverted.confidence {
         (m_normal, word, false)
     } else {
         (m_inverted, !word, true)
     };
 
-    // Reject if quality too low
-    if best_match.dist > config.max_decode_dist
-        || best_match.margin < config.min_decode_margin
-        || best_match.confidence < config.min_decode_confidence
-    {
-        let (reason, context) = if best_match.dist > config.max_decode_dist {
-            (
-                DecodeRejectReason::DistTooHigh,
-                DecodeRejectContext::DistTooHigh {
-                    observed_dist: best_match.dist,
-                    max_allowed_dist: config.max_decode_dist,
-                },
-            )
-        } else if best_match.margin < config.min_decode_margin {
-            (
-                DecodeRejectReason::MarginTooLow,
-                DecodeRejectContext::MarginTooLow {
-                    observed_margin: best_match.margin,
-                    min_required_margin: config.min_decode_margin,
-                },
-            )
-        } else {
-            (
-                DecodeRejectReason::ConfidenceTooLow,
-                DecodeRejectContext::ConfidenceTooLow {
-                    observed_confidence: best_match.confidence,
-                    min_required_confidence: config.min_decode_confidence,
-                },
-            )
-        };
+    if let Some((reason, context)) = check_decode_quality_gates(&best_match, config) {
         return (
             None,
             DecodeDiagnostics {
@@ -533,6 +548,23 @@ fn decode_marker_impl(
     };
 
     (Some(result), diag)
+}
+
+fn decode_marker_impl(
+    gray: &GrayImage,
+    outer_ellipse: &Ellipse,
+    config: &DecodeConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> (Option<DecodeResult>, DecodeDiagnostics) {
+    let (cx, cy, r_mean) = match validate_decode_ellipse(outer_ellipse) {
+        Ok(v) => v,
+        Err(early) => return early,
+    };
+
+    let sampler = DistortionAwareSampler::new(gray, mapper);
+    let sector_intensities = sample_sector_intensities(&sampler, cx, cy, r_mean, config);
+
+    threshold_and_match_codebook(sector_intensities, config)
 }
 
 #[cfg(test)]

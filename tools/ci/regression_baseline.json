@@ -1,0 +1,54 @@
+{
+  "description": "Regression gate baselines. Metrics are threshold-gated: precision/recall must be >= min, errors must be <= max. Regenerate by running each benchmark and updating values.",
+  "reference_benchmark": {
+    "script": "tools/run_reference_benchmark.sh",
+    "output": "tools/out/reference_benchmark_post_pipeline/summary.json",
+    "modes": {
+      "none__none": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.104,
+        "max_h_vs_gt_mean_px": 0.064
+      },
+      "projective_center__none": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.084,
+        "max_h_vs_gt_mean_px": 0.047
+      }
+    }
+  },
+  "distortion_benchmark": {
+    "script": "tools/run_distortion_benchmark.sh",
+    "output": "tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/summary.json",
+    "modes": {
+      "projective_center__none": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.109,
+        "max_h_vs_gt_mean_px": 1.381
+      },
+      "projective_center__external": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.107,
+        "max_h_vs_gt_mean_px": 0.049
+      },
+      "projective_center__self_undistort": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.108,
+        "max_h_vs_gt_mean_px": 0.081
+      }
+    }
+  },
+  "blur3_benchmark": {
+    "script": "tools/run_blur3_benchmark.sh",
+    "output": "tools/out/eval_blur3_post_pipeline/det/aggregate.json",
+    "criteria": {
+      "min_precision": 1.0,
+      "min_recall": 0.968,
+      "max_center_error": 0.472
+    }
+  }
+}

@@ -7,16 +7,26 @@ description: Run regression benchmarks and maintainability guardrails. Rebuilds,
 
 Run the full regression suite: build, benchmark, maintainability check.
 
-## Step 1 — Build
+## Step 1 — Build and lint
 
-Build the release binary and Python bindings:
+Build the release binary and Python bindings, then run fmt and clippy:
 
 ```bash
 cargo build --release
 cd crates/ringgrid-py && ../../.venv/bin/maturin develop --release && cd ../..
 ```
 
-If the build fails, stop and report the error. Do not proceed to benchmarks.
+If the build fails, stop and report the error. Do not proceed to further steps.
+
+After a successful build, run formatting and lint checks:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+- **fmt failures**: Run `cargo fmt --all` to auto-fix, then report what changed.
+- **clippy failures**: Fix the warnings in code. Do not add `#[allow(...)]` unless truly justified. Report each fix.
 
 ## Step 2 — Run benchmarks
 
@@ -87,6 +97,8 @@ If everything passes, print:
 
 ```
 REGRESSION GATE: ALL PASSED
+  Format (cargo fmt): OK
+  Lint (cargo clippy): OK
   Reference benchmark: OK (2 modes)
   Distortion benchmark: OK (3 modes)
   Blur3 benchmark: OK

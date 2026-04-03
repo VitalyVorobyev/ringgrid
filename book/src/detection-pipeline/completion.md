@@ -27,6 +27,16 @@ Completion uses stricter acceptance criteria than the initial detection to avoid
 
 The `reproj_gate_px` is the most important gate — it ensures that completed markers are geometrically consistent with the homography. A tight gate (default 3.0 px) prevents false detections from being added.
 
+## Seed Strategy
+
+The completion stage uses a three-level fallback chain to predict each missing marker's image position:
+
+1. **Hex-neighbor midpoint** (via `projective-grid`): predicts the position from axial midpoints of detected hex neighbors along three hex axes. This is the most geometrically principled seed for hex lattices and handles local perspective distortion well.
+2. **Local affine**: fits a local affine transform from the 3--4 nearest decoded neighbors in board space and projects the missing position. Requires at least 3 nearby decoded markers.
+3. **Global homography**: projects the board position through the global H matrix. Least accurate under lens distortion at image periphery.
+
+The hex-neighbor seed was added via the `projective-grid` crate integration. On the rtv3d validation dataset it provides +5--6 additional decoded markers across strategies.
+
 ## Projective Center for Completion Markers
 
 After completion, projective center correction is applied to the newly completed markers only. Previously corrected markers retain their corrections. Each marker is corrected exactly once.

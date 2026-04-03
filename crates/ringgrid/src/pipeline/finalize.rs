@@ -1,4 +1,10 @@
+use std::collections::HashMap;
+use std::time::Instant;
+
 use image::GrayImage;
+use nalgebra::Point2;
+use projective_grid::hex::hex_find_inconsistent_corners;
+use projective_grid::GridIndex;
 
 use super::{
     annotate_neighbor_radius_ratios, apply_projective_centers, complete_with_h, compute_h_stats,
@@ -11,7 +17,6 @@ use crate::detector::{DetectedMarker, DetectionSource};
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, DetectionResult};
 use crate::pixelmap::PixelMapper;
-use std::time::Instant;
 
 const AXIS_RATIO_RELATIVE_TOLERANCE: f64 = 0.25;
 
@@ -107,6 +112,63 @@ fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> Fil
         h_current,
         ransac_stats: stats,
     }
+}
+
+/// Build a hex grid map from decoded markers, mapping `(q, r)` → image center.
+pub(crate) fn build_hex_grid_map(
+    markers: &[DetectedMarker],
+    board: &BoardLayout,
+) -> HashMap<GridIndex, Point2<f32>> {
+    markers
+        .iter()
+        .filter_map(|m| {
+            let id = m.id?;
+            let bm = board.marker(id)?;
+            let q = bm.q? as i32;
+            let r = bm.r? as i32;
+            Some((
+                GridIndex { i: q, j: r },
+                Point2::new(m.center[0] as f32, m.center[1] as f32),
+            ))
+        })
+        .collect()
+}
+
+/// Remove markers whose image-space positions are inconsistent with their hex
+/// neighbors (midpoint prediction). Returns the number of markers removed.
+fn topology_filter(
+    markers: &mut Vec<DetectedMarker>,
+    board: &BoardLayout,
+    threshold_px: f32,
+) -> usize {
+    let grid = build_hex_grid_map(markers, board);
+    let inconsistent = hex_find_inconsistent_corners(&grid, threshold_px);
+    if inconsistent.is_empty() {
+        return 0;
+    }
+    let bad_indices: std::collections::HashSet<GridIndex> =
+        inconsistent.iter().map(|(idx, _)| *idx).collect();
+    let before = markers.len();
+    markers.retain(|m| {
+        let Some(id) = m.id else { return true };
+        let Some(bm) = board.marker(id) else {
+            return true;
+        };
+        let (Some(q), Some(r)) = (bm.q, bm.r) else {
+            return true;
+        };
+        !bad_indices.contains(&GridIndex {
+            i: q as i32,
+            j: r as i32,
+        })
+    });
+    let removed = before - markers.len();
+    tracing::debug!(
+        removed,
+        threshold_px,
+        "topology filter: removed spatially inconsistent markers"
+    );
+    removed
 }
 
 fn phase_completion(
@@ -384,6 +446,15 @@ fn finalize_global_filter_result(
     let mut final_markers = filter_phase.markers;
     let markers_after_filter = final_markers.len();
     let h_current = filter_phase.h_current;
+
+    let topology_start = Instant::now();
+    let n_topology_removed = if let Some(threshold) = config.topology_filter_threshold_px {
+        topology_filter(&mut final_markers, &config.board, threshold)
+    } else {
+        0
+    };
+    let topology_elapsed = topology_start.elapsed();
+
     let n_before_completion = final_markers.len();
 
     let completion_start = Instant::now();
@@ -457,9 +528,11 @@ fn finalize_global_filter_result(
     tracing::info!(
         markers_in,
         markers_after_filter,
+        n_topology_removed,
         markers_after_completion,
         markers_out = result.detected_markers.len(),
         global_filter_ms = duration_ms(filter_elapsed),
+        topology_ms = duration_ms(topology_elapsed),
         completion_ms = duration_ms(completion_elapsed),
         final_h_ms = duration_ms(final_h_elapsed),
         map_to_image_ms = duration_ms(map_to_image_elapsed),

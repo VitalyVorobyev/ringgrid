@@ -805,6 +805,14 @@ pub struct DetectConfig {
     pub dedup_radius: f64,
     /// Enable global homography filtering (requires board spec).
     pub use_global_filter: bool,
+    /// Hex-topology consistency filter threshold (pixels).
+    ///
+    /// After global filter and ID correction, each decoded marker's position is
+    /// compared against the midpoint predicted by its hex neighbors. Markers
+    /// that deviate by more than this threshold are removed.
+    ///
+    /// Set to `None` to disable the topology filter. Default: `None`.
+    pub topology_filter_threshold_px: Option<f32>,
     /// RANSAC homography configuration.
     pub ransac_homography: RansacHomographyConfig,
     /// Board layout: marker positions and geometry.
@@ -912,6 +920,7 @@ impl Default for DetectConfig {
             max_aspect_ratio: 3.0,
             dedup_radius: 6.0,
             use_global_filter: true,
+            topology_filter_threshold_px: None,
             ransac_homography: RansacHomographyConfig::default(),
             board: BoardLayout::default(),
             self_undistort: SelfUndistortConfig::default(),

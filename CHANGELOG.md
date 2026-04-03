@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Integrated `projective-grid` crate as a dependency for hex-lattice geometry.
+- Hex-neighbor completion seeds via `hex_predict_grid_position`: completion now
+  predicts missing marker positions from axial midpoints of detected hex
+  neighbors before falling back to local affine or global homography.
+  Validated on rtv3d dataset: +6 decoded markers on strategy A, +5 on strategy B.
+- Optional topology-aware outlier filter (`topology_filter_threshold_px` config):
+  flags markers whose image positions deviate from hex-neighbor midpoint
+  predictions. Disabled by default; available for high-false-positive scenarios.
+
 ## [0.5.1] — 2026-03-28
 
 ### Added

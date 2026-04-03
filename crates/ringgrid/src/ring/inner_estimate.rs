@@ -11,7 +11,7 @@ use crate::marker::{GradPolarity, MarkerSpec};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
-use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid};
+use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid, RadialScanResult};
 use super::radial_profile;
 pub use super::radial_profile::Polarity;
 
@@ -74,6 +74,137 @@ pub struct InnerEstimate {
     pub r_samples: Option<Vec<f32>>,
 }
 
+/// Build the search window, validate it, and construct the `RadialSampleGrid`.
+///
+/// Returns `(window, polarity_candidates, track_pos, track_neg, grid)` on
+/// success, or an early-return `InnerEstimate` on failure.
+#[allow(clippy::type_complexity)]
+fn setup_inner_search_window(
+    spec: &MarkerSpec,
+    n_r: usize,
+) -> Result<([f32; 2], Vec<Polarity>, bool, bool, RadialSampleGrid), InnerEstimate> {
+    let mut window = spec.search_window();
+    window[0] = window[0].clamp(0.2, 0.9);
+    window[1] = window[1].clamp(0.2, 0.9);
+    if window[1] <= window[0] + 1e-6 {
+        return Err(InnerEstimate {
+            r_inner_expected: spec.r_inner_expected,
+            search_window: window,
+            r_inner_found: None,
+            polarity: None,
+            peak_strength: None,
+            theta_consistency: None,
+            status: InnerStatus::Failed,
+            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
+            radial_response_agg: None,
+            r_samples: None,
+        });
+    }
+
+    let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
+        GradPolarity::DarkToLight => vec![Polarity::Pos],
+        GradPolarity::LightToDark => vec![Polarity::Neg],
+        GradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
+    };
+    let track_pos = polarity_candidates.contains(&Polarity::Pos);
+    let track_neg = polarity_candidates.contains(&Polarity::Neg);
+    let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
+        return Err(InnerEstimate {
+            r_inner_expected: spec.r_inner_expected,
+            search_window: window,
+            r_inner_found: None,
+            polarity: None,
+            peak_strength: None,
+            theta_consistency: None,
+            status: InnerStatus::Failed,
+            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
+            radial_response_agg: None,
+            r_samples: None,
+        });
+    };
+
+    Ok((window, polarity_candidates, track_pos, track_neg, grid))
+}
+
+/// Iterate over polarity candidates and select the best inner-radius hypothesis.
+///
+/// Returns the best `InnerEstimate` found, or `None` if no polarity produced a
+/// valid candidate.
+fn select_best_polarity_hypothesis(
+    polarity_candidates: &[Polarity],
+    agg_resp: &[f32],
+    scan: &RadialScanResult,
+    spec: &MarkerSpec,
+    window: [f32; 2],
+    n_r: usize,
+    store_response: bool,
+) -> Option<InnerEstimate> {
+    fn find_peak_idx(agg: &[f32], pol: Polarity) -> (usize, f32) {
+        let idx = radial_profile::peak_idx(agg, pol);
+        (idx, agg[idx])
+    }
+
+    let mut best: Option<(InnerEstimate, f32)> = None;
+
+    for &pol in polarity_candidates {
+        let (peak_idx, peak_val) = find_peak_idx(agg_resp, pol);
+        let r_star = scan.grid.r_samples[peak_idx];
+
+        let per_theta = scan.per_theta_peaks(pol);
+        let theta_consistency =
+            radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.02);
+
+        let peak_strength = peak_val.abs();
+
+        let mut status = InnerStatus::Ok;
+        let mut failure = None;
+        if !(0.2..=0.9).contains(&r_star) {
+            status = InnerStatus::Rejected;
+            failure = Some(InnerEstimateFailure::ScaleOutOfBounds { r_star });
+        } else if peak_idx == 0 || peak_idx + 1 == n_r {
+            status = InnerStatus::Rejected;
+            failure = Some(InnerEstimateFailure::PeakAtSearchWindowEdge);
+        } else if theta_consistency < spec.min_theta_consistency {
+            status = InnerStatus::Rejected;
+            failure = Some(InnerEstimateFailure::ThetaInconsistent {
+                observed: theta_consistency,
+                min_required: spec.min_theta_consistency,
+            });
+        }
+
+        let est = InnerEstimate {
+            r_inner_expected: spec.r_inner_expected,
+            search_window: window,
+            r_inner_found: Some(r_star),
+            polarity: Some(pol),
+            peak_strength: Some(peak_strength),
+            theta_consistency: Some(theta_consistency),
+            status,
+            failure,
+            radial_response_agg: if store_response {
+                Some(agg_resp.to_vec())
+            } else {
+                None
+            },
+            r_samples: if store_response {
+                Some(scan.grid.r_samples.clone())
+            } else {
+                None
+            },
+        };
+
+        let score = peak_strength * theta_consistency;
+        match &best {
+            Some((_, best_score)) if *best_score >= score => {}
+            _ => {
+                best = Some((est, score));
+            }
+        }
+    }
+
+    best.map(|(e, _)| e)
+}
+
 /// Estimate inner ring scale from a fitted outer ellipse.
 ///
 /// Uses an optional working<->image mapper for distortion-aware sampling.
@@ -99,48 +230,14 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         };
     }
 
-    let mut window = spec.search_window();
-    // Clamp to plausible normalized bounds. (These are intentionally wide.)
-    window[0] = window[0].clamp(0.2, 0.9);
-    window[1] = window[1].clamp(0.2, 0.9);
-    if window[1] <= window[0] + 1e-6 {
-        return InnerEstimate {
-            r_inner_expected: spec.r_inner_expected,
-            search_window: window,
-            r_inner_found: None,
-            polarity: None,
-            peak_strength: None,
-            theta_consistency: None,
-            status: InnerStatus::Failed,
-            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
-            radial_response_agg: None,
-            r_samples: None,
-        };
-    }
-
     let n_r = spec.radial_samples.max(5);
     let n_t = spec.theta_samples.max(8);
-    let polarity_candidates: Vec<Polarity> = match spec.inner_grad_polarity {
-        GradPolarity::DarkToLight => vec![Polarity::Pos],
-        GradPolarity::LightToDark => vec![Polarity::Neg],
-        GradPolarity::Auto => vec![Polarity::Neg, Polarity::Pos],
-    };
-    let track_pos = polarity_candidates.contains(&Polarity::Pos);
-    let track_neg = polarity_candidates.contains(&Polarity::Neg);
-    let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
-        return InnerEstimate {
-            r_inner_expected: spec.r_inner_expected,
-            search_window: window,
-            r_inner_found: None,
-            polarity: None,
-            peak_strength: None,
-            theta_consistency: None,
-            status: InnerStatus::Failed,
-            failure: Some(InnerEstimateFailure::InvalidSearchWindow),
-            radial_response_agg: None,
-            r_samples: None,
+
+    let (window, polarity_candidates, track_pos, track_neg, grid) =
+        match setup_inner_search_window(spec, n_r) {
+            Ok(v) => v,
+            Err(est) => return est,
         };
-    };
 
     // Precompute rotation for ellipse sampling
     let cx = outer.cx as f32;
@@ -157,7 +254,6 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         track_neg,
         |ct, st, r_samples, i_vals| {
             for (ri, &r) in r_samples.iter().enumerate() {
-                // v = [a*r*cosθ, b*r*sinθ] then rotate by ellipse angle
                 let vx = a * r * ct;
                 let vy = b * r * st;
                 let x = cx + ca * vx - sa * vy;
@@ -194,74 +290,18 @@ pub fn estimate_inner_scale_from_outer_with_mapper(
         };
     }
 
-    fn find_peak_idx(agg: &[f32], pol: Polarity) -> (usize, f32) {
-        let idx = radial_profile::peak_idx(agg, pol);
-        (idx, agg[idx])
-    }
-
     let agg_resp = scan.aggregate_response(&spec.aggregator);
 
-    let mut best: Option<(InnerEstimate, f32)> = None;
-
-    for pol in polarity_candidates {
-        let (peak_idx, peak_val) = find_peak_idx(&agg_resp, pol);
-        let r_star = scan.grid.r_samples[peak_idx];
-
-        // Consistency: how many per-theta peaks agree with r_star
-        let per_theta = scan.per_theta_peaks(pol);
-        let theta_consistency =
-            radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.02);
-
-        let peak_strength = peak_val.abs();
-
-        let mut status = InnerStatus::Ok;
-        let mut failure = None;
-        if !(0.2..=0.9).contains(&r_star) {
-            status = InnerStatus::Rejected;
-            failure = Some(InnerEstimateFailure::ScaleOutOfBounds { r_star });
-        } else if peak_idx == 0 || peak_idx + 1 == n_r {
-            status = InnerStatus::Rejected;
-            failure = Some(InnerEstimateFailure::PeakAtSearchWindowEdge);
-        } else if theta_consistency < spec.min_theta_consistency {
-            status = InnerStatus::Rejected;
-            failure = Some(InnerEstimateFailure::ThetaInconsistent {
-                observed: theta_consistency,
-                min_required: spec.min_theta_consistency,
-            });
-        }
-
-        let est = InnerEstimate {
-            r_inner_expected: spec.r_inner_expected,
-            search_window: window,
-            r_inner_found: Some(r_star),
-            polarity: Some(pol),
-            peak_strength: Some(peak_strength),
-            theta_consistency: Some(theta_consistency),
-            status,
-            failure,
-            radial_response_agg: if store_response {
-                Some(agg_resp.clone())
-            } else {
-                None
-            },
-            r_samples: if store_response {
-                Some(scan.grid.r_samples.clone())
-            } else {
-                None
-            },
-        };
-
-        // Heuristic score for auto polarity selection
-        let score = peak_strength * theta_consistency;
-        match &best {
-            Some((_, best_score)) if *best_score >= score => {}
-            _ => {
-                best = Some((est, score));
-            }
-        }
-    }
-
-    best.map(|(e, _)| e).unwrap_or(InnerEstimate {
+    select_best_polarity_hypothesis(
+        &polarity_candidates,
+        &agg_resp,
+        &scan,
+        spec,
+        window,
+        n_r,
+        store_response,
+    )
+    .unwrap_or(InnerEstimate {
         r_inner_expected: spec.r_inner_expected,
         search_window: window,
         r_inner_found: None,

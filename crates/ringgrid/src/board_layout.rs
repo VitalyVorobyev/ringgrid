@@ -20,52 +20,87 @@ const DEFAULT_RING_WIDTH_MM: f32 = 1.152;
 /// Validation failures for a board layout specification.
 #[derive(Debug, Clone)]
 pub enum BoardLayoutValidationError {
+    /// Validation failed: unsupported target schema version.
     UnsupportedSchema {
+        /// Schema string found in the file.
         found: String,
+        /// Schema string the loader expected.
         expected: &'static str,
     },
+    /// Validation failed: target name is empty.
     EmptyName,
+    /// Validation failed: pitch is non-positive or non-finite.
     InvalidPitch {
+        /// The invalid pitch value.
         pitch_mm: f32,
     },
+    /// Validation failed: row count is zero.
     InvalidRows {
+        /// The invalid row count.
         rows: usize,
     },
+    /// Validation failed: long-row column count is zero.
     InvalidLongRowCols {
+        /// The invalid column count.
         long_row_cols: usize,
     },
+    /// Validation failed: long-row columns must exceed short-row columns derived from row count.
     InvalidLongRowColsForRows {
+        /// Total number of rows.
         rows: usize,
+        /// Column count for the longest row.
         long_row_cols: usize,
     },
+    /// Validation failed: outer radius is non-positive or non-finite.
     InvalidOuterRadius {
+        /// The invalid outer radius value.
         marker_outer_radius_mm: f32,
     },
+    /// Validation failed: inner radius is non-positive or non-finite.
     InvalidInnerRadius {
+        /// The invalid inner radius value.
         marker_inner_radius_mm: f32,
     },
+    /// Validation failed: ring width is non-positive or non-finite.
     InvalidRingWidth {
+        /// The invalid ring width value.
         marker_ring_width_mm: f32,
     },
+    /// Validation failed: inner radius must be strictly less than outer radius.
     InnerRadiusNotSmallerThanOuter {
+        /// The inner radius value.
         marker_inner_radius_mm: f32,
+        /// The outer radius value.
         marker_outer_radius_mm: f32,
     },
+    /// Validation failed: code band gap between inner and outer rings is non-positive.
     NonPositiveCodeBandGap {
+        /// Outer edge of the inner ring in mm.
         inner_ring_outer_edge_mm: f32,
+        /// Inner edge of the outer ring in mm.
         outer_ring_inner_edge_mm: f32,
     },
+    /// Validation failed: outer diameter exceeds minimum center-to-center spacing.
     OuterDiameterExceedsMinCenterSpacing {
+        /// Outer diameter in mm.
         marker_outer_diameter_mm: f32,
+        /// Minimum center spacing in mm.
         min_center_spacing_mm: f32,
     },
+    /// Validation failed: marker draw diameter exceeds minimum center-to-center spacing.
     MarkerDrawDiameterExceedsMinCenterSpacing {
+        /// Marker draw diameter in mm.
         marker_draw_diameter_mm: f32,
+        /// Minimum center spacing in mm.
         min_center_spacing_mm: f32,
     },
+    /// Validation failed: a row has zero columns after applying hex-lattice offset.
     DerivedZeroColumns {
+        /// Index of the problematic row.
         row_index: usize,
+        /// Total number of rows.
         rows: usize,
+        /// Column count for the longest row.
         long_row_cols: usize,
     },
 }
@@ -159,8 +194,11 @@ impl std::error::Error for BoardLayoutValidationError {}
 /// Load-time failures for board layout JSON.
 #[derive(Debug)]
 pub enum BoardLayoutLoadError {
+    /// File I/O error while reading the layout JSON.
     Io(std::io::Error),
+    /// JSON deserialization failed.
     JsonParse(serde_json::Error),
+    /// Deserialized values failed validation.
     Validation(BoardLayoutValidationError),
 }
 
@@ -238,12 +276,19 @@ pub struct BoardMarker {
 /// ```
 #[derive(Debug, Clone)]
 pub struct BoardLayout {
+    /// Human-readable name of the target layout.
     pub name: String,
+    /// Center-to-center spacing between adjacent markers in millimeters.
     pub pitch_mm: f32,
+    /// Number of marker rows on the board.
     pub rows: usize,
+    /// Number of columns in the longest (even-indexed) row.
     pub long_row_cols: usize,
+    /// Outer ring radius in millimeters.
     pub marker_outer_radius_mm: f32,
+    /// Inner ring radius in millimeters.
     pub marker_inner_radius_mm: f32,
+    /// Width of each ring band in millimeters.
     pub marker_ring_width_mm: f32,
     markers: Vec<BoardMarker>,
 

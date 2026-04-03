@@ -5,7 +5,8 @@
 //! - RANSAC wrapper for outlier-robust fitting.
 //! - Reprojection error computation.
 
-use nalgebra::{DMatrix, Matrix3, Vector3};
+use nalgebra::{Matrix3, Point2, Vector3};
+use projective_grid::estimate_homography as pg_estimate_homography;
 
 // ── Error type ───────────────────────────────────────────────────────────
 
@@ -82,37 +83,6 @@ pub fn homography_reprojection_error(h: &Matrix3<f64>, src: &[f64; 2], dst: &[f6
     (dx * dx + dy * dy).sqrt()
 }
 
-// ── Hartley normalization ────────────────────────────────────────────────
-
-/// Compute a normalizing transform: translate centroid to origin, scale so
-/// mean distance from origin is sqrt(2).
-fn normalize_points(pts: &[[f64; 2]]) -> (Matrix3<f64>, Vec<[f64; 2]>) {
-    let n = pts.len() as f64;
-    let cx: f64 = pts.iter().map(|p| p[0]).sum::<f64>() / n;
-    let cy: f64 = pts.iter().map(|p| p[1]).sum::<f64>() / n;
-
-    let mean_dist: f64 = pts
-        .iter()
-        .map(|p| ((p[0] - cx).powi(2) + (p[1] - cy).powi(2)).sqrt())
-        .sum::<f64>()
-        / n;
-
-    let s = if mean_dist > 1e-15 {
-        std::f64::consts::SQRT_2 / mean_dist
-    } else {
-        1.0
-    };
-
-    let t = Matrix3::new(s, 0.0, -s * cx, 0.0, s, -s * cy, 0.0, 0.0, 1.0);
-
-    let normalized: Vec<[f64; 2]> = pts
-        .iter()
-        .map(|p| [s * (p[0] - cx), s * (p[1] - cy)])
-        .collect();
-
-    (t, normalized)
-}
-
 // ── DLT ──────────────────────────────────────────────────────────────────
 
 /// Estimate homography from ≥4 point correspondences using DLT.
@@ -121,6 +91,9 @@ fn normalize_points(pts: &[[f64; 2]]) -> (Matrix3<f64>, Vec<[f64; 2]>) {
 /// `dst`: destination points (e.g., image coordinates in pixels).
 ///
 /// Returns the 3×3 homography H such that dst ≈ project(H, src).
+///
+/// Delegates to `projective_grid::estimate_homography` (Hartley-normalized
+/// DLT with a faster LU-based solver for the exact 4-point case).
 pub fn estimate_homography_dlt(
     src: &[[f64; 2]],
     dst: &[[f64; 2]],
@@ -138,66 +111,12 @@ pub fn estimate_homography_dlt(
         ));
     }
 
-    // Hartley normalization
-    let (t_src, src_n) = normalize_points(src);
-    let (t_dst, dst_n) = normalize_points(dst);
+    let src_pts: Vec<Point2<f64>> = src.iter().map(|p| Point2::new(p[0], p[1])).collect();
+    let dst_pts: Vec<Point2<f64>> = dst.iter().map(|p| Point2::new(p[0], p[1])).collect();
 
-    // Build 2n × 9 matrix A
-    let mut a = DMatrix::zeros(2 * n, 9);
-    for i in 0..n {
-        let (sx, sy) = (src_n[i][0], src_n[i][1]);
-        let (dx, dy) = (dst_n[i][0], dst_n[i][1]);
-
-        // Row 2i:   [  0  0  0 | -sx -sy -1 | dy*sx  dy*sy  dy ]
-        a[(2 * i, 3)] = -sx;
-        a[(2 * i, 4)] = -sy;
-        a[(2 * i, 5)] = -1.0;
-        a[(2 * i, 6)] = dy * sx;
-        a[(2 * i, 7)] = dy * sy;
-        a[(2 * i, 8)] = dy;
-
-        // Row 2i+1: [ sx  sy  1 |  0  0  0 | -dx*sx -dx*sy -dx ]
-        a[(2 * i + 1, 0)] = sx;
-        a[(2 * i + 1, 1)] = sy;
-        a[(2 * i + 1, 2)] = 1.0;
-        a[(2 * i + 1, 6)] = -dx * sx;
-        a[(2 * i + 1, 7)] = -dx * sy;
-        a[(2 * i + 1, 8)] = -dx;
-    }
-
-    // Solve via A^T A: the solution h is the eigenvector of the smallest
-    // eigenvalue of the 9×9 matrix A^T A. This avoids thin-SVD dimension issues.
-    let ata = a.transpose() * &a;
-    let eig = nalgebra::SymmetricEigen::new(ata);
-
-    // Find eigenvector with smallest eigenvalue
-    let mut min_idx = 0;
-    let mut min_val = eig.eigenvalues[0].abs();
-    for i in 1..9 {
-        let v = eig.eigenvalues[i].abs();
-        if v < min_val {
-            min_val = v;
-            min_idx = i;
-        }
-    }
-    let h_vec: Vec<f64> = (0..9).map(|j| eig.eigenvectors[(j, min_idx)]).collect();
-    let h_norm = Matrix3::new(
-        h_vec[0], h_vec[1], h_vec[2], h_vec[3], h_vec[4], h_vec[5], h_vec[6], h_vec[7], h_vec[8],
-    );
-
-    // Denormalize: H = T_dst^-1 * H_norm * T_src
-    let t_dst_inv = t_dst
-        .try_inverse()
-        .ok_or_else(|| HomographyError::NumericalFailure("T_dst not invertible".into()))?;
-    let h = t_dst_inv * h_norm * t_src;
-
-    // Normalize so h[2][2] = 1 (if possible)
-    let scale = h[(2, 2)];
-    if scale.abs() < 1e-15 {
-        Ok(h)
-    } else {
-        Ok(h / scale)
-    }
+    pg_estimate_homography(&src_pts, &dst_pts)
+        .map(|h| h.h)
+        .ok_or_else(|| HomographyError::NumericalFailure("DLT estimation failed".into()))
 }
 
 // ── RANSAC ───────────────────────────────────────────────────────────────
@@ -240,6 +159,29 @@ pub struct RansacHomographyResult {
     pub errors: Vec<f64>,
 }
 
+/// Sample 4 distinct random indices from `[0, n)`.
+fn sample_4_distinct(n: usize, rng: &mut rand::rngs::StdRng) -> [usize; 4] {
+    use rand::RngExt;
+    let mut indices = [0usize; 4];
+    for _ in 0..200 {
+        for idx in &mut indices {
+            *idx = rng.random_range(0..n);
+        }
+        let mut ok = true;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                if indices[i] == indices[j] {
+                    ok = false;
+                }
+            }
+        }
+        if ok {
+            return indices;
+        }
+    }
+    indices
+}
+
 /// Fit homography with RANSAC.
 ///
 /// `src`: source points (board coords).
@@ -254,40 +196,21 @@ pub fn fit_homography_ransac(
         return Err(HomographyError::TooFewPoints { needed: 4, got: n });
     }
 
-    use rand::prelude::*;
-    use rand::RngExt;
+    use rand::SeedableRng;
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
 
     let mut best_inliers = 0usize;
     let mut best_mask: Vec<bool> = vec![false; n];
     let mut best_h = Matrix3::identity();
+    let mut mask = vec![false; n];
+    let mut adaptive_limit = config.max_iters;
 
-    for _ in 0..config.max_iters {
-        // Sample 4 distinct indices
-        let mut indices = [0usize; 4];
-        let mut attempts = 0;
-        loop {
-            for idx in &mut indices {
-                *idx = rng.random_range(0..n);
-            }
-            // Check distinct
-            let mut ok = true;
-            for i in 0..4 {
-                for j in (i + 1)..4 {
-                    if indices[i] == indices[j] {
-                        ok = false;
-                    }
-                }
-            }
-            if ok {
-                break;
-            }
-            attempts += 1;
-            if attempts > 100 {
-                break;
-            }
+    for iter in 0..config.max_iters {
+        if iter >= adaptive_limit {
+            break;
         }
 
+        let indices = sample_4_distinct(n, &mut rng);
         let s4: Vec<[f64; 2]> = indices.iter().map(|&i| src[i]).collect();
         let d4: Vec<[f64; 2]> = indices.iter().map(|&i| dst[i]).collect();
 
@@ -296,9 +219,9 @@ pub fn fit_homography_ransac(
             Err(_) => continue,
         };
 
-        // Count inliers
+        // Count inliers (reuse mask buffer)
+        mask.fill(false);
         let mut count = 0usize;
-        let mut mask = vec![false; n];
         for i in 0..n {
             let err = homography_reprojection_error(&h, &src[i], &dst[i]);
             if err < config.inlier_threshold {
@@ -309,8 +232,17 @@ pub fn fit_homography_ransac(
 
         if count > best_inliers {
             best_inliers = count;
-            best_mask = mask;
+            best_mask.copy_from_slice(&mask);
             best_h = h;
+
+            // Adaptive iteration limit (Hartley & Zisserman Algorithm 4.6)
+            // confidence = 99.99%, model DoF = 4 (homography from 4 points)
+            let w = count as f64 / n as f64;
+            if w > 0.0 {
+                let p_fail = (1.0 - w.powi(4)).max(1e-15);
+                let needed = (1e-4_f64.ln() / p_fail.ln()).ceil() as usize;
+                adaptive_limit = needed.max(50).min(config.max_iters);
+            }
 
             // Early exit if >90% inliers
             if count * 10 > n * 9 {

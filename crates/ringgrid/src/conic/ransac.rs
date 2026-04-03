@@ -20,8 +20,14 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
     let mut best_inlier_count = 0usize;
     let mut best_ellipse: Option<Ellipse> = None;
     let mut best_mask: Vec<bool> = vec![false; n];
+    let mut mask = vec![false; n];
+    let mut adaptive_limit = config.max_iters;
 
-    for _ in 0..config.max_iters {
+    for iter in 0..config.max_iters {
+        if iter >= adaptive_limit {
+            break;
+        }
+
         // Sample 6 random points
         let sample = sample_indices(&mut rng, n, 6);
         let sample_pts: Vec<[f64; 2]> = sample.iter().map(|&i| points[i]).collect();
@@ -34,10 +40,9 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
             continue;
         };
 
-        // Count inliers using Sampson distance (approximate geometric
-        // distance in pixels), which is threshold-interpretable.
+        // Count inliers using Sampson distance (reuse mask buffer)
+        mask.fill(false);
         let mut inlier_count = 0usize;
-        let mut mask = vec![false; n];
         for (i, &[x, y]) in points.iter().enumerate() {
             let dist = ellipse.sampson_distance(x, y);
             if dist < config.inlier_threshold {
@@ -49,7 +54,16 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         if inlier_count > best_inlier_count {
             best_inlier_count = inlier_count;
             best_ellipse = Some(ellipse);
-            best_mask = mask;
+            best_mask.copy_from_slice(&mask);
+
+            // Adaptive iteration limit (Hartley & Zisserman Algorithm 4.6)
+            // confidence = 99.99%, model DoF = 6 (ellipse from 6 points)
+            let w = inlier_count as f64 / n as f64;
+            if w > 0.0 {
+                let p_fail = (1.0 - w.powi(6)).max(1e-15);
+                let needed = (1e-4_f64.ln() / p_fail.ln()).ceil() as usize;
+                adaptive_limit = needed.max(20).min(config.max_iters);
+            }
 
             // Early exit: if >90% of points are inliers, stop searching
             if best_inlier_count * 10 > n * 9 {

@@ -76,14 +76,15 @@ The `OuterEstimationConfig` struct controls this stage:
 |-----------|---------|-------------|
 | `search_halfwidth_px` | 4.0 | Search half-width around expected radius |
 | `radial_samples` | 64 | Number of radial samples per ray |
-| `theta_samples` | 48 | Number of angular rays |
 | `aggregator` | Median | Angular aggregation method |
 | `grad_polarity` | DarkToLight | Expected edge polarity |
 | `min_theta_coverage` | 0.6 | Minimum fraction of valid rays |
-| `min_theta_consistency` | 0.35 | Minimum fraction of rays agreeing with peak |
+| `min_theta_consistency` | 0.25 | Minimum fraction of rays agreeing with peak |
 | `allow_two_hypotheses` | true | Emit runner-up hypothesis if strong enough |
 | `second_peak_min_rel` | 0.85 | Runner-up must be this fraction of best peak |
 | `refine_halfwidth_px` | 1.0 | Per-theta local refinement half-width |
+
+The number of angular rays is **not** stored in this config. It is passed from `EdgeSampleConfig::n_rays` (default 48) so the caller can synchronize angular density between outer estimation and edge sampling.
 
 When `DetectConfig` derives parameters from `MarkerScalePrior`, the search halfwidth is expanded to cover the full diameter range.
 

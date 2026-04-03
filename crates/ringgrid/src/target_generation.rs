@@ -60,10 +60,21 @@ impl Default for PngTargetOptions {
 /// Target-generation failures.
 #[derive(Debug)]
 pub enum TargetGenerationError {
-    InvalidMargin { margin_mm: f32 },
-    InvalidDpi { dpi: f32 },
+    /// Margin value is negative or non-finite.
+    InvalidMargin {
+        /// The invalid margin value.
+        margin_mm: f32,
+    },
+    /// DPI value is non-positive or non-finite.
+    InvalidDpi {
+        /// The invalid DPI value.
+        dpi: f32,
+    },
+    /// File I/O error during target writing.
     Io(std::io::Error),
+    /// Image encoding error.
     Image(image::ImageError),
+    /// PNG-specific encoding error.
     PngEncoding(EncodingError),
 }
 

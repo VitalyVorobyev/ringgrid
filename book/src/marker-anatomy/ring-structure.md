@@ -13,7 +13,7 @@ Each marker is defined by two radii measured from the marker center:
 |-----------|---------------|-------------|
 | Outer radius | 4.8 mm | Radius of the outer ring centerline |
 | Inner radius | 3.2 mm | Radius of the inner ring centerline |
-| Ring width | 0.576 mm (0.12 * outer radius) | Width of each dark ring band |
+| Ring half-thickness | 0.576 mm (0.12 * outer radius) | Half-width of each dark ring band (full width = 1.152 mm) |
 | Pitch | 8.0 mm | Center-to-center spacing on the hex lattice |
 
 The **outer ring** is a dark annular band centered at the outer radius. Its
@@ -104,7 +104,7 @@ Key defaults:
 | `theta_samples` | 96 | Angular samples around the ring |
 | `aggregator` | `Median` | Robust to code-band sector outliers |
 | `min_theta_coverage` | 0.6 | At least 60% of angles must be valid |
-| `min_theta_consistency` | 0.35 | At least 35% must agree on edge location |
+| `min_theta_consistency` | 0.25 | At least 25% must agree on edge location |
 
 The `search_window()` method returns the normalized radial interval
 `[r_inner_expected - halfwidth, r_inner_expected + halfwidth]` where the inner

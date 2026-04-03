@@ -22,6 +22,7 @@ mod scale_probe;
 
 pub use result::{DetectionFrame, DetectionResult};
 
+pub(crate) use finalize::build_hex_grid_map;
 pub(crate) use prelude::*;
 
 pub(crate) use run::{

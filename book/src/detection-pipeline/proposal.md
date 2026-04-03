@@ -111,7 +111,7 @@ The `ProposalConfig` struct controls all proposal parameters:
 |-----------|---------|-------------|
 | `r_min` | 3.0 | Minimum voting radius in pixels |
 | `r_max` | 12.0 | Maximum voting radius in pixels |
-| `min_distance` | 10.0 | Minimum distance between output proposals (pixels) |
+| `min_distance` | 7.0 | Minimum distance between output proposals (pixels) |
 | `grad_threshold` | 0.05 | Gradient magnitude threshold (fraction of max) |
 | `min_vote_frac` | 0.1 | Minimum accumulator value (fraction of max) |
 | `accum_sigma` | 2.0 | Gaussian sigma for accumulator smoothing |
@@ -120,9 +120,11 @@ The `ProposalConfig` struct controls all proposal parameters:
 
 These defaults are overridden by `DetectConfig` when a `MarkerScalePrior` is set. The scale prior drives:
 
-- `r_min = max(0.4 * radius_min_px, 2.0)`
-- `r_max = 1.7 * radius_max_px`
-- `min_distance` — derived from marker spacing and diameter prior
+- `r_min = max(0.15 * spacing_min_px, 2.0)` where `spacing_min_px = spacing_ratio * d_min`
+- `r_max = min(0.45 * spacing_max_px, 1.35 * outer_radius_max_px)`
+- `min_distance = max(0.16 * d_min, 0.85 * spacing_min_px)`
+
+The `spacing_ratio` is derived from board geometry: `min_center_spacing_mm / (2 * outer_radius_mm)`. This ensures proposal search radii adapt to both marker scale and board density.
 
 Additionally, `max_candidates` in `ProposalConfig` limits the total proposals emitted, while `max_candidates` in `fit_decode.rs` separately caps how many proposals enter the fit-decode loop (sorted by score, highest first).
 

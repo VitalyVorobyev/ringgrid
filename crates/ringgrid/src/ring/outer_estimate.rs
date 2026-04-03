@@ -11,7 +11,7 @@ use crate::marker::{AngularAggregator, GradPolarity};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
-use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid};
+use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid, RadialScanResult};
 use super::radial_profile;
 use super::radial_profile::Polarity;
 
@@ -160,37 +160,29 @@ fn find_local_peaks(score: &[f32]) -> Vec<usize> {
     out
 }
 
-/// Estimate outer radius around a center prior using radial derivatives.
+/// Build the search window and construct the `RadialSampleGrid` for outer estimation.
 ///
-/// `theta_samples` sets the number of angular rays. Pass
-/// `edge_sample.n_rays` to keep the outer-estimation and edge-sampling
-/// resolutions in sync without a silent config override.
-///
-/// Uses an optional working<->image mapper for distortion-aware sampling.
-pub fn estimate_outer_from_prior_with_mapper(
-    gray: &GrayImage,
-    center_prior: [f32; 2],
+/// Returns `(window, polarity_candidates, track_pos, track_neg, grid)` on
+/// success, or an early-return `OuterEstimate` on failure.
+#[allow(clippy::type_complexity)]
+fn setup_outer_search_window(
     r_outer_expected_px: f32,
     cfg: &OuterEstimationConfig,
-    theta_samples: usize,
-    mapper: Option<&dyn PixelMapper>,
-    store_response: bool,
-) -> OuterEstimate {
+) -> Result<([f32; 2], Vec<Polarity>, bool, bool, RadialSampleGrid), OuterEstimate> {
     let r_expected = r_outer_expected_px.max(1.0);
     let hw = cfg.search_halfwidth_px.max(0.5);
     let mut window = [r_expected - hw, r_expected + hw];
     window[0] = window[0].max(1.0);
     if window[1] <= window[0] + 1e-3 {
-        return failed_outer_estimate(
+        return Err(failed_outer_estimate(
             r_expected,
             window,
             OuterEstimateFailure::InvalidSearchWindow,
             None,
-        );
+        ));
     }
 
     let n_r = cfg.radial_samples.max(7);
-    let n_t = theta_samples.max(8);
     let polarity_candidates: Vec<Polarity> = match cfg.grad_polarity {
         GradPolarity::DarkToLight => vec![Polarity::Pos],
         GradPolarity::LightToDark => vec![Polarity::Neg],
@@ -199,13 +191,34 @@ pub fn estimate_outer_from_prior_with_mapper(
     let track_pos = polarity_candidates.contains(&Polarity::Pos);
     let track_neg = polarity_candidates.contains(&Polarity::Neg);
     let Some(grid) = RadialSampleGrid::from_window(window, n_r) else {
-        return failed_outer_estimate(
+        return Err(failed_outer_estimate(
             r_expected,
             window,
             OuterEstimateFailure::InvalidSearchWindow,
             None,
-        );
+        ));
     };
+
+    Ok((window, polarity_candidates, track_pos, track_neg, grid))
+}
+
+/// Run the radial derivative scan and check theta coverage.
+///
+/// Returns the `RadialScanResult` on success, or an early-return
+/// `OuterEstimate` on failure.
+///
+/// `fail_ctx` holds `(r_expected, window, store_response)` for the error path.
+fn execute_outer_radial_scan(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    grid: RadialSampleGrid,
+    polarity: (usize, bool, bool),
+    mapper: Option<&dyn PixelMapper>,
+    cfg: &OuterEstimationConfig,
+    fail_ctx: (f32, [f32; 2], bool),
+) -> Result<RadialScanResult, OuterEstimate> {
+    let (n_t, track_pos, track_neg) = polarity;
+    let (r_expected, window, store_response) = fail_ctx;
     let sampler = DistortionAwareSampler::new(gray, mapper);
     let cx = center_prior[0];
     let cy = center_prior[1];
@@ -227,11 +240,10 @@ pub fn estimate_outer_from_prior_with_mapper(
             true
         },
     );
-    let n_r = scan.grid.r_samples.len();
 
     let coverage = scan.coverage();
     if scan.n_valid_theta == 0 || coverage < cfg.min_theta_coverage {
-        return failed_outer_estimate(
+        return Err(failed_outer_estimate(
             r_expected,
             window,
             OuterEstimateFailure::InsufficientThetaCoverage {
@@ -239,74 +251,130 @@ pub fn estimate_outer_from_prior_with_mapper(
                 min_required: cfg.min_theta_coverage,
             },
             store_response.then(|| scan.grid.r_samples.clone()),
-        );
+        ));
     }
+
+    Ok(scan)
+}
+
+/// Find peaks in the aggregated response for a single polarity and assemble
+/// up to two `OuterHypothesis` entries that pass theta-consistency gating.
+fn build_hypotheses_for_polarity(
+    agg_resp: &[f32],
+    pol: Polarity,
+    scan: &RadialScanResult,
+    n_r: usize,
+    cfg: &OuterEstimationConfig,
+) -> Vec<OuterHypothesis> {
+    // Convert to a score where "larger is better" regardless of polarity.
+    let score_vec: Vec<f32> = match pol {
+        Polarity::Pos => agg_resp.to_vec(),
+        Polarity::Neg => agg_resp.iter().map(|v| -v).collect(),
+    };
+
+    // Candidate peaks: local maxima in score_vec.
+    let mut peaks = find_local_peaks(&score_vec);
+    if peaks.is_empty() {
+        // Fallback: global max if no local maxima found.
+        if let Some((idx, _)) = score_vec
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        {
+            peaks.push(idx);
+        }
+    }
+
+    // Sort peaks by score desc.
+    peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
+
+    let per_theta = scan.per_theta_peaks(pol);
+
+    let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
+    let mut best_strength = None::<f32>;
+
+    for &pi in &peaks {
+        if pi == 0 || pi + 1 == n_r {
+            continue;
+        }
+        let r_star = scan.grid.r_samples[pi];
+        let peak_strength = agg_resp[pi].abs();
+        if best_strength.is_none() {
+            best_strength = Some(peak_strength);
+        } else if !cfg.allow_two_hypotheses {
+            break;
+        } else if let Some(bs) = best_strength {
+            if peak_strength < (cfg.second_peak_min_rel.clamp(0.0, 1.0) * bs) {
+                break;
+            }
+        }
+
+        let theta_consistency =
+            radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.75);
+
+        if theta_consistency < cfg.min_theta_consistency {
+            continue;
+        }
+
+        hypotheses.push(OuterHypothesis {
+            r_outer_px: r_star,
+            peak_strength,
+            theta_consistency,
+        });
+
+        if hypotheses.len() >= 2 {
+            break;
+        }
+    }
+
+    hypotheses
+}
+
+/// Estimate outer radius around a center prior using radial derivatives.
+///
+/// `theta_samples` sets the number of angular rays. Pass
+/// `edge_sample.n_rays` to keep the outer-estimation and edge-sampling
+/// resolutions in sync without a silent config override.
+///
+/// Uses an optional working<->image mapper for distortion-aware sampling.
+pub fn estimate_outer_from_prior_with_mapper(
+    gray: &GrayImage,
+    center_prior: [f32; 2],
+    r_outer_expected_px: f32,
+    cfg: &OuterEstimationConfig,
+    theta_samples: usize,
+    mapper: Option<&dyn PixelMapper>,
+    store_response: bool,
+) -> OuterEstimate {
+    let r_expected = r_outer_expected_px.max(1.0);
+    let n_t = theta_samples.max(8);
+
+    let (window, polarity_candidates, track_pos, track_neg, grid) =
+        match setup_outer_search_window(r_outer_expected_px, cfg) {
+            Ok(v) => v,
+            Err(est) => return est,
+        };
+
+    let scan = match execute_outer_radial_scan(
+        gray,
+        center_prior,
+        grid,
+        (n_t, track_pos, track_neg),
+        mapper,
+        cfg,
+        (r_expected, window, store_response),
+    ) {
+        Ok(s) => s,
+        Err(est) => return est,
+    };
+    let n_r = scan.grid.r_samples.len();
 
     let agg_resp = scan.aggregate_response(&cfg.aggregator);
 
     let mut best: Option<(OuterEstimate, f32)> = None;
 
     for pol in polarity_candidates {
-        // Convert to a score where "larger is better" regardless of polarity.
-        let score_vec: Vec<f32> = match pol {
-            Polarity::Pos => agg_resp.clone(),
-            Polarity::Neg => agg_resp.iter().map(|v| -v).collect(),
-        };
-
-        // Candidate peaks: local maxima in score_vec.
-        let mut peaks = find_local_peaks(&score_vec);
-        if peaks.is_empty() {
-            // Fallback: global max if no local maxima found.
-            if let Some((idx, _)) = score_vec
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            {
-                peaks.push(idx);
-            }
-        }
-
-        // Sort peaks by score desc.
-        peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
-
-        let per_theta = scan.per_theta_peaks(pol);
-
-        let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
-        let mut best_strength = None::<f32>;
-
-        for &pi in &peaks {
-            if pi == 0 || pi + 1 == n_r {
-                continue;
-            }
-            let r_star = scan.grid.r_samples[pi];
-            let peak_strength = agg_resp[pi].abs();
-            if best_strength.is_none() {
-                best_strength = Some(peak_strength);
-            } else if !cfg.allow_two_hypotheses {
-                break;
-            } else if let Some(bs) = best_strength {
-                if peak_strength < (cfg.second_peak_min_rel.clamp(0.0, 1.0) * bs) {
-                    break;
-                }
-            }
-
-            let theta_consistency =
-                radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.75);
-
-            if theta_consistency < cfg.min_theta_consistency {
-                continue;
-            }
-
-            hypotheses.push(OuterHypothesis {
-                r_outer_px: r_star,
-                peak_strength,
-                theta_consistency,
-            });
-
-            if hypotheses.len() >= 2 {
-                break;
-            }
-        }
+        let hypotheses = build_hypotheses_for_polarity(&agg_resp, pol, &scan, n_r, cfg);
 
         if hypotheses.is_empty() {
             continue;

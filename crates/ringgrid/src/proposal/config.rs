@@ -62,13 +62,6 @@ pub struct ProposalConfig {
     pub edge_thinning: bool,
 }
 
-/// Cap on the internal NMS peak-extraction radius. The offset table scales
-/// as `pi * r^2`, so keeping this bounded avoids quadratic blowup when
-/// `min_distance` is large. The greedy distance-suppression pass (which
-/// runs only on the handful of NMS survivors) handles the full
-/// `min_distance` guarantee.
-pub(crate) const MAX_NMS_RADIUS: f32 = 10.0;
-
 impl Default for ProposalConfig {
     fn default() -> Self {
         Self {
@@ -81,13 +74,5 @@ impl Default for ProposalConfig {
             max_candidates: None,
             edge_thinning: true,
         }
-    }
-}
-
-impl ProposalConfig {
-    /// Effective NMS radius for vote-map peak extraction (capped for
-    /// performance).
-    pub(crate) fn nms_radius(&self) -> f32 {
-        self.min_distance.min(MAX_NMS_RADIUS)
     }
 }

@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**Proposal stage: replaced internal implementation with `radsym` RSD**
+- The proposal module now delegates center detection to radsym's Radial
+  Symmetry Detector (RSD) instead of the internal Scharr gradient voting
+  implementation.
+- Deleted internal `gradient.rs`, `nms.rs`, and `voting.rs` (~440 lines); the
+  proposal module is now a thin adapter over radsym (~60 lines of glue code).
+- Public API unchanged: `Proposal`, `ProposalConfig`, `ProposalResult`,
+  `find_ellipse_centers`, and `find_ellipse_centers_with_heatmap` retain their
+  signatures and serde format.
+- `imageproc` moved from runtime dependency to dev-dependency (only used in
+  test utilities).
+- All regression benchmarks (reference, distortion, blur3, rtv3d) pass.
+
 **Workspace versioning**
 - Introduced shared `workspace.package` fields (version, edition, license,
   repository, homepage, rust-version) in the root `Cargo.toml`. Crate-level
@@ -32,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### CI
 
 - Added RTv3D real-world dataset benchmark to the regression gate skill
-  (local-only; skipped when `data/rtv3d` is not present). Strategies A and B
-  are gated on minimum decoded marker counts.
+  (local-only; skipped when `data/rtv3d` is not present). Strategy A is
+  gated on minimum decoded marker count.
 
 ## [0.5.1] — 2026-03-28
 

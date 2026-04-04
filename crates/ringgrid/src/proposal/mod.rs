@@ -124,8 +124,8 @@ fn compute_via_radsym(
     let view = radsym::ImageView::from_slice(gray.as_raw(), w as usize, h as usize)
         .expect("GrayImage dimensions always valid");
 
-    // Compute gradient
-    let gradient = match radsym::sobel_gradient(&view) {
+    // Compute Scharr gradient (matches the old internal code's operator)
+    let gradient = match radsym::scharr_gradient(&view) {
         Ok(g) => g,
         Err(_) => {
             let heatmap = keep_heatmap.then(|| vec![0.0; w as usize * h as usize]);
@@ -133,14 +133,13 @@ fn compute_via_radsym(
         }
     };
 
-    // Translate relative gradient threshold to absolute.
-    // Scale down by 0.4 to compensate for Sobel vs Scharr magnitude distribution.
+    // Translate relative gradient threshold to absolute
     let max_mag = gradient.max_magnitude();
     if max_mag < 1e-6 {
         let heatmap = keep_heatmap.then(|| vec![0.0; w as usize * h as usize]);
         return (Vec::new(), heatmap);
     }
-    let abs_threshold = config.grad_threshold * max_mag * 0.4;
+    let abs_threshold = config.grad_threshold * max_mag;
 
     let rsd_config = radsym::RsdConfig {
         radii,

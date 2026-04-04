@@ -149,7 +149,7 @@ fn compute_via_radsym(
         smoothing_factor: 0.5,
     };
 
-    let response = match radsym::rsd_response(&gradient, &rsd_config) {
+    let response = match radsym::rsd_response_fused(&gradient, &rsd_config) {
         Ok(r) => r,
         Err(_) => {
             let heatmap = keep_heatmap.then(|| vec![0.0; w as usize * h as usize]);

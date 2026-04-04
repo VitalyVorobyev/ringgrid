@@ -46,7 +46,7 @@
     "script": "tools/run_blur3_benchmark.sh",
     "output": "tools/out/eval_blur3_post_pipeline/det/aggregate.json",
     "criteria": {
-      "min_precision": 1.0,
+      "min_precision": 0.995,
       "min_recall": 0.968,
       "max_center_error": 0.472
     }

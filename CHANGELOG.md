@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flags markers whose image positions deviate from hex-neighbor midpoint
   predictions. Disabled by default; available for high-false-positive scenarios.
 
+## [0.5.2] — 2026-04-03
+
+### Changed
+
+**Workspace versioning**
+- Introduced shared `workspace.package` fields (version, edition, license,
+  repository, homepage, rust-version) in the root `Cargo.toml`. Crate-level
+  manifests now inherit these via `field.workspace = true`.
+
+### CI
+
+- Added RTv3D real-world dataset benchmark to the regression gate skill
+  (local-only; skipped when `data/rtv3d` is not present). Strategies A and B
+  are gated on minimum decoded marker counts.
+
 ## [0.5.1] — 2026-03-28
 
 ### Added

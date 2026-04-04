@@ -1,17 +1,17 @@
 [package]
 name = "ringgrid"
-version = "0.5.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
 description = "Pure-Rust detector for coded ring calibration targets"
-license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/VitalyVorobyev/ringgrid"
-homepage = "https://github.com/VitalyVorobyev/ringgrid"
 documentation = "https://docs.rs/ringgrid"
 authors = ["Vitaly Vorobyev <vit.vorobiev@gmail.com>"]
 categories = ["computer-vision", "multimedia::images", "science::robotics"]
 keywords = ["computer-vision", "calibration", "fiducial", "marker", "homography"]
-rust-version = "1.87"
 include = ["src/**", "examples/**", "README.md", "LICENSE-*", "Cargo.toml"]
 
 [dependencies]

@@ -50,5 +50,18 @@
       "min_recall": 0.968,
       "max_center_error": 0.472
     }
+  },
+  "rtv3d_benchmark": {
+    "script": ".venv/bin/python tools/run_rtv3d_eval.py",
+    "output": "tools/out/rtv3d_eval/report.json",
+    "description": "Real-world rtv3d dataset: 20 strips x 6 cameras = 120 tiles. Strategies A/B are primary regression targets.",
+    "strategies": {
+      "A_old_default_20_56": {
+        "min_total_decoded": 4600
+      },
+      "B_new_default_14_66": {
+        "min_total_decoded": 4500
+      }
+    }
   }
 }

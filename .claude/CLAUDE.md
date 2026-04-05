@@ -183,15 +183,17 @@ Self-undistort mode estimates a division-model distortion correction from detect
 
 ## Versioning
 
-When bumping the version, update **all five** locations:
-1. `Cargo.toml` — `[workspace.package] version`
-2. `crates/ringgrid/Cargo.toml` — `version` (explicit, not workspace-inherited; CI reads this with `tomllib` and cannot resolve `version.workspace = true`)
-3. `crates/ringgrid-cli/Cargo.toml` — `version` (same reason)
-4. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
-5. `crates/ringgrid-py/pyproject.toml` — `project.version` field
+The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
+`ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
+
+When bumping the version, update **three** locations:
+1. `Cargo.toml` — `[workspace.package] version` (single source of truth for workspace crates)
+2. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
+3. `crates/ringgrid-py/pyproject.toml` — `project.version` field
 
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
-version consistency between the git tag and these files using `tomllib`.
+version consistency between the git tag and these files using `tomllib`. The CI
+scripts resolve `version.workspace = true` by falling back to the workspace root.
 
 ## Conventions
 

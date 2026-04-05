@@ -38,8 +38,17 @@ jobs:
           tag = os.environ['GITHUB_REF_NAME']
           tag_version = tag[1:] if tag.startswith('v') else tag
 
-          ringgrid_rust = tomllib.loads((root / 'crates/ringgrid/Cargo.toml').read_text())['package']['version']
-          ringgrid_py_cargo = tomllib.loads((root / 'crates/ringgrid-py/Cargo.toml').read_text())['package']['version']
+          def resolve_version(crate_toml: pathlib.Path) -> str:
+              data = tomllib.loads(crate_toml.read_text())
+              v = data['package']['version']
+              if isinstance(v, str):
+                  return v
+              # version.workspace = true → read from workspace root
+              ws = tomllib.loads((root / 'Cargo.toml').read_text())
+              return ws['workspace']['package']['version']
+
+          ringgrid_rust = resolve_version(root / 'crates/ringgrid/Cargo.toml')
+          ringgrid_py_cargo = resolve_version(root / 'crates/ringgrid-py/Cargo.toml')
           ringgrid_py_project = tomllib.loads((root / 'crates/ringgrid-py/pyproject.toml').read_text())['project']['version']
 
           print(f'tag version:           {tag_version}')

@@ -5,6 +5,7 @@
 //! Per-marker coordinate lists are intentionally not part of the runtime schema.
 
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use std::path::Path;
 
 const TARGET_SCHEMA_V4: &str = "ringgrid.target.v4";
@@ -195,6 +196,7 @@ impl std::error::Error for BoardLayoutValidationError {}
 #[derive(Debug)]
 pub enum BoardLayoutLoadError {
     /// File I/O error while reading the layout JSON.
+    #[cfg(feature = "std")]
     Io(std::io::Error),
     /// JSON deserialization failed.
     JsonParse(serde_json::Error),
@@ -205,6 +207,7 @@ pub enum BoardLayoutLoadError {
 impl std::fmt::Display for BoardLayoutLoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(err) => write!(f, "failed to read target JSON: {err}"),
             Self::JsonParse(err) => write!(f, "failed to parse target JSON: {err}"),
             Self::Validation(err) => write!(f, "invalid target spec: {err}"),
@@ -215,6 +218,7 @@ impl std::fmt::Display for BoardLayoutLoadError {
 impl std::error::Error for BoardLayoutLoadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(err) => Some(err),
             Self::JsonParse(err) => Some(err),
             Self::Validation(err) => Some(err),
@@ -222,6 +226,7 @@ impl std::error::Error for BoardLayoutLoadError {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for BoardLayoutLoadError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
@@ -445,6 +450,7 @@ impl BoardLayout {
     }
 
     /// Load a board layout from a JSON file.
+    #[cfg(feature = "std")]
     pub fn from_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         let data = std::fs::read_to_string(path)?;
         Self::from_json_str(&data)
@@ -463,6 +469,7 @@ impl BoardLayout {
     }
 
     /// Write the canonical `ringgrid.target.v4` JSON representation to disk.
+    #[cfg(feature = "std")]
     pub fn write_json_file(&self, path: &Path) -> Result<(), std::io::Error> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -719,6 +726,7 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[cfg(feature = "std")]
     fn temp_json_path(prefix: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -844,6 +852,7 @@ mod tests {
         assert!(span[1] > 0.0);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn from_json_file_maps_io_error_to_typed_variant() {
         let missing = temp_json_path("missing_board");
@@ -851,6 +860,7 @@ mod tests {
         assert!(matches!(err, BoardLayoutLoadError::Io(_)));
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn from_json_file_maps_parse_error_to_typed_variant() {
         let path = temp_json_path("bad_json");
@@ -862,6 +872,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn from_json_file_maps_validation_error_to_typed_variant() {
         let path = temp_json_path("bad_schema");
@@ -930,6 +941,7 @@ mod tests {
         assert_eq!(board.name, "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152");
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn write_json_file_creates_parent_dirs_and_round_trips() {
         let path = temp_json_path("round_trip");

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-04-05
+
 ### Added
 
 - Integrated `projective-grid` crate as a dependency for hex-lattice geometry.
@@ -19,6 +21,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional topology-aware outlier filter (`topology_filter_threshold_px` config):
   flags markers whose image positions deviate from hex-neighbor midpoint
   predictions. Disabled by default; available for high-false-positive scenarios.
+
+
+### Changed
+
+**Proposal stage: replaced internal implementation with `radsym` RSD**
+- The proposal module now delegates center detection to radsym's fused Radial
+  Symmetry Detector (`rsd_response_fused`) with Scharr gradient, instead of
+  the internal Scharr gradient voting implementation.
+- Uses radsym 0.1.3's fused multi-radius API: all radii accumulated in a single
+  pass with one Gaussian blur, matching the old code's algorithmic structure.
+- Deleted internal `gradient.rs`, `nms.rs`, and `voting.rs` (~440 lines); the
+  proposal module is now a thin adapter over radsym (~60 lines of glue code).
+- Public API unchanged: `Proposal`, `ProposalConfig`, `ProposalResult`,
+  `find_ellipse_centers`, and `find_ellipse_centers_with_heatmap` retain their
+  signatures and serde format.
+- `imageproc` moved from runtime dependency to dev-dependency (only used in
+  test utilities).
+- Performance at parity: 5.5% faster on the 720×540 fixture benchmark (29.5ms
+  vs 30.1ms on main); larger synthetic images ~25% slower due to Gaussian blur
+  scaling.
+- All 4 regression benchmarks pass (reference, distortion, blur3, rtv3d).
+
+**Workspace versioning**
+- Introduced shared `workspace.package` fields (version, edition, license,
+  repository, homepage, rust-version) in the root `Cargo.toml`. Crate-level
+  manifests now inherit these via `field.workspace = true`.
 
 ## [0.5.1] — 2026-03-28
 

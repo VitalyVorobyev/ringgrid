@@ -278,10 +278,10 @@ fn generate_projective_point_candidates(
 
     // Method B (equivalent in exact arithmetic): (Q2 - lambda Q1) p = 0.
     let m = q2 - q1 * lambda_re;
-    if let Some(p_h) = real_null_vector_3x3(&m) {
-        if p_h[2].abs() > eps {
-            points.push(Vector3::new(p_h[0] / p_h[2], p_h[1] / p_h[2], 1.0));
-        }
+    if let Some(p_h) = real_null_vector_3x3(&m)
+        && p_h[2].abs() > eps
+    {
+        points.push(Vector3::new(p_h[0] / p_h[2], p_h[1] / p_h[2], 1.0));
     }
 
     points
@@ -421,7 +421,7 @@ pub fn ring_center_projective_with_debug(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{rngs::StdRng, RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     fn circle_conic(radius: f64) -> Matrix3<f64> {
         Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))

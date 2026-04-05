@@ -11,18 +11,17 @@
 
 use image::GrayImage;
 
+use crate::DetectedMarker;
 use crate::conic::Ellipse;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
 use crate::ring::OuterEstimationConfig;
-use crate::DetectedMarker;
 
 use super::{
-    inner_fit, marker_build,
+    DetectConfig, inner_fit, marker_build,
     marker_build::compute_marker_confidence,
     median_outer_radius_from_neighbors_px,
     outer_fit::{self, OuterFitCandidate},
-    DetectConfig,
 };
 
 /// Annotates each marker with the ratio of its outer radius to the median
@@ -50,16 +49,16 @@ pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [DetectedMarker], k:
 
     for (marker, ratio) in markers.iter_mut().zip(ratios) {
         marker.fit.neighbor_radius_ratio = ratio;
-        if let Some(r) = ratio {
-            if r < WARN_THRESHOLD {
-                tracing::warn!(
-                    ratio = r,
-                    center_x = marker.center[0],
-                    center_y = marker.center[1],
-                    id = ?marker.id,
-                    "marker outer radius anomalous vs neighbors (possible inner-as-outer)"
-                );
-            }
+        if let Some(r) = ratio
+            && r < WARN_THRESHOLD
+        {
+            tracing::warn!(
+                ratio = r,
+                center_x = marker.center[0],
+                center_y = marker.center[1],
+                id = ?marker.id,
+                "marker outer radius anomalous vs neighbors (possible inner-as-outer)"
+            );
         }
     }
 }

@@ -20,9 +20,12 @@ crates/ringgrid/src/
 ├── lib.rs              # Re-exports only (public API surface)
 ├── api.rs              # Detector (primary entry point)
 ├── board_layout.rs     # Board geometry (hex lattice layout, JSON loader)
+├── proposal/           # Center proposal generation (delegates to radsym)
+│   ├── mod.rs          # Adapter: radsym fused RSD → ringgrid Proposal types
+│   ├── config.rs       # ProposalConfig (translated to radsym RsdConfig)
+│   └── tests.rs        # Behavioral tests
 ├── detector/           # Per-marker detection primitives
 │   ├── config.rs       # DetectConfig and sub-configs
-│   ├── proposal.rs     # Scharr gradient voting + NMS → candidate centers
 │   ├── outer_fit.rs    # RANSAC ellipse fitting (Fitzgibbon direct LS)
 │   ├── inner_fit.rs    # Inner ring ellipse fit
 │   ├── marker_build.rs # DetectedMarker, FitMetrics structs + builder
@@ -67,7 +70,7 @@ crates/ringgrid/src/
 
 ### Single-pass stages (in order)
 
-1. **Proposal** (`detector/proposal.rs`) — Scharr gradient voting + NMS → candidate centers
+1. **Proposal** (`proposal/mod.rs`) — radsym fused RSD (Scharr gradient + magnitude voting + NMS) → candidate centers
 2. **Outer Estimate** (`ring/outer_estimate.rs`) — radius hypotheses via radial profile peaks
 3. **Outer Fit** (`detector/outer_fit.rs`) — RANSAC ellipse fitting (Fitzgibbon direct LS)
 4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (893 codewords)

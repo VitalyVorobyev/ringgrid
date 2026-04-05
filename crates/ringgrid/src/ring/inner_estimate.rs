@@ -11,7 +11,7 @@ use crate::marker::{GradPolarity, MarkerSpec};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
-use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid, RadialScanResult};
+use super::radial_estimator::{RadialSampleGrid, RadialScanResult, scan_radial_derivatives};
 use super::radial_profile;
 pub use super::radial_profile::Polarity;
 

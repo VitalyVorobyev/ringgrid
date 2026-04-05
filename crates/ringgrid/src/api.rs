@@ -8,7 +8,7 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
-use crate::detector::config::{derive_proposal_config, ScaleTiers};
+use crate::detector::config::{ScaleTiers, derive_proposal_config};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;

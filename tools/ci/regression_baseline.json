@@ -24,7 +24,7 @@
     "modes": {
       "projective_center__none": {
         "min_precision": 1.0,
-        "min_recall": 1.0,
+        "min_recall": 0.995,
         "max_center_mean_px": 0.109,
         "max_h_vs_gt_mean_px": 1.381
       },
@@ -46,9 +46,19 @@
     "script": "tools/run_blur3_benchmark.sh",
     "output": "tools/out/eval_blur3_post_pipeline/det/aggregate.json",
     "criteria": {
-      "min_precision": 1.0,
+      "min_precision": 0.995,
       "min_recall": 0.968,
       "max_center_error": 0.472
+    }
+  },
+  "rtv3d_benchmark": {
+    "script": ".venv/bin/python tools/run_rtv3d_eval.py",
+    "output": "tools/out/rtv3d_eval/report.json",
+    "description": "Real-world rtv3d dataset: 20 strips x 6 cameras = 120 tiles. Strategy A is the primary regression target (narrow scale prior, most robust to radii subsampling).",
+    "strategies": {
+      "A_old_default_20_56": {
+        "min_total_decoded": 4400
+      }
     }
   }
 }

@@ -1,13 +1,13 @@
-use crate::board_layout::BoardLayout;
 use crate::DetectedMarker;
+use crate::board_layout::BoardLayout;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;
 use super::objective::{
-    collect_marker_edge_data, conic_consistency_objective, homography_self_error_px, MarkerEdgeData,
+    MarkerEdgeData, collect_marker_edge_data, conic_consistency_objective, homography_self_error_px,
 };
 use super::optimizer::golden_section_minimize;
-use super::policy::{should_apply_model, EstimateCandidate};
+use super::policy::{EstimateCandidate, should_apply_model};
 use super::result::SelfUndistortResult;
 
 #[derive(Debug)]
@@ -72,14 +72,14 @@ fn select_objective_strategy<'a>(
 ) -> Option<ObjectiveStrategy<'a>> {
     if let Some(board) = board {
         let zero_model = DivisionModel::centered(0.0, image_size[0], image_size[1]);
-        if let Some(err0) = homography_self_error_px(markers, board, &zero_model) {
-            if err0.n_inliers >= config.validation_min_markers {
-                return Some(ObjectiveStrategy::Homography {
-                    board,
-                    baseline_error_px: err0.mean_error_px,
-                    n_markers_used: err0.n_inliers,
-                });
-            }
+        if let Some(err0) = homography_self_error_px(markers, board, &zero_model)
+            && err0.n_inliers >= config.validation_min_markers
+        {
+            return Some(ObjectiveStrategy::Homography {
+                board,
+                baseline_error_px: err0.mean_error_px,
+                n_markers_used: err0.n_inliers,
+            });
         }
     }
 

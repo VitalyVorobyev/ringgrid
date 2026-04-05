@@ -6,7 +6,7 @@ use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
-    estimate_outer_from_prior_with_mapper, OuterEstimateFailure, OuterHypothesis, OuterStatus,
+    OuterEstimateFailure, OuterHypothesis, OuterStatus, estimate_outer_from_prior_with_mapper,
 };
 
 use super::DetectConfig;

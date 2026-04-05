@@ -1,7 +1,7 @@
+use crate::DetectedMarker;
 use crate::board_layout::BoardLayout;
 use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
 use crate::homography;
-use crate::DetectedMarker;
 
 use super::super::{DivisionModel, PixelMapper};
 

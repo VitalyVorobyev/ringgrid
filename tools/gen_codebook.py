@@ -151,6 +151,131 @@ def generate_codebook(
     return best_chosen, achieved
 
 
+def compute_distance_histogram(codewords: list[int]) -> dict:
+    """Compute full pairwise cyclic distance histogram, worst pairs, and per-word badness."""
+    nc = len(codewords)
+    histogram = [0] * (BITS + 1)
+    min_d = BITS
+    worst_pairs: list[tuple[int, int]] = []
+
+    for i in range(nc):
+        for j in range(i + 1, nc):
+            d = cyclic_hamming(codewords[i], codewords[j])
+            histogram[d] += 1
+            if d < min_d:
+                min_d = d
+                worst_pairs = [(i, j)]
+            elif d == min_d:
+                worst_pairs.append((i, j))
+
+    # Per-codeword count of how many d_min pairs it participates in
+    badness: dict[int, int] = {}
+    for i, j in worst_pairs:
+        badness[i] = badness.get(i, 0) + 1
+        badness[j] = badness.get(j, 0) + 1
+
+    return {
+        "histogram": histogram,
+        "min_dist": min_d,
+        "worst_pairs": worst_pairs,
+        "badness": badness,
+    }
+
+
+def estimate_removal_for_target(
+    codewords: list[int], target_dist: int
+) -> tuple[list[int], list[int]]:
+    """Greedy removal of codewords until min cyclic distance reaches target_dist.
+
+    Returns (remaining_codewords, removed_indices_in_original_order).
+    """
+    # Work with (original_index, word) pairs
+    active: list[tuple[int, int]] = list(enumerate(codewords))
+    removed: list[int] = []
+
+    while True:
+        # Find current min distance and worst pairs among active words
+        min_d = BITS
+        pairs_at_min: list[tuple[int, int]] = []  # indices into `active`
+
+        for ai in range(len(active)):
+            for aj in range(ai + 1, len(active)):
+                d = cyclic_hamming(active[ai][1], active[aj][1])
+                if d < min_d:
+                    min_d = d
+                    pairs_at_min = [(ai, aj)]
+                elif d == min_d:
+                    pairs_at_min.append((ai, aj))
+
+        if min_d >= target_dist:
+            break
+
+        # Count how many min-dist pairs each active index participates in
+        counts: dict[int, int] = {}
+        for ai, aj in pairs_at_min:
+            counts[ai] = counts.get(ai, 0) + 1
+            counts[aj] = counts.get(aj, 0) + 1
+
+        # Remove the word with the most min-dist pairs
+        worst_active_idx = max(counts, key=lambda k: counts[k])
+        removed.append(active[worst_active_idx][0])
+        active.pop(worst_active_idx)
+
+    remaining = [w for _, w in active]
+    return remaining, sorted(removed)
+
+
+def print_analysis(codewords: list[int]) -> None:
+    """Print full distance distribution analysis."""
+    nc = len(codewords)
+    total_pairs = nc * (nc - 1) // 2
+    print(f"\nDistance histogram ({nc} codewords, {total_pairs} pairs):")
+
+    result = compute_distance_histogram(codewords)
+    histogram = result["histogram"]
+    min_d = result["min_dist"]
+    worst_pairs = result["worst_pairs"]
+    badness = result["badness"]
+
+    for d in range(BITS + 1):
+        if histogram[d] > 0:
+            pct = 100.0 * histogram[d] / total_pairs
+            print(f"  d={d:2d}: {histogram[d]:7d} pairs ({pct:.3f}%)")
+
+    print(f"\nWorst pairs (d={min_d}): {len(worst_pairs)} pairs")
+    for i, j in worst_pairs[:20]:
+        print(
+            f"  ID {i:4d} (0x{codewords[i]:04X}) <-> "
+            f"ID {j:4d} (0x{codewords[j]:04X})"
+        )
+    if len(worst_pairs) > 20:
+        print(f"  ... and {len(worst_pairs) - 20} more")
+
+    if badness:
+        print(f"\nCodewords with most d={min_d} neighbors:")
+        ranked = sorted(badness.items(), key=lambda kv: -kv[1])
+        for idx, count in ranked[:15]:
+            print(f"  ID {idx:4d} (0x{codewords[idx]:04X}): {count} pairs at d={min_d}")
+        if len(ranked) > 15:
+            print(f"  ... and {len(ranked) - 15} more")
+
+    # Estimate removals needed for d_min=3 and d_min=4
+    for target in (3, 4):
+        if min_d >= target:
+            print(f"\nAlready at d_min >= {target}, no removals needed.")
+            continue
+        print(f"\nGreedy removal to reach d_min={target}...")
+        remaining, removed_ids = estimate_removal_for_target(codewords, target)
+        print(
+            f"  Removed {len(removed_ids)} codewords -> "
+            f"{len(remaining)} remaining, d_min={target}"
+        )
+        if len(removed_ids) <= 30:
+            print(f"  Removed IDs: {removed_ids}")
+        else:
+            print(f"  Removed IDs (first 30): {removed_ids[:30]} ...")
+
+
 def verified_min_dist(codewords: list[int], max_pairs: int = 500_000) -> int:
     """Compute min pairwise cyclic Hamming distance.
     For large codebooks, sample pairs to keep runtime bounded."""
@@ -345,6 +470,11 @@ def main() -> None:
         type=str,
         default="crates/ringgrid/src/marker/codebook.rs",
     )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Print distance distribution analysis of the codebook and exit",
+    )
     args = parser.parse_args()
 
     if args.bits != 16:
@@ -377,6 +507,10 @@ def main() -> None:
             seed=args.seed,
             restarts=args.restarts,
         )
+
+    if args.analyze:
+        print_analysis(base_codewords)
+        return
 
     pool = build_candidate_pool()
     extended_codewords, extended_achieved = build_extended_profile(base_codewords, pool)

@@ -832,15 +832,15 @@ fn build_detect_config(
     }
 
     // Outer estimator / decode / scoring tuning options.
-    if let Some(v) = overrides.outer_min_theta_consistency {
-        if v.is_finite() {
-            config.outer_estimation.min_theta_consistency = v.clamp(0.0, 1.0);
-        }
+    if let Some(v) = overrides.outer_min_theta_consistency
+        && v.is_finite()
+    {
+        config.outer_estimation.min_theta_consistency = v.clamp(0.0, 1.0);
     }
-    if let Some(v) = overrides.outer_second_peak_min_rel {
-        if v.is_finite() {
-            config.outer_estimation.second_peak_min_rel = v.clamp(0.0, 1.0);
-        }
+    if let Some(v) = overrides.outer_second_peak_min_rel
+        && v.is_finite()
+    {
+        config.outer_estimation.second_peak_min_rel = v.clamp(0.0, 1.0);
     }
     if let Some(v) = overrides.decode_min_margin {
         config.decode.min_decode_margin = v;
@@ -848,15 +848,15 @@ fn build_detect_config(
     if let Some(v) = overrides.decode_max_dist {
         config.decode.max_decode_dist = v;
     }
-    if let Some(v) = overrides.decode_min_confidence {
-        if v.is_finite() {
-            config.decode.min_decode_confidence = v.clamp(0.0, 1.0);
-        }
+    if let Some(v) = overrides.decode_min_confidence
+        && v.is_finite()
+    {
+        config.decode.min_decode_confidence = v.clamp(0.0, 1.0);
     }
-    if let Some(v) = overrides.outer_size_score_weight {
-        if v.is_finite() {
-            config.outer_fit.size_score_weight = v.clamp(0.0, 1.0);
-        }
+    if let Some(v) = overrides.outer_size_score_weight
+        && v.is_finite()
+    {
+        config.outer_fit.size_score_weight = v.clamp(0.0, 1.0);
     }
 
     // ID correction: CLI --id-correct enables it on top of whatever the config file set.

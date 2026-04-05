@@ -1,5 +1,5 @@
-use crate::board_layout::BoardLayout;
 use crate::DetectedMarker;
+use crate::board_layout::BoardLayout;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;

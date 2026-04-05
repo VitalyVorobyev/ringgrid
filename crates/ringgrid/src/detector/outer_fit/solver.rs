@@ -1,4 +1,4 @@
-use crate::conic::{fit_ellipse_direct, try_fit_ellipse_ransac, Ellipse};
+use crate::conic::{Ellipse, fit_ellipse_direct, try_fit_ellipse_ransac};
 use crate::detector::DetectConfig;
 use crate::ring::edge_sample::EdgeSampleResult;
 

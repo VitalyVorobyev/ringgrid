@@ -4,9 +4,9 @@ use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
-use crate::pixelmap::{estimate_self_undistort, PixelMapper};
+use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
-    find_ellipse_centers_with_heatmap, Proposal, ProposalConfig, ProposalResult,
+    Proposal, ProposalConfig, ProposalResult, find_ellipse_centers_with_heatmap,
 };
 use image::{ImageBuffer, Luma};
 use std::collections::HashSet;

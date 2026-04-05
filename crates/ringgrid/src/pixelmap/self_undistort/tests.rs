@@ -2,8 +2,8 @@ use nalgebra::{Matrix3, Vector3};
 
 use super::super::DivisionModel;
 use super::*;
-use crate::conic::fit_ellipse_direct;
 use crate::DetectedMarker;
+use crate::conic::fit_ellipse_direct;
 
 fn circle_conic(radius: f64) -> Matrix3<f64> {
     Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))

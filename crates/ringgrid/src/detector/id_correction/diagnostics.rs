@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 
 use super::consistency::{consistency_evidence_for_id, should_clear_by_consistency};
 use super::index::dist2;
-use super::vote::{gather_trusted_neighbors_local_scale, vote_for_candidate, VoteOutcome};
-use super::workspace::{is_soft_locked_assignment, marker_center_is_finite, IdCorrectionWorkspace};
+use super::vote::{VoteOutcome, gather_trusted_neighbors_local_scale, vote_for_candidate};
+use super::workspace::{IdCorrectionWorkspace, is_soft_locked_assignment, marker_center_is_finite};
 
 pub(super) fn estimate_adjacent_spacing_px(ws: &IdCorrectionWorkspace<'_>) -> Option<f64> {
     let mut dists = Vec::<f64>::new();

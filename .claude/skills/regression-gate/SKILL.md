@@ -1,6 +1,6 @@
 ---
 name: regression-gate
-description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 3 synthetic benchmarks + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
+description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 3 synthetic benchmarks + 1 real-world benchmark + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
 ---
 
 # Regression Gate
@@ -30,7 +30,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Step 2 — Run benchmarks
 
-Run all 3 benchmark scripts in sequence using `.venv`:
+Run all 3 synthetic benchmark scripts in sequence using `.venv`:
 
 ```bash
 bash tools/run_reference_benchmark.sh
@@ -39,6 +39,16 @@ bash tools/run_blur3_benchmark.sh
 ```
 
 Each script writes results to `tools/out/`. If any script fails, report the error and continue with the remaining benchmarks.
+
+**RTv3D real-world benchmark (local only — private data)**
+
+If the `data/rtv3d` directory exists, also run:
+
+```bash
+.venv/bin/python tools/run_rtv3d_eval.py
+```
+
+If `data/rtv3d` does not exist, skip this step and report `RTv3D benchmark: SKIPPED (no data)`. This dataset is private and not available in CI.
 
 ## Step 3 — Check benchmark results against baselines
 
@@ -57,6 +67,11 @@ For each mode in the baseline, read the corresponding mode from the benchmark ou
 - `avg_precision >= baseline.criteria.min_precision`
 - `avg_recall >= baseline.criteria.min_recall`
 - `avg_center_error <= baseline.criteria.max_center_error`
+
+**For rtv3d benchmark** (report.json format):
+
+For each strategy in the baseline, read the corresponding strategy from the benchmark output and check:
+- `total_decoded >= baseline.min_total_decoded`
 
 Collect all failures into a report table.
 
@@ -102,6 +117,7 @@ REGRESSION GATE: ALL PASSED
   Reference benchmark: OK (2 modes)
   Distortion benchmark: OK (3 modes)
   Blur3 benchmark: OK
+  RTv3D benchmark: OK (2 strategies)  — or SKIPPED (no data)
   Maintainability: OK
 ```
 
@@ -121,5 +137,5 @@ To regenerate baselines after intentional improvements:
 
 - Baselines: `tools/ci/regression_baseline.json`
 - Maintainability: `tools/ci/maintainability_baseline.json`, `tools/ci/maintainability_guardrails.py`
-- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`
-- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`
+- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_rtv3d_eval.py`
+- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/rtv3d_eval/`

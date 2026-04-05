@@ -1,8 +1,8 @@
+use crate::BoardLayout;
 use crate::board_layout::{
     marker_code_band_bounds_mm, marker_outer_draw_radius_mm, marker_ring_half_thickness_mm,
 };
 use crate::marker::codebook::CODEBOOK;
-use crate::BoardLayout;
 use image::{GrayImage, Luma};
 use png::{BitDepth, ColorType, Encoder as PngEncoder, EncodingError, PixelDimensions, Unit};
 use std::f64::consts::PI;
@@ -256,10 +256,10 @@ impl BoardLayout {
         options: &SvgTargetOptions,
     ) -> Result<(), TargetGenerationError> {
         let svg = self.render_target_svg(options)?;
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, svg)?;
         Ok(())
@@ -365,10 +365,10 @@ impl BoardLayout {
     ) -> Result<(), TargetGenerationError> {
         let image = self.render_target_png(options)?;
         let dpi = validated_dpi(options.dpi)?;
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         let writer = BufWriter::new(File::create(path)?);
         encode_png(writer, &image, dpi)?;

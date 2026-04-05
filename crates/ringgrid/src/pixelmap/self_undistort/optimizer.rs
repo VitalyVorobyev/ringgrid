@@ -33,9 +33,5 @@ pub(super) fn golden_section_minimize(
         evals += 1;
     }
 
-    if f1 < f2 {
-        (x1, f1)
-    } else {
-        (x2, f2)
-    }
+    if f1 < f2 { (x1, f1) } else { (x2, f2) }
 }

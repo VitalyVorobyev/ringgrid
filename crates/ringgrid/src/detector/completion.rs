@@ -2,21 +2,22 @@ use std::collections::HashMap;
 
 use image::GrayImage;
 use nalgebra::Point2;
-use projective_grid::hex::hex_predict_grid_position;
 use projective_grid::GridIndex;
+use projective_grid::hex::hex_predict_grid_position;
 
+use crate::DetectedMarker;
 use crate::conic::Ellipse;
 use crate::detector::id_correction::{affine_to_image, fit_local_affine};
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
 use crate::marker::codec::Codebook;
 use crate::ring::edge_sample::EdgeSampleResult;
-use crate::DetectedMarker;
 
 use super::{
+    CompletionParams, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
-    median_outer_radius_from_neighbors_px, CompletionParams, DetectConfig, OuterFitCandidate,
+    median_outer_radius_from_neighbors_px,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -253,14 +254,14 @@ fn check_decode_gate(
     decode_result: Option<&crate::marker::decode::DecodeResult>,
     expected_id: usize,
 ) -> Option<CompletionDecodeNotice> {
-    if let Some(d) = decode_result {
-        if d.id != expected_id {
-            return Some(CompletionDecodeNotice {
-                reason: CompletionDecodeNoticeReason::DecodeMismatchAccepted,
-                expected_id,
-                observed_id: d.id,
-            });
-        }
+    if let Some(d) = decode_result
+        && d.id != expected_id
+    {
+        return Some(CompletionDecodeNotice {
+            reason: CompletionDecodeNoticeReason::DecodeMismatchAccepted,
+            expected_id,
+            observed_id: d.id,
+        });
     }
     None
 }
@@ -563,10 +564,10 @@ pub(crate) fn complete_with_h(
         }
         stats.n_in_image += 1;
 
-        if let Some(max) = params.max_attempts {
-            if attempted_fits >= max {
-                break;
-            }
+        if let Some(max) = params.max_attempts
+            && attempted_fits >= max
+        {
+            break;
         }
         attempted_fits += 1;
         stats.n_attempted += 1;

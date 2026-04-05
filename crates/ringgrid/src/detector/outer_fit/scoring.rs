@@ -1,4 +1,4 @@
-use crate::conic::{rms_sampson_distance, Ellipse};
+use crate::conic::{Ellipse, rms_sampson_distance};
 use crate::ring::edge_sample::EdgeSampleResult;
 
 use super::super::marker_build::fit_support_score;

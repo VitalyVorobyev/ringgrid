@@ -8,10 +8,10 @@ use super::consistency::{
 };
 use super::index::dist2;
 use super::types::{RecoverySource, ScrubStage, Trust};
-use super::vote::{gather_trusted_neighbors_local_scale, vote_for_candidate, VoteOutcome};
+use super::vote::{VoteOutcome, gather_trusted_neighbors_local_scale, vote_for_candidate};
 use super::workspace::{
-    apply_id_assignment, is_soft_locked_assignment, marker_center_is_finite,
-    should_block_by_trusted_confidence, IdCorrectionWorkspace,
+    IdCorrectionWorkspace, apply_id_assignment, is_soft_locked_assignment, marker_center_is_finite,
+    should_block_by_trusted_confidence,
 };
 
 fn config_soft_lock_blocks_override(
@@ -88,17 +88,16 @@ fn run_local_stage(
             ) {
                 continue;
             }
-            if ws.markers[i].id.is_none() {
-                if let (Some(h), Some(board_xy)) = (
+            if ws.markers[i].id.is_none()
+                && let (Some(h), Some(board_xy)) = (
                     ws.anchor_h.as_ref(),
                     ws.board_index.id_to_xy.get(&candidate_id),
-                ) {
-                    let proj =
-                        homography_project(h, f64::from(board_xy[0]), f64::from(board_xy[1]));
-                    let err = dist2(proj, ws.markers[i].center).sqrt();
-                    if !err.is_finite() || err > ws.config.h_reproj_gate_px {
-                        continue;
-                    }
+                )
+            {
+                let proj = homography_project(h, f64::from(board_xy[0]), f64::from(board_xy[1]));
+                let err = dist2(proj, ws.markers[i].center).sqrt();
+                if !err.is_finite() || err > ws.config.h_reproj_gate_px {
+                    continue;
                 }
             }
             if should_block_by_trusted_confidence(i, candidate_id, ws.markers, &ws.trust) {

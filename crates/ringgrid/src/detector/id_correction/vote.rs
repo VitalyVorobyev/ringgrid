@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::detector::marker_build::DetectedMarker;
 
-use super::index::{dist2, BoardIndex};
+use super::index::{BoardIndex, dist2};
 use super::math::{affine_to_board, fit_local_affine};
 use super::types::Trust;
 
@@ -172,11 +172,11 @@ pub(super) fn vote_for_candidate(
     let mut n_votes: usize = 0;
 
     for n in neighbors {
-        if let Some(pb) = affine_predicted_board {
-            if let Some(candidate_id) = board_index.nearest_within(pb, tolerance_mm) {
-                *votes.entry(candidate_id).or_insert(0.0) += n.confidence * AFFINE_VOTE_WEIGHT;
-                n_votes += 1;
-            }
+        if let Some(pb) = affine_predicted_board
+            && let Some(candidate_id) = board_index.nearest_within(pb, tolerance_mm)
+        {
+            *votes.entry(candidate_id).or_insert(0.0) += n.confidence * AFFINE_VOTE_WEIGHT;
+            n_votes += 1;
         }
 
         if let Some(ratio) = local_ratio {
@@ -257,11 +257,11 @@ pub(super) fn resolve_id_conflicts(markers: &mut [DetectedMarker]) -> usize {
     }
     let mut n_cleared = 0usize;
     for (i, m) in markers.iter_mut().enumerate() {
-        if let Some(id) = m.id {
-            if best.get(&id).copied() != Some(i) {
-                m.id = None;
-                n_cleared += 1;
-            }
+        if let Some(id) = m.id
+            && best.get(&id).copied() != Some(i)
+        {
+            m.id = None;
+            n_cleared += 1;
         }
     }
     n_cleared

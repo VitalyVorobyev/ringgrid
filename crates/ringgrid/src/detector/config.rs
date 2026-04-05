@@ -731,8 +731,9 @@ impl Default for InnerAsOuterRecoveryConfig {
 pub enum ProposalDownscale {
     /// Auto-select downscale factor from `marker_scale.diameter_min_px`.
     ///
-    /// `factor = clamp(floor(d_min / 20.0), 1, 4)`. Ensures markers remain
-    /// at least ~10 px diameter after downscaling.
+    /// `factor = clamp(floor(d_min / 14.0), 1, 4)`. Ensures markers remain
+    /// at least ~7 px diameter after downscaling, which is sufficient for
+    /// RSD center detection.
     Auto,
     /// No downscaling (full resolution proposals).
     #[default]
@@ -747,7 +748,7 @@ impl ProposalDownscale {
         match self {
             Self::Auto => {
                 let d_min = marker_scale.diameter_range_px()[0];
-                (d_min / 20.0).floor().clamp(1.0, 4.0) as u32
+                (d_min / 14.0).floor().clamp(1.0, 4.0) as u32
             }
             Self::Off => 1,
             Self::Factor(f) => (*f).clamp(1, 4),

@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::detector::marker_build::DetectedMarker;
-use crate::homography::{fit_homography_ransac, homography_project, RansacHomographyConfig};
+use crate::homography::{RansacHomographyConfig, fit_homography_ransac, homography_project};
 
 use super::consistency::candidate_passes_local_consistency_gate;
 use super::local::candidate_reprojection_error;
 use super::types::{HomographyAssignment, HomographyFallbackModel, RecoverySource, Trust};
 use super::workspace::{
-    apply_id_assignment, is_soft_locked_assignment, marker_center_is_finite, IdCorrectionWorkspace,
+    IdCorrectionWorkspace, apply_id_assignment, is_soft_locked_assignment, marker_center_is_finite,
 };
 
 const HOMOGRAPHY_FALLBACK_SEED: u64 = 0x1DC0_11D0;
@@ -175,10 +175,10 @@ fn collect_homography_assignments(
 
         let mut best: Option<(usize, f64)> = None;
         for (candidate_id, _) in ws.board_index.nearest_k_ids(board_hint, top_k) {
-            if let Some(&trusted_conf) = trusted_conf_by_id.get(&candidate_id) {
-                if trusted_conf >= m.confidence {
-                    continue;
-                }
+            if let Some(&trusted_conf) = trusted_conf_by_id.get(&candidate_id)
+                && trusted_conf >= m.confidence
+            {
+                continue;
             }
             if !candidate_passes_local_consistency_gate(ws, i, candidate_id) {
                 continue;

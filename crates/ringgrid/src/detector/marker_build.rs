@@ -1,6 +1,6 @@
 use crate::conic::{self, Ellipse};
-use crate::marker::decode::DecodeResult;
 use crate::marker::DecodeMetrics;
+use crate::marker::decode::DecodeResult;
 use crate::ring::edge_sample::EdgeSampleResult;
 
 use super::config::InnerFitConfig;

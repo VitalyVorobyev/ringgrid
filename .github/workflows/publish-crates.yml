@@ -41,7 +41,17 @@ jobs:
           root = pathlib.Path(".")
           tag = os.environ["GITHUB_REF_NAME"]
           tag_version = tag[1:] if tag.startswith("v") else tag
-          package_version = tomllib.loads((root / "crates/ringgrid/Cargo.toml").read_text())["package"]["version"]
+
+          def resolve_version(crate_toml: pathlib.Path) -> str:
+              data = tomllib.loads(crate_toml.read_text())
+              v = data["package"]["version"]
+              if isinstance(v, str):
+                  return v
+              # version.workspace = true → read from workspace root
+              ws = tomllib.loads((root / "Cargo.toml").read_text())
+              return ws["workspace"]["package"]["version"]
+
+          package_version = resolve_version(root / "crates/ringgrid/Cargo.toml")
 
           print(f"tag version:     {tag_version}")
           print(f"crate version:   {package_version}")

@@ -3,10 +3,10 @@
 use crate::board_layout::BoardLayout;
 use crate::detector::DetectedMarker;
 
-use super::core::{fit_homography_ransac, RansacHomographyConfig, RansacStats};
+use super::core::{RansacHomographyConfig, RansacStats, fit_homography_ransac};
 use super::{
-    collect_marker_correspondences, collect_masked_inlier_errors, mean_and_p95,
-    reprojection_errors, CorrespondenceDestinationFrame, DuplicateIdPolicy,
+    CorrespondenceDestinationFrame, DuplicateIdPolicy, collect_marker_correspondences,
+    collect_masked_inlier_errors, mean_and_p95, reprojection_errors,
 };
 
 pub(crate) fn refit_homography(
@@ -97,11 +97,7 @@ pub(crate) fn mean_reproj_error_px(
             n += 1;
         }
     }
-    if n == 0 {
-        f64::NAN
-    } else {
-        sum / n as f64
-    }
+    if n == 0 { f64::NAN } else { sum / n as f64 }
 }
 
 pub(crate) fn compute_h_stats(

@@ -3,14 +3,14 @@ use std::time::Instant;
 
 use image::GrayImage;
 use nalgebra::Point2;
-use projective_grid::hex::hex_find_inconsistent_corners;
 use projective_grid::GridIndex;
+use projective_grid::hex::hex_find_inconsistent_corners;
 
 use super::{
-    annotate_neighbor_radius_ratios, apply_projective_centers, complete_with_h, compute_h_stats,
-    global_filter, matrix3_to_array, mean_reproj_error_px, refit_homography,
-    try_recover_inner_as_outer, verify_and_correct_ids, warn_center_correction_without_intrinsics,
-    CompletionStats, DetectConfig,
+    CompletionStats, DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
+    complete_with_h, compute_h_stats, global_filter, matrix3_to_array, mean_reproj_error_px,
+    refit_homography, try_recover_inner_as_outer, verify_and_correct_ids,
+    warn_center_correction_without_intrinsics,
 };
 use crate::board_layout::BoardLayout;
 use crate::detector::{DetectedMarker, DetectionSource};
@@ -905,8 +905,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("board_xy_mm must be present for valid id");
         assert_eq!(board_xy.len(), 2);
-        assert!(board_xy
-            .iter()
-            .all(|v| v.as_f64().is_some_and(|x| x.is_finite())));
+        assert!(
+            board_xy
+                .iter()
+                .all(|v| v.as_f64().is_some_and(|x| x.is_finite()))
+        );
     }
 }

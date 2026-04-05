@@ -2,9 +2,9 @@
 
 use nalgebra::{Matrix3, SMatrix, Vector6};
 
+use super::ConicCoeffs;
 use super::eigen::solve_gep_3x3;
 use super::types::Ellipse;
-use super::ConicCoeffs;
 
 /// Fit an ellipse to a set of 2D points using the direct least-squares method
 /// of Fitzgibbon et al. (1999).

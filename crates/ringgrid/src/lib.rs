@@ -68,13 +68,13 @@ pub(crate) mod test_utils;
 
 // High-level detector facade and proposal-only convenience helpers
 pub use api::{
-    propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
-    propose_with_marker_diameter, propose_with_marker_scale, Detector,
+    Detector, propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
+    propose_with_marker_diameter, propose_with_marker_scale,
 };
 
 // Proposal module (standalone ellipse center detection)
-pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 pub use proposal::{Proposal, ProposalConfig, ProposalResult};
+pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
 // Result types
 pub use detector::{DetectedMarker, DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};

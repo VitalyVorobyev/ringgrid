@@ -1,7 +1,7 @@
 use std::f32::consts::PI as PI_F32;
 use std::f64::consts::PI as PI_F64;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use image::GrayImage;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};

@@ -81,7 +81,7 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
     let inlier_pts: Vec<[f64; 2]> = best_mask
         .iter()
         .zip(points.iter())
-        .filter(|(&m, _)| m)
+        .filter(|&(&m, _)| m)
         .map(|(_, &p)| p)
         .collect();
 
@@ -135,8 +135,8 @@ fn sample_indices(rng: &mut impl rand::Rng, n: usize, k: usize) -> Vec<usize> {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use rand::prelude::*;
     use rand::RngExt;
+    use rand::prelude::*;
 
     /// Helper: create an ellipse and sample points on it.
     fn make_test_ellipse() -> Ellipse {

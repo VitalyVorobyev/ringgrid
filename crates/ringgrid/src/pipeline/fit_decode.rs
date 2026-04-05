@@ -7,10 +7,10 @@ use super::inner_fit;
 use super::marker_build::{
     compute_marker_confidence, decode_metrics_from_result, fit_metrics_with_inner,
 };
-use super::outer_fit::{fit_outer_candidate_from_prior, OuterFitCandidate, OuterFitRejectReason};
-use super::{dedup_by_id, dedup_markers, DetectConfig};
-use crate::detector::marker_build::DetectionSource;
+use super::outer_fit::{OuterFitCandidate, OuterFitRejectReason, fit_outer_candidate_from_prior};
+use super::{DetectConfig, dedup_by_id, dedup_markers};
 use crate::detector::DetectedMarker;
+use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::Proposal;
 use crate::ring::edge_sample::DistortionAwareSampler;

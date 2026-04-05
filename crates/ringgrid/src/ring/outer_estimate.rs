@@ -11,7 +11,7 @@ use crate::marker::{AngularAggregator, GradPolarity};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
-use super::radial_estimator::{scan_radial_derivatives, RadialSampleGrid, RadialScanResult};
+use super::radial_estimator::{RadialSampleGrid, RadialScanResult, scan_radial_derivatives};
 use super::radial_profile;
 use super::radial_profile::Polarity;
 
@@ -303,10 +303,10 @@ fn build_hypotheses_for_polarity(
             best_strength = Some(peak_strength);
         } else if !cfg.allow_two_hypotheses {
             break;
-        } else if let Some(bs) = best_strength {
-            if peak_strength < (cfg.second_peak_min_rel.clamp(0.0, 1.0) * bs) {
-                break;
-            }
+        } else if let Some(bs) = best_strength
+            && peak_strength < (cfg.second_peak_min_rel.clamp(0.0, 1.0) * bs)
+        {
+            break;
         }
 
         let theta_consistency =

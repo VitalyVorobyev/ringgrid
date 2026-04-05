@@ -220,8 +220,8 @@ mod tests {
         CODEBOOK_EXTENDED_N, CODEBOOK_MIN_CYCLIC_DIST, CODEBOOK_N,
     };
     use super::*;
-    use rand::prelude::*;
     use rand::RngExt;
+    use rand::prelude::*;
     use std::collections::HashSet;
 
     fn assert_no_codeword_is_rotationally_symmetric(words: &[u16]) {

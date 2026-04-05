@@ -18,7 +18,7 @@ pub(crate) mod config;
 pub(crate) use center_correction::{
     apply_projective_centers, warn_center_correction_without_intrinsics,
 };
-pub(crate) use completion::{complete_with_h, CompletionStats};
+pub(crate) use completion::{CompletionStats, complete_with_h};
 pub use config::{
     CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
     InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
@@ -33,6 +33,6 @@ pub(crate) use inner_as_outer_recovery::{
 pub use inner_fit::{InnerFitReason, InnerFitStatus};
 pub use marker_build::{DetectedMarker, DetectionSource, FitMetrics};
 pub(crate) use outer_fit::{
-    fit_outer_candidate_from_prior_for_completion, median_outer_radius_from_neighbors_px,
-    OuterFitCandidate,
+    OuterFitCandidate, fit_outer_candidate_from_prior_for_completion,
+    median_outer_radius_from_neighbors_px,
 };

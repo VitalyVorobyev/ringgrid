@@ -1,5 +1,5 @@
-use crate::conic::Conic2D;
 use crate::DetectedMarker;
+use crate::conic::Conic2D;
 
 use super::{CircleRefinementMethod, DetectConfig};
 
@@ -17,7 +17,7 @@ pub(crate) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
 /// Apply projective center correction to the provided marker slice.
 pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
     use crate::ring::projective_center::{
-        ring_center_projective_with_debug, RingCenterProjectiveOptions,
+        RingCenterProjectiveOptions, ring_center_projective_with_debug,
     };
 
     if !config.circle_refinement.uses_projective_center() {
@@ -57,33 +57,31 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
             continue;
         };
 
-        if let Some(max_residual) = config.projective_center.max_selected_residual {
-            if !res.debug.selected_residual.is_finite()
-                || res.debug.selected_residual > max_residual
-            {
-                n_rejected_residual += 1;
-                continue;
-            }
+        if let Some(max_residual) = config.projective_center.max_selected_residual
+            && (!res.debug.selected_residual.is_finite()
+                || res.debug.selected_residual > max_residual)
+        {
+            n_rejected_residual += 1;
+            continue;
         }
 
-        if let Some(min_sep) = config.projective_center.min_eig_separation {
-            if !res.debug.selected_eig_separation.is_finite()
-                || res.debug.selected_eig_separation < min_sep
-            {
-                n_rejected_eig_sep += 1;
-                continue;
-            }
+        if let Some(min_sep) = config.projective_center.min_eig_separation
+            && (!res.debug.selected_eig_separation.is_finite()
+                || res.debug.selected_eig_separation < min_sep)
+        {
+            n_rejected_eig_sep += 1;
+            continue;
         }
 
         let center_projective = [res.center.x, res.center.y];
         let dx = center_projective[0] - center_before[0];
         let dy = center_projective[1] - center_before[1];
         let center_shift = (dx * dx + dy * dy).sqrt();
-        if let Some(max_shift_px) = config.projective_center.max_center_shift_px {
-            if !center_shift.is_finite() || center_shift > max_shift_px {
-                n_rejected_shift += 1;
-                continue;
-            }
+        if let Some(max_shift_px) = config.projective_center.max_center_shift_px
+            && (!center_shift.is_finite() || center_shift > max_shift_px)
+        {
+            n_rejected_shift += 1;
+            continue;
         }
 
         m.center = center_projective;

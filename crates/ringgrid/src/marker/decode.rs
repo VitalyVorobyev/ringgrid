@@ -614,11 +614,7 @@ mod tests {
                     let sector = if sector < 0 { sector + 16 } else { sector } as u32;
                     let bit = (codeword >> sector) & 1;
                     let bright = if inverted { bit == 0 } else { bit == 1 };
-                    if bright {
-                        220u8
-                    } else {
-                        40u8
-                    }
+                    if bright { 220u8 } else { 40u8 }
                 } else {
                     200u8 // background
                 };

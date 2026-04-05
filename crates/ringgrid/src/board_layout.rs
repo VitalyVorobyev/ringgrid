@@ -464,10 +464,10 @@ impl BoardLayout {
 
     /// Write the canonical `ringgrid.target.v4` JSON representation to disk.
     pub fn write_json_file(&self, path: &Path) -> Result<(), std::io::Error> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
 
         std::fs::write(path, format!("{}\n", self.to_json_string()))

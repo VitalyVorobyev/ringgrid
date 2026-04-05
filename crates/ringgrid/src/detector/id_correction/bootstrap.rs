@@ -1,5 +1,5 @@
 use super::types::Trust;
-use super::workspace::{is_exact_decode, IdCorrectionWorkspace};
+use super::workspace::{IdCorrectionWorkspace, is_exact_decode};
 
 pub(super) fn bootstrap_trust_anchors(ws: &mut IdCorrectionWorkspace<'_>) -> usize {
     let mut n_seeds = 0usize;

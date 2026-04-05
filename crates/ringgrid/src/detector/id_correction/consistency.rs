@@ -2,9 +2,9 @@ use crate::detector::marker_build::DetectedMarker;
 
 use super::index::dist2;
 use super::types::{ConsistencyEvidence, ScrubStage, Trust};
-use super::vote::{gather_trusted_neighbors_local_scale, vote_for_candidate, VoteOutcome};
+use super::vote::{VoteOutcome, gather_trusted_neighbors_local_scale, vote_for_candidate};
 use super::workspace::{
-    clear_marker_id, is_soft_locked_assignment, marker_center_is_finite, IdCorrectionWorkspace,
+    IdCorrectionWorkspace, clear_marker_id, is_soft_locked_assignment, marker_center_is_finite,
 };
 
 pub(super) fn local_edge_neighbor_ids(

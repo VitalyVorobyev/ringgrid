@@ -6,7 +6,7 @@ mod self_undistort;
 
 pub use cameramodel::{CameraIntrinsics, CameraModel};
 pub use distortion::{DivisionModel, RadialTangentialDistortion, UndistortConfig};
-pub use self_undistort::{estimate_self_undistort, SelfUndistortConfig, SelfUndistortResult};
+pub use self_undistort::{SelfUndistortConfig, SelfUndistortResult, estimate_self_undistort};
 
 /// Mapping between raw image pixels and detector working-frame pixels.
 ///

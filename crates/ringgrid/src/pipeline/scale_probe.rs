@@ -12,7 +12,7 @@
 
 use image::GrayImage;
 
-use crate::proposal::{find_ellipse_centers, ProposalConfig};
+use crate::proposal::{ProposalConfig, find_ellipse_centers};
 
 // Geometric series of candidate probe radii covering diameters ~8–220 px.
 // 20 values from r=4 to r=110, factor ≈ 1.196 per step.
@@ -103,11 +103,7 @@ fn dominant_probe_radius(
         }
     }
 
-    if best_var <= 0.0 {
-        None
-    } else {
-        Some(best_r)
-    }
+    if best_var <= 0.0 { None } else { Some(best_r) }
 }
 
 /// Estimate dominant marker code-band radii from the image.

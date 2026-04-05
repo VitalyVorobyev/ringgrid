@@ -6,7 +6,7 @@ use crate::marker::MarkerSpec;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
-    estimate_inner_scale_from_outer_with_mapper, InnerEstimate, InnerStatus, Polarity,
+    InnerEstimate, InnerStatus, Polarity, estimate_inner_scale_from_outer_with_mapper,
 };
 use crate::ring::radial_profile;
 
@@ -301,16 +301,16 @@ fn check_inner_fit_gates(
     r_hint: Option<f32>,
     cfg: &InnerFitConfig,
 ) -> Option<(InnerFitReason, InnerFitReasonContext)> {
-    if let Some(ir) = inlier_ratio {
-        if ir < cfg.min_inlier_ratio {
-            return Some((
-                InnerFitReason::InlierRatioLow,
-                InnerFitReasonContext::InlierRatioLow {
-                    observed_inlier_ratio: ir,
-                    min_required_inlier_ratio: cfg.min_inlier_ratio,
-                },
-            ));
-        }
+    if let Some(ir) = inlier_ratio
+        && ir < cfg.min_inlier_ratio
+    {
+        return Some((
+            InnerFitReason::InlierRatioLow,
+            InnerFitReasonContext::InlierRatioLow {
+                observed_inlier_ratio: ir,
+                min_required_inlier_ratio: cfg.min_inlier_ratio,
+            },
+        ));
     }
 
     let dx = inner.cx - outer.cx;
@@ -329,17 +329,17 @@ fn check_inner_fit_gates(
     let mean_outer = ((outer.a + outer.b) * 0.5).max(1e-9);
     let mean_inner = (inner.a + inner.b) * 0.5;
     let ratio_meas = mean_inner / mean_outer;
-    if let Some(r_h) = r_hint {
-        if (ratio_meas - r_h as f64).abs() > cfg.max_ratio_abs_error {
-            return Some((
-                InnerFitReason::RatioMismatch,
-                InnerFitReasonContext::RatioMismatch {
-                    measured_ratio: ratio_meas,
-                    hint_ratio: r_h,
-                    max_allowed_abs_error: cfg.max_ratio_abs_error,
-                },
-            ));
-        }
+    if let Some(r_h) = r_hint
+        && (ratio_meas - r_h as f64).abs() > cfg.max_ratio_abs_error
+    {
+        return Some((
+            InnerFitReason::RatioMismatch,
+            InnerFitReasonContext::RatioMismatch {
+                measured_ratio: ratio_meas,
+                hint_ratio: r_h,
+                max_allowed_abs_error: cfg.max_ratio_abs_error,
+            },
+        ));
     }
 
     if !rms_residual.is_finite() || rms_residual > cfg.max_rms_residual {

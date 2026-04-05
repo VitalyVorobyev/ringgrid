@@ -161,12 +161,15 @@ Self-undistort mode estimates a division-model distortion correction from detect
 
 ## Versioning
 
-The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
-`ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
-`ringgrid-py` is excluded from the workspace — its version must be updated manually
-in **three** places when bumping:
-- `crates/ringgrid-py/Cargo.toml` (`version` field + `ringgrid` dependency version)
-- `crates/ringgrid-py/pyproject.toml` (`project.version` field)
+When bumping the version, update **all five** locations:
+1. `Cargo.toml` — `[workspace.package] version`
+2. `crates/ringgrid/Cargo.toml` — `version` (explicit, not workspace-inherited; CI reads this with `tomllib` and cannot resolve `version.workspace = true`)
+3. `crates/ringgrid-cli/Cargo.toml` — `version` (same reason)
+4. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
+5. `crates/ringgrid-py/pyproject.toml` — `project.version` field
+
+CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
+version consistency between the git tag and these files using `tomllib`.
 
 ## Conventions
 
@@ -182,6 +185,14 @@ in **three** places when bumping:
 - If a translation layer is unavoidable, document why it exists and ensure only one side owns defaults.
 
 ## CI / checks
+
+GitHub Actions workflows in `.github/workflows/`:
+- `ci.yml` — fmt, clippy, test on push/PR
+- `publish-crates.yml` — publish ringgrid + ringgrid-cli to crates.io on tag
+- `release-pypi.yml` — build and publish Python wheels to PyPI on tag
+- `release.yml` — create GitHub release
+- `publish-docs.yml` — build and deploy mdBook docs
+- `audit.yml` — dependency audit
 
 Run locally:
 ```bash

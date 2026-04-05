@@ -8,35 +8,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Structure
 
-Cargo workspace with two crates:
+Cargo workspace (edition 2024, MSRV 1.88) with two crate members plus an excluded Python binding:
 - `crates/ringgrid/` — detection algorithms, math primitives, result types
 - `crates/ringgrid-cli/` — CLI binary (`ringgrid`) with clap-based argument parsing
+- `crates/ringgrid-py/` — PyO3 Python bindings (excluded from workspace, built via maturin)
 - `tools/` — Python utilities for synthetic data generation, evaluation, scoring, and visualization
+- `py/` — Python scripts for rtv3d benchmarking and overlay visualization
+
+Key external dependency: `radsym` crate provides the proposal-stage center detection (fused RSD with Scharr gradient). Python package management uses `uv` (virtualenv at `.venv`).
 
 ## Module Layout
 
 ```
 crates/ringgrid/src/
 ├── lib.rs              # Re-exports only (public API surface)
-├── api.rs              # Detector (primary entry point)
+├── api.rs              # Detector facade + propose_with_* free functions
 ├── board_layout.rs     # Board geometry (hex lattice layout, JSON loader)
+├── target_generation.rs # SVG/PNG target rendering
 ├── proposal/           # Center proposal generation (delegates to radsym)
 │   ├── mod.rs          # Adapter: radsym fused RSD → ringgrid Proposal types
 │   ├── config.rs       # ProposalConfig (translated to radsym RsdConfig)
 │   └── tests.rs        # Behavioral tests
 ├── detector/           # Per-marker detection primitives
-│   ├── config.rs       # DetectConfig and sub-configs
-│   ├── outer_fit.rs    # RANSAC ellipse fitting (Fitzgibbon direct LS)
+│   ├── config.rs       # DetectConfig and all sub-configs
+│   ├── outer_fit/      # RANSAC ellipse fitting (Fitzgibbon direct LS)
+│   │   ├── mod.rs, sampling.rs, scoring.rs, solver.rs
 │   ├── inner_fit.rs    # Inner ring ellipse fit
+│   ├── inner_as_outer_recovery.rs # Recover inner ring from outer-fit failures
 │   ├── marker_build.rs # DetectedMarker, FitMetrics structs + builder
 │   ├── dedup.rs        # Spatial + ID-based deduplication
 │   ├── global_filter.rs# RANSAC homography filter
 │   ├── completion.rs   # Conservative fits at missing H-projected IDs
-│   └── center_correction.rs # Projective center application
+│   ├── center_correction.rs # Projective center application
+│   └── id_correction/  # BFS hex-neighbor ID consensus
+│       ├── mod.rs, engine.rs, workspace.rs, types.rs, index.rs
+│       ├── local.rs, homography.rs, vote.rs, math.rs
+│       ├── bootstrap.rs, consistency.rs, cleanup.rs, diagnostics.rs
 ├── ring/               # Ring-level sampling & estimation primitives
 │   ├── outer_estimate.rs    # Radius hypotheses via radial profile peaks
 │   ├── inner_estimate.rs    # Inner ring scale estimation
 │   ├── radial_profile.rs    # Radial intensity profile sampling
+│   ├── radial_estimator.rs  # Radial profile estimator
 │   ├── edge_sample.rs       # Edge point sampling (distortion-aware)
 │   └── projective_center.rs # Unbiased center from inner+outer conics
 ├── marker/             # Code decoding & marker specification
@@ -46,7 +58,7 @@ crates/ringgrid/src/
 │   └── marker_spec.rs  # MarkerSpec type
 ├── pipeline/           # Detection pipeline orchestration
 │   ├── mod.rs          # DetectionResult struct, module glue, re-exports
-│   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort/multiscale flow
+│   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort/multiscale
 │   ├── fit_decode.rs   # Proposals → fit → decode → dedup
 │   ├── finalize.rs     # Center correction → global filter → completion → final H
 │   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
@@ -54,7 +66,8 @@ crates/ringgrid/src/
 │   └── result.rs       # DetectionResult type
 ├── homography/         # Homography estimation & utilities
 │   ├── core.rs         # DLT + RANSAC, RansacStats
-│   └── utils.rs        # Refit, reprojection error, matrix conversion
+│   ├── utils.rs        # Refit, reprojection error, matrix conversion
+│   └── correspondence.rs # Point correspondence matching
 ├── conic/              # Ellipse/conic math
 │   ├── types.rs        # Ellipse type
 │   ├── fit.rs          # Direct ellipse fitting (Fitzgibbon)
@@ -63,7 +76,9 @@ crates/ringgrid/src/
 ├── pixelmap/           # Camera, distortion, pixel mapping
 │   ├── cameramodel.rs  # CameraModel, CameraIntrinsics
 │   ├── distortion.rs   # RadialTangentialDistortion, DivisionModel
-│   └── self_undistort.rs # Self-undistort estimation
+│   └── self_undistort/ # Self-undistort estimation
+│       ├── mod.rs, config.rs, result.rs
+│       ├── estimator.rs, objective.rs, optimizer.rs, policy.rs
 ```
 
 ## Detection Pipeline Architecture
@@ -72,32 +87,35 @@ crates/ringgrid/src/
 
 1. **Proposal** (`proposal/mod.rs`) — radsym fused RSD (Scharr gradient + magnitude voting + NMS) → candidate centers
 2. **Outer Estimate** (`ring/outer_estimate.rs`) — radius hypotheses via radial profile peaks
-3. **Outer Fit** (`detector/outer_fit.rs`) — RANSAC ellipse fitting (Fitzgibbon direct LS)
+3. **Outer Fit** (`detector/outer_fit/`) — RANSAC ellipse fitting (Fitzgibbon direct LS)
 4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (893 codewords)
 5. **Inner Fit** (`detector/inner_fit.rs`) — inner ring ellipse fit
 6. **Dedup** (`detector/dedup.rs`) — spatial + ID-based deduplication
 7. **Projective Center** (`detector/center_correction.rs`) — correct fit-decode marker centers (once per marker)
-8. **Global Filter** (`detector/global_filter.rs`) — RANSAC homography if ≥4 decoded markers (uses corrected centers)
-9. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs + projective center for new markers
-10. **Final H Refit** — refit homography from all corrected centers
+8. **ID Correction** (`detector/id_correction/`) — BFS hex-neighbor consensus
+9. **Global Filter** (`detector/global_filter.rs`) — RANSAC homography if ≥4 decoded markers (uses corrected centers)
+10. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs + projective center for new markers
+11. **Final H Refit** — refit homography from all corrected centers
 
-Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–10 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`.
+Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–11 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`.
 
 ### Multi-scale / adaptive pipeline
 
 For multi-scale detection (`detect_multiscale`, `detect_adaptive`, `detect_adaptive_with_hint`), the pipeline is split at the finalize boundary:
 
-- **`finalize_premerge`** — runs stages 7 (projective center) only; returns `Vec<DetectedMarker>` without global filter, completion, or H refit. Called once per tier.
+- **`finalize_premerge`** — runs stages 7–8 (projective center + ID correction) only; returns `Vec<DetectedMarker>` without global filter, completion, or H refit. Called once per tier.
 - **`merge_multiscale_markers`** (`detector/dedup.rs`) — size-consistency-aware NMS across all tier outputs. Prefers markers whose outer radius matches the neighborhood median (k=6 hex-lattice neighbors); confidence breaks ties.
-- **`finalize_postmerge`** — runs stages 8–10 (global filter + completion + final H refit) exactly once on the merged pool.
+- **`finalize_postmerge`** — runs stages 9–11 (global filter + completion + final H refit) exactly once on the merged pool.
 
 Scale probe (`pipeline/scale_probe.rs`): ring angular-variance sweep at top-K gradient proposals over 20 geometric radius candidates (4–110 px). High variance at a radius indicates the code band (alternating bright/dark sectors). Code-band midpoint ≈ 0.8× outer ring radius; results feed `ScaleTiers::from_detected_radii`.
 
-Default `MarkerScalePrior` is **[14, 66] px** (updated from [20, 56] in this release, +11.4% on the rtv3d dataset).
+Default `MarkerScalePrior` is **[14, 66] px**.
 
 ## Public API
 
-All detection goes through the `Detector` struct (`api.rs`). No public free functions.
+All detection goes through the `Detector` struct (`api.rs`). Standalone proposal functions are also available:
+- `find_ellipse_centers`, `find_ellipse_centers_with_heatmap` — low-level proposal generation
+- `propose_with_marker_scale`, `propose_with_marker_diameter` (+ heatmap variants) — board-aware proposal helpers
 
 Key public types:
 - `Detector` — entry point
@@ -107,6 +125,7 @@ Key public types:
 - `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
 - `Ellipse` — conic geometry
+- `Proposal`, `ProposalConfig`, `ProposalResult` — proposal types
 
 ## Build & Development Commands
 
@@ -115,24 +134,27 @@ Key public types:
 cargo build --release
 
 # Tests
-cargo test --workspace --all-features
+cargo test --workspace
 
 # Lint & format
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 
+# Python bindings (uses uv for package management)
+cd crates/ringgrid-py && ../../.venv/bin/maturin develop --release && cd ../..
+
 # Run detector
 cargo run -- detect --image <path> --out <path> --marker-diameter 32.0
 
 # End-to-end synthetic eval (generate → detect → score)
-python3 tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_run
+.venv/bin/python tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_run
 
 # Score a single detection
-python3 tools/score_detect.py --gt <gt.json> --pred <det.json> --gate 8.0 --out <score.json>
+.venv/bin/python tools/score_detect.py --gt <gt.json> --pred <det.json> --gate 8.0 --out <score.json>
 
 # Regenerate embedded codebook/board constants (don't hand-edit these)
-python3 tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/codebook.rs
-python3 tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
+.venv/bin/python tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/codebook.rs
+.venv/bin/python tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
 cargo build  # rebuild after regenerating
 ```
 
@@ -183,6 +205,7 @@ version consistency between the git tag and these files using `tomllib`.
 - Avoid mirrored structs (`*Params` vs `*Config`) that carry the same fields/defaults; consolidate into one type unless domains are genuinely different.
 - Avoid duplicated thresholds/gating logic across modules; centralize constants and semantics.
 - If a translation layer is unavoidable, document why it exists and ensure only one side owns defaults.
+- Python package management uses `uv`. Virtual environment at `.venv`. Use `.venv/bin/python` and `.venv/bin/uv pip install` for all Python operations.
 
 ## CI / checks
 
@@ -200,3 +223,18 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+## Regression Gate
+
+The `/regression-gate` skill runs the full regression suite (invoke after significant changes):
+
+1. Build release + Python bindings
+2. Run 3 synthetic benchmarks + 1 real-world benchmark (rtv3d, local-only):
+   - `bash tools/run_reference_benchmark.sh`
+   - `bash tools/run_distortion_benchmark.sh`
+   - `bash tools/run_blur3_benchmark.sh`
+   - `.venv/bin/python tools/run_rtv3d_eval.py` (skipped if `data/rtv3d` absent)
+3. Validate against `tools/ci/regression_baseline.json`
+4. Run `tools/ci/maintainability_guardrails.py`
+
+Baselines: `tools/ci/regression_baseline.json` (synthetic + rtv3d thresholds), `tools/ci/maintainability_baseline.json` (function size, dead code, doc coverage).

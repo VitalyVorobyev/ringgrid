@@ -159,6 +159,15 @@ Optional radial-tangential distortion model (`pixelmap/`). When camera intrinsic
 
 Self-undistort mode estimates a division-model distortion correction from detected ellipse edge points, then re-runs detection with the estimated mapper.
 
+## Versioning
+
+The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
+`ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
+`ringgrid-py` is excluded from the workspace — its version must be updated manually
+in **three** places when bumping:
+- `crates/ringgrid-py/Cargo.toml` (`version` field + `ringgrid` dependency version)
+- `crates/ringgrid-py/pyproject.toml` (`project.version` field)
+
 ## Conventions
 
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`

@@ -19,7 +19,10 @@ fn validate_gray(pixels: &[u8], width: u32, height: u32) -> Result<GrayImage, Js
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} grayscale pixels ({}x{}), got {}",
-            expected, width, height, pixels.len()
+            expected,
+            width,
+            height,
+            pixels.len()
         )));
     }
     Ok(GrayImage::from_raw(width, height, pixels.to_vec()).expect("buffer size validated"))
@@ -30,7 +33,10 @@ fn validate_rgba(pixels: &[u8], width: u32, height: u32) -> Result<(), JsValue> 
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} RGBA bytes ({}x{}x4), got {}",
-            expected, width, height, pixels.len()
+            expected,
+            width,
+            height,
+            pixels.len()
         )));
     }
     Ok(())
@@ -44,8 +50,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
 }
 
 fn parse_board(board_json: &str) -> Result<ringgrid::BoardLayout, JsValue> {
-    ringgrid::BoardLayout::from_json_str(board_json)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+    ringgrid::BoardLayout::from_json_str(board_json).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, JsValue> {
@@ -146,12 +151,7 @@ impl RinggridDetector {
 
     /// Detect markers from RGBA pixels (e.g. canvas ImageData).
     /// Returns JSON string (DetectionResult).
-    pub fn detect_rgba(
-        &self,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<String, JsValue> {
+    pub fn detect_rgba(&self, pixels: &[u8], width: u32, height: u32) -> Result<String, JsValue> {
         validate_dimensions(width, height)?;
         validate_rgba(pixels, width, height)?;
         let gray = rgba_to_gray(pixels, width, height);

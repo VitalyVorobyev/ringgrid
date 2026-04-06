@@ -5,15 +5,15 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
-
 jobs:
   build-and-publish:
     name: Build WASM and publish to npm
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -52,13 +52,12 @@ jobs:
         run: cp crates/ringgrid-wasm/README.md crates/ringgrid-wasm/pkg/README.md
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
+          package-manager-cache: false
           registry-url: "https://registry.npmjs.org"
 
-      - name: Publish to npm
+      - name: Publish to npm with Trusted Publishing
         working-directory: crates/ringgrid-wasm/pkg
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public

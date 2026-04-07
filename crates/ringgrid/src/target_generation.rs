@@ -4,10 +4,14 @@ use crate::board_layout::{
 };
 use crate::marker::codebook::CODEBOOK;
 use image::{GrayImage, Luma};
+#[cfg(feature = "std")]
 use png::{BitDepth, ColorType, Encoder as PngEncoder, EncodingError, PixelDimensions, Unit};
 use std::f64::consts::PI;
+#[cfg(feature = "std")]
 use std::fs::File;
+#[cfg(feature = "std")]
 use std::io::BufWriter;
+#[cfg(feature = "std")]
 use std::path::Path;
 
 const CODE_SECTORS: usize = 16;
@@ -71,10 +75,12 @@ pub enum TargetGenerationError {
         dpi: f32,
     },
     /// File I/O error during target writing.
+    #[cfg(feature = "std")]
     Io(std::io::Error),
     /// Image encoding error.
     Image(image::ImageError),
     /// PNG-specific encoding error.
+    #[cfg(feature = "std")]
     PngEncoding(EncodingError),
 }
 
@@ -87,8 +93,10 @@ impl std::fmt::Display for TargetGenerationError {
             Self::InvalidDpi { dpi } => {
                 write!(f, "dpi must be finite and > 0 (got {dpi})")
             }
+            #[cfg(feature = "std")]
             Self::Io(err) => write!(f, "failed to write target output: {err}"),
             Self::Image(err) => write!(f, "failed to encode target image: {err}"),
+            #[cfg(feature = "std")]
             Self::PngEncoding(err) => write!(f, "failed to encode PNG target: {err}"),
         }
     }
@@ -97,14 +105,17 @@ impl std::fmt::Display for TargetGenerationError {
 impl std::error::Error for TargetGenerationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(err) => Some(err),
             Self::Image(err) => Some(err),
+            #[cfg(feature = "std")]
             Self::PngEncoding(err) => Some(err),
             Self::InvalidMargin { .. } | Self::InvalidDpi { .. } => None,
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for TargetGenerationError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
@@ -117,6 +128,7 @@ impl From<image::ImageError> for TargetGenerationError {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<EncodingError> for TargetGenerationError {
     fn from(value: EncodingError) -> Self {
         Self::PngEncoding(value)
@@ -250,6 +262,7 @@ impl BoardLayout {
     }
 
     /// Write a printable SVG target to disk.
+    #[cfg(feature = "std")]
     pub fn write_target_svg(
         &self,
         path: &Path,
@@ -358,6 +371,7 @@ impl BoardLayout {
     ///
     /// This always writes PNG bytes and embeds the requested `dpi` as PNG
     /// physical pixel dimensions (`pHYs`) so the output preserves print scale.
+    #[cfg(feature = "std")]
     pub fn write_target_png(
         &self,
         path: &Path,
@@ -392,6 +406,7 @@ fn validated_dpi(dpi: f32) -> Result<f64, TargetGenerationError> {
     }
 }
 
+#[cfg(feature = "std")]
 fn encode_png<W: std::io::Write>(
     writer: W,
     image: &GrayImage,
@@ -778,6 +793,7 @@ fn square(x: f64) -> f64 {
     x * x
 }
 
+#[cfg(feature = "std")]
 fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
     (dpi * 1000.0 / MM_PER_INCH).round() as u32
 }

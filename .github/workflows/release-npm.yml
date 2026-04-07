@@ -1,0 +1,63 @@
+name: Release npm Package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    name: Build WASM and publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          WASM_VER="$(grep '^version' crates/ringgrid-wasm/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          echo "tag version:  $VER"
+          echo "wasm version: $WASM_VER"
+          test "$WASM_VER" = "$VER"
+
+      - name: Build WASM package
+        run: wasm-pack build crates/ringgrid-wasm --target web --release
+
+      - name: Patch package name
+        working-directory: crates/ringgrid-wasm/pkg
+        run: |
+          sed -i 's/"name": "ringgrid-wasm"/"name": "ringgrid"/' package.json
+          cat package.json
+
+      - name: Copy README
+        run: cp crates/ringgrid-wasm/README.md crates/ringgrid-wasm/pkg/README.md
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm with Trusted Publishing
+        working-directory: crates/ringgrid-wasm/pkg
+        run: npm publish --access public

@@ -5,9 +5,12 @@
 //! common detection scenarios (config-driven detect and external mapper).
 
 use image::GrayImage;
+#[cfg(feature = "std")]
 use std::path::Path;
 
-use crate::board_layout::{BoardLayout, BoardLayoutLoadError};
+use crate::board_layout::BoardLayout;
+#[cfg(feature = "std")]
+use crate::board_layout::BoardLayoutLoadError;
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
@@ -64,11 +67,13 @@ impl Detector {
 
     /// Load target JSON and create a detector in one step using default
     /// marker-scale search prior.
+    #[cfg(feature = "std")]
     pub fn from_target_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         Ok(Self::new(BoardLayout::from_json_file(path)?))
     }
 
     /// Load target JSON and create a detector with explicit marker-scale prior.
+    #[cfg(feature = "std")]
     pub fn from_target_json_file_with_scale(
         path: &Path,
         marker_scale: MarkerScalePrior,
@@ -80,6 +85,7 @@ impl Detector {
     }
 
     /// Load target JSON and create a detector with fixed marker-diameter hint.
+    #[cfg(feature = "std")]
     pub fn from_target_json_file_with_marker_diameter(
         path: &Path,
         marker_diameter_px: f32,

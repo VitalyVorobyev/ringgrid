@@ -14,19 +14,24 @@ categories = ["computer-vision", "multimedia::images", "science::robotics"]
 keywords = ["computer-vision", "calibration", "fiducial", "marker", "homography"]
 include = ["src/**", "examples/**", "README.md", "LICENSE-*", "Cargo.toml"]
 
+[features]
+default = ["std"]
+std = ["dep:png"]
+
 [dependencies]
 nalgebra = { workspace = true }
 image = { workspace = true }
-rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 approx = { workspace = true }
 rand = { workspace = true }
-tiny-solver = { workspace = true }
-png = { workspace = true }
+png = { workspace = true, optional = true }
 projective-grid = { workspace = true }
 radsym = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }

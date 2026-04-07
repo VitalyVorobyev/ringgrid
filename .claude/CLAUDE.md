@@ -8,10 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Structure
 
-Cargo workspace (edition 2024, MSRV 1.88) with two crate members plus an excluded Python binding:
+Cargo workspace (edition 2024, MSRV 1.88) with two crate members plus excluded bindings:
 - `crates/ringgrid/` — detection algorithms, math primitives, result types
 - `crates/ringgrid-cli/` — CLI binary (`ringgrid`) with clap-based argument parsing
 - `crates/ringgrid-py/` — PyO3 Python bindings (excluded from workspace, built via maturin)
+- `crates/ringgrid-wasm/` — WebAssembly bindings (excluded from workspace, built via wasm-pack)
 - `tools/` — Python utilities for synthetic data generation, evaluation, scoring, and visualization
 - `py/` — Python scripts for rtv3d benchmarking and overlay visualization
 
@@ -143,6 +144,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Python bindings (uses uv for package management)
 cd crates/ringgrid-py && ../../.venv/bin/maturin develop --release && cd ../..
 
+# WASM bindings
+wasm-pack build crates/ringgrid-wasm --target web --release
+
 # Run detector
 cargo run -- detect --image <path> --out <path> --marker-diameter 32.0
 
@@ -186,14 +190,26 @@ Self-undistort mode estimates a division-model distortion correction from detect
 The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
 `ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
 
-When bumping the version, update **three** locations:
+When bumping the version, update **four** locations:
 1. `Cargo.toml` — `[workspace.package] version` (single source of truth for workspace crates)
 2. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
 3. `crates/ringgrid-py/pyproject.toml` — `project.version` field
+4. `crates/ringgrid-wasm/Cargo.toml` — `version` field + `ringgrid` dependency version
 
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
 version consistency between the git tag and these files using `tomllib`. The CI
 scripts resolve `version.workspace = true` by falling back to the workspace root.
+
+## Feature Flags (ringgrid crate)
+
+- `std` (default) — enables file I/O (`from_json_file`, `write_json_file`, `write_target_svg`, `write_target_png`) and the `png` dependency. Disable for WASM targets.
+- WASM crate uses `default-features = false` to exclude `std`.
+
+## Decision-Making Rules
+
+- **Never draw conclusions without reproducible evidence.** Every claim about correctness, performance, or behavior must be backed by a test, benchmark, or concrete reproducing example. "I believe this works" is not acceptable — run the code, show the output.
+- **When in doubt, stop and ask.** If the task is ambiguous, the expected behavior is unclear, or there are multiple reasonable interpretations, do not guess. Ask the user for clarification before proceeding.
+- **Do not speculate about root causes.** When debugging, reproduce the issue first, then form a hypothesis, then verify it with a test. Do not propose fixes based on reading code alone — run the failing case and confirm the diagnosis.
 
 ## Conventions
 
@@ -212,9 +228,10 @@ scripts resolve `version.workspace = true` by falling back to the workspace root
 ## CI / checks
 
 GitHub Actions workflows in `.github/workflows/`:
-- `ci.yml` — fmt, clippy, test on push/PR
+- `ci.yml` — fmt, clippy, test, WASM build smoke test on push/PR
 - `publish-crates.yml` — publish ringgrid + ringgrid-cli to crates.io on tag
 - `release-pypi.yml` — build and publish Python wheels to PyPI on tag
+- `release-npm.yml` — build and publish WASM npm package on tag
 - `release.yml` — create GitHub release
 - `publish-docs.yml` — build and deploy mdBook docs
 - `audit.yml` — dependency audit

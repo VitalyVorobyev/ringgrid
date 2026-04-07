@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ringgrid WASM Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #1a1a2e; color: #e0e0e0; padding: 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #a0c4ff; }
+  .version { font-size: 0.85rem; color: #888; margin-bottom: 1rem; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+  .controls label { font-size: 0.85rem; color: #aaa; }
+  button { padding: 0.4rem 0.8rem; border: 1px solid #444; border-radius: 4px;
+           background: #2a2a4a; color: #e0e0e0; cursor: pointer; font-size: 0.85rem; }
+  button:hover { background: #3a3a6a; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #3a6ea5; border-color: #5a8ec5; }
+  button.primary:hover { background: #4a7eb5; }
+  select, input[type="file"] { padding: 0.3rem; border: 1px solid #444; border-radius: 4px;
+           background: #2a2a4a; color: #e0e0e0; font-size: 0.85rem; }
+
+  .canvases { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+  .canvas-wrap { position: relative; }
+  .canvas-wrap h3 { font-size: 0.85rem; color: #888; margin-bottom: 0.3rem; }
+  canvas { border: 1px solid #333; border-radius: 4px; max-width: 100%; height: auto; }
+
+  .status { font-size: 0.85rem; padding: 0.4rem 0.6rem; border-radius: 4px;
+            background: #2a2a4a; margin-bottom: 1rem; min-height: 1.5rem; }
+  .status.ok { color: #6ecf6e; }
+  .status.err { color: #f06060; }
+
+  details { margin-bottom: 1rem; }
+  summary { cursor: pointer; font-size: 0.9rem; color: #a0c4ff; padding: 0.3rem 0; }
+  .json-panel { max-height: 400px; overflow: auto; background: #111; border: 1px solid #333;
+                border-radius: 4px; padding: 0.5rem; margin-top: 0.3rem; }
+  .json-panel pre { font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+
+  details.board-cfg { margin-bottom: 1rem; }
+  textarea { width: 100%; max-width: 600px; height: 80px; font-family: monospace; font-size: 0.75rem;
+             background: #111; color: #ccc; border: 1px solid #333; border-radius: 4px; padding: 0.4rem; }
+</style>
+</head>
+<body>
+
+<h1>ringgrid WASM Demo</h1>
+<div class="version" id="ver"></div>
+
+<div class="controls">
+  <input type="file" id="fileInput" accept="image/*">
+  <button id="loadTestBtn">Load Test Image</button>
+  <label for="mode">Mode:</label>
+  <select id="mode">
+    <option value="detect">detect</option>
+    <option value="detect_adaptive">detect_adaptive</option>
+    <option value="propose">propose_with_heatmap</option>
+  </select>
+  <button id="runBtn" class="primary" disabled>Run Detection</button>
+</div>
+
+<details class="board-cfg">
+  <summary>Board JSON</summary>
+  <textarea id="boardJson"></textarea>
+</details>
+
+<div class="status" id="status">Load an image to begin.</div>
+
+<div class="canvases">
+  <div class="canvas-wrap">
+    <h3>Detection Result</h3>
+    <canvas id="mainCanvas" width="1" height="1"></canvas>
+  </div>
+  <div class="canvas-wrap" id="heatmapWrap" style="display:none">
+    <h3>Proposal Heatmap</h3>
+    <canvas id="heatCanvas" width="1" height="1"></canvas>
+  </div>
+</div>
+
+<details id="jsonDetails" style="display:none">
+  <summary id="jsonSummary">JSON Result</summary>
+  <div class="json-panel"><pre id="jsonPre"></pre></div>
+</details>
+
+<script type="module">
+import init, { RinggridDetector, default_board_json, version, init_panic_hook } from '../pkg/ringgrid_wasm.js';
+
+// ── State ───────────────────────────────────────────────────────
+let wasmReady = false;
+let imageData = null;   // { rgba: Uint8Array, width, height, imgElement }
+
+const $ = id => document.getElementById(id);
+
+// ── Init ────────────────────────────────────────────────────────
+async function bootstrap() {
+  try {
+    await init();
+    init_panic_hook();
+    wasmReady = true;
+    $('ver').textContent = 'ringgrid v' + version() + ' (WASM)';
+    $('boardJson').value = default_board_json();
+    setStatus('WASM loaded. Load an image to begin.', 'ok');
+  } catch (e) {
+    setStatus('Failed to initialize WASM: ' + e, 'err');
+  }
+}
+
+function setStatus(msg, cls) {
+  const el = $('status');
+  el.textContent = msg;
+  el.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+// ── Image loading ───────────────────────────────────────────────
+function imageToRGBA(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth || img.width;
+  c.height = img.naturalHeight || img.height;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return ctx.getImageData(0, 0, c.width, c.height);
+}
+
+function setImage(img) {
+  const id = imageToRGBA(img);
+  imageData = { rgba: id.data, width: id.width, height: id.height, imgElement: img };
+  $('runBtn').disabled = false;
+
+  // Draw original on main canvas
+  const mc = $('mainCanvas');
+  mc.width = id.width;
+  mc.height = id.height;
+  mc.getContext('2d').drawImage(img, 0, 0);
+  setStatus(`Image loaded: ${id.width} x ${id.height}`, 'ok');
+}
+
+$('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => setImage(img);
+  img.onerror = () => setStatus('Failed to load image', 'err');
+  img.src = URL.createObjectURL(file);
+});
+
+$('loadTestBtn').addEventListener('click', async () => {
+  setStatus('Loading test image...', '');
+  try {
+    const resp = await fetch('../../../testdata/target_3_split_00.png');
+    if (!resp.ok) throw new Error(resp.statusText);
+    const blob = await resp.blob();
+    const img = new Image();
+    img.onload = () => { setImage(img); URL.revokeObjectURL(img.src); };
+    img.onerror = () => setStatus('Failed to decode test image', 'err');
+    img.src = URL.createObjectURL(blob);
+  } catch (e) {
+    setStatus('Could not fetch test image: ' + e.message, 'err');
+  }
+});
+
+// ── Detection ───────────────────────────────────────────────────
+$('runBtn').addEventListener('click', runDetection);
+
+async function runDetection() {
+  if (!wasmReady || !imageData) return;
+  const mode = $('mode').value;
+  $('runBtn').disabled = true;
+  setStatus('Running ' + mode + '...', '');
+
+  // Yield to let the UI update
+  await new Promise(r => setTimeout(r, 10));
+
+  let detector;
+  try {
+    const boardJson = $('boardJson').value;
+    detector = new RinggridDetector(boardJson);
+
+    const t0 = performance.now();
+    let jsonStr;
+
+    if (mode === 'detect') {
+      jsonStr = detector.detect_rgba(imageData.rgba, imageData.width, imageData.height);
+    } else if (mode === 'detect_adaptive') {
+      jsonStr = detector.detect_adaptive_rgba(imageData.rgba, imageData.width, imageData.height);
+    } else {
+      jsonStr = detector.propose_with_heatmap_rgba(imageData.rgba, imageData.width, imageData.height);
+    }
+
+    const elapsed = (performance.now() - t0).toFixed(1);
+    const result = JSON.parse(jsonStr);
+
+    // Show heatmap if in propose mode
+    if (mode === 'propose') {
+      drawHeatmap(detector);
+      $('heatmapWrap').style.display = '';
+    } else {
+      $('heatmapWrap').style.display = 'none';
+    }
+
+    // Draw overlay
+    const nMarkers = mode === 'propose'
+      ? result.proposals.length
+      : result.detected_markers.length;
+
+    if (mode !== 'propose') {
+      drawOverlay(result);
+    } else {
+      drawProposalOverlay(result);
+    }
+
+    // Status
+    const label = mode === 'propose' ? 'proposals' : 'markers';
+    setStatus(`${mode}: ${nMarkers} ${label} in ${elapsed} ms`, 'ok');
+
+    // JSON panel
+    $('jsonDetails').style.display = '';
+    $('jsonSummary').textContent = `JSON Result (${nMarkers} ${label})`;
+    $('jsonPre').textContent = JSON.stringify(result, null, 2);
+
+  } catch (e) {
+    setStatus('Error: ' + e, 'err');
+  } finally {
+    if (detector) detector.free();
+    $('runBtn').disabled = false;
+  }
+}
+
+// ── Drawing ─────────────────────────────────────────────────────
+function drawOverlay(result) {
+  const mc = $('mainCanvas');
+  const ctx = mc.getContext('2d');
+
+  // Redraw original image
+  mc.width = imageData.width;
+  mc.height = imageData.height;
+  ctx.drawImage(imageData.imgElement, 0, 0);
+
+  for (const m of result.detected_markers) {
+    const color = markerColor(m.confidence);
+
+    // Draw outer ellipse
+    if (m.ellipse_outer) {
+      const e = m.ellipse_outer;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(e.cx, e.cy, e.a, e.b, e.angle, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draw inner ellipse
+    if (m.ellipse_inner) {
+      const e = m.ellipse_inner;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.ellipse(e.cx, e.cy, e.a, e.b, e.angle, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draw center
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(m.center[0], m.center[1], 2, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Draw ID label
+    if (m.id != null) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = color;
+      ctx.fillText(String(m.id), m.center[0] + 4, m.center[1] - 4);
+    }
+  }
+}
+
+function drawProposalOverlay(result) {
+  const mc = $('mainCanvas');
+  const ctx = mc.getContext('2d');
+  mc.width = imageData.width;
+  mc.height = imageData.height;
+  ctx.drawImage(imageData.imgElement, 0, 0);
+
+  for (const p of result.proposals) {
+    ctx.strokeStyle = '#00ff80';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    ctx.fillStyle = '#00ff80';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 1.5, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+function drawHeatmap(detector) {
+  const hc = $('heatCanvas');
+  const w = detector.heatmap_width();
+  const h = detector.heatmap_height();
+  const data = detector.heatmap_f32();
+
+  hc.width = w;
+  hc.height = h;
+  const ctx = hc.getContext('2d');
+  const img = ctx.createImageData(w, h);
+
+  // Find max for normalization
+  let maxVal = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] > maxVal) maxVal = data[i];
+  }
+
+  // Blue-to-red colormap
+  for (let i = 0; i < data.length; i++) {
+    const t = maxVal > 0 ? data[i] / maxVal : 0;
+    img.data[4 * i]     = Math.floor(255 * t);       // R
+    img.data[4 * i + 1] = Math.floor(255 * t * (1 - t) * 4); // G (peak at 0.5)
+    img.data[4 * i + 2] = Math.floor(255 * (1 - t));  // B
+    img.data[4 * i + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+function markerColor(confidence) {
+  if (confidence > 0.7) return '#4ade80';  // green
+  if (confidence > 0.4) return '#facc15';  // yellow
+  return '#f87171';                         // red
+}
+
+// ── Boot ────────────────────────────────────────────────────────
+bootstrap();
+</script>
+</body>
+</html>

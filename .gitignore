@@ -14,3 +14,5 @@ out
 py
 lib_ringgrid.dylib.dSYM
 uv.lock
+crates/ringgrid-wasm/pkg/
+target

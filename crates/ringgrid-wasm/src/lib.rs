@@ -8,8 +8,19 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// Checked pixel count: returns `width * height` as `usize`, or `Err` on overflow.
+fn checked_pixel_count(width: u32, height: u32) -> Result<usize, JsValue> {
+    (width as usize).checked_mul(height as usize).ok_or_else(|| {
+        JsValue::from_str(&format!(
+            "image dimensions overflow: {}x{} exceeds addressable range",
+            width, height
+        ))
+    })
+}
+
 /// BT.601 luma: Y = (77R + 150G + 29B + 128) >> 8
 fn rgba_to_gray(rgba: &[u8], width: u32, height: u32) -> GrayImage {
+    // Caller must validate dimensions first; this is only called after validate_rgba.
     let n = (width as usize) * (height as usize);
     let mut gray = Vec::with_capacity(n);
     for i in 0..n {
@@ -22,13 +33,11 @@ fn rgba_to_gray(rgba: &[u8], width: u32, height: u32) -> GrayImage {
 }
 
 fn validate_gray(pixels: &[u8], width: u32, height: u32) -> Result<GrayImage, JsValue> {
-    let expected = (width as usize) * (height as usize);
+    let expected = checked_pixel_count(width, height)?;
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} grayscale pixels ({}x{}), got {}",
-            expected,
-            width,
-            height,
+            expected, width, height,
             pixels.len()
         )));
     }
@@ -36,13 +45,18 @@ fn validate_gray(pixels: &[u8], width: u32, height: u32) -> Result<GrayImage, Js
 }
 
 fn validate_rgba(pixels: &[u8], width: u32, height: u32) -> Result<(), JsValue> {
-    let expected = 4 * (width as usize) * (height as usize);
+    let expected = checked_pixel_count(width, height)?
+        .checked_mul(4)
+        .ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "RGBA buffer size overflow: {}x{}x4 exceeds addressable range",
+                width, height
+            ))
+        })?;
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} RGBA bytes ({}x{}x4), got {}",
-            expected,
-            width,
-            height,
+            expected, width, height,
             pixels.len()
         )));
     }
@@ -53,6 +67,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
     if width == 0 || height == 0 {
         return Err(JsValue::from_str("image dimensions must be non-zero"));
     }
+    checked_pixel_count(width, height)?;
     Ok(())
 }
 

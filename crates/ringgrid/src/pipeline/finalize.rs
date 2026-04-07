@@ -1,5 +1,5 @@
+use super::time_compat::Instant;
 use std::collections::HashMap;
-use std::time::Instant;
 
 use image::GrayImage;
 use nalgebra::Point2;

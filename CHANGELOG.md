@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-04-07
+
+### Fixed
+
+- Fix WASM runtime panic ("RuntimeError: unreachable") caused by `std::time::Instant` usage in the detection pipeline. The `wasm32-unknown-unknown` target does not implement `Instant::now()`. Replaced with `web-time` crate on `wasm32` targets, which delegates to `performance.now()` in browsers.
+
+### Added
+
+- Comprehensive unit tests for `ringgrid-wasm` crate (20 native parity tests + 6 headless WASM integration tests):
+  - Detection parity: verify WASM bindings produce identical results to native Rust for `detect`, `detect_adaptive`, `detect_rgba`, and `propose_with_heatmap`.
+  - WASM integration tests run in headless Safari via `wasm-pack test` with embedded fixture image.
+- Interactive browser demo (`crates/ringgrid-wasm/demo/index.html`):
+  - Three detection modes: `detect`, `detect_adaptive`, `propose_with_heatmap`.
+  - Overlay visualization with ellipses, centers, IDs, and confidence color coding.
+  - Heatmap canvas, collapsible JSON result panel, timing display.
+- `init_panic_hook()` WASM export for better error messages via `console_error_panic_hook`.
+- mdBook documentation page for WASM usage and demo instructions.
+
+### Dependencies
+
+- Added `web-time` (1.x) as a conditional dependency for `wasm32` targets in `ringgrid`.
+- Added `console_error_panic_hook` (0.1) to `ringgrid-wasm`.
+
 ## [0.5.3] — 2026-04-05
 
 ### Added

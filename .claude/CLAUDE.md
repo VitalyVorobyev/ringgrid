@@ -205,6 +205,12 @@ scripts resolve `version.workspace = true` by falling back to the workspace root
 - `std` (default) — enables file I/O (`from_json_file`, `write_json_file`, `write_target_svg`, `write_target_png`) and the `png` dependency. Disable for WASM targets.
 - WASM crate uses `default-features = false` to exclude `std`.
 
+## Decision-Making Rules
+
+- **Never draw conclusions without reproducible evidence.** Every claim about correctness, performance, or behavior must be backed by a test, benchmark, or concrete reproducing example. "I believe this works" is not acceptable — run the code, show the output.
+- **When in doubt, stop and ask.** If the task is ambiguous, the expected behavior is unclear, or there are multiple reasonable interpretations, do not guess. Ask the user for clarification before proceeding.
+- **Do not speculate about root causes.** When debugging, reproduce the issue first, then form a hypothesis, then verify it with a test. Do not propose fixes based on reading code alone — run the failing case and confirm the diagnosis.
+
 ## Conventions
 
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`

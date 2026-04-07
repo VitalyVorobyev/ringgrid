@@ -1,7 +1,9 @@
 use image::GrayImage;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use super::time_compat::Instant;
 
 use super::inner_fit;
 use super::marker_build::{

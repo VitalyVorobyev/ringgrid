@@ -30,6 +30,9 @@ png = { workspace = true, optional = true }
 projective-grid = { workspace = true }
 radsym = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace = true }
+
 [dev-dependencies]
 approx = { workspace = true }
 imageproc = { workspace = true }

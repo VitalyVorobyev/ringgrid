@@ -19,6 +19,7 @@ mod prelude;
 mod result;
 mod run;
 mod scale_probe;
+mod time_compat;
 
 pub use result::{DetectionFrame, DetectionResult};
 

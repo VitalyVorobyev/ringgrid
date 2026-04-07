@@ -50,3 +50,4 @@
 - [Coordinate Frames](coordinate-frames.md)
 - [Target Generation](target-generation.md)
 - [CLI Guide](cli-guide.md)
+- [WASM & Web Demo](wasm-demo.md)

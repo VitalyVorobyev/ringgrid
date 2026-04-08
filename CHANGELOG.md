@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-04-08
+
+### Fixed
+
+- Fix npm publish 404 by using scoped package name `@vitavision/ringgrid` in the release workflow.
+- Guard pixel-count multiplication against overflow in WASM validation (wasm32 `usize` is 32-bit).
+
 ## [0.5.4] — 2026-04-07
 
 ### Fixed

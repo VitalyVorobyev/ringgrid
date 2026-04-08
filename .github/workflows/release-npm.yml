@@ -45,7 +45,7 @@ jobs:
       - name: Patch package name
         working-directory: crates/ringgrid-wasm/pkg
         run: |
-          sed -i 's/"name": "ringgrid-wasm"/"name": "ringgrid"/' package.json
+          sed -i 's/"name": "ringgrid-wasm"/"name": "@vitavision\/ringgrid"/' package.json
           cat package.json
 
       - name: Copy README

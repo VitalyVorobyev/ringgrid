@@ -104,6 +104,20 @@ pub enum BoardLayoutValidationError {
         /// Column count for the longest row.
         long_row_cols: usize,
     },
+    /// Validation failed: `id_assignment` length does not match marker count.
+    IdAssignmentLength {
+        /// Expected length (marker count).
+        expected: usize,
+        /// Actual length.
+        got: usize,
+    },
+    /// Validation failed: `id_assignment` contains duplicate IDs.
+    IdAssignmentDuplicate {
+        /// The duplicated codebook ID.
+        id: usize,
+        /// Position index where the duplicate was found.
+        position: usize,
+    },
 }
 
 impl std::fmt::Display for BoardLayoutValidationError {
@@ -185,6 +199,14 @@ impl std::fmt::Display for BoardLayoutValidationError {
                 f,
                 "derived row has zero columns at row {} (rows={}, long_row_cols={})",
                 row_index, rows, long_row_cols
+            ),
+            Self::IdAssignmentLength { expected, got } => write!(
+                f,
+                "id_assignment length ({got}) does not match marker count ({expected})"
+            ),
+            Self::IdAssignmentDuplicate { id, position } => write!(
+                f,
+                "id_assignment contains duplicate ID {id} at position {position}"
             ),
         }
     }
@@ -312,6 +334,11 @@ struct BoardLayoutSpecV4 {
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
     marker_ring_width_mm: f32,
+    /// Optional optimized ID assignment. When present, `id_assignment[i]` is the
+    /// codebook ID for the i-th marker (in generation order). When absent, IDs
+    /// are assigned sequentially (0, 1, 2, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id_assignment: Option<Vec<usize>>,
 }
 
 impl BoardLayout {
@@ -365,6 +392,7 @@ impl BoardLayout {
             marker_outer_radius_mm,
             marker_inner_radius_mm,
             marker_ring_width_mm,
+            id_assignment: None,
         })
     }
 
@@ -489,7 +517,27 @@ impl BoardLayout {
         }
 
         validate_layout_spec(&spec)?;
-        let markers = generate_markers(spec.rows, spec.long_row_cols, spec.pitch_mm)?;
+        let mut markers = generate_markers(spec.rows, spec.long_row_cols, spec.pitch_mm)?;
+
+        if let Some(ref assignment) = spec.id_assignment {
+            if assignment.len() != markers.len() {
+                return Err(BoardLayoutValidationError::IdAssignmentLength {
+                    expected: markers.len(),
+                    got: assignment.len(),
+                });
+            }
+            let mut seen = std::collections::HashSet::new();
+            for (i, &id) in assignment.iter().enumerate() {
+                if !seen.insert(id) {
+                    return Err(BoardLayoutValidationError::IdAssignmentDuplicate {
+                        id,
+                        position: i,
+                    });
+                }
+                markers[i].id = id;
+            }
+        }
+
         let id_to_idx = markers.iter().enumerate().map(|(i, m)| (m.id, i)).collect();
 
         Ok(Self {
@@ -506,6 +554,12 @@ impl BoardLayout {
     }
 
     fn to_layout_spec(&self) -> BoardLayoutSpecV4 {
+        let is_sequential = self.markers.iter().enumerate().all(|(i, m)| m.id == i);
+        let id_assignment = if is_sequential {
+            None
+        } else {
+            Some(self.markers.iter().map(|m| m.id).collect())
+        };
         BoardLayoutSpecV4 {
             schema: TARGET_SCHEMA_V4.to_string(),
             name: self.name.clone(),
@@ -515,6 +569,7 @@ impl BoardLayout {
             marker_outer_radius_mm: self.marker_outer_radius_mm,
             marker_inner_radius_mm: self.marker_inner_radius_mm,
             marker_ring_width_mm: self.marker_ring_width_mm,
+            id_assignment,
         }
     }
 }
@@ -530,6 +585,7 @@ impl Default for BoardLayout {
             marker_outer_radius_mm: DEFAULT_OUTER_RADIUS_MM,
             marker_inner_radius_mm: DEFAULT_INNER_RADIUS_MM,
             marker_ring_width_mm: DEFAULT_RING_WIDTH_MM,
+            id_assignment: None,
         };
 
         Self::from_layout_spec(spec).expect("default board spec must be valid")

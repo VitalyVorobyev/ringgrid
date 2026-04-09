@@ -49,5 +49,6 @@
   - [Custom PixelMapper](detection-modes/custom-pixel-mapper.md)
 - [Coordinate Frames](coordinate-frames.md)
 - [Target Generation](target-generation.md)
+- [ID Assignment Optimization](id-optimization.md)
 - [CLI Guide](cli-guide.md)
 - [WASM & Web Demo](wasm-demo.md)

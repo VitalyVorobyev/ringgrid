@@ -19,8 +19,11 @@
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.primary { background: #3a6ea5; border-color: #5a8ec5; }
   button.primary:hover { background: #4a7eb5; }
-  select, input[type="file"] { padding: 0.3rem; border: 1px solid #444; border-radius: 4px;
-           background: #2a2a4a; color: #e0e0e0; font-size: 0.85rem; }
+  select, input[type="file"], input[type="number"] {
+    padding: 0.3rem; border: 1px solid #444; border-radius: 4px;
+    background: #2a2a4a; color: #e0e0e0; font-size: 0.85rem; }
+  input[type="number"] { width: 5rem; }
+  input[type="checkbox"] { accent-color: #5a8ec5; }
 
   .canvases { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
   .canvas-wrap { position: relative; }
@@ -38,9 +41,21 @@
                 border-radius: 4px; padding: 0.5rem; margin-top: 0.3rem; }
   .json-panel pre { font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
 
-  details.board-cfg { margin-bottom: 1rem; }
-  textarea { width: 100%; max-width: 600px; height: 80px; font-family: monospace; font-size: 0.75rem;
+  details.board-cfg { margin-bottom: 0.5rem; }
+  details.config-cfg { margin-bottom: 1rem; }
+  textarea { width: 100%; max-width: 700px; font-family: monospace; font-size: 0.75rem;
              background: #111; color: #ccc; border: 1px solid #333; border-radius: 4px; padding: 0.4rem; }
+  textarea.board-ta { height: 80px; }
+  textarea.config-ta { height: 200px; }
+
+  .mode-extra { display: inline-flex; gap: 0.5rem; align-items: center; }
+  .mode-extra.hidden { display: none; }
+
+  .quick-controls { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center;
+                    margin: 0.5rem 0; font-size: 0.85rem; }
+  .quick-controls label { color: #aaa; }
+  .quick-controls .group { display: flex; gap: 0.3rem; align-items: center; }
+  .config-buttons { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 </style>
 </head>
 <body>
@@ -55,14 +70,68 @@
   <select id="mode">
     <option value="detect">detect</option>
     <option value="detect_adaptive">detect_adaptive</option>
+    <option value="detect_adaptive_hint">detect_adaptive (with hint)</option>
+    <option value="detect_multiscale">detect_multiscale</option>
     <option value="propose">propose_with_heatmap</option>
   </select>
+  <span class="mode-extra hidden" id="hintExtra">
+    <label for="hintDiam">diameter:</label>
+    <input type="number" id="hintDiam" value="30" min="4" step="1">
+  </span>
+  <span class="mode-extra hidden" id="tiersExtra">
+    <label for="tiersPreset">tiers:</label>
+    <select id="tiersPreset">
+      <option value="two_tier">Two-tier (14-100 px)</option>
+      <option value="four_tier">Four-tier (8-220 px)</option>
+    </select>
+  </span>
   <button id="runBtn" class="primary" disabled>Run Detection</button>
+</div>
+
+<div class="controls">
+  <label><input type="checkbox" id="showEdges"> Show edge points</label>
 </div>
 
 <details class="board-cfg">
   <summary>Board JSON</summary>
-  <textarea id="boardJson"></textarea>
+  <textarea class="board-ta" id="boardJson"></textarea>
+</details>
+
+<details class="config-cfg">
+  <summary>Detection Config</summary>
+  <div class="quick-controls">
+    <div class="group">
+      <label>Scale min:</label>
+      <input type="number" id="scaleMin" value="14" min="4" step="1">
+    </div>
+    <div class="group">
+      <label>max:</label>
+      <input type="number" id="scaleMax" value="66" min="4" step="1">
+    </div>
+    <div class="group">
+      <label>Completion:</label>
+      <input type="checkbox" id="completionEnable" checked>
+    </div>
+    <div class="group">
+      <label>Refinement:</label>
+      <select id="circleRefine">
+        <option value="ProjectiveCenter">ProjectiveCenter</option>
+        <option value="None">None</option>
+      </select>
+    </div>
+    <div class="group">
+      <label>Downscale:</label>
+      <select id="proposalDownscale">
+        <option value="off">Off</option>
+        <option value="auto">Auto</option>
+      </select>
+    </div>
+  </div>
+  <textarea class="config-ta" id="configJson"></textarea>
+  <div class="config-buttons">
+    <button id="applyConfigBtn">Apply Config</button>
+    <button id="resetConfigBtn">Reset to Defaults</button>
+  </div>
 </details>
 
 <div class="status" id="status">Load an image to begin.</div>
@@ -84,11 +153,23 @@
 </details>
 
 <script type="module">
-import init, { RinggridDetector, default_board_json, version, init_panic_hook } from '../pkg/ringgrid_wasm.js';
+// Resolve the base path to the ringgrid-wasm crate root.
+// Works whether the page is served from demo/, crates/ringgrid-wasm/, or repo root.
+const scriptUrl = new URL(import.meta.url);
+const demoDir = scriptUrl.pathname.replace(/\/[^/]*$/, '/');  // directory of this HTML
+const crateRoot = demoDir.replace(/demo\/$/, '');             // crates/ringgrid-wasm/
+const repoRoot = crateRoot.replace(/crates\/ringgrid-wasm\//, '');
+
+import init, {
+  RinggridDetector, default_board_json, default_config_json, version, init_panic_hook,
+  scale_tiers_two_tier_standard_json, scale_tiers_four_tier_wide_json
+} from '../pkg/ringgrid_wasm.js';
 
 // ── State ───────────────────────────────────────────────────────
 let wasmReady = false;
 let imageData = null;   // { rgba: Uint8Array, width, height, imgElement }
+let detector = null;    // persistent RinggridDetector instance
+let configDirty = true; // re-create detector when config changes
 
 const $ = id => document.getElementById(id);
 
@@ -99,10 +180,29 @@ async function bootstrap() {
     init_panic_hook();
     wasmReady = true;
     $('ver').textContent = 'ringgrid v' + version() + ' (WASM)';
-    $('boardJson').value = default_board_json();
+    const boardJson = default_board_json();
+    $('boardJson').value = boardJson;
+    loadDefaultConfig(boardJson);
     setStatus('WASM loaded. Load an image to begin.', 'ok');
   } catch (e) {
     setStatus('Failed to initialize WASM: ' + e, 'err');
+  }
+}
+
+function loadDefaultConfig(boardJson) {
+  try {
+    const configStr = default_config_json(boardJson);
+    const config = JSON.parse(configStr);
+    $('configJson').value = JSON.stringify(config, null, 2);
+    // Sync quick controls from config
+    $('scaleMin').value = config.marker_scale.diameter_min_px;
+    $('scaleMax').value = config.marker_scale.diameter_max_px;
+    $('completionEnable').checked = config.completion.enable;
+    $('circleRefine').value = config.circle_refinement;
+    $('proposalDownscale').value = config.proposal_downscale.toLowerCase();
+    configDirty = true;
+  } catch (e) {
+    setStatus('Failed to load default config: ' + e, 'err');
   }
 }
 
@@ -110,6 +210,16 @@ function setStatus(msg, cls) {
   const el = $('status');
   el.textContent = msg;
   el.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+// ── Detector lifecycle ─────────────────────────────────────────
+function ensureDetector() {
+  if (detector && !configDirty) return;
+  if (detector) { detector.free(); detector = null; }
+  const boardJson = $('boardJson').value;
+  const configStr = $('configJson').value;
+  detector = RinggridDetector.with_config(boardJson, configStr);
+  configDirty = false;
 }
 
 // ── Image loading ───────────────────────────────────────────────
@@ -147,7 +257,7 @@ $('fileInput').addEventListener('change', e => {
 $('loadTestBtn').addEventListener('click', async () => {
   setStatus('Loading test image...', '');
   try {
-    const resp = await fetch('../../../testdata/target_3_split_00.png');
+    const resp = await fetch(repoRoot + 'testdata/target_3_split_00.png');
     if (!resp.ok) throw new Error(resp.statusText);
     const blob = await resp.blob();
     const img = new Image();
@@ -157,6 +267,66 @@ $('loadTestBtn').addEventListener('click', async () => {
   } catch (e) {
     setStatus('Could not fetch test image: ' + e.message, 'err');
   }
+});
+
+// ── Mode selector ──────────────────────────────────────────────
+$('mode').addEventListener('change', () => {
+  const mode = $('mode').value;
+  $('hintExtra').classList.toggle('hidden', mode !== 'detect_adaptive_hint');
+  $('tiersExtra').classList.toggle('hidden', mode !== 'detect_multiscale');
+});
+
+// ── Config controls ────────────────────────────────────────────
+function quickControlsToOverlay() {
+  return {
+    marker_scale: {
+      diameter_min_px: parseFloat($('scaleMin').value),
+      diameter_max_px: parseFloat($('scaleMax').value)
+    },
+    completion: { enable: $('completionEnable').checked },
+    circle_refinement: $('circleRefine').value,
+    proposal_downscale: $('proposalDownscale').value
+  };
+}
+
+// When quick controls change, update the full config JSON
+for (const id of ['scaleMin', 'scaleMax', 'completionEnable', 'circleRefine', 'proposalDownscale']) {
+  $(id).addEventListener('change', () => {
+    try {
+      const boardJson = $('boardJson').value;
+      // Start from defaults, apply overlay
+      const base = JSON.parse(default_config_json(boardJson));
+      const overlay = quickControlsToOverlay();
+      Object.assign(base.marker_scale, overlay.marker_scale);
+      base.completion.enable = overlay.completion.enable;
+      base.circle_refinement = overlay.circle_refinement;
+      base.proposal_downscale = overlay.proposal_downscale;
+      $('configJson').value = JSON.stringify(base, null, 2);
+      configDirty = true;
+    } catch (e) {
+      setStatus('Config error: ' + e, 'err');
+    }
+  });
+}
+
+$('applyConfigBtn').addEventListener('click', () => {
+  try {
+    // Validate JSON parses
+    JSON.parse($('configJson').value);
+    configDirty = true;
+    setStatus('Config applied. Run detection to see changes.', 'ok');
+  } catch (e) {
+    setStatus('Invalid config JSON: ' + e.message, 'err');
+  }
+});
+
+$('resetConfigBtn').addEventListener('click', () => {
+  loadDefaultConfig($('boardJson').value);
+  setStatus('Config reset to defaults.', 'ok');
+});
+
+$('boardJson').addEventListener('change', () => {
+  loadDefaultConfig($('boardJson').value);
 });
 
 // ── Detection ───────────────────────────────────────────────────
@@ -171,10 +341,8 @@ async function runDetection() {
   // Yield to let the UI update
   await new Promise(r => setTimeout(r, 10));
 
-  let detector;
   try {
-    const boardJson = $('boardJson').value;
-    detector = new RinggridDetector(boardJson);
+    ensureDetector();
 
     const t0 = performance.now();
     let jsonStr;
@@ -183,6 +351,15 @@ async function runDetection() {
       jsonStr = detector.detect_rgba(imageData.rgba, imageData.width, imageData.height);
     } else if (mode === 'detect_adaptive') {
       jsonStr = detector.detect_adaptive_rgba(imageData.rgba, imageData.width, imageData.height);
+    } else if (mode === 'detect_adaptive_hint') {
+      const diam = parseFloat($('hintDiam').value);
+      jsonStr = detector.detect_adaptive_with_hint_rgba(imageData.rgba, imageData.width, imageData.height, diam);
+    } else if (mode === 'detect_multiscale') {
+      const preset = $('tiersPreset').value;
+      const tiersJson = preset === 'four_tier'
+        ? scale_tiers_four_tier_wide_json()
+        : scale_tiers_two_tier_standard_json();
+      jsonStr = detector.detect_multiscale_rgba(imageData.rgba, imageData.width, imageData.height, tiersJson);
     } else {
       jsonStr = detector.propose_with_heatmap_rgba(imageData.rgba, imageData.width, imageData.height);
     }
@@ -221,7 +398,6 @@ async function runDetection() {
   } catch (e) {
     setStatus('Error: ' + e, 'err');
   } finally {
-    if (detector) detector.free();
     $('runBtn').disabled = false;
   }
 }
@@ -230,6 +406,7 @@ async function runDetection() {
 function drawOverlay(result) {
   const mc = $('mainCanvas');
   const ctx = mc.getContext('2d');
+  const showEdges = $('showEdges').checked;
 
   // Redraw original image
   mc.width = imageData.width;
@@ -262,6 +439,26 @@ function drawOverlay(result) {
       ctx.ellipse(e.cx, e.cy, e.a, e.b, e.angle, 0, 2 * Math.PI);
       ctx.stroke();
       ctx.restore();
+    }
+
+    // Draw edge points
+    if (showEdges) {
+      if (m.edge_points_outer) {
+        ctx.fillStyle = color;
+        for (const pt of m.edge_points_outer) {
+          ctx.beginPath();
+          ctx.arc(pt[0], pt[1], 1.5, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+      if (m.edge_points_inner) {
+        ctx.fillStyle = color + '99'; // semi-transparent
+        for (const pt of m.edge_points_inner) {
+          ctx.beginPath();
+          ctx.arc(pt[0], pt[1], 1.5, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
     }
 
     // Draw center
@@ -300,11 +497,11 @@ function drawProposalOverlay(result) {
   }
 }
 
-function drawHeatmap(detector) {
+function drawHeatmap(det) {
   const hc = $('heatCanvas');
-  const w = detector.heatmap_width();
-  const h = detector.heatmap_height();
-  const data = detector.heatmap_f32();
+  const w = det.heatmap_width();
+  const h = det.heatmap_height();
+  const data = det.heatmap_f32();
 
   hc.width = w;
   hc.height = h;

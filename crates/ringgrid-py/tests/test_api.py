@@ -482,6 +482,30 @@ def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
     assert cfg.to_dict()["proposal"] != baseline["proposal"]
 
 
+def test_native_detect_config_overlay_merges_nested_completion_fields() -> None:
+    from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
+
+    board = ringgrid.BoardLayout.default()
+    native = NativeDetectConfigCore(board._spec_json)
+
+    native.apply_overlay_json(
+        json.dumps(
+            {
+                "completion": {
+                    "require_perfect_decode": True,
+                    "max_attempts": 17,
+                }
+            }
+        )
+    )
+    native.apply_overlay_json(json.dumps({"completion": {"enable": False}}))
+
+    resolved = json.loads(native.dump_json())
+    assert resolved["completion"]["enable"] is False
+    assert resolved["completion"]["require_perfect_decode"] is True
+    assert resolved["completion"]["max_attempts"] == 17
+
+
 def test_readme_detect_config_field_guide_covers_python_surface() -> None:
     cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
     readme = README_PATH.read_text(encoding="utf-8")

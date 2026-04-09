@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-04-09
+
+### Added
+
+**WASM bindings: full config and detection API**
+- `RinggridDetector.with_config(board_json, config_json)` — constructor with full config control.
+- `config_json()` — get current detection config as JSON.
+- `update_config(overlay_json)` — apply partial config overlay (only provided fields are updated).
+- `detect_adaptive_with_hint` / `detect_adaptive_with_hint_rgba` — adaptive detection with nominal diameter hint.
+- `detect_multiscale` / `detect_multiscale_rgba` — explicit multi-scale detection with custom tier sets.
+- `default_config_json(board_json)` — free function returning default config for a board.
+- `scale_tiers_four_tier_wide_json()` / `scale_tiers_two_tier_standard_json()` — scale tier preset JSON helpers.
+- Config dump/overlay types mirror the Python bindings' proven pattern, including 3 fields not yet exposed in Python: `h_reproj_confidence_alpha`, `topology_filter_threshold_px`, `proposal_downscale`.
+
+**Optimized marker ID assignment**
+- Optional `id_assignment` field in `ringgrid.target.v4` board spec JSON for non-sequential codebook ID assignment optimized for local dissimilarity.
+- Python optimizer (`tools/optimize_id_assignment.py`): greedy initialization + simulated annealing to maximize minimum cyclic Hamming distance between hex-adjacent markers.
+- Pre-optimized board specs: `tools/board/board_spec_optimized.json` (base profile, min adjacent distance 5) and `tools/board/board_spec_extended_opt.json` (extended profile).
+- Diagnostic script (`tools/board_adjacency_report.py`) for analyzing adjacency distance statistics.
+- Results on default 203-marker board: min adjacent distance raised from 2 (sequential) to 5 (optimized base), mean from 4.67 to 6.54.
+
+**WASM demo enhancements**
+- Detection config panel with quick controls (marker scale, completion toggle, circle refinement, proposal downscale) and full JSON editor.
+- Two new detection modes: `detect_adaptive` with diameter hint and `detect_multiscale` with tier presets.
+- Edge point visualization toggle (outer and inner edge points rendered as dots).
+- Persistent detector lifecycle: detector is created once and reused across detections.
+
+### Changed
+
+- Demo now requires serving from the repository root for correct test image and WASM module paths.
+
 ## [0.5.5] — 2026-04-08
 
 ### Fixed

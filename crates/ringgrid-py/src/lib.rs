@@ -20,31 +20,6 @@ struct BoardSnapshot {
     markers: Vec<ringgrid::BoardMarker>,
 }
 
-/// JSON-loadable detection configuration overlay.
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct DetectConfigFile {
-    marker_scale: Option<ringgrid::MarkerScalePrior>,
-    circle_refinement: Option<ringgrid::CircleRefinementMethod>,
-    inner_fit: Option<ringgrid::InnerFitConfig>,
-    outer_fit: Option<ringgrid::OuterFitConfig>,
-    completion: Option<ringgrid::CompletionParams>,
-    projective_center: Option<ringgrid::ProjectiveCenterParams>,
-    seed_proposals: Option<ringgrid::SeedProposalParams>,
-    proposal: Option<ringgrid::ProposalConfig>,
-    edge_sample: Option<ringgrid::EdgeSampleConfig>,
-    decode: Option<ringgrid::DecodeConfig>,
-    marker_spec: Option<ringgrid::MarkerSpec>,
-    outer_estimation: Option<ringgrid::OuterEstimationConfig>,
-    ransac_homography: Option<ringgrid::RansacHomographyConfig>,
-    self_undistort: Option<ringgrid::SelfUndistortConfig>,
-    id_correction: Option<ringgrid::IdCorrectionConfig>,
-    inner_as_outer_recovery: Option<ringgrid::InnerAsOuterRecoveryConfig>,
-    dedup_radius: Option<f64>,
-    max_aspect_ratio: Option<f64>,
-    use_global_filter: Option<bool>,
-}
-
 /// Serializable snapshot of all tunable detection parameters.
 #[derive(Serialize, Deserialize, Clone)]
 struct DetectConfigDump {
@@ -220,69 +195,104 @@ fn dump_to_config(board: ringgrid::BoardLayout, dump: &DetectConfigDump) -> ring
     config
 }
 
-fn apply_config_overlay(config: &mut ringgrid::DetectConfig, overlay: DetectConfigFile) {
-    if let Some(marker_scale) = overlay.marker_scale {
-        config.set_marker_scale_prior(marker_scale);
-    }
-    if let Some(v) = overlay.circle_refinement {
-        config.circle_refinement = v;
-    }
-    if let Some(v) = overlay.inner_fit {
-        config.inner_fit = v;
-    }
-    if let Some(v) = overlay.outer_fit {
-        config.outer_fit = v;
-    }
-    if let Some(v) = overlay.completion {
-        config.completion = v;
-    }
-    if let Some(v) = overlay.projective_center {
-        config.projective_center = v;
-    }
-    if let Some(v) = overlay.seed_proposals {
-        config.seed_proposals = v;
-    }
-    if let Some(v) = overlay.proposal {
-        config.proposal = v;
-    }
-    if let Some(v) = overlay.edge_sample {
-        config.edge_sample = v;
-    }
-    if let Some(v) = overlay.decode {
-        config.decode = v;
-    }
-    if let Some(v) = overlay.marker_spec {
-        config.marker_spec = v;
-    }
-    if let Some(v) = overlay.outer_estimation {
-        config.outer_estimation = v;
-    }
-    if let Some(v) = overlay.ransac_homography {
-        config.ransac_homography = v;
-    }
-    if let Some(v) = overlay.self_undistort {
-        config.self_undistort = v;
-    }
-    if let Some(v) = overlay.id_correction {
-        config.id_correction = v;
-    }
-    if let Some(v) = overlay.inner_as_outer_recovery {
-        config.inner_as_outer_recovery = v;
-    }
-    if let Some(v) = overlay.dedup_radius {
-        config.dedup_radius = v;
-    }
-    if let Some(v) = overlay.max_aspect_ratio {
-        config.max_aspect_ratio = v;
-    }
-    if let Some(v) = overlay.use_global_filter {
-        config.use_global_filter = v;
+fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                match base_obj.get_mut(&key) {
+                    Some(base_value) => merge_json_value(base_value, overlay_value),
+                    None => {
+                        base_obj.insert(key, overlay_value);
+                    }
+                }
+            }
+        }
+        (base_slot, overlay_value) => *base_slot = overlay_value,
     }
 }
 
-fn parse_overlay(overlay_json: Option<&str>) -> PyResult<DetectConfigFile> {
-    let overlay_json = overlay_json.unwrap_or("{}");
-    serde_json::from_str::<DetectConfigFile>(overlay_json).map_err(py_value_error)
+fn parse_overlay_object(
+    overlay_json: &str,
+) -> PyResult<serde_json::Map<String, serde_json::Value>> {
+    let overlay = serde_json::from_str::<serde_json::Value>(overlay_json).map_err(py_value_error)?;
+    match overlay {
+        serde_json::Value::Object(obj) => Ok(obj),
+        _ => Err(PyValueError::new_err("config overlay must be a JSON object")),
+    }
+}
+
+fn merge_overlay_value<T>(current: &T, overlay: serde_json::Value) -> PyResult<T>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
+    let mut merged = serde_json::to_value(current).map_err(py_value_error)?;
+    merge_json_value(&mut merged, overlay);
+    serde_json::from_value(merged).map_err(py_value_error)
+}
+
+fn apply_overlay_json(config: &mut ringgrid::DetectConfig, overlay_json: &str) -> PyResult<()> {
+    let mut overlay = parse_overlay_object(overlay_json)?;
+
+    if let Some(value) = overlay.remove("marker_scale") {
+        let marker_scale = merge_overlay_value(&config.marker_scale, value)?;
+        config.set_marker_scale_prior(marker_scale);
+    }
+    if let Some(value) = overlay.remove("circle_refinement") {
+        config.circle_refinement = merge_overlay_value(&config.circle_refinement, value)?;
+    }
+    if let Some(value) = overlay.remove("inner_fit") {
+        config.inner_fit = merge_overlay_value(&config.inner_fit, value)?;
+    }
+    if let Some(value) = overlay.remove("outer_fit") {
+        config.outer_fit = merge_overlay_value(&config.outer_fit, value)?;
+    }
+    if let Some(value) = overlay.remove("completion") {
+        config.completion = merge_overlay_value(&config.completion, value)?;
+    }
+    if let Some(value) = overlay.remove("projective_center") {
+        config.projective_center = merge_overlay_value(&config.projective_center, value)?;
+    }
+    if let Some(value) = overlay.remove("seed_proposals") {
+        config.seed_proposals = merge_overlay_value(&config.seed_proposals, value)?;
+    }
+    if let Some(value) = overlay.remove("proposal") {
+        config.proposal = merge_overlay_value(&config.proposal, value)?;
+    }
+    if let Some(value) = overlay.remove("edge_sample") {
+        config.edge_sample = merge_overlay_value(&config.edge_sample, value)?;
+    }
+    if let Some(value) = overlay.remove("decode") {
+        config.decode = merge_overlay_value(&config.decode, value)?;
+    }
+    if let Some(value) = overlay.remove("marker_spec") {
+        config.marker_spec = merge_overlay_value(&config.marker_spec, value)?;
+    }
+    if let Some(value) = overlay.remove("outer_estimation") {
+        config.outer_estimation = merge_overlay_value(&config.outer_estimation, value)?;
+    }
+    if let Some(value) = overlay.remove("ransac_homography") {
+        config.ransac_homography = merge_overlay_value(&config.ransac_homography, value)?;
+    }
+    if let Some(value) = overlay.remove("self_undistort") {
+        config.self_undistort = merge_overlay_value(&config.self_undistort, value)?;
+    }
+    if let Some(value) = overlay.remove("id_correction") {
+        config.id_correction = merge_overlay_value(&config.id_correction, value)?;
+    }
+    if let Some(value) = overlay.remove("inner_as_outer_recovery") {
+        config.inner_as_outer_recovery =
+            merge_overlay_value(&config.inner_as_outer_recovery, value)?;
+    }
+    if let Some(value) = overlay.remove("dedup_radius") {
+        config.dedup_radius = merge_overlay_value(&config.dedup_radius, value)?;
+    }
+    if let Some(value) = overlay.remove("max_aspect_ratio") {
+        config.max_aspect_ratio = merge_overlay_value(&config.max_aspect_ratio, value)?;
+    }
+    if let Some(value) = overlay.remove("use_global_filter") {
+        config.use_global_filter = merge_overlay_value(&config.use_global_filter, value)?;
+    }
+    Ok(())
 }
 
 fn parse_dump(config_json: &str) -> PyResult<DetectConfigDump> {
@@ -479,9 +489,7 @@ impl DetectConfigCore {
     }
 
     fn apply_overlay_json(&mut self, overlay_json: &str) -> PyResult<()> {
-        let overlay = parse_overlay(Some(overlay_json))?;
-        apply_config_overlay(&mut self.config, overlay);
-        Ok(())
+        apply_overlay_json(&mut self.config, overlay_json)
     }
 }
 
@@ -873,12 +881,8 @@ fn proposal_result_with_scale_payload_array<'py>(
 #[pyo3(signature = (board_spec_json, overlay_json=None))]
 fn resolve_config_json(board_spec_json: &str, overlay_json: Option<&str>) -> PyResult<String> {
     let board = board_from_spec_json(board_spec_json)?;
-    let overlay = parse_overlay(overlay_json)?;
-
-    let marker_scale = overlay.marker_scale.unwrap_or_default();
-    let mut config = ringgrid::DetectConfig::from_target_and_scale_prior(board, marker_scale);
-    apply_config_overlay(&mut config, overlay);
-
+    let mut config = ringgrid::DetectConfig::from_target(board);
+    apply_overlay_json(&mut config, overlay_json.unwrap_or("{}"))?;
     serde_json::to_string(&config_to_dump(&config)).map_err(py_value_error)
 }
 
@@ -890,11 +894,8 @@ fn update_config_json(
 ) -> PyResult<String> {
     let board = board_from_spec_json(board_spec_json)?;
     let base = parse_dump(base_config_json)?;
-    let overlay = parse_overlay(Some(overlay_json))?;
-
     let mut config = dump_to_config(board, &base);
-    apply_config_overlay(&mut config, overlay);
-
+    apply_overlay_json(&mut config, overlay_json)?;
     serde_json::to_string(&config_to_dump(&config)).map_err(py_value_error)
 }
 

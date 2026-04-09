@@ -286,6 +286,22 @@ println!("{} markers on '{}'", board.n_markers(), board.name);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Optimized ID Assignment
+
+Generated boards assign codebook IDs to marker positions sequentially (0, 1,
+2, ...). For production use, it is recommended to post-process the board spec
+with the ID assignment optimizer, which reassigns IDs to maximize the cyclic
+Hamming distance between hex-adjacent markers. This makes the ID correction
+stage more robust against decode errors.
+
+```bash
+.venv/bin/python tools/optimize_id_assignment.py --board board_spec.json --out board_spec_optimized.json
+```
+
+Two pre-optimized reference boards are included at `tools/board/board_spec_optimized.json`
+and `tools/board/board_spec_extended_opt.json`. See [ID Assignment Optimization](id-optimization.md)
+for details, tradeoffs, and usage instructions.
+
 ## Practical Print Guidance
 
 - Prefer SVG for final print jobs.

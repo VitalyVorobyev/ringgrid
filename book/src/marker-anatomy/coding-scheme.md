@@ -56,6 +56,14 @@ introducing new polarity ambiguity beyond the fixed baseline, but still lowers
 the minimum cyclic Hamming distance to 1 and therefore weakens the baseline
 profile's ambiguity guarantee. This is why `extended` is explicit opt-in.
 
+Note that the codebook minimum distance (2 for base) is a *global* property
+across all codewords. The minimum distance between *hex-adjacent markers on
+the board* depends on which IDs are assigned to which positions. With
+sequential assignment, adjacent markers may have distance as low as 2.
+The [ID assignment optimizer](../id-optimization.md) raises this to 5 on
+the default board, making decode errors far less likely to produce a valid
+neighbor's ID.
+
 Additional constraints enforced during codebook generation:
 
 - **No rotational symmetry**: no codeword equals any of its own non-trivial

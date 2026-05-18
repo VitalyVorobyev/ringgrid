@@ -206,26 +206,36 @@ class DetectedMarker:
     board_xy_mm: list[float] | None
     ellipse_outer: Ellipse | None
     ellipse_inner: Ellipse | None
-    edge_points_outer: list[list[float]] | None
-    edge_points_inner: list[list[float]] | None
-    fit: FitMetrics
-    decode: DecodeMetrics | None
     def __init__(
         self,
         confidence: float,
         center: list[float],
-        fit: FitMetrics,
         id: int | None = ...,
         center_mapped: list[float] | None = ...,
         board_xy_mm: list[float] | None = ...,
         ellipse_outer: Ellipse | None = ...,
         ellipse_inner: Ellipse | None = ...,
-        edge_points_outer: list[list[float]] | None = ...,
-        edge_points_inner: list[list[float]] | None = ...,
-        decode: DecodeMetrics | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DetectedMarker: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class MarkerDiagnostics:
+    fit: FitMetrics
+    source: str
+    decode: DecodeMetrics | None
+    edge_points_outer: list[list[float]] | None
+    edge_points_inner: list[list[float]] | None
+    def __init__(
+        self,
+        fit: FitMetrics,
+        source: str = ...,
+        decode: DecodeMetrics | None = ...,
+        edge_points_outer: list[list[float]] | None = ...,
+        edge_points_inner: list[list[float]] | None = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> MarkerDiagnostics: ...
     def to_dict(self) -> dict[str, Any]: ...
 
 class Proposal:
@@ -291,7 +301,6 @@ class DetectionResult:
     homography_frame: DetectionFrame
     image_size: list[int]
     homography: list[list[float]] | None
-    ransac: RansacStats | None
     self_undistort: SelfUndistortResult | None
     def __init__(
         self,
@@ -300,7 +309,6 @@ class DetectionResult:
         homography_frame: DetectionFrame,
         image_size: list[int],
         homography: list[list[float]] | None = ...,
-        ransac: RansacStats | None = ...,
         self_undistort: SelfUndistortResult | None = ...,
     ) -> None: ...
     @classmethod
@@ -320,6 +328,20 @@ class DetectionResult:
         show_confidence: bool = ...,
         alpha: float = ...,
     ) -> None: ...
+
+class DetectionDiagnostics:
+    markers: list[MarkerDiagnostics]
+    ransac: RansacStats | None
+    def __init__(
+        self,
+        markers: list[MarkerDiagnostics],
+        ransac: RansacStats | None = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> DetectionDiagnostics: ...
+    @classmethod
+    def from_json(cls, path_or_json: str | Path) -> DetectionDiagnostics: ...
+    def to_dict(self) -> dict[str, Any]: ...
 
 class RansacFitConfig:
     max_iters: int
@@ -786,6 +808,8 @@ class Detector:
     def propose_with_heatmap(self, image: np.ndarray | str | Path) -> ProposalResult: ...
     def detect(self, image: np.ndarray | str | Path) -> DetectionResult: ...
     def detect_with_mapper(self, image: np.ndarray | str | Path, mapper: CameraModel | DivisionModel) -> DetectionResult: ...
+    def detect_with_diagnostics(self, image: np.ndarray | str | Path) -> tuple[DetectionResult, DetectionDiagnostics]: ...
+    def detect_with_mapper_diagnostics(self, image: np.ndarray | str | Path, mapper: CameraModel | DivisionModel) -> tuple[DetectionResult, DetectionDiagnostics]: ...
     def detect_adaptive(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
     def detect_adaptive_with_hint(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
     def detect_multiscale(self, image: np.ndarray | str | Path, tiers: ScaleTiers) -> DetectionResult: ...

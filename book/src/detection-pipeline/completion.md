@@ -47,11 +47,11 @@ With the expanded marker set (original + completed), the homography is refit fro
 
 1. Uses all available markers for maximum accuracy
 2. Accepts the refit only if the mean reprojection error improves
-3. Updates `DetectionResult.homography` and `DetectionResult.ransac`
+3. Updates `DetectionResult.homography` and `DetectionDiagnostics.ransac`
 
 ## Disabling Completion
 
-Set `completion.enable = false` in `DetectConfig` or use `--no-complete` in the CLI to skip completion entirely. This is useful when:
+Set `advanced.completion.enable = false` in `DetectConfig` or use `--no-complete` in the CLI to skip completion entirely. This is useful when:
 
 - You only want high-confidence initial detections
 - Processing speed is more important than recall

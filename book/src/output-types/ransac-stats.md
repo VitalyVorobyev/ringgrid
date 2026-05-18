@@ -1,6 +1,6 @@
 # RansacStats
 
-`RansacStats` reports the quality of the RANSAC-fitted board-to-image homography. It is present in `DetectionResult::ransac` whenever a homography was successfully estimated (requires at least 4 decoded markers).
+`RansacStats` reports the quality of the RANSAC-fitted board-to-image homography. It is present in `DetectionDiagnostics::ransac` whenever a homography was successfully estimated (requires at least 4 decoded markers). Obtain the diagnostics via `Detector::detect_with_diagnostics`; in the CLI `detect.json` the stats appear under `diagnostics.ransac`.
 
 **Source:** `crates/ringgrid/src/homography/core.rs`
 
@@ -65,4 +65,4 @@ The `threshold_px` field records the reprojection error threshold used during RA
 
 ## Absence
 
-When `DetectionResult::ransac` is `None`, no homography was fitted. This happens when fewer than 4 markers were decoded or when RANSAC failed to find enough inliers (controlled by `RansacHomographyConfig::min_inliers`, default 6).
+When `DetectionDiagnostics::ransac` is `None`, no homography was fitted. This happens when fewer than 4 markers were decoded or when RANSAC failed to find enough inliers (controlled by `RansacHomographyConfig::min_inliers`, default 6).

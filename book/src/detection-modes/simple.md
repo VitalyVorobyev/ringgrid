@@ -109,10 +109,12 @@ let json = serde_json::to_string_pretty(&result)?;
 std::fs::write("output.json", json)?;
 ```
 
-The output JSON contains detected markers with their IDs, centers, ellipse
-parameters, fit metrics, detection source, and (when available) the
-board-to-image homography. See [Detection Output Format](../output-format.md)
-for the full serialized schema.
+The output JSON of a bare `DetectionResult` contains detected markers with their
+IDs, centers, ellipse parameters, and (when available) the board-to-image
+homography. Per-marker fit metrics, decode metrics, and detection source are not
+part of `DetectionResult` — request them via `detector.detect_with_diagnostics(&image)`,
+which also returns a `DetectionDiagnostics`. See
+[Detection Output Format](../output-format.md) for the full serialized schema.
 
 ## Source Files
 

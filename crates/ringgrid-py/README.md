@@ -93,7 +93,9 @@ Complete target-generation tutorial and full flag reference:
 
 - Native `BoardLayout` target generation for canonical spec JSON + printable SVG/PNG
 - Native `Detector` API with NumPy input support
-- Full `DetectionResult` model objects with JSON round-trips
+- Slim `DetectionResult` model objects with JSON round-trips
+- Opt-in `DetectionDiagnostics` channel (`detector.detect_with_diagnostics(...)`)
+  for per-marker fit/decode internals, edge points, and homography RANSAC stats
 - Optional plotting helpers in `ringgrid.viz` (`pip install ringgrid[viz]`)
 
 ## Input Rules
@@ -166,7 +168,8 @@ cfg.completion_enable = False
 cfg.decode_min_confidence = 0.4
 
 snapshot = cfg.to_dict()
-print(snapshot["decode"]["codebook_profile"])  # "extended"
+# Stage tuning nests under "advanced" in the wire view.
+print(snapshot["advanced"]["decode"]["codebook_profile"])  # "extended"
 ```
 
 How Python `DetectConfig` behaves:
@@ -174,10 +177,15 @@ How Python `DetectConfig` behaves:
 - `cfg.board` is the constructor input and stays read-only. It is not included
   in `cfg.to_dict()`.
 - `cfg.to_dict()` returns the resolved native wire view. That is the easiest way
-  to inspect the exact config the Rust detector will use.
+  to inspect the exact config the Rust detector will use. Its top-level keys are
+  `marker_scale`, `circle_refinement`, `self_undistort`, and `advanced`; every
+  stage-tuning section (`decode`, `inner_fit`, `outer_fit`, `completion`,
+  `proposal`, `id_correction`, …) lives under the `advanced` object.
 - Section getters such as `cfg.decode`, `cfg.inner_fit`, and `cfg.self_undistort`
-  return copies. Reassign the section after editing it, or use a convenience
-  alias such as `cfg.decode_min_margin = 2`.
+  stay flat on the Python `DetectConfig` object — they return copies. Reassign
+  the section after editing it, or use a convenience alias such as
+  `cfg.decode_min_margin = 2`. (The flat Python accessors map onto the nested
+  `advanced` wire fields automatically.)
 - `cfg.marker_scale` defaults to `14-66` px outer diameter and re-derives the
   scale-coupled search windows when you replace it.
 - Board geometry derives `cfg.marker_spec.r_inner_expected` and
@@ -187,15 +195,16 @@ How Python `DetectConfig` behaves:
   `ringgrid.CircleRefinementMethod`, while `cfg.to_dict()["circle_refinement"]`
   stores the native wire strings `"ProjectiveCenter"` or `"None"`.
 
-Default `marker_scale` derivations for `DetectConfig(BoardLayout.default())`:
+Default `marker_scale` derivations for `DetectConfig(BoardLayout.default())`
+(stage sections shown as nested `advanced` wire keys):
 
-- `proposal.r_min = max(0.4 * radius_min_px, 2.0)` -> `2.8`
-- `proposal.r_max = 1.7 * radius_max_px` -> `56.100002`
-- `proposal.min_distance` — derived from marker spacing and diameter prior
-- `edge_sample.r_max = 2.0 * radius_max_px` -> `66.0`
-- `outer_estimation.search_halfwidth_px = max(max((radius_max_px - radius_min_px) * 0.5, 2.0), 13.0)` -> `13.0`
-- `completion.roi_radius_px = clamp(0.75 * nominal_diameter_px, 24.0, 80.0)` -> `30.0`
-- `projective_center.max_center_shift_px = 2.0 * nominal_outer_radius_px` -> `40.0`
+- `advanced.proposal.r_min` — spacing-aware, `max(0.15 * spacing_min_px, 2.0)` -> `3.0310888`
+- `advanced.proposal.r_max` — spacing-aware, `min(0.45 * spacing_max_px, 1.35 * radius_max_px)` -> `42.86825`
+- `advanced.proposal.min_distance` — derived from marker spacing and diameter prior
+- `advanced.edge_sample.r_max = 2.0 * radius_max_px` -> `66.0`
+- `advanced.outer_estimation.search_halfwidth_px = max(max((radius_max_px - radius_min_px) * 0.5, 2.0), 13.0)` -> `13.0`
+- `advanced.completion.roi_radius_px = clamp(0.75 * nominal_diameter_px, 24.0, 80.0)` -> `30.0`
+- `advanced.projective_center.max_center_shift_px = 2.0 * nominal_outer_radius_px` -> `40.0`
 
 Deeper theory and Rust-side derivation details:
 - [Book: DetectConfig](https://vitalyvorobyev.github.io/ringgrid/book/configuration/detect-config.html)
@@ -266,8 +275,8 @@ centers before local fitting.
 
 | Field | Default | Practical notes |
 |---|---|---|
-| `r_min` | derived -> `2.8` | Minimum vote radius. Lower only for genuinely tiny markers. Re-derived from `cfg.marker_scale`. |
-| `r_max` | derived -> `56.100002` | Maximum vote radius. Raise only if markers exceed your current size prior. Re-derived from `cfg.marker_scale`. |
+| `r_min` | derived -> `3.0310888` | Minimum vote radius. Lower only for genuinely tiny markers. Re-derived (spacing-aware) from `cfg.marker_scale` and board geometry. |
+| `r_max` | derived -> `42.86825` | Maximum vote radius. Raise only if markers exceed your current size prior. Re-derived (spacing-aware) from `cfg.marker_scale` and board geometry. |
 | `grad_threshold` | `0.05` | Fraction of max gradient magnitude used to keep votes. Raise it in noisy scenes; lower it for low-contrast imagery. |
 | `min_distance` | derived | Minimum distance between proposals (px). Re-derived from `cfg.marker_scale`. |
 | `min_vote_frac` | `0.1` | Minimum accumulator peak fraction relative to the best proposal. Raise to be stricter, lower to keep weaker peaks. |

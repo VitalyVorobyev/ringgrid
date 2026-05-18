@@ -942,11 +942,11 @@ fn run_board_info() -> CliResult<()> {
     let board = ringgrid::BoardLayout::default();
 
     println!("ringgrid default board specification");
-    println!("  name:           {}", board.name);
+    println!("  name:           {}", board.name());
     println!("  markers:        {}", board.n_markers());
-    println!("  pitch:          {} mm", board.pitch_mm);
-    println!("  rows:           {}", board.rows);
-    println!("  long row cols:  {}", board.long_row_cols);
+    println!("  pitch:          {} mm", board.pitch_mm());
+    println!("  rows:           {}", board.rows());
+    println!("  long row cols:  {}", board.long_row_cols());
     if let Some(span) = board.marker_span_mm() {
         println!("  marker span:    {:.3}x{:.3} mm", span[0], span[1]);
     }
@@ -1024,12 +1024,12 @@ fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
     );
     println!(
         "Board: {}, schema={}, rows={}, long_row_cols={}, markers={}, pitch={}mm",
-        board.name,
+        board.name(),
         TARGET_SPEC_SCHEMA_V4,
-        board.rows,
-        board.long_row_cols,
+        board.rows(),
+        board.long_row_cols(),
         board.n_markers(),
-        board.pitch_mm
+        board.pitch_mm()
     );
     Ok(())
 }
@@ -1144,7 +1144,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
             })?;
         tracing::info!(
             "Loaded board layout '{}' with {} markers",
-            board.name,
+            board.name(),
             board.n_markers()
         );
         board

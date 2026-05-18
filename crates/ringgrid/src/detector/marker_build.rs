@@ -32,6 +32,7 @@ pub enum DetectionSource {
 /// ratios (> 0.8) and low RMS Sampson residuals (< 0.5 px) indicate a
 /// precise ellipse fit.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct FitMetrics {
     /// Total number of radial rays cast.
     pub n_angles_total: usize,

@@ -688,9 +688,9 @@ mod tests {
         let json = default_board_json();
         let board = ringgrid::BoardLayout::from_json_str(&json).unwrap();
         let default = ringgrid::BoardLayout::default();
-        assert_eq!(board.rows, default.rows);
-        assert_eq!(board.long_row_cols, default.long_row_cols);
-        assert!((board.pitch_mm - default.pitch_mm).abs() < 1e-6);
+        assert_eq!(board.rows(), default.rows());
+        assert_eq!(board.long_row_cols(), default.long_row_cols());
+        assert!((board.pitch_mm() - default.pitch_mm()).abs() < 1e-6);
     }
 
     // ── Group 4: Detection parity (grayscale) ──────────────────────

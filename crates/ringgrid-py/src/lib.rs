@@ -101,13 +101,13 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
 fn board_snapshot(board: &ringgrid::BoardLayout) -> BoardSnapshot {
     BoardSnapshot {
         schema: TARGET_SCHEMA_V4.to_string(),
-        name: board.name.clone(),
-        pitch_mm: board.pitch_mm,
-        rows: board.rows,
-        long_row_cols: board.long_row_cols,
-        marker_outer_radius_mm: board.marker_outer_radius_mm,
-        marker_inner_radius_mm: board.marker_inner_radius_mm,
-        marker_ring_width_mm: board.marker_ring_width_mm,
+        name: board.name().to_string(),
+        pitch_mm: board.pitch_mm(),
+        rows: board.rows(),
+        long_row_cols: board.long_row_cols(),
+        marker_outer_radius_mm: board.marker_outer_radius_mm(),
+        marker_inner_radius_mm: board.marker_inner_radius_mm(),
+        marker_ring_width_mm: board.marker_ring_width_mm(),
         markers: board.markers().to_vec(),
     }
 }

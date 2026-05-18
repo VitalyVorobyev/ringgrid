@@ -22,6 +22,7 @@ use super::codec::{Codebook, CodebookProfile};
 /// `margin` measures how far the second-best codeword is (higher = more
 /// confident).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct DecodeMetrics {
     /// Raw 16-bit word sampled from the code band.
     pub observed_word: u16,
@@ -46,6 +47,7 @@ pub struct DecodeMetrics {
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct DecodeConfig {
     /// Embedded codebook profile to match against.
     ///

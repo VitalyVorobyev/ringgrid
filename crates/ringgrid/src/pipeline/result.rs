@@ -71,6 +71,7 @@ pub struct DetectedMarker {
 /// Returned only via
 /// [`Detector::detect_with_diagnostics`](crate::Detector::detect_with_diagnostics).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct MarkerDiagnostics {
     /// Fit quality metrics (edge sampling and ellipse fit).
     pub fit: FitMetrics,
@@ -122,6 +123,7 @@ pub struct DetectionResult {
 /// [`Detector::detect_with_diagnostics`](crate::Detector::detect_with_diagnostics).
 /// Carries per-marker algorithm internals and homography RANSAC statistics.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct DetectionDiagnostics {
     /// Per-marker algorithm internals.
     ///

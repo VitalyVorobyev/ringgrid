@@ -299,24 +299,31 @@ pub struct BoardMarker {
 /// use std::path::Path;
 ///
 /// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-/// println!("{} markers, pitch={} mm", board.n_markers(), board.pitch_mm);
+/// println!("{} markers, pitch={} mm", board.n_markers(), board.pitch_mm());
 /// ```
+///
+/// Scalar geometry fields are not publicly mutable: they are coupled to a
+/// derived marker cache that an in-place mutation would silently desync.
+/// Construct via [`BoardLayout::default`], [`BoardLayout::new`],
+/// [`BoardLayout::with_name`], or [`BoardLayout::from_json_file`]; read the
+/// geometry through the accessor methods.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct BoardLayout {
     /// Human-readable name of the target layout.
-    pub name: String,
+    pub(crate) name: String,
     /// Center-to-center spacing between adjacent markers in millimeters.
-    pub pitch_mm: f32,
+    pub(crate) pitch_mm: f32,
     /// Number of marker rows on the board.
-    pub rows: usize,
+    pub(crate) rows: usize,
     /// Number of columns in the longest (even-indexed) row.
-    pub long_row_cols: usize,
+    pub(crate) long_row_cols: usize,
     /// Outer ring radius in millimeters.
-    pub marker_outer_radius_mm: f32,
+    pub(crate) marker_outer_radius_mm: f32,
     /// Inner ring radius in millimeters.
-    pub marker_inner_radius_mm: f32,
+    pub(crate) marker_inner_radius_mm: f32,
     /// Width of each ring band in millimeters.
-    pub marker_ring_width_mm: f32,
+    pub(crate) marker_ring_width_mm: f32,
     markers: Vec<BoardMarker>,
 
     /// Fast lookup: marker ID -> index into `markers`.
@@ -419,6 +426,26 @@ impl BoardLayout {
     /// Total number of markers on the board.
     pub fn n_markers(&self) -> usize {
         self.markers.len()
+    }
+
+    /// Human-readable name of the target layout.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Center-to-center spacing between adjacent markers (mm).
+    pub fn pitch_mm(&self) -> f32 {
+        self.pitch_mm
+    }
+
+    /// Number of marker rows on the board.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Number of columns in the longest (even-indexed) row.
+    pub fn long_row_cols(&self) -> usize {
+        self.long_row_cols
     }
 
     /// Marker outer radius in board units (mm).

@@ -79,6 +79,7 @@ pub struct OuterEstimate {
 /// Set [`crate::EdgeSampleConfig::n_rays`] to control angular density for both stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct OuterEstimationConfig {
     /// Search half-width around the expected outer radius, in pixels.
     pub search_halfwidth_px: f32,

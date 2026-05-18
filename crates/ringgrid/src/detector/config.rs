@@ -44,6 +44,7 @@ pub(crate) fn derive_proposal_config(
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SeedProposalParams {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
@@ -67,6 +68,7 @@ impl Default for SeedProposalParams {
 /// missing IDs at H-projected board locations.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct CompletionParams {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
@@ -137,6 +139,7 @@ impl Default for CompletionParams {
 /// Projective-only unbiased center recovery from inner/outer conics.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct ProjectiveCenterParams {
     /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
     pub use_expected_ratio: bool,
@@ -171,6 +174,7 @@ impl Default for ProjectiveCenterParams {
 /// Configuration for robust inner ellipse fitting from outer-fit hints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InnerFitConfig {
     /// Minimum number of sampled points required to attempt a fit.
     pub min_points: usize,
@@ -247,6 +251,7 @@ impl Default for InnerFitConfig {
 /// Configuration for robust outer ellipse fitting from sampled edge points.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct OuterFitConfig {
     /// Minimum number of sampled points required to attempt direct LS fit.
     pub min_direct_fit_points: usize,
@@ -555,6 +560,7 @@ impl ScaleTiers {
 /// This guarantees no wrong IDs reach the global filter or completion stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct IdCorrectionConfig {
     /// Enable structural ID verification and correction.
     pub enable: bool,
@@ -664,6 +670,7 @@ impl Default for IdCorrectionConfig {
 /// the inner ring even under the relaxed thresholds.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InnerAsOuterRecoveryConfig {
     /// Enable inner-as-outer recovery (default: `true`).
     pub enable: bool,
@@ -765,6 +772,7 @@ impl ProposalDownscale {
 /// Override individual fields for fine-grained tuning of difficult scenes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct AdvancedDetectConfig {
     /// Outer edge estimation configuration (anchored on `marker_scale`).
     pub outer_estimation: OuterEstimationConfig,
@@ -883,6 +891,7 @@ impl Default for AdvancedDetectConfig {
 /// scale- and geometry-coupled parameters.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct DetectConfig {
     /// Board layout: marker positions and geometry.
     ///

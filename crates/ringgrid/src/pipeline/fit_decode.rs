@@ -135,9 +135,9 @@ fn process_candidate(
     let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
         ctx.gray,
         &outer,
-        &ctx.config.marker_spec,
+        &ctx.config.advanced.marker_spec,
         ctx.mapper,
-        &ctx.config.inner_fit,
+        &ctx.config.advanced.inner_fit,
         false,
     );
     timing.inner_fit += inner_fit_start.elapsed();
@@ -152,7 +152,7 @@ fn process_candidate(
             inner_fit.reason_context
         );
     }
-    if ctx.config.inner_fit.require_inner_fit && inner_fit.ellipse_inner.is_none() {
+    if ctx.config.advanced.inner_fit.require_inner_fit && inner_fit.ellipse_inner.is_none() {
         return Err(CandidateRejectReason::InnerFitRequired);
     }
 
@@ -164,7 +164,7 @@ fn process_candidate(
         outer_ransac.as_ref(),
         &inner_fit,
         &fit_metrics,
-        &ctx.config.inner_fit,
+        &ctx.config.advanced.inner_fit,
     );
     let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
     let marker_id = decode_result.as_ref().map(|d| d.id);
@@ -198,7 +198,7 @@ pub(super) fn run(
     tracing::info!("{} proposals found", input_count);
 
     let select_start = Instant::now();
-    let proposals = select_proposals_for_fit(proposals, config.proposal.max_candidates);
+    let proposals = select_proposals_for_fit(proposals, config.advanced.proposal.max_candidates);
     let select_elapsed = select_start.elapsed();
     if proposals.len() != input_count {
         tracing::info!(
@@ -249,7 +249,7 @@ pub(super) fn run(
 
     let accepted_before_dedup = markers.len();
     let dedup_start = Instant::now();
-    markers = dedup_markers(markers, config.dedup_radius);
+    markers = dedup_markers(markers, config.advanced.dedup_radius);
     dedup_by_id(&mut markers);
     let dedup_elapsed = dedup_start.elapsed();
 
@@ -328,11 +328,11 @@ mod tests {
 
         let mut relaxed = DetectConfig::default();
         relaxed.set_marker_diameter_hint_px(outer_radius * 2.0);
-        relaxed.inner_fit.min_points = 1;
-        relaxed.inner_fit.min_inlier_ratio = 0.0;
-        relaxed.inner_fit.max_rms_residual = f64::INFINITY;
-        relaxed.inner_fit.max_center_shift_px = f64::INFINITY;
-        relaxed.inner_fit.max_ratio_abs_error = f64::INFINITY;
+        relaxed.advanced.inner_fit.min_points = 1;
+        relaxed.advanced.inner_fit.min_inlier_ratio = 0.0;
+        relaxed.advanced.inner_fit.max_rms_residual = f64::INFINITY;
+        relaxed.advanced.inner_fit.max_center_shift_px = f64::INFINITY;
+        relaxed.advanced.inner_fit.max_ratio_abs_error = f64::INFINITY;
 
         let relaxed_out = run(
             &img,
@@ -353,7 +353,7 @@ mod tests {
         );
 
         let mut strict = relaxed.clone();
-        strict.inner_fit.min_points = usize::MAX;
+        strict.advanced.inner_fit.min_points = usize::MAX;
 
         let strict_out = run(&img, &strict, None, proposals, DetectionSource::FitDecoded);
         assert!(
@@ -382,7 +382,7 @@ mod tests {
 
         let mut cfg = DetectConfig::default();
         cfg.set_marker_diameter_hint_px(outer_radius * 2.0);
-        cfg.proposal.max_candidates = Some(0);
+        cfg.advanced.proposal.max_candidates = Some(0);
 
         let out = run(&img, &cfg, None, proposals, DetectionSource::FitDecoded);
         assert!(

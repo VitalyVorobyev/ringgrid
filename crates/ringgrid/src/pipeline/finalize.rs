@@ -95,7 +95,7 @@ struct FilterPhaseOutput {
 }
 
 fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> FilterPhaseOutput {
-    if !config.use_global_filter {
+    if !config.advanced.use_global_filter {
         return FilterPhaseOutput {
             markers: fit_markers,
             h_current: None,
@@ -103,8 +103,11 @@ fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> Fil
         };
     }
 
-    let (filtered, h_result, stats) =
-        global_filter(&fit_markers, &config.ransac_homography, &config.board);
+    let (filtered, h_result, stats) = global_filter(
+        &fit_markers,
+        &config.advanced.ransac_homography,
+        &config.board,
+    );
     let h_current = h_result.as_ref().map(|r| r.h);
 
     FilterPhaseOutput {
@@ -178,7 +181,7 @@ fn phase_completion(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> CompletionStats {
-    if !config.completion.enable {
+    if !config.advanced.completion.enable {
         return CompletionStats::default();
     }
 
@@ -196,8 +199,12 @@ fn phase_final_h(
     config: &DetectConfig,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let final_h_matrix = if final_markers.len() >= 10 {
-        let h_refit = refit_homography(final_markers, &config.ransac_homography, &config.board)
-            .map(|(h, _)| h);
+        let h_refit = refit_homography(
+            final_markers,
+            &config.advanced.ransac_homography,
+            &config.board,
+        )
+        .map(|(h, _)| h);
         match (h_current, h_refit) {
             (Some(h_cur), Some(h_new)) => {
                 let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.board);
@@ -223,7 +230,7 @@ fn phase_final_h(
             compute_h_stats(
                 h,
                 final_markers,
-                config.ransac_homography.inlier_threshold,
+                config.advanced.ransac_homography.inlier_threshold,
                 &config.board,
             )
         })
@@ -345,9 +352,9 @@ fn apply_post_filter_fixup(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
-    let k = config.inner_as_outer_recovery.k_neighbors;
+    let k = config.advanced.inner_as_outer_recovery.k_neighbors;
     annotate_neighbor_radius_ratios(markers, k);
-    if config.inner_as_outer_recovery.enable {
+    if config.advanced.inner_as_outer_recovery.enable {
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.board);
         annotate_neighbor_radius_ratios(markers, k);
@@ -448,7 +455,7 @@ fn finalize_global_filter_result(
     let h_current = filter_phase.h_current;
 
     let topology_start = Instant::now();
-    let n_topology_removed = if let Some(threshold) = config.topology_filter_threshold_px {
+    let n_topology_removed = if let Some(threshold) = config.advanced.topology_filter_threshold_px {
         topology_filter(&mut final_markers, &config.board, threshold)
     } else {
         0
@@ -495,7 +502,7 @@ fn finalize_global_filter_result(
     annotate_h_reprojection_and_adjust_confidence(
         &mut final_markers,
         final_h,
-        config.h_reproj_confidence_alpha,
+        config.advanced.h_reproj_confidence_alpha,
     );
     let reproj_annotate_elapsed = reproj_annotate_start.elapsed();
 
@@ -564,12 +571,12 @@ pub(super) fn finalize_premerge(
         apply_projective_centers(&mut corrected_markers, config);
     }
 
-    if config.id_correction.enable {
+    if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.board,
-            &config.id_correction,
-            config.decode.codebook_profile,
+            &config.advanced.id_correction,
+            config.advanced.decode.codebook_profile,
         );
         log_id_correction_summary(&stats);
     }
@@ -597,7 +604,7 @@ pub(super) fn finalize_postmerge(
         DetectionFrame::Image
     };
 
-    if !config.use_global_filter {
+    if !config.advanced.use_global_filter {
         return finalize_no_global_filter_result(
             gray,
             merged_markers,
@@ -644,19 +651,19 @@ pub(super) fn run(
     let projective_center_elapsed = projective_center_start.elapsed();
 
     let id_correction_start = Instant::now();
-    if config.id_correction.enable {
+    if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.board,
-            &config.id_correction,
-            config.decode.codebook_profile,
+            &config.advanced.id_correction,
+            config.advanced.decode.codebook_profile,
         );
         log_id_correction_summary(&stats);
     }
     let id_correction_elapsed = id_correction_start.elapsed();
 
     let tail_start = Instant::now();
-    if !config.use_global_filter {
+    if !config.advanced.use_global_filter {
         let result = finalize_no_global_filter_result(
             gray,
             corrected_markers,
@@ -803,11 +810,12 @@ mod tests {
     }
 
     fn no_global_filter_config() -> DetectConfig {
-        DetectConfig {
-            use_global_filter: false,
+        let mut config = DetectConfig {
             circle_refinement: crate::CircleRefinementMethod::None,
             ..DetectConfig::default()
-        }
+        };
+        config.advanced.use_global_filter = false;
+        config
     }
 
     #[test]

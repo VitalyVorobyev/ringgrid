@@ -84,9 +84,10 @@ pub use pipeline::{DetectionFrame, DetectionResult};
 
 // Configuration
 pub use detector::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
-    InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
-    ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers, SeedProposalParams,
+    AdvancedDetectConfig, CircleRefinementMethod, CompletionParams, DetectConfig,
+    IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
+    OuterFitConfig, ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers,
+    SeedProposalParams,
 };
 pub use homography::RansacHomographyConfig;
 

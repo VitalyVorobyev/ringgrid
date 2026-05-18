@@ -40,6 +40,14 @@ README_SECTION_TYPES: dict[str, type[object]] = {
     "inner_as_outer_recovery": ringgrid.InnerAsOuterRecoveryConfig,
 }
 
+#: Scalar (non-section) config keys exposed as curated `cfg.<name>` properties.
+README_SCALAR_NAMES = (
+    "circle_refinement",
+    "dedup_radius",
+    "max_aspect_ratio",
+    "use_global_filter",
+)
+
 README_ALIAS_NAMES = (
     "completion_enable",
     "self_undistort_enable",
@@ -267,8 +275,9 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
     cfg = ringgrid.DetectConfig(board)
 
     baseline = cfg.to_dict()
-    assert "decode" in baseline
-    assert "completion" in baseline
+    # Stage tuning nests under "advanced" in the v0.6 config schema.
+    assert "decode" in baseline["advanced"]
+    assert "completion" in baseline["advanced"]
 
     cfg.completion_enable = False
     cfg.use_global_filter = False
@@ -280,13 +289,14 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
     cfg.homography_inlier_threshold_px = 4.0
 
     d = cfg.to_dict()
-    assert d["completion"]["enable"] is False
-    assert d["use_global_filter"] is False
-    assert d["decode"]["min_decode_margin"] == 2
-    assert d["decode"]["max_decode_dist"] == 2
-    assert d["decode"]["min_decode_confidence"] == pytest.approx(0.4)
-    assert d["inner_fit"]["require_inner_fit"] is True
-    assert d["ransac_homography"]["inlier_threshold"] == pytest.approx(4.0)
+    adv = d["advanced"]
+    assert adv["completion"]["enable"] is False
+    assert adv["use_global_filter"] is False
+    assert adv["decode"]["min_decode_margin"] == 2
+    assert adv["decode"]["max_decode_dist"] == 2
+    assert adv["decode"]["min_decode_confidence"] == pytest.approx(0.4)
+    assert adv["inner_fit"]["require_inner_fit"] is True
+    assert adv["ransac_homography"]["inlier_threshold"] == pytest.approx(4.0)
 
 
 def test_detect_config_typed_sections_are_settable_without_mapping_overlays() -> None:
@@ -360,25 +370,27 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     cfg.use_global_filter = False
 
     d = cfg.to_dict()
+    adv = d["advanced"]
+    # marker_scale and self_undistort stay at the top level; stage tuning nests.
     assert d["marker_scale"]["diameter_min_px"] == pytest.approx(12.0)
     assert d["marker_scale"]["diameter_max_px"] == pytest.approx(96.0)
-    assert d["inner_fit"]["require_inner_fit"] is True
-    assert d["outer_fit"]["size_score_weight"] == pytest.approx(0.22)
-    assert d["completion"]["enable"] is False
-    assert d["projective_center"]["ratio_penalty_weight"] == pytest.approx(0.45)
-    assert d["seed_proposals"]["max_seeds"] == 128
-    assert d["proposal"]["max_candidates"] == 64
-    assert d["edge_sample"]["n_rays"] == 56
-    assert d["decode"]["codebook_profile"] == "extended"
-    assert d["decode"]["min_decode_margin"] == 3
-    assert d["marker_spec"]["theta_samples"] == 120
-    assert d["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
+    assert adv["inner_fit"]["require_inner_fit"] is True
+    assert adv["outer_fit"]["size_score_weight"] == pytest.approx(0.22)
+    assert adv["completion"]["enable"] is False
+    assert adv["projective_center"]["ratio_penalty_weight"] == pytest.approx(0.45)
+    assert adv["seed_proposals"]["max_seeds"] == 128
+    assert adv["proposal"]["max_candidates"] == 64
+    assert adv["edge_sample"]["n_rays"] == 56
+    assert adv["decode"]["codebook_profile"] == "extended"
+    assert adv["decode"]["min_decode_margin"] == 3
+    assert adv["marker_spec"]["theta_samples"] == 120
+    assert adv["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
     assert d["self_undistort"]["enable"] is True
-    assert d["id_correction"]["enable"] is False
-    assert d["inner_as_outer_recovery"]["enable"] is False
-    assert d["dedup_radius"] == pytest.approx(0.65)
-    assert d["max_aspect_ratio"] == pytest.approx(2.4)
-    assert d["use_global_filter"] is False
+    assert adv["id_correction"]["enable"] is False
+    assert adv["inner_as_outer_recovery"]["enable"] is False
+    assert adv["dedup_radius"] == pytest.approx(0.65)
+    assert adv["max_aspect_ratio"] == pytest.approx(2.4)
+    assert adv["use_global_filter"] is False
 
 
 def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
@@ -399,8 +411,8 @@ def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
     assert cfg.decode.min_decode_margin != 99
 
     snapshot = cfg.to_dict()
-    snapshot["decode"]["min_decode_margin"] = 123
-    assert cfg.to_dict()["decode"]["min_decode_margin"] != 123
+    snapshot["advanced"]["decode"]["min_decode_margin"] = 123
+    assert cfg.to_dict()["advanced"]["decode"]["min_decode_margin"] != 123
     assert cfg._resolved_cache is cache
 
 
@@ -408,7 +420,8 @@ def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> N
     board = ringgrid.BoardLayout.default()
     cfg = ringgrid.DetectConfig(board)
 
-    assert cfg.decode.to_dict() == cfg.to_dict()["decode"]
+    # The `decode` section nests under `advanced` in the v0.6 config schema.
+    assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
     decode = cfg.decode
     decode.codebook_profile = "extended"
@@ -417,21 +430,21 @@ def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> N
 
     assert cfg.decode.codebook_profile == "extended"
     assert cfg.decode.min_decode_margin == 2
-    assert cfg.decode.to_dict() == cfg.to_dict()["decode"]
+    assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
-    roundtrip = ringgrid.DecodeConfig.from_dict(cfg.to_dict()["decode"])
-    assert roundtrip.to_dict() == cfg.to_dict()["decode"]
+    roundtrip = ringgrid.DecodeConfig.from_dict(cfg.to_dict()["advanced"]["decode"])
+    assert roundtrip.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
 
 def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
     cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
-    legacy_payload = dict(cfg.to_dict()["decode"])
+    legacy_payload = dict(cfg.to_dict()["advanced"]["decode"])
     del legacy_payload["codebook_profile"]
 
     decoded = ringgrid.DecodeConfig.from_dict(legacy_payload)
 
     assert decoded.codebook_profile == "base"
-    assert decoded.to_dict() == cfg.to_dict()["decode"]
+    assert decoded.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
 
 def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> None:
@@ -441,22 +454,27 @@ def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> Non
     cfg = ringgrid.DetectConfig(board)
     native = NativeDetectConfigCore(board._spec_json)
 
+    # Stage tuning nests under "advanced" in both the dump and the overlay.
     cfg.decode_min_confidence = 0.4
     native_decode = ringgrid.DecodeConfig.from_dict(
-        json.loads(native.dump_json())["decode"]
+        json.loads(native.dump_json())["advanced"]["decode"]
     )
     native_decode.min_decode_confidence = 0.4
-    native.apply_overlay_json(json.dumps({"decode": native_decode.to_dict()}))
+    native.apply_overlay_json(
+        json.dumps({"advanced": {"decode": native_decode.to_dict()}})
+    )
 
     cfg.completion_enable = False
     native_completion = ringgrid.CompletionParams.from_dict(
-        json.loads(native.dump_json())["completion"]
+        json.loads(native.dump_json())["advanced"]["completion"]
     )
     native_completion.enable = False
-    native.apply_overlay_json(json.dumps({"completion": native_completion.to_dict()}))
+    native.apply_overlay_json(
+        json.dumps({"advanced": {"completion": native_completion.to_dict()}})
+    )
 
     cfg.use_global_filter = False
-    native.apply_overlay_json(json.dumps({"use_global_filter": False}))
+    native.apply_overlay_json(json.dumps({"advanced": {"use_global_filter": False}}))
 
     cfg.circle_refinement = ringgrid.CircleRefinementMethod.NONE
     native.apply_overlay_json(json.dumps({"circle_refinement": "None"}))
@@ -479,7 +497,8 @@ def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
     expected = json.loads(native.dump_json())
     assert cfg._resolved_cache == expected
     assert cfg.to_dict() == expected
-    assert cfg.to_dict()["proposal"] != baseline["proposal"]
+    # `proposal` is scale-derived and nests under `advanced`.
+    assert cfg.to_dict()["advanced"]["proposal"] != baseline["advanced"]["proposal"]
 
 
 def test_native_detect_config_overlay_merges_nested_completion_fields() -> None:
@@ -488,19 +507,25 @@ def test_native_detect_config_overlay_merges_nested_completion_fields() -> None:
     board = ringgrid.BoardLayout.default()
     native = NativeDetectConfigCore(board._spec_json)
 
+    # The recursive overlay merge reaches arbitrarily nested leaves; stage
+    # tuning lives under "advanced" in the v0.6 config schema.
     native.apply_overlay_json(
         json.dumps(
             {
-                "completion": {
-                    "require_perfect_decode": True,
-                    "max_attempts": 17,
+                "advanced": {
+                    "completion": {
+                        "require_perfect_decode": True,
+                        "max_attempts": 17,
+                    }
                 }
             }
         )
     )
-    native.apply_overlay_json(json.dumps({"completion": {"enable": False}}))
+    native.apply_overlay_json(
+        json.dumps({"advanced": {"completion": {"enable": False}}})
+    )
 
-    resolved = json.loads(native.dump_json())
+    resolved = json.loads(native.dump_json())["advanced"]
     assert resolved["completion"]["enable"] is False
     assert resolved["completion"]["require_perfect_decode"] is True
     assert resolved["completion"]["max_attempts"] == 17
@@ -513,14 +538,22 @@ def test_readme_detect_config_field_guide_covers_python_surface() -> None:
     assert "## DetectConfig Field Guide" in readme
     assert "`cfg.board`" in readme
 
-    resolved = cfg.to_dict()
-    for key, value in resolved.items():
-        if isinstance(value, dict):
-            section = _markdown_section(readme, f"`{key}`")
-            for field in dataclasses.fields(README_SECTION_TYPES[key]):
-                assert f"`{field.name}`" in section
-        else:
-            assert f"`cfg.{key}`" in readme
+    # The v0.6 config schema nests stage tuning under "advanced". Flatten it so
+    # each curated section is still verified field-by-field. The full Rust
+    # `to_dict()` also exposes leaves with no curated Python property (e.g.
+    # `topology_filter_threshold_px`); only the curated surface is checked here.
+    resolved = dict(cfg.to_dict())
+    advanced = resolved.pop("advanced", {})
+    flattened = {**resolved, **advanced}
+    for key, section_type in README_SECTION_TYPES.items():
+        assert isinstance(flattened.get(key), dict), f"missing config section: {key}"
+        section = _markdown_section(readme, f"`{key}`")
+        for field in dataclasses.fields(section_type):
+            assert f"`{field.name}`" in section
+
+    for scalar in README_SCALAR_NAMES:
+        assert scalar in flattened, f"missing config scalar: {scalar}"
+        assert f"`cfg.{scalar}`" in readme
 
     for alias in README_ALIAS_NAMES:
         assert f"`cfg.{alias}`" in readme

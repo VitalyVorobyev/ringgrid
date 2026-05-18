@@ -117,12 +117,12 @@ pub(crate) struct OuterFitCandidate {
 }
 
 fn baseline_edge_cfg(config: &DetectConfig) -> &EdgeSampleConfig {
-    &config.edge_sample
+    &config.advanced.edge_sample
 }
 
 fn completion_edge_cfg(config: &DetectConfig) -> EdgeSampleConfig {
-    let mut edge_cfg = config.edge_sample.clone();
-    let params = &config.completion;
+    let mut edge_cfg = config.advanced.edge_sample.clone();
+    let params = &config.advanced.completion;
     edge_cfg.r_max = params.roi_radius_px.clamp(8.0, 200.0);
 
     let n_rays = edge_cfg.n_rays.max(1);
@@ -154,7 +154,7 @@ fn evaluate_hypothesis(
         ctx.r_expected,
         ctx.pol,
         ctx.edge_cfg,
-        ctx.config.outer_estimation.refine_halfwidth_px,
+        ctx.config.advanced.outer_estimation.refine_halfwidth_px,
     );
 
     if outer_points.len() < ctx.edge_cfg.min_rays_with_ring {
@@ -175,12 +175,16 @@ fn evaluate_hypothesis(
     let (outer, outer_ransac) = solver::fit_outer_ellipse_with_reason(&edge, ctx.config).ok()?;
 
     let gap = sampling::max_angular_gap(outer.center(), &edge.outer_points);
-    if gap > ctx.config.outer_fit.max_angular_gap_rad {
+    if gap > ctx.config.advanced.outer_fit.max_angular_gap_rad {
         return None;
     }
 
-    let (decode_result, diagnostics) =
-        decode_marker_with_diagnostics_and_mapper(ctx.gray, &outer, &ctx.config.decode, ctx.mapper);
+    let (decode_result, diagnostics) = decode_marker_with_diagnostics_and_mapper(
+        ctx.gray,
+        &outer,
+        &ctx.config.advanced.decode,
+        ctx.mapper,
+    );
 
     let score = scoring::score_outer_candidate(
         &edge,
@@ -188,7 +192,7 @@ fn evaluate_hypothesis(
         outer_ransac.as_ref(),
         diagnostics.decode_confidence,
         ctx.r_expected,
-        ctx.config.outer_fit.size_score_weight,
+        ctx.config.advanced.outer_fit.size_score_weight,
     );
 
     Some(OuterFitCandidate {
@@ -250,7 +254,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         gray,
         center_prior,
         r_expected,
-        &config.outer_estimation,
+        &config.advanced.outer_estimation,
         edge_cfg.n_rays.max(8),
         mapper,
         false,
@@ -314,23 +318,26 @@ mod tests {
     #[test]
     fn completion_edge_cfg_derivation_is_bounded() {
         let mut cfg = DetectConfig::default();
-        cfg.edge_sample.n_rays = 20;
-        cfg.edge_sample.r_max = 99.0;
-        cfg.completion.roi_radius_px = 4.0;
-        cfg.completion.min_arc_coverage = 0.42;
+        cfg.advanced.edge_sample.n_rays = 20;
+        cfg.advanced.edge_sample.r_max = 99.0;
+        cfg.advanced.completion.roi_radius_px = 4.0;
+        cfg.advanced.completion.min_arc_coverage = 0.42;
 
         let edge_cfg = completion_edge_cfg(&cfg);
         assert!((edge_cfg.r_max - 8.0).abs() < 1e-6);
         assert_eq!(edge_cfg.min_rays_with_ring, 9);
-        assert_eq!(edge_cfg.r_min, cfg.edge_sample.r_min);
-        assert!((edge_cfg.r_step - cfg.edge_sample.r_step).abs() < 1e-6);
-        assert!((edge_cfg.min_ring_depth - cfg.edge_sample.min_ring_depth).abs() < 1e-6);
+        assert_eq!(edge_cfg.r_min, cfg.advanced.edge_sample.r_min);
+        assert!((edge_cfg.r_step - cfg.advanced.edge_sample.r_step).abs() < 1e-6);
+        assert!((edge_cfg.min_ring_depth - cfg.advanced.edge_sample.min_ring_depth).abs() < 1e-6);
     }
 
     #[test]
     fn baseline_edge_cfg_returns_config_field() {
         let cfg = DetectConfig::default();
-        assert!(std::ptr::eq(baseline_edge_cfg(&cfg), &cfg.edge_sample));
+        assert!(std::ptr::eq(
+            baseline_edge_cfg(&cfg),
+            &cfg.advanced.edge_sample
+        ));
     }
 
     #[test]
@@ -371,12 +378,12 @@ mod tests {
         let inner_radius = 12.0f32;
         let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
         let mut cfg = DetectConfig::default();
-        cfg.edge_sample.r_min = 1.5;
-        cfg.edge_sample.r_max = 48.0;
+        cfg.advanced.edge_sample.r_min = 1.5;
+        cfg.advanced.edge_sample.r_max = 48.0;
 
         let out = fit_outer_candidate_from_prior(&img, center, outer_radius, &cfg, None)
             .expect("baseline outer fit should produce a candidate");
-        assert!(out.edge.outer_points.len() >= cfg.edge_sample.min_rays_with_ring);
+        assert!(out.edge.outer_points.len() >= cfg.advanced.edge_sample.min_rays_with_ring);
     }
 
     #[test]
@@ -387,8 +394,8 @@ mod tests {
         let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
 
         let mut cfg = DetectConfig::default();
-        cfg.edge_sample.r_max = 12.0;
-        cfg.completion.roi_radius_px = 40.0;
+        cfg.advanced.edge_sample.r_max = 12.0;
+        cfg.advanced.completion.roi_radius_px = 40.0;
 
         let baseline = fit_outer_candidate_from_prior(&img, center, outer_radius, &cfg, None);
         assert!(baseline.is_err());
@@ -408,9 +415,9 @@ mod tests {
         let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
 
         let mut cfg = DetectConfig::default();
-        cfg.edge_sample.r_min = 1.5;
-        cfg.edge_sample.r_max = 48.0;
-        cfg.outer_fit.min_ransac_points = usize::MAX;
+        cfg.advanced.edge_sample.r_min = 1.5;
+        cfg.advanced.edge_sample.r_max = 48.0;
+        cfg.advanced.outer_fit.min_ransac_points = usize::MAX;
 
         let out = fit_outer_candidate_from_prior(&img, center, outer_radius, &cfg, None)
             .expect("outer fit should still succeed via direct fit path");

@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn detector_config_mut() {
         let mut det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
-        det.config_mut().completion.enable = false;
-        assert!(!det.config().completion.enable);
+        det.config_mut().advanced.completion.enable = false;
+        assert!(!det.config().advanced.completion.enable);
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn detector_proposal_apis_honor_proposal_downscale() {
         let mut cfg = DetectConfig::from_target(BoardLayout::default());
-        cfg.proposal_downscale = crate::ProposalDownscale::Factor(4);
+        cfg.advanced.proposal_downscale = crate::ProposalDownscale::Factor(4);
         let detector = Detector::with_config(cfg.clone());
         let img = draw_ring_image(101, 98, [50.0, 49.0], 20.0, 10.0);
 

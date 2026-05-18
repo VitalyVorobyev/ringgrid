@@ -20,30 +20,6 @@ struct BoardSnapshot {
     markers: Vec<ringgrid::BoardMarker>,
 }
 
-/// Serializable snapshot of all tunable detection parameters.
-#[derive(Serialize, Deserialize, Clone)]
-struct DetectConfigDump {
-    marker_scale: ringgrid::MarkerScalePrior,
-    circle_refinement: ringgrid::CircleRefinementMethod,
-    inner_fit: ringgrid::InnerFitConfig,
-    outer_fit: ringgrid::OuterFitConfig,
-    completion: ringgrid::CompletionParams,
-    projective_center: ringgrid::ProjectiveCenterParams,
-    seed_proposals: ringgrid::SeedProposalParams,
-    proposal: ringgrid::ProposalConfig,
-    edge_sample: ringgrid::EdgeSampleConfig,
-    decode: ringgrid::DecodeConfig,
-    marker_spec: ringgrid::MarkerSpec,
-    outer_estimation: ringgrid::OuterEstimationConfig,
-    ransac_homography: ringgrid::RansacHomographyConfig,
-    self_undistort: ringgrid::SelfUndistortConfig,
-    id_correction: ringgrid::IdCorrectionConfig,
-    inner_as_outer_recovery: ringgrid::InnerAsOuterRecoveryConfig,
-    dedup_radius: f64,
-    max_aspect_ratio: f64,
-    use_global_filter: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum MapperSpec {
@@ -148,51 +124,23 @@ fn board_from_geometry(
     .map_err(py_value_error)
 }
 
-fn config_to_dump(config: &ringgrid::DetectConfig) -> DetectConfigDump {
-    DetectConfigDump {
-        marker_scale: config.marker_scale,
-        circle_refinement: config.circle_refinement,
-        inner_fit: config.inner_fit.clone(),
-        outer_fit: config.outer_fit.clone(),
-        completion: config.completion.clone(),
-        projective_center: config.projective_center.clone(),
-        seed_proposals: config.seed_proposals.clone(),
-        proposal: config.proposal.clone(),
-        edge_sample: config.edge_sample.clone(),
-        decode: config.decode.clone(),
-        marker_spec: config.marker_spec.clone(),
-        outer_estimation: config.outer_estimation.clone(),
-        ransac_homography: config.ransac_homography.clone(),
-        self_undistort: config.self_undistort.clone(),
-        id_correction: config.id_correction.clone(),
-        inner_as_outer_recovery: config.inner_as_outer_recovery.clone(),
-        dedup_radius: config.dedup_radius,
-        max_aspect_ratio: config.max_aspect_ratio,
-        use_global_filter: config.use_global_filter,
-    }
+/// Serialize a [`ringgrid::DetectConfig`] to its JSON representation.
+///
+/// Stage-tuning parameters nest under the `"advanced"` object. The board layout
+/// is `#[serde(skip)]`; it is supplied separately when reconstituting a config.
+fn config_to_json(config: &ringgrid::DetectConfig) -> PyResult<serde_json::Value> {
+    serde_json::to_value(config).map_err(py_value_error)
 }
 
-fn dump_to_config(board: ringgrid::BoardLayout, dump: &DetectConfigDump) -> ringgrid::DetectConfig {
-    let mut config = ringgrid::DetectConfig::from_target_and_scale_prior(board, dump.marker_scale);
-    config.circle_refinement = dump.circle_refinement;
-    config.inner_fit = dump.inner_fit.clone();
-    config.outer_fit = dump.outer_fit.clone();
-    config.completion = dump.completion.clone();
-    config.projective_center = dump.projective_center.clone();
-    config.seed_proposals = dump.seed_proposals.clone();
-    config.proposal = dump.proposal.clone();
-    config.edge_sample = dump.edge_sample.clone();
-    config.decode = dump.decode.clone();
-    config.marker_spec = dump.marker_spec.clone();
-    config.outer_estimation = dump.outer_estimation.clone();
-    config.ransac_homography = dump.ransac_homography.clone();
-    config.self_undistort = dump.self_undistort.clone();
-    config.id_correction = dump.id_correction.clone();
-    config.inner_as_outer_recovery = dump.inner_as_outer_recovery.clone();
-    config.dedup_radius = dump.dedup_radius;
-    config.max_aspect_ratio = dump.max_aspect_ratio;
-    config.use_global_filter = dump.use_global_filter;
-    config
+/// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
+/// attaching `board` and re-deriving the board-coupled / scale-coupled fields.
+fn config_from_json(
+    board: ringgrid::BoardLayout,
+    config_json: &serde_json::Value,
+) -> PyResult<ringgrid::DetectConfig> {
+    let config: ringgrid::DetectConfig =
+        serde_json::from_value(config_json.clone()).map_err(py_value_error)?;
+    Ok(config.with_board(board))
 }
 
 fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
@@ -211,98 +159,36 @@ fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
     }
 }
 
-fn parse_overlay_object(
-    overlay_json: &str,
-) -> PyResult<serde_json::Map<String, serde_json::Value>> {
+fn parse_overlay_object(overlay_json: &str) -> PyResult<serde_json::Value> {
     let overlay = serde_json::from_str::<serde_json::Value>(overlay_json).map_err(py_value_error)?;
     match overlay {
-        serde_json::Value::Object(obj) => Ok(obj),
+        obj @ serde_json::Value::Object(_) => Ok(obj),
         _ => Err(PyValueError::new_err("config overlay must be a JSON object")),
     }
 }
 
-fn merge_overlay_value<T>(current: &T, overlay: serde_json::Value) -> PyResult<T>
-where
-    T: Serialize + serde::de::DeserializeOwned,
-{
-    let mut merged = serde_json::to_value(current).map_err(py_value_error)?;
-    merge_json_value(&mut merged, overlay);
-    serde_json::from_value(merged).map_err(py_value_error)
-}
-
+/// Apply a partial config overlay onto `config`.
+///
+/// The overlay is a (possibly partial) [`ringgrid::DetectConfig`] JSON object;
+/// stage tuning nests under `"advanced"`. It is recursively merged onto the
+/// current config's JSON form so that a deeply nested partial section (e.g.
+/// `{"advanced": {"completion": {"enable": false}}}`) overrides only the named
+/// leaves. After the merge the config is deserialized and the board is
+/// re-attached, which re-derives all board- and scale-coupled fields.
 fn apply_overlay_json(config: &mut ringgrid::DetectConfig, overlay_json: &str) -> PyResult<()> {
-    let mut overlay = parse_overlay_object(overlay_json)?;
-
-    if let Some(value) = overlay.remove("marker_scale") {
-        let marker_scale = merge_overlay_value(&config.marker_scale, value)?;
-        config.set_marker_scale_prior(marker_scale);
-    }
-    if let Some(value) = overlay.remove("circle_refinement") {
-        config.circle_refinement = merge_overlay_value(&config.circle_refinement, value)?;
-    }
-    if let Some(value) = overlay.remove("inner_fit") {
-        config.inner_fit = merge_overlay_value(&config.inner_fit, value)?;
-    }
-    if let Some(value) = overlay.remove("outer_fit") {
-        config.outer_fit = merge_overlay_value(&config.outer_fit, value)?;
-    }
-    if let Some(value) = overlay.remove("completion") {
-        config.completion = merge_overlay_value(&config.completion, value)?;
-    }
-    if let Some(value) = overlay.remove("projective_center") {
-        config.projective_center = merge_overlay_value(&config.projective_center, value)?;
-    }
-    if let Some(value) = overlay.remove("seed_proposals") {
-        config.seed_proposals = merge_overlay_value(&config.seed_proposals, value)?;
-    }
-    if let Some(value) = overlay.remove("proposal") {
-        config.proposal = merge_overlay_value(&config.proposal, value)?;
-    }
-    if let Some(value) = overlay.remove("edge_sample") {
-        config.edge_sample = merge_overlay_value(&config.edge_sample, value)?;
-    }
-    if let Some(value) = overlay.remove("decode") {
-        config.decode = merge_overlay_value(&config.decode, value)?;
-    }
-    if let Some(value) = overlay.remove("marker_spec") {
-        config.marker_spec = merge_overlay_value(&config.marker_spec, value)?;
-    }
-    if let Some(value) = overlay.remove("outer_estimation") {
-        config.outer_estimation = merge_overlay_value(&config.outer_estimation, value)?;
-    }
-    if let Some(value) = overlay.remove("ransac_homography") {
-        config.ransac_homography = merge_overlay_value(&config.ransac_homography, value)?;
-    }
-    if let Some(value) = overlay.remove("self_undistort") {
-        config.self_undistort = merge_overlay_value(&config.self_undistort, value)?;
-    }
-    if let Some(value) = overlay.remove("id_correction") {
-        config.id_correction = merge_overlay_value(&config.id_correction, value)?;
-    }
-    if let Some(value) = overlay.remove("inner_as_outer_recovery") {
-        config.inner_as_outer_recovery =
-            merge_overlay_value(&config.inner_as_outer_recovery, value)?;
-    }
-    if let Some(value) = overlay.remove("dedup_radius") {
-        config.dedup_radius = merge_overlay_value(&config.dedup_radius, value)?;
-    }
-    if let Some(value) = overlay.remove("max_aspect_ratio") {
-        config.max_aspect_ratio = merge_overlay_value(&config.max_aspect_ratio, value)?;
-    }
-    if let Some(value) = overlay.remove("use_global_filter") {
-        config.use_global_filter = merge_overlay_value(&config.use_global_filter, value)?;
-    }
+    let overlay = parse_overlay_object(overlay_json)?;
+    let board = config.board.clone();
+    let mut merged = config_to_json(config)?;
+    merge_json_value(&mut merged, overlay);
+    *config = config_from_json(board, &merged)?;
     Ok(())
-}
-
-fn parse_dump(config_json: &str) -> PyResult<DetectConfigDump> {
-    serde_json::from_str::<DetectConfigDump>(config_json).map_err(py_value_error)
 }
 
 fn detector_from_json(board_spec_json: &str, config_json: &str) -> PyResult<ringgrid::Detector> {
     let board = board_from_spec_json(board_spec_json)?;
-    let dump = parse_dump(config_json)?;
-    let config = dump_to_config(board, &dump);
+    let config_value = serde_json::from_str::<serde_json::Value>(config_json)
+        .map_err(py_value_error)?;
+    let config = config_from_json(board, &config_value)?;
     Ok(ringgrid::Detector::with_config(config))
 }
 
@@ -330,12 +216,12 @@ fn detect_with_core_mapper(
 }
 
 fn validate_nominal_diameter_hint(nominal_diameter_px: Option<f32>) -> PyResult<Option<f32>> {
-    if let Some(diameter_px) = nominal_diameter_px {
-        if !diameter_px.is_finite() || diameter_px <= 0.0 {
-            return Err(PyValueError::new_err(
-                "nominal_diameter_px must be finite and > 0 when provided",
-            ));
-        }
+    if let Some(diameter_px) = nominal_diameter_px
+        && (!diameter_px.is_finite() || diameter_px <= 0.0)
+    {
+        return Err(PyValueError::new_err(
+            "nominal_diameter_px must be finite and > 0 when provided",
+        ));
     }
     Ok(nominal_diameter_px)
 }
@@ -485,7 +371,7 @@ impl DetectConfigCore {
     }
 
     fn dump_json(&self) -> PyResult<String> {
-        serde_json::to_string(&config_to_dump(&self.config)).map_err(py_value_error)
+        serde_json::to_string(&self.config).map_err(py_value_error)
     }
 
     fn apply_overlay_json(&mut self, overlay_json: &str) -> PyResult<()> {
@@ -883,7 +769,7 @@ fn resolve_config_json(board_spec_json: &str, overlay_json: Option<&str>) -> PyR
     let board = board_from_spec_json(board_spec_json)?;
     let mut config = ringgrid::DetectConfig::from_target(board);
     apply_overlay_json(&mut config, overlay_json.unwrap_or("{}"))?;
-    serde_json::to_string(&config_to_dump(&config)).map_err(py_value_error)
+    serde_json::to_string(&config).map_err(py_value_error)
 }
 
 #[pyfunction]
@@ -893,10 +779,11 @@ fn update_config_json(
     overlay_json: &str,
 ) -> PyResult<String> {
     let board = board_from_spec_json(board_spec_json)?;
-    let base = parse_dump(base_config_json)?;
-    let mut config = dump_to_config(board, &base);
+    let base_value =
+        serde_json::from_str::<serde_json::Value>(base_config_json).map_err(py_value_error)?;
+    let mut config = config_from_json(board, &base_value)?;
     apply_overlay_json(&mut config, overlay_json)?;
-    serde_json::to_string(&config_to_dump(&config)).map_err(py_value_error)
+    serde_json::to_string(&config).map_err(py_value_error)
 }
 
 #[pyfunction]

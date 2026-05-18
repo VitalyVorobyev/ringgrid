@@ -1587,6 +1587,31 @@ class InnerAsOuterRecoveryConfig:
         }
 
 
+#: Config keys that nest under the ``"advanced"`` object in the Rust
+#: ``DetectConfig`` JSON. Stable user-facing keys (``marker_scale``,
+#: ``circle_refinement``, ``self_undistort``) stay at the top level.
+_ADVANCED_KEYS: frozenset[str] = frozenset(
+    {
+        "outer_estimation",
+        "proposal",
+        "seed_proposals",
+        "edge_sample",
+        "decode",
+        "marker_spec",
+        "inner_fit",
+        "outer_fit",
+        "projective_center",
+        "completion",
+        "max_aspect_ratio",
+        "dedup_radius",
+        "use_global_filter",
+        "ransac_homography",
+        "id_correction",
+        "inner_as_outer_recovery",
+    }
+)
+
+
 class DetectConfig:
     """High-level detector configuration with typed section properties.
 
@@ -1623,16 +1648,56 @@ class DetectConfig:
         """Return a snapshot of the fully resolved config dictionary."""
         return self._snapshot()
 
+    @staticmethod
+    def _nest_overlay(overlay: Mapping[str, Any]) -> dict[str, Any]:
+        """Route an overlay's keys to the Rust JSON layout.
+
+        Keys in :data:`_ADVANCED_KEYS` are wrapped under an ``"advanced"``
+        object; stable keys stay at the top level.
+        """
+        top: dict[str, Any] = {}
+        advanced: dict[str, Any] = {}
+        for key, value in overlay.items():
+            if str(key) in _ADVANCED_KEYS:
+                advanced[str(key)] = value
+            else:
+                top[str(key)] = value
+        if advanced:
+            top["advanced"] = advanced
+        return top
+
+    def _resolved_value(self, key: str) -> Any:
+        """Read a config section/field, transparently looking under ``advanced``."""
+        resolved = self._resolved()
+        if key in _ADVANCED_KEYS:
+            return resolved["advanced"][key]
+        return resolved[key]
+
     def _patch_cached_overlay(self, overlay: Mapping[str, Any]) -> None:
         if self._resolved_cache is None:
             return
         for key, value in overlay.items():
-            self._resolved_cache[str(key)] = copy.deepcopy(value)
+            key = str(key)
+            if key in _ADVANCED_KEYS:
+                advanced = self._resolved_cache.get("advanced")
+                if not isinstance(advanced, dict):
+                    self._refresh_snapshot()
+                    return
+                advanced[key] = copy.deepcopy(value)
+            else:
+                self._resolved_cache[key] = copy.deepcopy(value)
 
     def _patch_cached_section_field(self, section_name: str, field_name: str, value: Any) -> None:
         if self._resolved_cache is None:
             return
-        section = self._resolved_cache.get(section_name)
+        container = self._resolved_cache
+        if section_name in _ADVANCED_KEYS:
+            advanced = self._resolved_cache.get("advanced")
+            if not isinstance(advanced, dict):
+                self._refresh_snapshot()
+                return
+            container = advanced
+        section = container.get(section_name)
         if not isinstance(section, dict):
             self._refresh_snapshot()
             return
@@ -1640,7 +1705,7 @@ class DetectConfig:
 
     def _apply_overlay(self, overlay: dict[str, Any], *, refresh: bool = False) -> None:
         payload = dict(overlay)
-        self._core.apply_overlay_json(json.dumps(payload))
+        self._core.apply_overlay_json(json.dumps(self._nest_overlay(payload)))
         if refresh:
             self._refresh_snapshot()
         else:
@@ -1654,7 +1719,9 @@ class DetectConfig:
         field_name: str,
         value: Any,
     ) -> None:
-        self._core.apply_overlay_json(json.dumps({section_name: section.to_dict()}))
+        self._core.apply_overlay_json(
+            json.dumps(self._nest_overlay({section_name: section.to_dict()}))
+        )
         self._patch_cached_section_field(section_name, field_name, value)
         self._version += 1
 
@@ -1675,8 +1742,7 @@ class DetectConfig:
 
     @property
     def inner_fit(self) -> InnerFitConfig:
-        resolved = self._resolved()
-        return InnerFitConfig.from_dict(resolved["inner_fit"])
+        return InnerFitConfig.from_dict(self._resolved_value("inner_fit"))
 
     @inner_fit.setter
     def inner_fit(self, value: InnerFitConfig) -> None:
@@ -1686,8 +1752,7 @@ class DetectConfig:
 
     @property
     def outer_fit(self) -> OuterFitConfig:
-        resolved = self._resolved()
-        return OuterFitConfig.from_dict(resolved["outer_fit"])
+        return OuterFitConfig.from_dict(self._resolved_value("outer_fit"))
 
     @outer_fit.setter
     def outer_fit(self, value: OuterFitConfig) -> None:
@@ -1697,8 +1762,7 @@ class DetectConfig:
 
     @property
     def completion(self) -> CompletionParams:
-        resolved = self._resolved()
-        return CompletionParams.from_dict(resolved["completion"])
+        return CompletionParams.from_dict(self._resolved_value("completion"))
 
     @completion.setter
     def completion(self, value: CompletionParams) -> None:
@@ -1708,8 +1772,7 @@ class DetectConfig:
 
     @property
     def projective_center(self) -> ProjectiveCenterParams:
-        resolved = self._resolved()
-        return ProjectiveCenterParams.from_dict(resolved["projective_center"])
+        return ProjectiveCenterParams.from_dict(self._resolved_value("projective_center"))
 
     @projective_center.setter
     def projective_center(self, value: ProjectiveCenterParams) -> None:
@@ -1719,8 +1782,7 @@ class DetectConfig:
 
     @property
     def seed_proposals(self) -> SeedProposalParams:
-        resolved = self._resolved()
-        return SeedProposalParams.from_dict(resolved["seed_proposals"])
+        return SeedProposalParams.from_dict(self._resolved_value("seed_proposals"))
 
     @seed_proposals.setter
     def seed_proposals(self, value: SeedProposalParams) -> None:
@@ -1730,8 +1792,7 @@ class DetectConfig:
 
     @property
     def proposal(self) -> ProposalConfig:
-        resolved = self._resolved()
-        return ProposalConfig.from_dict(resolved["proposal"])
+        return ProposalConfig.from_dict(self._resolved_value("proposal"))
 
     @proposal.setter
     def proposal(self, value: ProposalConfig) -> None:
@@ -1741,8 +1802,7 @@ class DetectConfig:
 
     @property
     def edge_sample(self) -> EdgeSampleConfig:
-        resolved = self._resolved()
-        return EdgeSampleConfig.from_dict(resolved["edge_sample"])
+        return EdgeSampleConfig.from_dict(self._resolved_value("edge_sample"))
 
     @edge_sample.setter
     def edge_sample(self, value: EdgeSampleConfig) -> None:
@@ -1752,8 +1812,7 @@ class DetectConfig:
 
     @property
     def decode(self) -> DecodeConfig:
-        resolved = self._resolved()
-        return DecodeConfig.from_dict(resolved["decode"])
+        return DecodeConfig.from_dict(self._resolved_value("decode"))
 
     @decode.setter
     def decode(self, value: DecodeConfig) -> None:
@@ -1763,8 +1822,7 @@ class DetectConfig:
 
     @property
     def marker_spec(self) -> MarkerSpec:
-        resolved = self._resolved()
-        return MarkerSpec.from_dict(resolved["marker_spec"])
+        return MarkerSpec.from_dict(self._resolved_value("marker_spec"))
 
     @marker_spec.setter
     def marker_spec(self, value: MarkerSpec) -> None:
@@ -1774,8 +1832,7 @@ class DetectConfig:
 
     @property
     def outer_estimation(self) -> OuterEstimationConfig:
-        resolved = self._resolved()
-        return OuterEstimationConfig.from_dict(resolved["outer_estimation"])
+        return OuterEstimationConfig.from_dict(self._resolved_value("outer_estimation"))
 
     @outer_estimation.setter
     def outer_estimation(self, value: OuterEstimationConfig) -> None:
@@ -1785,8 +1842,7 @@ class DetectConfig:
 
     @property
     def ransac_homography(self) -> RansacHomographyConfig:
-        resolved = self._resolved()
-        return RansacHomographyConfig.from_dict(resolved["ransac_homography"])
+        return RansacHomographyConfig.from_dict(self._resolved_value("ransac_homography"))
 
     @ransac_homography.setter
     def ransac_homography(self, value: RansacHomographyConfig) -> None:
@@ -1807,8 +1863,7 @@ class DetectConfig:
 
     @property
     def id_correction(self) -> IdCorrectionConfig:
-        resolved = self._resolved()
-        return IdCorrectionConfig.from_dict(resolved["id_correction"])
+        return IdCorrectionConfig.from_dict(self._resolved_value("id_correction"))
 
     @id_correction.setter
     def id_correction(self, value: IdCorrectionConfig) -> None:
@@ -1818,8 +1873,7 @@ class DetectConfig:
 
     @property
     def inner_as_outer_recovery(self) -> InnerAsOuterRecoveryConfig:
-        resolved = self._resolved()
-        return InnerAsOuterRecoveryConfig.from_dict(resolved["inner_as_outer_recovery"])
+        return InnerAsOuterRecoveryConfig.from_dict(self._resolved_value("inner_as_outer_recovery"))
 
     @inner_as_outer_recovery.setter
     def inner_as_outer_recovery(self, value: InnerAsOuterRecoveryConfig) -> None:
@@ -1838,8 +1892,7 @@ class DetectConfig:
 
     @property
     def dedup_radius(self) -> float:
-        resolved = self._resolved()
-        return float(resolved["dedup_radius"])
+        return float(self._resolved_value("dedup_radius"))
 
     @dedup_radius.setter
     def dedup_radius(self, value: float) -> None:
@@ -1847,8 +1900,7 @@ class DetectConfig:
 
     @property
     def max_aspect_ratio(self) -> float:
-        resolved = self._resolved()
-        return float(resolved["max_aspect_ratio"])
+        return float(self._resolved_value("max_aspect_ratio"))
 
     @max_aspect_ratio.setter
     def max_aspect_ratio(self, value: float) -> None:
@@ -1894,8 +1946,7 @@ class DetectConfig:
 
     @property
     def use_global_filter(self) -> bool:
-        resolved = self._resolved()
-        return bool(resolved["use_global_filter"])
+        return bool(self._resolved_value("use_global_filter"))
 
     @use_global_filter.setter
     def use_global_filter(self, value: bool) -> None:

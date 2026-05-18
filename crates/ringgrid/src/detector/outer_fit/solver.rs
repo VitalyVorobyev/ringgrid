@@ -10,8 +10,9 @@ pub(super) enum OuterEllipseFitReject {
 }
 
 fn point_thresholds(config: &DetectConfig) -> (usize, usize) {
-    let min_direct_fit_points = config.outer_fit.min_direct_fit_points.max(6);
+    let min_direct_fit_points = config.advanced.outer_fit.min_direct_fit_points.max(6);
     let min_ransac_points = config
+        .advanced
         .outer_fit
         .min_ransac_points
         .max(min_direct_fit_points);
@@ -25,7 +26,7 @@ pub(super) fn fit_outer_ellipse_with_reason(
     let (min_direct_fit_points, min_ransac_points) = point_thresholds(config);
 
     let (outer, outer_ransac) = if edge.outer_points.len() >= min_ransac_points {
-        match try_fit_ellipse_ransac(&edge.outer_points, &config.outer_fit.ransac) {
+        match try_fit_ellipse_ransac(&edge.outer_points, &config.advanced.outer_fit.ransac) {
             Ok(r) => (r.ellipse, Some(r)),
             Err(_) => {
                 // Fall back to direct fit when robust fit fails.
@@ -44,11 +45,11 @@ pub(super) fn fit_outer_ellipse_with_reason(
         return Err(OuterEllipseFitReject::TooFewPoints);
     };
 
-    if outer.a < config.min_semi_axis
-        || outer.a > config.max_semi_axis
-        || outer.b < config.min_semi_axis
-        || outer.b > config.max_semi_axis
-        || outer.aspect_ratio() > config.max_aspect_ratio
+    if outer.a < config.advanced.min_semi_axis
+        || outer.a > config.advanced.max_semi_axis
+        || outer.b < config.advanced.min_semi_axis
+        || outer.b > config.advanced.max_semi_axis
+        || outer.aspect_ratio() > config.advanced.max_aspect_ratio
         || !outer.is_valid()
     {
         return Err(OuterEllipseFitReject::InvalidEllipse);

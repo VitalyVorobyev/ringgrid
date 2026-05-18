@@ -24,14 +24,14 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         return;
     }
 
-    let expected_ratio = if config.projective_center.use_expected_ratio {
-        Some(config.marker_spec.r_inner_expected as f64)
+    let expected_ratio = if config.advanced.projective_center.use_expected_ratio {
+        Some(config.advanced.marker_spec.r_inner_expected as f64)
     } else {
         None
     };
     let opts = RingCenterProjectiveOptions {
         expected_ratio,
-        ratio_penalty_weight: config.projective_center.ratio_penalty_weight,
+        ratio_penalty_weight: config.advanced.projective_center.ratio_penalty_weight,
         ..Default::default()
     };
 
@@ -57,7 +57,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
             continue;
         };
 
-        if let Some(max_residual) = config.projective_center.max_selected_residual
+        if let Some(max_residual) = config.advanced.projective_center.max_selected_residual
             && (!res.debug.selected_residual.is_finite()
                 || res.debug.selected_residual > max_residual)
         {
@@ -65,7 +65,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
             continue;
         }
 
-        if let Some(min_sep) = config.projective_center.min_eig_separation
+        if let Some(min_sep) = config.advanced.projective_center.min_eig_separation
             && (!res.debug.selected_eig_separation.is_finite()
                 || res.debug.selected_eig_separation < min_sep)
         {
@@ -77,7 +77,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &
         let dx = center_projective[0] - center_before[0];
         let dy = center_projective[1] - center_before[1];
         let center_shift = (dx * dx + dy * dy).sqrt();
-        if let Some(max_shift_px) = config.projective_center.max_center_shift_px
+        if let Some(max_shift_px) = config.advanced.projective_center.max_center_shift_px
             && (!center_shift.is_finite() || center_shift > max_shift_px)
         {
             n_rejected_shift += 1;

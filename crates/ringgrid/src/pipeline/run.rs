@@ -56,7 +56,7 @@ fn run_pass2(
     mapper: &dyn PixelMapper,
     pass1: &DetectionResult,
 ) -> DetectionResult {
-    let seed_params = &config.seed_proposals;
+    let seed_params = &config.advanced.seed_proposals;
     let proposals = pass1.seed_proposals(seed_params.max_seeds);
     run(
         gray,
@@ -151,16 +151,22 @@ fn find_proposals_with_downscale(
 }
 
 pub(crate) fn proposal_seeds_for_config(gray: &GrayImage, config: &DetectConfig) -> Vec<Proposal> {
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
-    find_proposals_with_downscale(gray, &config.proposal, factor)
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
+    find_proposals_with_downscale(gray, &config.advanced.proposal, factor)
 }
 
 pub(crate) fn proposal_result_for_config(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> ProposalResult {
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
-    proposal_result_with_downscale(gray, &config.proposal, factor)
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
+    proposal_result_with_downscale(gray, &config.advanced.proposal, factor)
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +176,10 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
     let total_start = Instant::now();
     let (image_width, image_height) = gray.dimensions();
 
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
 
     let proposal_start = Instant::now();
     let proposals = proposal_seeds_for_config(gray, config);
@@ -260,7 +269,7 @@ pub(crate) fn detect_premerge(
 /// 4. Runs global filter + completion + final H refit once on the merged pool.
 ///
 /// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
-/// `config.dedup_radius`.
+/// `config.advanced.dedup_radius`.
 pub fn detect_multiscale(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -292,7 +301,7 @@ pub fn detect_multiscale(
         .iter()
         .map(|t| t.prior.diameter_min_px as f64)
         .fold(f64::INFINITY, f64::min);
-    let dedup_radius = (min_tier_d * 0.6).max(config.dedup_radius);
+    let dedup_radius = (min_tier_d * 0.6).max(config.advanced.dedup_radius);
 
     let merged = merge_multiscale_markers(all_markers, dedup_radius, 6);
 

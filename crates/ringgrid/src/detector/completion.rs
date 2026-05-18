@@ -346,7 +346,7 @@ fn evaluate_completion_candidate(
     active_codebook_min_cyclic_dist: u8,
     stats: &mut CompletionStats,
 ) -> Result<CandidateQuality, ()> {
-    let params = &config.completion;
+    let params = &config.advanced.completion;
     let quality = compute_candidate_quality(
         &cand.edge,
         &cand.outer,
@@ -359,7 +359,7 @@ fn evaluate_completion_candidate(
         &quality,
         params,
         r_expected,
-        config.outer_fit.max_angular_gap_rad,
+        config.advanced.outer_fit.max_angular_gap_rad,
     ) {
         tracing::trace!(
             "Completion id={} gate_reject={} context={:?}",
@@ -407,9 +407,9 @@ fn assemble_completion_marker(
     let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
         gray,
         &cand.outer,
-        &config.marker_spec,
+        &config.advanced.marker_spec,
         mapper,
-        &config.inner_fit,
+        &config.advanced.inner_fit,
         false,
     );
     let fit = fit_metrics_with_inner(
@@ -464,7 +464,7 @@ fn try_complete_marker(
     stats: &mut CompletionStats,
 ) -> Option<DetectedMarker> {
     let active_codebook_min_cyclic_dist =
-        Codebook::from_profile(config.decode.codebook_profile).min_cyclic_dist() as u8;
+        Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
     let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
         .unwrap_or(config.marker_scale.nominal_outer_radius_px());
 
@@ -527,7 +527,7 @@ pub(crate) fn complete_with_h(
 ) -> CompletionStats {
     use std::collections::HashSet;
 
-    let params = &config.completion;
+    let params = &config.advanced.completion;
     if !params.enable {
         return CompletionStats::default();
     }

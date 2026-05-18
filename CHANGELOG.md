@@ -9,6 +9,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-18
+
+Public API revision: a deliberate, batched breaking cleanup of the `ringgrid`
+crate surface. The goal is a small, stable contract — primary results stay
+compact, opt-in diagnostics are a separate channel, and per-stage tuning is no
+longer part of the durable API. See `API_REVISION.md` for the full audit.
+
+### Removed
+
+- **Hidden `codec` / `codebook` module re-exports.** `ringgrid::codec` and
+  `ringgrid::codebook` (previously `#[doc(hidden)]` re-exports of raw decoder
+  internals) are gone. Use the new `ringgrid::{codebook_info, decode_word}`
+  functions, which return `CodebookInfo` / `CodewordMatch`.
+- **`DetectionResult::seed_proposals()`** — the pipeline-internal seed helper is
+  no longer on the public primary result.
+- **`DetectionResult::ransac`** — homography RANSAC statistics moved to
+  `DetectionDiagnostics` (see below). `homography` and `self_undistort` remain on
+  `DetectionResult`.
+- **`DetectedMarker` fields `fit`, `decode`, `source`, `edge_points_outer`,
+  `edge_points_inner`** — moved to the new `MarkerDiagnostics` type.
+
+### Changed
+
+- **BREAKING: `DetectConfig` split into stable + advanced.** Per-stage tuning
+  knobs moved under a nested `advanced: AdvancedDetectConfig`. The top level now
+  holds only the durable user choices: `board`, `marker_scale`,
+  `circle_refinement`, `self_undistort`. Migration: `cfg.inner_fit` becomes
+  `cfg.advanced.inner_fit`, and likewise for every stage sub-config
+  (`outer_fit`, `decode`, `proposal`, `edge_sample`, `completion`,
+  `id_correction`, `ransac_homography`, `use_global_filter`, …). The config
+  dump/overlay JSON now nests stage tuning under an `"advanced"` object — old
+  flat config JSON no longer deserializes.
+- **BREAKING: `DetectedMarker` slimmed.** It now carries only `id`, `confidence`,
+  `center`, `center_mapped`, `board_xy_mm`, `ellipse_outer`, `ellipse_inner`.
+  The detailed fit/decode/source/edge-point fields are on `MarkerDiagnostics`,
+  obtained via `Detector::detect_with_diagnostics`.
+- **BREAKING: `DetectionResult` slimmed.** `ransac` was removed (now on
+  `DetectionDiagnostics`) and the `seed_proposals()` method was removed.
+  `homography` and `self_undistort` are unchanged.
+- **BREAKING: `BoardLayout` geometry fields are now getter methods.** Use
+  `board.name()`, `board.pitch_mm()`, `board.rows()`, and
+  `board.long_row_cols()` instead of direct field access. This protects the
+  validated marker cache from going out of sync.
+- **BREAKING: CLI detection JSON nests diagnostics.** Per-marker
+  `fit` / `decode` / `source` / `edge_points_*` and the per-result `ransac`
+  block moved under a nested `diagnostics` object in `detect.json`.
+- **BREAKING: `#[non_exhaustive]` added to public config, diagnostics, and
+  result structs.** `DetectConfig`, `AdvancedDetectConfig`, the 11 stage
+  sub-configs, the diagnostics structs (`FitMetrics`, `DecodeMetrics`,
+  `MarkerDiagnostics`, `DetectionDiagnostics`), and the result types can no
+  longer be built with a struct literal from outside the crate. Construct them
+  through their constructors or `Default` and mutate fields afterwards.
+
+### Added
+
+- **`Detector::detect_with_diagnostics`** (and the mapper variant
+  `detect_with_mapper_diagnostics`) — returns
+  `(DetectionResult, DetectionDiagnostics)`. `detect()` keeps its signature and
+  returns the slim result; request diagnostics explicitly when you need
+  per-marker fit/decode internals, edge points, or homography RANSAC stats.
+- **`DetectionDiagnostics`** and **`MarkerDiagnostics`** — the opt-in
+  debugging/tuning channel. `MarkerDiagnostics` is positionally aligned 1:1 with
+  `DetectionResult` markers.
+- **`codebook_info`** / **`decode_word`** and the **`CodebookInfo`** /
+  **`CodewordMatch`** types — a small explicit codebook-inspection API replacing
+  the removed raw `codec` / `codebook` re-exports.
+- **`AdvancedDetectConfig`** — the advanced per-stage tuning struct now reachable
+  from `DetectConfig::advanced`.
+- **Root re-exports of `RansacConfig`, `AngularAggregator`, `GradPolarity`, and
+  `UndistortConfig`** — types that previously appeared in public signatures or
+  config fields without being nameable from the crate root.
+
+### Migration
+
+Before (0.5.x):
+
+```rust
+let mut cfg = DetectConfig::from_target(board);
+cfg.completion.enable = false;
+cfg.inner_fit.require_inner_fit = true;
+let result = Detector::with_config(cfg).detect(&image);
+for m in &result.detected_markers {
+    println!("{:?} dist={}", m.id, m.decode.best_dist);
+}
+```
+
+After (0.6.0):
+
+```rust
+let mut cfg = DetectConfig::from_target(board);
+cfg.advanced.completion.enable = false;
+cfg.advanced.inner_fit.require_inner_fit = true;
+let (result, diag) = Detector::with_config(cfg).detect_with_diagnostics(&image);
+for (m, d) in result.detected_markers.iter().zip(&diag.markers) {
+    println!("{:?} dist={}", m.id, d.decode.best_dist);
+}
+```
+
 ## [0.5.6] — 2026-04-09
 
 ### Added

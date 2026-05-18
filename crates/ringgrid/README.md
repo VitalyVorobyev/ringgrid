@@ -25,7 +25,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.5.1"
+ringgrid = "0.6.0"
 ```
 
 ## Rust Target Generation
@@ -133,9 +133,12 @@ for marker in &result.detected_markers {
 }
 ```
 
-`result` is a `DetectionResult`. It contains the final marker list plus image
-size, frame metadata, optional homography/RANSAC stats, and optional
-`self_undistort` output. For the serialized JSON shape and field meanings, see:
+`result` is a slim `DetectionResult`. It contains the final marker list plus
+image size, frame metadata, optional homography, and optional `self_undistort`
+output. Per-marker fit/decode metrics, edge points, and homography RANSAC stats
+are an opt-in diagnostics channel — call `detector.detect_with_diagnostics(&image)`
+to also get a `DetectionDiagnostics`. For the serialized JSON shape and field
+meanings, see:
 - https://vitalyvorobyev.github.io/ringgrid/book/output-format.html
 
 With a marker diameter hint for better scale tuning:

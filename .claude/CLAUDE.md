@@ -142,7 +142,8 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 
 # Python bindings (uses uv for package management)
-cd crates/ringgrid-py && ../../.venv/bin/maturin develop --release && cd ../..
+# VIRTUAL_ENV must point at .venv so maturin installs into it, not system Python.
+cd crates/ringgrid-py && VIRTUAL_ENV=../../.venv ../../.venv/bin/maturin develop --release && cd ../..
 
 # WASM bindings
 wasm-pack build crates/ringgrid-wasm --target web --release

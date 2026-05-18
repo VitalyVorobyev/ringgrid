@@ -91,11 +91,12 @@ let detector = Detector::from_target_json_file(Path::new("target.json"))?;
 ## Post-Construction Tuning
 
 After creating the detector you can adjust individual configuration fields through
-`config_mut()`. For example, to disable the completion stage:
+`config_mut()`. Per-stage tuning lives under the `advanced` sub-config; for
+example, to disable the completion stage:
 
 ```rust
 let mut detector = Detector::new(board);
-detector.config_mut().completion.enable = false;
+detector.config_mut().advanced.completion.enable = false;
 ```
 
 ## Serializing Results

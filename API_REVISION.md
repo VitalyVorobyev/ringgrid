@@ -1,7 +1,7 @@
 # ringgrid API Revision Report
 
 Date: 2026-05-18
-Status: report only, no implementation
+Status: implemented for 0.6.0 — the recommendations in this report were carried out as a batched breaking API revision; see `CHANGELOG.md` `[0.6.0]`.
 Audience: Claude Code implementation handoff
 
 ## Executive Summary

@@ -94,6 +94,9 @@ pub use homography::RansacHomographyConfig;
 pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
+// Codebook diagnostics (inspection helpers for the embedded codebook profiles)
+pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
+
 // Geometry
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,

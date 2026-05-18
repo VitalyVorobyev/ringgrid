@@ -942,27 +942,23 @@ fn main() -> CliResult<()> {
 // ── codebook-info ──────────────────────────────────────────────────────
 
 fn run_codebook_info() -> CliResult<()> {
-    use ringgrid::codec::{Codebook, CodebookProfile};
+    use ringgrid::{CodebookInfo, CodebookProfile, codebook_info};
 
     println!("ringgrid embedded codebook profiles");
     println!("  default profile:      {}", CodebookProfile::Base.as_str());
 
     for profile in [CodebookProfile::Base, CodebookProfile::Extended] {
-        let cb = Codebook::from_profile(profile);
-        println!("  {}:", profile.as_str());
-        println!("    bits per codeword:    {}", cb.bits());
-        println!("    number of codewords:  {}", cb.len());
-        println!("    min cyclic Hamming:   {}", cb.min_cyclic_dist());
-        println!("    generator seed:       {}", cb.seed());
-        if !cb.is_empty() {
-            println!(
-                "    first codeword:       0x{:04X}",
-                cb.word(0).unwrap_or(0)
-            );
-            println!(
-                "    last codeword:        0x{:04X}",
-                cb.word(cb.len() - 1).unwrap_or(0)
-            );
+        let info: CodebookInfo = codebook_info(profile);
+        println!("  {}:", info.profile.as_str());
+        println!("    bits per codeword:    {}", info.bits);
+        println!("    number of codewords:  {}", info.len);
+        println!("    min cyclic Hamming:   {}", info.min_cyclic_dist);
+        println!("    generator seed:       {}", info.seed);
+        if let Some(first) = info.first_codeword {
+            println!("    first codeword:       0x{:04X}", first);
+        }
+        if let Some(last) = info.last_codeword {
+            println!("    last codeword:        0x{:04X}", last);
         }
     }
 
@@ -1070,7 +1066,7 @@ fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
 // ── decode-test ────────────────────────────────────────────────────────
 
 fn run_decode_test(word_str: &str, profile: CodebookProfileArg) -> CliResult<()> {
-    use ringgrid::codec::{Codebook, Match};
+    use ringgrid::{CodewordMatch, decode_word};
 
     let word_str = word_str
         .trim()
@@ -1079,14 +1075,13 @@ fn run_decode_test(word_str: &str, profile: CodebookProfileArg) -> CliResult<()>
     let word = u16::from_str_radix(word_str, 16)
         .map_err(|e| -> CliError { format!("invalid hex word: {}", e).into() })?;
 
-    let cb = Codebook::from_profile(profile.to_core());
-    let m: Match = cb.match_word(word);
+    let m: CodewordMatch = decode_word(word, profile.to_core());
 
-    println!("Input word:   0x{:04X} (binary: {:016b})", word, word);
-    println!("Profile:      {}", cb.profile().as_str());
+    println!("Input word:   0x{:04X} (binary: {:016b})", m.word, m.word);
+    println!("Profile:      {}", m.profile.as_str());
     println!("Best match:");
     println!("  id:         {}", m.id);
-    println!("  codeword:   0x{:04X}", cb.word(m.id).unwrap_or(0));
+    println!("  codeword:   0x{:04X}", m.codeword.unwrap_or(0));
     println!("  rotation:   {} sectors", m.rotation);
     println!("  distance:   {} bits", m.dist);
     println!("  margin:     {} bits", m.margin);

@@ -1,6 +1,6 @@
 //! Structural ID verification and correction using hex neighborhood consensus.
 //!
-//! This stage operates in image-space pixels (`DetectedMarker.center`) and
+//! This stage operates in image-space pixels (`MarkerRecord.center`) and
 //! board-space millimeters (`BoardLayout` marker coordinates).
 //!
 //! ## Staged algorithm

@@ -11,7 +11,7 @@ use super::marker_build::{
 };
 use super::outer_fit::{OuterFitCandidate, OuterFitRejectReason, fit_outer_candidate_from_prior};
 use super::{DetectConfig, dedup_by_id, dedup_markers};
-use crate::detector::DetectedMarker;
+use crate::detector::MarkerRecord;
 use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::Proposal;
@@ -92,7 +92,7 @@ fn process_candidate(
     proposal: Proposal,
     ctx: &CandidateProcessContext<'_>,
     timing: &mut CandidateTimingStats,
-) -> Result<DetectedMarker, CandidateRejectReason> {
+) -> Result<MarkerRecord, CandidateRejectReason> {
     let Some(center_prior) = ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) else {
         return Err(CandidateRejectReason::ProposalUnmappable);
     };
@@ -171,7 +171,7 @@ fn process_candidate(
     let outer_points = edge.outer_points;
     let inner_points = inner_fit.points_inner;
 
-    Ok(DetectedMarker {
+    Ok(MarkerRecord {
         id: marker_id,
         confidence,
         center,
@@ -182,7 +182,7 @@ fn process_candidate(
         fit: fit_metrics,
         decode: decode_metrics,
         source: ctx.source,
-        ..DetectedMarker::default()
+        ..MarkerRecord::default()
     })
 }
 
@@ -192,7 +192,7 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
     source: DetectionSource,
-) -> Vec<DetectedMarker> {
+) -> Vec<MarkerRecord> {
     let total_start = Instant::now();
     let input_count = proposals.len();
     tracing::info!("{} proposals found", input_count);
@@ -218,7 +218,7 @@ pub(super) fn run(
         source,
     };
 
-    let mut markers: Vec<DetectedMarker> = Vec::new();
+    let mut markers: Vec<MarkerRecord> = Vec::new();
     let mut reject_reasons: HashMap<CandidateRejectReason, usize> = HashMap::new();
     let mut timing = CandidateTimingStats::default();
     for proposal in proposals {
@@ -292,7 +292,7 @@ mod tests {
         crate::test_utils::draw_ring_image(w, h, center, outer_radius, inner_radius, 24, 230)
     }
 
-    fn nearest_marker(markers: &[DetectedMarker], center: [f64; 2]) -> Option<&DetectedMarker> {
+    fn nearest_marker(markers: &[MarkerRecord], center: [f64; 2]) -> Option<&MarkerRecord> {
         markers.iter().min_by(|a, b| {
             let da = (a.center[0] - center[0]) * (a.center[0] - center[0])
                 + (a.center[1] - center[1]) * (a.center[1] - center[1]);

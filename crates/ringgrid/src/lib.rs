@@ -76,11 +76,17 @@ pub use api::{
 pub use proposal::{Proposal, ProposalConfig, ProposalResult};
 pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
-// Result types
-pub use detector::{DetectedMarker, DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
+// Result types — slim, stable primary output of `Detector::detect`.
+pub use pipeline::{DetectedMarker, DetectionFrame, DetectionResult};
+
+// Diagnostics — opt-in debugging/tuning channel returned by
+// `Detector::detect_with_diagnostics`. `FitMetrics`, `DecodeMetrics`,
+// `RansacStats`, `DetectionSource`, `InnerFitReason`, and `InnerFitStatus` are
+// the field types of these diagnostics structs.
+pub use detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
-pub use pipeline::{DetectionFrame, DetectionResult};
+pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics};
 
 // Configuration
 pub use detector::{

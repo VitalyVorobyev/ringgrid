@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::detector::marker_build::DetectedMarker;
+use crate::detector::marker_build::MarkerRecord;
 use crate::homography::homography_project;
 
 use super::consistency::{
@@ -15,7 +15,7 @@ use super::workspace::{
 };
 
 fn config_soft_lock_blocks_override(
-    marker: &DetectedMarker,
+    marker: &MarkerRecord,
     soft_lock_enable: bool,
     codebook_min_cyclic_dist: usize,
     candidate_id: usize,

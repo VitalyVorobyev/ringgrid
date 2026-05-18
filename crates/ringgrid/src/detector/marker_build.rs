@@ -6,8 +6,9 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::config::InnerFitConfig;
 use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
 
-/// Indicates which pipeline stage produced a [`DetectedMarker`].
+/// Indicates which pipeline stage produced a marker.
 ///
+/// Exposed via [`MarkerDiagnostics::source`](crate::MarkerDiagnostics).
 /// Used to separate false-positive sources in post-processing and analysis.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
@@ -89,7 +90,17 @@ pub struct FitMetrics {
     pub h_reproj_err_px: Option<f32>,
 }
 
-/// A detected marker with its refined center and optional ID.
+/// Internal rich working marker used while the detection pipeline runs.
+///
+/// This is the mutable per-marker state threaded through every fit / decode /
+/// id-correction / completion / finalization stage. It carries algorithm
+/// internals (fit metrics, decode metrics, raw edge sample points, stage
+/// provenance) that several stages both read and mutate.
+///
+/// It is **not** part of the public API. At the [`Detector::detect`](crate::Detector::detect)
+/// boundary each `MarkerRecord` is split into the public slim
+/// [`DetectedMarker`](crate::DetectedMarker) plus its
+/// [`MarkerDiagnostics`](crate::MarkerDiagnostics) counterpart.
 ///
 /// The `center` field is always in image-pixel coordinates, regardless of
 /// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is
@@ -98,7 +109,7 @@ pub struct FitMetrics {
 /// millimeters when the decoded `id` is valid for the active [`BoardLayout`](crate::BoardLayout).
 /// Ellipses are in the working frame when a mapper is active.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct DetectedMarker {
+pub(crate) struct MarkerRecord {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<usize>,

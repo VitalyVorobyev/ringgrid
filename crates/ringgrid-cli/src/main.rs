@@ -851,10 +851,18 @@ fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
     Ok(())
 }
 
+/// JSON detection output.
+///
+/// The slim [`ringgrid::DetectionResult`] fields are flattened at the top
+/// level. Per-marker algorithm internals and homography RANSAC statistics —
+/// relocated out of the result type in the v0.6 API — are nested under the
+/// `diagnostics` object: `diagnostics.markers[i]` describes `detected_markers[i]`
+/// (positionally aligned 1:1), and `diagnostics.ransac` holds the RANSAC stats.
 #[derive(serde::Serialize)]
 struct DetectionJsonOutput<'a> {
     #[serde(flatten)]
     result: &'a ringgrid::DetectionResult,
+    diagnostics: &'a ringgrid::DetectionDiagnostics,
     #[serde(skip_serializing_if = "Option::is_none")]
     camera: Option<ringgrid::CameraModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -867,11 +875,13 @@ struct DetectionJsonOutput<'a> {
 
 fn serialize_detection_output(
     result: &ringgrid::DetectionResult,
+    diagnostics: &ringgrid::DetectionDiagnostics,
     camera: Option<ringgrid::CameraModel>,
     proposals: Option<&[ringgrid::Proposal]>,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(&DetectionJsonOutput {
         result,
+        diagnostics,
         camera,
         proposal_frame: proposals.map(|_| ringgrid::DetectionFrame::Image),
         proposal_count: proposals.map(|p| p.len()),
@@ -1155,9 +1165,11 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     } else {
         None
     };
-    let result = match overrides.camera.as_ref() {
-        Some(camera) => detector.detect_with_mapper(&gray, camera),
-        None => detector.detect(&gray),
+    // Use the diagnostics-returning entry points so the relocated per-marker
+    // internals and RANSAC stats can still be emitted in the output JSON.
+    let (result, diagnostics) = match overrides.camera.as_ref() {
+        Some(camera) => detector.detect_with_mapper_diagnostics(&gray, camera),
+        None => detector.detect_with_diagnostics(&gray),
     };
 
     let n_with_id = result
@@ -1171,7 +1183,7 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
         n_with_id,
     );
 
-    if let Some(ref stats) = result.ransac {
+    if let Some(ref stats) = diagnostics.ransac {
         tracing::info!(
             "Homography: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
             stats.n_inliers,
@@ -1193,7 +1205,12 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     }
 
     // Write results
-    let json = serialize_detection_output(&result, overrides.camera, proposals.as_deref())?;
+    let json = serialize_detection_output(
+        &result,
+        &diagnostics,
+        overrides.camera,
+        proposals.as_deref(),
+    )?;
     std::fs::write(&args.out, &json)?;
     tracing::info!("Results written to {}", args.out.display());
 
@@ -1357,16 +1374,20 @@ mod tests {
     #[test]
     fn serialize_detection_output_includes_camera_when_present() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let json =
-            serialize_detection_output(&result, Some(sample_camera()), None).expect("serialize");
+        let diagnostics = ringgrid::DetectionDiagnostics::default();
+        let json = serialize_detection_output(&result, &diagnostics, Some(sample_camera()), None)
+            .expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert!(value.get("camera").is_some());
+        assert!(value.get("diagnostics").is_some());
     }
 
     #[test]
     fn serialize_detection_output_omits_camera_when_absent() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let json = serialize_detection_output(&result, None, None).expect("serialize");
+        let diagnostics = ringgrid::DetectionDiagnostics::default();
+        let json =
+            serialize_detection_output(&result, &diagnostics, None, None).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert!(value.get("camera").is_none());
     }
@@ -1374,12 +1395,14 @@ mod tests {
     #[test]
     fn serialize_detection_output_includes_proposals_when_present() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
+        let diagnostics = ringgrid::DetectionDiagnostics::default();
         let proposals = vec![ringgrid::Proposal {
             x: 10.0,
             y: 20.0,
             score: 30.0,
         }];
-        let json = serialize_detection_output(&result, None, Some(&proposals)).expect("serialize");
+        let json = serialize_detection_output(&result, &diagnostics, None, Some(&proposals))
+            .expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert_eq!(
             value.get("proposal_frame").and_then(|v| v.as_str()),

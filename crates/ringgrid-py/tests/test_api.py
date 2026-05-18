@@ -665,6 +665,49 @@ def test_detect_path_smoke() -> None:
     assert result.image_size[1] > 0
 
 
+def test_detect_with_diagnostics_matches_detect_and_is_aligned() -> None:
+    detector = _make_detector()
+
+    plain = detector.detect(SAMPLE_IMAGE)
+    result, diagnostics = detector.detect_with_diagnostics(SAMPLE_IMAGE)
+
+    assert isinstance(result, ringgrid.DetectionResult)
+    assert isinstance(diagnostics, ringgrid.DetectionDiagnostics)
+
+    # detect() and detect_with_diagnostics() agree on the slim result.
+    assert len(plain.detected_markers) == len(result.detected_markers)
+    assert plain.image_size == result.image_size
+    for a, b in zip(plain.detected_markers, result.detected_markers):
+        assert a.id == b.id
+        assert a.center == b.center
+        assert a.confidence == b.confidence
+
+    # Diagnostics markers align 1:1 with detected markers.
+    assert len(diagnostics.markers) == len(result.detected_markers)
+    for diag in diagnostics.markers:
+        assert isinstance(diag, ringgrid.MarkerDiagnostics)
+        assert isinstance(diag.fit, ringgrid.FitMetrics)
+
+    # The slim DetectedMarker no longer carries algorithm internals: the
+    # relocated fields must not be present on the slim type.
+    for marker in result.detected_markers:
+        assert not hasattr(marker, "fit")
+        assert not hasattr(marker, "decode")
+        assert not hasattr(marker, "edge_points_outer")
+
+
+def test_detection_diagnostics_roundtrips() -> None:
+    detector = _make_detector()
+    _, diagnostics = detector.detect_with_diagnostics(SAMPLE_IMAGE)
+
+    data = diagnostics.to_dict()
+    assert "markers" in data
+
+    restored = ringgrid.DetectionDiagnostics.from_dict(data)
+    assert restored.to_dict() == data
+    assert len(restored.markers) == len(diagnostics.markers)
+
+
 def test_propose_path_array_and_module_level_parity() -> None:
     proposal_config = ringgrid.ProposalConfig()
     detector = _make_proposal_detector(proposal_config)

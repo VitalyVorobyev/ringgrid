@@ -1,5 +1,5 @@
-use crate::DetectedMarker;
 use crate::conic::Conic2D;
+use crate::detector::MarkerRecord;
 
 use super::{CircleRefinementMethod, DetectConfig};
 
@@ -15,7 +15,7 @@ pub(crate) fn warn_center_correction_without_intrinsics(config: &DetectConfig, h
 }
 
 /// Apply projective center correction to the provided marker slice.
-pub(crate) fn apply_projective_centers(markers: &mut [DetectedMarker], config: &DetectConfig) {
+pub(crate) fn apply_projective_centers(markers: &mut [MarkerRecord], config: &DetectConfig) {
     use crate::ring::projective_center::{
         RingCenterProjectiveOptions, ring_center_projective_with_debug,
     };

@@ -16,7 +16,7 @@ use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
-use crate::{DetectionResult, Proposal, ProposalResult};
+use crate::{DetectionDiagnostics, DetectionResult, Proposal, ProposalResult};
 
 /// Primary detection interface.
 ///
@@ -111,6 +111,16 @@ impl Detector {
         &mut self.config
     }
 
+    /// Run the single-pass / self-undistort pipeline and return the internal
+    /// rich result.
+    fn run_detect(&self, image: &GrayImage) -> pipeline::PipelineResult {
+        if self.config.self_undistort.enable {
+            pipeline::detect_with_self_undistort(image, &self.config)
+        } else {
+            pipeline::detect_single_pass(image, &self.config)
+        }
+    }
+
     /// Detect markers in a grayscale image.
     ///
     /// When `config.self_undistort.enable` is `false`, runs single-pass
@@ -119,12 +129,28 @@ impl Detector {
     /// When `config.self_undistort.enable` is `true`, runs baseline detection,
     /// estimates a self-undistort model, and optionally runs a second seeded
     /// pass with the estimated mapper.
+    ///
+    /// Returns the slim [`DetectionResult`]. Use
+    /// [`detect_with_diagnostics`](Self::detect_with_diagnostics) to also obtain
+    /// per-marker algorithm internals and RANSAC statistics.
     pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        if self.config.self_undistort.enable {
-            pipeline::detect_with_self_undistort(image, &self.config)
-        } else {
-            pipeline::detect_single_pass(image, &self.config)
-        }
+        self.run_detect(image).split().0
+    }
+
+    /// Detect markers and also return opt-in detection diagnostics.
+    ///
+    /// Behaves exactly like [`detect`](Self::detect) — the returned
+    /// [`DetectionResult`] is identical — but additionally yields a
+    /// [`DetectionDiagnostics`] carrying per-marker fit/decode metrics, raw edge
+    /// sample points, stage provenance, and homography RANSAC statistics.
+    ///
+    /// `diagnostics.markers` is positionally aligned 1:1 with
+    /// `result.detected_markers`.
+    pub fn detect_with_diagnostics(
+        &self,
+        image: &GrayImage,
+    ) -> (DetectionResult, DetectionDiagnostics) {
+        self.run_detect(image).split()
     }
 
     /// Generate pass-1 center proposals in image coordinates.
@@ -165,7 +191,7 @@ impl Detector {
     ///
     /// [`detect_multiscale`]: Self::detect_multiscale
     pub fn detect_adaptive(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_adaptive(image, &self.config)
+        pipeline::detect_adaptive(image, &self.config).split().0
     }
 
     /// Return the scale tiers that adaptive detection would use for this image.
@@ -197,6 +223,8 @@ impl Detector {
         nominal_diameter_px: Option<f32>,
     ) -> DetectionResult {
         pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
+            .split()
+            .0
     }
 
     /// Detect markers using an explicit set of scale tiers.
@@ -211,22 +239,48 @@ impl Detector {
     /// - [`ScaleTiers::single`] — single-pass, no merge overhead
     pub fn detect_multiscale(&self, image: &GrayImage, tiers: &ScaleTiers) -> DetectionResult {
         pipeline::detect_multiscale(image, &self.config, tiers)
+            .split()
+            .0
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
     ///
     /// Pass-1 runs without mapper for seed generation, pass-2 runs with mapper.
     /// Marker centers in the returned result are always image-space.
-    /// Mapper-frame centers are exposed via `DetectedMarker.center_mapped`.
+    /// Mapper-frame centers are exposed via [`DetectedMarker::center_mapped`](crate::DetectedMarker::center_mapped).
     ///
     /// This method always uses the provided mapper and does not run
     /// self-undistort estimation from `config.self_undistort`.
+    ///
+    /// Returns the slim [`DetectionResult`]. Use
+    /// [`detect_with_mapper_diagnostics`](Self::detect_with_mapper_diagnostics)
+    /// to also obtain detection diagnostics.
     pub fn detect_with_mapper(
         &self,
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> DetectionResult {
         pipeline::detect_with_mapper(image, &self.config, mapper)
+            .split()
+            .0
+    }
+
+    /// Detect with a custom pixel mapper and also return detection diagnostics.
+    ///
+    /// Mapper-variant counterpart of
+    /// [`detect_with_diagnostics`](Self::detect_with_diagnostics): the returned
+    /// [`DetectionResult`] is identical to [`detect_with_mapper`](Self::detect_with_mapper),
+    /// and the [`DetectionDiagnostics`] carries per-marker internals and
+    /// homography RANSAC statistics.
+    ///
+    /// `diagnostics.markers` is positionally aligned 1:1 with
+    /// `result.detected_markers`.
+    pub fn detect_with_mapper_diagnostics(
+        &self,
+        image: &GrayImage,
+        mapper: &dyn PixelMapper,
+    ) -> (DetectionResult, DetectionDiagnostics) {
+        pipeline::detect_with_mapper(image, &self.config, mapper).split()
     }
 }
 
@@ -397,6 +451,34 @@ mod tests {
             assert_eq!(a.y.to_bits(), b.y.to_bits());
             assert_eq!(a.score.to_bits(), b.score.to_bits());
         }
+    }
+
+    #[test]
+    fn detect_with_diagnostics_result_matches_detect_and_is_aligned() {
+        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let detector = Detector::with_config(cfg);
+        let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
+
+        let plain = detector.detect(&img);
+        let (rich, diagnostics) = detector.detect_with_diagnostics(&img);
+
+        // detect() must return the exact same slim result as detect_with_diagnostics().
+        assert_eq!(plain.detected_markers.len(), rich.detected_markers.len());
+        assert_eq!(plain.image_size, rich.image_size);
+        assert_eq!(plain.center_frame, rich.center_frame);
+        assert_eq!(plain.homography_frame, rich.homography_frame);
+        for (a, b) in plain
+            .detected_markers
+            .iter()
+            .zip(rich.detected_markers.iter())
+        {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.center, b.center);
+            assert_eq!(a.confidence.to_bits(), b.confidence.to_bits());
+        }
+
+        // Diagnostics markers are positionally aligned 1:1 with detected markers.
+        assert_eq!(diagnostics.markers.len(), rich.detected_markers.len());
     }
 
     #[test]

@@ -719,19 +719,21 @@ class FitMetrics:
 
 @dataclass(slots=True)
 class DetectedMarker:
-    """Single detected marker with geometry, ID, and metrics."""
+    """Single detected marker: refined geometry plus the decoded ID.
+
+    Slim, stable primary output. Algorithm internals (fit metrics, decode
+    metrics, raw edge sample points, stage provenance) live in the separate
+    opt-in :class:`MarkerDiagnostics` channel — request them via
+    :meth:`Detector.detect_with_diagnostics`.
+    """
 
     confidence: float
     center: list[float]
-    fit: FitMetrics
     id: int | None = None
     center_mapped: list[float] | None = None
     board_xy_mm: list[float] | None = None
     ellipse_outer: Ellipse | None = None
     ellipse_inner: Ellipse | None = None
-    edge_points_outer: list[list[float]] | None = None
-    edge_points_inner: list[list[float]] | None = None
-    decode: DecodeMetrics | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectedMarker":
@@ -747,28 +749,56 @@ class DetectedMarker:
             ellipse_inner=None
             if data.get("ellipse_inner") is None
             else Ellipse.from_dict(data["ellipse_inner"]),
-            edge_points_outer=_optional_points(data.get("edge_points_outer")),
-            edge_points_inner=_optional_points(data.get("edge_points_inner")),
-            fit=FitMetrics.from_dict(data["fit"]),
-            decode=None
-            if data.get("decode") is None
-            else DecodeMetrics.from_dict(data["decode"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "confidence": float(self.confidence),
             "center": [float(self.center[0]), float(self.center[1])],
-            "fit": self.fit.to_dict(),
         }
         _set_optional(out, "id", self.id)
         _set_optional(out, "center_mapped", self.center_mapped)
         _set_optional(out, "board_xy_mm", self.board_xy_mm)
         _set_optional(out, "ellipse_outer", None if self.ellipse_outer is None else self.ellipse_outer.to_dict())
         _set_optional(out, "ellipse_inner", None if self.ellipse_inner is None else self.ellipse_inner.to_dict())
+        return out
+
+
+@dataclass(slots=True)
+class MarkerDiagnostics:
+    """Detailed per-marker algorithm internals.
+
+    Opt-in diagnostics counterpart to :class:`DetectedMarker`. Each
+    ``MarkerDiagnostics`` is positionally aligned 1:1 with the corresponding
+    :class:`DetectedMarker` in :attr:`DetectionResult.detected_markers`.
+    """
+
+    fit: FitMetrics
+    source: str = "fit_decoded"
+    decode: DecodeMetrics | None = None
+    edge_points_outer: list[list[float]] | None = None
+    edge_points_inner: list[list[float]] | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerDiagnostics":
+        return cls(
+            fit=FitMetrics.from_dict(data["fit"]),
+            source=str(data.get("source", "fit_decoded")),
+            decode=None
+            if data.get("decode") is None
+            else DecodeMetrics.from_dict(data["decode"]),
+            edge_points_outer=_optional_points(data.get("edge_points_outer")),
+            edge_points_inner=_optional_points(data.get("edge_points_inner")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "fit": self.fit.to_dict(),
+            "source": str(self.source),
+        }
+        _set_optional(out, "decode", None if self.decode is None else self.decode.to_dict())
         _set_optional(out, "edge_points_outer", self.edge_points_outer)
         _set_optional(out, "edge_points_inner", self.edge_points_inner)
-        _set_optional(out, "decode", None if self.decode is None else self.decode.to_dict())
         return out
 
 
@@ -924,9 +954,13 @@ class SelfUndistortResult:
 
 @dataclass(slots=True)
 class DetectionResult:
-    """Full detector output for one image.
+    """Detector output for one image.
 
-    All geometry and quality fields match the Rust `DetectionResult` schema.
+    Slim, stable primary result: detected markers, frame metadata, and an
+    optional board-to-image homography. Matches the Rust `DetectionResult`
+    schema. Algorithm internals and RANSAC statistics are not part of this type;
+    obtain them via :meth:`Detector.detect_with_diagnostics`.
+
     Use :meth:`to_dict`, :meth:`to_json`, and :meth:`plot` for downstream tasks.
     """
 
@@ -935,7 +969,6 @@ class DetectionResult:
     homography_frame: DetectionFrame
     image_size: list[int]
     homography: list[list[float]] | None = None
-    ransac: RansacStats | None = None
     self_undistort: SelfUndistortResult | None = None
 
     @classmethod
@@ -947,7 +980,6 @@ class DetectionResult:
             homography_frame=DetectionFrame(str(data["homography_frame"])),
             image_size=[int(data["image_size"][0]), int(data["image_size"][1])],
             homography=_optional_h(data.get("homography")),
-            ransac=None if data.get("ransac") is None else RansacStats.from_dict(data["ransac"]),
             self_undistort=None
             if data.get("self_undistort") is None
             else SelfUndistortResult.from_dict(data["self_undistort"]),
@@ -966,7 +998,6 @@ class DetectionResult:
             "image_size": [int(self.image_size[0]), int(self.image_size[1])],
         }
         _set_optional(out, "homography", self.homography)
-        _set_optional(out, "ransac", None if self.ransac is None else self.ransac.to_dict())
         _set_optional(
             out,
             "self_undistort",
@@ -1006,6 +1037,43 @@ class DetectionResult:
             show_confidence=show_confidence,
             alpha=alpha,
         )
+
+
+@dataclass(slots=True)
+class DetectionDiagnostics:
+    """Opt-in detection diagnostics for debugging and tuning.
+
+    Returned alongside a :class:`DetectionResult` by
+    :meth:`Detector.detect_with_diagnostics`. Carries per-marker algorithm
+    internals and homography RANSAC statistics.
+
+    :attr:`markers` is positionally aligned 1:1 with
+    :attr:`DetectionResult.detected_markers`: ``markers[i]`` describes the
+    ``DetectedMarker`` at the same index ``i``.
+    """
+
+    markers: list[MarkerDiagnostics]
+    ransac: RansacStats | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "DetectionDiagnostics":
+        markers = [MarkerDiagnostics.from_dict(m) for m in data.get("markers", [])]
+        return cls(
+            markers=markers,
+            ransac=None if data.get("ransac") is None else RansacStats.from_dict(data["ransac"]),
+        )
+
+    @classmethod
+    def from_json(cls, path_or_json: str | Path) -> "DetectionDiagnostics":
+        """Load from JSON text or a JSON file path."""
+        return cls.from_dict(_json_loads_path_or_text(path_or_json))
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "markers": [m.to_dict() for m in self.markers],
+        }
+        _set_optional(out, "ransac", None if self.ransac is None else self.ransac.to_dict())
+        return out
 
 
 @dataclass(slots=True)
@@ -2057,15 +2125,42 @@ class Detector:
         mapper: CameraModel | DivisionModel,
     ) -> DetectionResult:
         """Run two-pass detection with an explicit pixel mapper."""
-        if isinstance(mapper, CameraModel):
-            payload = mapper._to_mapper_payload()
-        elif isinstance(mapper, DivisionModel):
-            payload = mapper._to_mapper_payload()
-        else:
-            raise TypeError("mapper must be CameraModel or DivisionModel")
-
+        payload = _coerce_mapper_payload(mapper)
         result_json = self._detect_impl(image=image, mapper_payload=payload)
         return DetectionResult.from_dict(json.loads(result_json))
+
+    def detect_with_diagnostics(
+        self,
+        image: np.ndarray | str | Path,
+    ) -> tuple[DetectionResult, DetectionDiagnostics]:
+        """Run detection and also return opt-in detection diagnostics.
+
+        Behaves exactly like :meth:`detect` — the returned
+        :class:`DetectionResult` is identical — but additionally yields a
+        :class:`DetectionDiagnostics` carrying per-marker fit/decode metrics,
+        raw edge sample points, stage provenance, and homography RANSAC
+        statistics. ``diagnostics.markers`` is aligned 1:1 with
+        ``result.detected_markers``.
+        """
+        combined_json = self._detect_with_diagnostics_impl(
+            image=image, mapper_payload=None
+        )
+        return _split_detection_with_diagnostics(combined_json)
+
+    def detect_with_mapper_diagnostics(
+        self,
+        image: np.ndarray | str | Path,
+        mapper: CameraModel | DivisionModel,
+    ) -> tuple[DetectionResult, DetectionDiagnostics]:
+        """Two-pass detection with a pixel mapper, returning diagnostics too.
+
+        Mapper-variant counterpart of :meth:`detect_with_diagnostics`.
+        """
+        payload = _coerce_mapper_payload(mapper)
+        combined_json = self._detect_with_diagnostics_impl(
+            image=image, mapper_payload=payload
+        )
+        return _split_detection_with_diagnostics(combined_json)
 
     def detect_adaptive(
         self,
@@ -2181,6 +2276,28 @@ class Detector:
             return self._core.detect_path(image_path)
         return self._core.detect_with_mapper_path(image_path, json.dumps(dict(mapper_payload)))
 
+    def _detect_with_diagnostics_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        mapper_payload: Mapping[str, Any] | None,
+    ) -> str:
+        self._refresh_core_if_needed()
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            if mapper_payload is None:
+                return self._core.detect_with_diagnostics_array(image)
+            return self._core.detect_with_mapper_diagnostics_array(
+                image, json.dumps(dict(mapper_payload))
+            )
+
+        image_path = _coerce_path(image)
+        if mapper_payload is None:
+            return self._core.detect_with_diagnostics_path(image_path)
+        return self._core.detect_with_mapper_diagnostics_path(
+            image_path, json.dumps(dict(mapper_payload))
+        )
+
     def _detect_adaptive_impl(
         self,
         *,
@@ -2244,6 +2361,25 @@ class Detector:
 
 
 __version__ = _package_version()
+
+
+def _coerce_mapper_payload(
+    mapper: "CameraModel | DivisionModel",
+) -> Mapping[str, Any]:
+    """Validate a pixel mapper and return its wire payload."""
+    if isinstance(mapper, (CameraModel, DivisionModel)):
+        return mapper._to_mapper_payload()
+    raise TypeError("mapper must be CameraModel or DivisionModel")
+
+
+def _split_detection_with_diagnostics(
+    combined_json: str,
+) -> tuple["DetectionResult", "DetectionDiagnostics"]:
+    """Parse a `{"result": ..., "diagnostics": ...}` payload."""
+    combined = json.loads(combined_json)
+    result = DetectionResult.from_dict(combined["result"])
+    diagnostics = DetectionDiagnostics.from_dict(combined["diagnostics"])
+    return result, diagnostics
 
 
 def _optional_float(value: Any) -> float | None:

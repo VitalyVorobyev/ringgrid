@@ -21,10 +21,13 @@ mod run;
 mod scale_probe;
 mod time_compat;
 
-pub use result::{DetectionFrame, DetectionResult};
+pub use result::{
+    DetectedMarker, DetectionDiagnostics, DetectionFrame, DetectionResult, MarkerDiagnostics,
+};
 
 pub(crate) use finalize::build_hex_grid_map;
 pub(crate) use prelude::*;
+pub(crate) use result::{PipelineResult, seed_proposals};
 
 pub(crate) use run::{
     detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,

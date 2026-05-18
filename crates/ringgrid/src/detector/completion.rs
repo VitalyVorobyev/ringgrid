@@ -5,8 +5,8 @@ use nalgebra::Point2;
 use projective_grid::GridIndex;
 use projective_grid::hex::hex_predict_grid_position;
 
-use crate::DetectedMarker;
 use crate::conic::Ellipse;
+use crate::detector::MarkerRecord;
 use crate::detector::id_correction::{affine_to_image, fit_local_affine};
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
@@ -156,7 +156,7 @@ fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
 
 fn local_affine_completion_seed(
     target_board_xy: [f64; 2],
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &crate::board_layout::BoardLayout,
 ) -> Option<[f64; 2]> {
     const MAX_NEIGHBORS: usize = 4;
@@ -206,7 +206,7 @@ fn hex_neighbor_seed(
 fn projected_completion_seed(
     id: usize,
     h: &nalgebra::Matrix3<f64>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &crate::board_layout::BoardLayout,
     hex_grid: &HashMap<GridIndex, Point2<f32>>,
 ) -> Option<[f64; 2]> {
@@ -392,7 +392,7 @@ fn evaluate_completion_candidate(
     Ok(quality)
 }
 
-/// Build the final `DetectedMarker` for an accepted completion candidate.
+/// Build the final `MarkerRecord` for an accepted completion candidate.
 ///
 /// Performs inner ellipse fit, computes fit/decode metrics, and assembles the
 /// marker struct.
@@ -403,7 +403,7 @@ fn assemble_completion_marker(
     quality: &CandidateQuality,
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
-) -> DetectedMarker {
+) -> MarkerRecord {
     let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
         gray,
         &cand.outer,
@@ -425,7 +425,7 @@ fn assemble_completion_marker(
         .map(|d| d.decode_confidence)
         .unwrap_or(quality.fit_confidence);
 
-    DetectedMarker {
+    MarkerRecord {
         id: Some(id),
         confidence,
         center: quality.center,
@@ -436,7 +436,7 @@ fn assemble_completion_marker(
         fit,
         decode: decode_metrics,
         source: DetectionSource::Completion,
-        ..DetectedMarker::default()
+        ..MarkerRecord::default()
     }
 }
 
@@ -458,11 +458,11 @@ fn try_complete_marker(
     gray: &GrayImage,
     id: usize,
     projected_center: [f64; 2],
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     stats: &mut CompletionStats,
-) -> Option<DetectedMarker> {
+) -> Option<MarkerRecord> {
     let active_codebook_min_cyclic_dist =
         Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
     let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
@@ -520,7 +520,7 @@ fn try_complete_marker(
 pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
-    markers: &mut Vec<DetectedMarker>,
+    markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     board: &crate::board_layout::BoardLayout,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
@@ -639,8 +639,8 @@ mod tests {
         }
     }
 
-    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
-        DetectedMarker {
+    fn marker_with_id(id: usize, center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
             id: Some(id),
             confidence: 1.0,
             center,
@@ -653,7 +653,7 @@ mod tests {
             }),
             fit: FitMetrics::default(),
             source: DetectionSource::FitDecoded,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
@@ -663,7 +663,7 @@ mod tests {
         let target_id = 16usize;
         let neighbor_ids = [0usize, 1usize, 14usize, 15usize];
         let affine = [[2.0, 0.1, 5.0], [-0.2, 1.5, 7.0]];
-        let markers: Vec<DetectedMarker> = neighbor_ids
+        let markers: Vec<MarkerRecord> = neighbor_ids
             .iter()
             .map(|&id| {
                 let board_xy = board.xy_mm(id).expect("board xy");

@@ -1,16 +1,17 @@
+use crate::RansacStats;
 use crate::board_layout::BoardLayout;
+use crate::detector::MarkerRecord;
 use crate::homography::{self, RansacHomographyConfig};
-use crate::{DetectedMarker, RansacStats};
 
 /// Apply global homography RANSAC filter.
 ///
 /// Returns `(filtered markers, RANSAC result, stats)`.
 pub fn global_filter(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     config: &RansacHomographyConfig,
     board: &BoardLayout,
 ) -> (
-    Vec<DetectedMarker>,
+    Vec<MarkerRecord>,
     Option<homography::RansacHomographyResult>,
     Option<RansacStats>,
 ) {
@@ -53,7 +54,7 @@ pub fn global_filter(
     };
 
     // Collect inliers/outliers and per-id errors.
-    let mut filtered: Vec<DetectedMarker> = Vec::new();
+    let mut filtered: Vec<MarkerRecord> = Vec::new();
     for (j, marker_index) in correspondences.marker_indices.iter().enumerate() {
         if result.inlier_mask.get(j).copied().unwrap_or(false) {
             filtered.push(markers[*marker_index].clone());

@@ -1,4 +1,4 @@
-use crate::detector::DetectedMarker;
+use crate::detector::MarkerRecord;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig};
 use crate::ring::inner_estimate::Polarity;
 
@@ -6,7 +6,7 @@ const MAX_EXPECTED_RADIUS_DEVIATION_FRAC: f32 = 0.4;
 
 pub(crate) fn median_outer_radius_from_neighbors_px(
     projected_center: [f64; 2],
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     k: usize,
 ) -> Option<f32> {
     let mut candidates: Vec<(f64, f32)> = Vec::new();

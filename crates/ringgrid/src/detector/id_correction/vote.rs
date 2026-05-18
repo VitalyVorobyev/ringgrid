@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::detector::marker_build::DetectedMarker;
+use crate::detector::marker_build::MarkerRecord;
 
 use super::index::{BoardIndex, dist2};
 use super::math::{affine_to_board, fit_local_affine};
@@ -58,7 +58,7 @@ fn local_scale_gate_px(radius_i: f64, radius_j: f64, outer_mul: f64) -> f64 {
 /// pairwise gating.
 pub(super) fn gather_trusted_neighbors_local_scale(
     i: usize,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     trust: &[Trust],
     board_index: &BoardIndex,
     outer_radii_px: &[f64],
@@ -242,7 +242,7 @@ pub(super) fn vote_for_candidate(
 }
 
 /// If two markers share the same decoded ID, clear the lower-confidence one's ID.
-pub(super) fn resolve_id_conflicts(markers: &mut [DetectedMarker]) -> usize {
+pub(super) fn resolve_id_conflicts(markers: &mut [MarkerRecord]) -> usize {
     // Map: id → index of the highest-confidence marker with that id.
     let mut best: HashMap<usize, usize> = HashMap::new();
     for (i, m) in markers.iter().enumerate() {
@@ -342,7 +342,7 @@ mod tests {
         let board = BoardLayout::default();
         let board_index = BoardIndex::build(&board);
         let markers = vec![
-            DetectedMarker {
+            MarkerRecord {
                 id: Some(0),
                 center: [100.0, 100.0],
                 ellipse_outer: Some(Ellipse {
@@ -352,9 +352,9 @@ mod tests {
                     b: 8.0,
                     angle: 0.0,
                 }),
-                ..DetectedMarker::default()
+                ..MarkerRecord::default()
             },
-            DetectedMarker {
+            MarkerRecord {
                 id: Some(1),
                 center: [112.0, 100.0],
                 ellipse_outer: Some(Ellipse {
@@ -364,9 +364,9 @@ mod tests {
                     b: 8.0,
                     angle: 0.0,
                 }),
-                ..DetectedMarker::default()
+                ..MarkerRecord::default()
             },
-            DetectedMarker {
+            MarkerRecord {
                 id: Some(2),
                 center: [142.0, 100.0],
                 ellipse_outer: Some(Ellipse {
@@ -376,7 +376,7 @@ mod tests {
                     b: 20.0,
                     angle: 0.0,
                 }),
-                ..DetectedMarker::default()
+                ..MarkerRecord::default()
             },
         ];
         let outer_radii = vec![8.0, 8.0, 20.0];

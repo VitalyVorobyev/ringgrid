@@ -11,8 +11,8 @@
 
 use image::GrayImage;
 
-use crate::DetectedMarker;
 use crate::conic::Ellipse;
+use crate::detector::MarkerRecord;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
 use crate::ring::OuterEstimationConfig;
@@ -27,12 +27,12 @@ use super::{
 /// Annotates each marker with the ratio of its outer radius to the median
 /// outer radius of its k nearest neighbors. Values well below 1.0 (< 0.75)
 /// indicate a potential inner-as-outer substitution.
-pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [DetectedMarker], k: usize) {
+pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [MarkerRecord], k: usize) {
     const WARN_THRESHOLD: f32 = 0.75;
 
     // Compute ratios in a separate immutable pass to satisfy the borrow checker.
     let ratios: Vec<Option<f32>> = {
-        let m_ref: &[DetectedMarker] = markers;
+        let m_ref: &[MarkerRecord] = markers;
         m_ref
             .iter()
             .map(|m| {
@@ -71,7 +71,7 @@ pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [DetectedMarker], k:
 ///
 /// After this function the caller should re-run `annotate_neighbor_radius_ratios`
 /// so the ratios reflect the recovered markers.
-fn flagged_recovery_indices(markers: &[DetectedMarker], ratio_threshold: f32) -> Vec<usize> {
+fn flagged_recovery_indices(markers: &[MarkerRecord], ratio_threshold: f32) -> Vec<usize> {
     markers
         .iter()
         .enumerate()
@@ -82,7 +82,7 @@ fn flagged_recovery_indices(markers: &[DetectedMarker], ratio_threshold: f32) ->
         .collect()
 }
 
-fn marker_center_working(marker: &DetectedMarker) -> [f64; 2] {
+fn marker_center_working(marker: &MarkerRecord) -> [f64; 2] {
     marker.center_mapped.unwrap_or(marker.center)
 }
 
@@ -108,7 +108,7 @@ fn build_recovery_config(config: &DetectConfig) -> DetectConfig {
 
 fn resolve_recovered_id(
     idx: usize,
-    marker: &DetectedMarker,
+    marker: &MarkerRecord,
     outer: &Ellipse,
     decode_result: Option<DecodeResult>,
     r_corrected: f32,
@@ -153,11 +153,11 @@ fn resolve_recovered_id(
 fn recover_marker_at_index(
     idx: usize,
     gray: &GrayImage,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     config: &DetectConfig,
     recovery_config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> Option<DetectedMarker> {
+) -> Option<MarkerRecord> {
     let cfg = &config.advanced.inner_as_outer_recovery;
     let center_wf = marker_center_working(&markers[idx]);
     let center_f32 = [center_wf[0] as f32, center_wf[1] as f32];
@@ -241,7 +241,7 @@ fn recover_marker_at_index(
         .and_then(|m| m.working_to_image_pixel(new_center_wf))
         .unwrap_or(new_center_wf);
 
-    Some(DetectedMarker {
+    Some(MarkerRecord {
         id: marker_id,
         confidence,
         center: new_center_image,
@@ -259,7 +259,7 @@ fn recover_marker_at_index(
 
 pub(crate) fn try_recover_inner_as_outer(
     gray: &GrayImage,
-    markers: &mut [DetectedMarker],
+    markers: &mut [MarkerRecord],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {

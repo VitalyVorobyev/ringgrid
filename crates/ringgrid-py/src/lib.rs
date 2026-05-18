@@ -53,6 +53,29 @@ struct ProposalResultPayload {
     proposals: Vec<ringgrid::Proposal>,
 }
 
+/// Combined payload for the diagnostics-returning detection entry points.
+///
+/// The slim [`ringgrid::DetectionResult`] and the opt-in
+/// [`ringgrid::DetectionDiagnostics`] are nested under `result` and
+/// `diagnostics`; `diagnostics.markers` aligns 1:1 with
+/// `result.detected_markers`.
+#[derive(Serialize)]
+struct DetectionWithDiagnostics {
+    result: ringgrid::DetectionResult,
+    diagnostics: ringgrid::DetectionDiagnostics,
+}
+
+fn detection_with_diagnostics_json(
+    result: ringgrid::DetectionResult,
+    diagnostics: ringgrid::DetectionDiagnostics,
+) -> PyResult<String> {
+    serde_json::to_string(&DetectionWithDiagnostics {
+        result,
+        diagnostics,
+    })
+    .map_err(py_value_error)
+}
+
 fn py_value_error<E: std::fmt::Display>(err: E) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
@@ -211,6 +234,29 @@ fn detect_with_core_mapper(
         MapperSpec::Division { lambda, cx, cy } => {
             let mapper = ringgrid::DivisionModel::new(*lambda, *cx, *cy);
             detector.detect_with_mapper(gray, &mapper)
+        }
+    }
+}
+
+fn detect_with_core_mapper_diagnostics(
+    detector: &ringgrid::Detector,
+    gray: &GrayImage,
+    mapper_spec: &MapperSpec,
+) -> (ringgrid::DetectionResult, ringgrid::DetectionDiagnostics) {
+    match mapper_spec {
+        MapperSpec::Camera {
+            intrinsics,
+            distortion,
+        } => {
+            let camera = ringgrid::CameraModel {
+                intrinsics: *intrinsics,
+                distortion: *distortion,
+            };
+            detector.detect_with_mapper_diagnostics(gray, &camera)
+        }
+        MapperSpec::Division { lambda, cx, cy } => {
+            let mapper = ringgrid::DivisionModel::new(*lambda, *cx, *cy);
+            detector.detect_with_mapper_diagnostics(gray, &mapper)
         }
     }
 }
@@ -408,6 +454,49 @@ impl DetectorCore {
         let gray = gray_image_from_array(image)?;
         let result = detector.detect(&gray);
         serde_json::to_string(&result).map_err(py_value_error)
+    }
+
+    fn detect_with_diagnostics_path(&self, image_path: &str) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+        detection_with_diagnostics_json(result, diagnostics)
+    }
+
+    fn detect_with_diagnostics_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+        detection_with_diagnostics_json(result, diagnostics)
+    }
+
+    fn detect_with_mapper_diagnostics_path(
+        &self,
+        image_path: &str,
+        mapper_json: &str,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
+        let (result, diagnostics) =
+            detect_with_core_mapper_diagnostics(&detector, &gray, &mapper);
+        detection_with_diagnostics_json(result, diagnostics)
+    }
+
+    fn detect_with_mapper_diagnostics_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+        mapper_json: &str,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
+        let (result, diagnostics) =
+            detect_with_core_mapper_diagnostics(&detector, &gray, &mapper);
+        detection_with_diagnostics_json(result, diagnostics)
     }
 
     fn propose_path(&self, image_path: &str) -> PyResult<String> {

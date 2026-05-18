@@ -2,13 +2,13 @@ use std::cmp::Ordering;
 
 use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
-use crate::detector::marker_build::DetectedMarker;
+use crate::detector::marker_build::MarkerRecord;
 
 use super::index::BoardIndex;
 use super::types::{IdCorrectionStats, RecoverySource, ScrubStage, Trust};
 
 pub(super) struct IdCorrectionWorkspace<'a> {
-    pub(super) markers: &'a mut Vec<DetectedMarker>,
+    pub(super) markers: &'a mut Vec<MarkerRecord>,
     pub(super) board_index: BoardIndex,
     pub(super) outer_radii_px: Vec<f64>,
     pub(super) outer_muls: Vec<f64>,
@@ -21,7 +21,7 @@ pub(super) struct IdCorrectionWorkspace<'a> {
 
 impl<'a> IdCorrectionWorkspace<'a> {
     pub(super) fn new(
-        markers: &'a mut Vec<DetectedMarker>,
+        markers: &'a mut Vec<MarkerRecord>,
         board: &BoardLayout,
         config: &'a IdCorrectionConfig,
         codebook_min_cyclic_dist: usize,
@@ -55,12 +55,12 @@ impl<'a> IdCorrectionWorkspace<'a> {
 }
 
 #[inline]
-pub(super) fn marker_center_is_finite(marker: &DetectedMarker) -> bool {
+pub(super) fn marker_center_is_finite(marker: &MarkerRecord) -> bool {
     marker.center[0].is_finite() && marker.center[1].is_finite()
 }
 
 #[inline]
-fn marker_outer_radius_px(marker: &DetectedMarker) -> Option<f64> {
+fn marker_outer_radius_px(marker: &MarkerRecord) -> Option<f64> {
     marker
         .ellipse_outer
         .as_ref()
@@ -69,7 +69,7 @@ fn marker_outer_radius_px(marker: &DetectedMarker) -> Option<f64> {
 }
 
 #[inline]
-pub(super) fn is_exact_decode(marker: &DetectedMarker, codebook_min_cyclic_dist: usize) -> bool {
+pub(super) fn is_exact_decode(marker: &MarkerRecord, codebook_min_cyclic_dist: usize) -> bool {
     marker
         .decode
         .as_ref()
@@ -78,7 +78,7 @@ pub(super) fn is_exact_decode(marker: &DetectedMarker, codebook_min_cyclic_dist:
 
 #[inline]
 pub(super) fn is_soft_locked_assignment(
-    marker: &DetectedMarker,
+    marker: &MarkerRecord,
     soft_lock_enable: bool,
     codebook_min_cyclic_dist: usize,
 ) -> bool {
@@ -93,7 +93,7 @@ pub(super) fn is_soft_locked_assignment(
     })
 }
 
-fn compute_outer_radii_px(markers: &[DetectedMarker]) -> Vec<f64> {
+fn compute_outer_radii_px(markers: &[MarkerRecord]) -> Vec<f64> {
     let mut valid = markers
         .iter()
         .filter_map(marker_outer_radius_px)
@@ -133,7 +133,7 @@ fn build_outer_mul_schedule(config: &IdCorrectionConfig) -> Vec<f64> {
 pub(super) fn should_block_by_trusted_confidence(
     marker_index: usize,
     candidate_id: usize,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     trust: &[Trust],
 ) -> bool {
     markers.iter().enumerate().any(|(j, m)| {
@@ -145,7 +145,7 @@ pub(super) fn should_block_by_trusted_confidence(
 }
 
 pub(super) fn apply_id_assignment(
-    marker: &mut DetectedMarker,
+    marker: &mut MarkerRecord,
     new_id: usize,
     stats: &mut IdCorrectionStats,
     source: RecoverySource,
@@ -174,7 +174,7 @@ pub(super) fn apply_id_assignment(
 
 pub(super) fn clear_marker_id(
     marker_index: usize,
-    markers: &mut [DetectedMarker],
+    markers: &mut [MarkerRecord],
     trust: &mut [Trust],
     stats: &mut IdCorrectionStats,
     soft_lock_enable: bool,

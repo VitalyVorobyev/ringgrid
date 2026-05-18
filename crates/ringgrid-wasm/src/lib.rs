@@ -297,6 +297,45 @@ impl RinggridDetector {
         to_json(&result)
     }
 
+    /// Detect markers from grayscale pixels, returning the slim result plus
+    /// opt-in detection diagnostics.
+    ///
+    /// Returns a JSON object `{"result": DetectionResult, "diagnostics":
+    /// DetectionDiagnostics}`. `diagnostics.markers` is positionally aligned
+    /// 1:1 with `result.detected_markers`.
+    pub fn detect_with_diagnostics(
+        &self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<String, JsValue> {
+        validate_dimensions(width, height)?;
+        let gray = validate_gray(pixels, width, height)?;
+        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        to_json(&DetectionWithDiagnostics {
+            result,
+            diagnostics,
+        })
+    }
+
+    /// Detect markers from RGBA pixels, returning the slim result plus opt-in
+    /// detection diagnostics. See [`detect_with_diagnostics`](Self::detect_with_diagnostics).
+    pub fn detect_with_diagnostics_rgba(
+        &self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<String, JsValue> {
+        validate_dimensions(width, height)?;
+        validate_rgba(pixels, width, height)?;
+        let gray = rgba_to_gray(pixels, width, height);
+        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        to_json(&DetectionWithDiagnostics {
+            result,
+            diagnostics,
+        })
+    }
+
     /// Adaptive detection from grayscale pixels. Returns JSON string (DetectionResult).
     pub fn detect_adaptive(
         &self,
@@ -521,6 +560,18 @@ pub fn version() -> String {
 struct ProposalPayload<'a> {
     image_size: [u32; 2],
     proposals: &'a [ringgrid::Proposal],
+}
+
+/// Combined payload for the diagnostics-returning detection entry points.
+///
+/// The slim [`ringgrid::DetectionResult`] and the opt-in
+/// [`ringgrid::DetectionDiagnostics`] are nested under `result` and
+/// `diagnostics`; `diagnostics.markers` aligns 1:1 with
+/// `result.detected_markers`.
+#[derive(serde::Serialize)]
+struct DetectionWithDiagnostics {
+    result: ringgrid::DetectionResult,
+    diagnostics: ringgrid::DetectionDiagnostics,
 }
 
 #[cfg(test)]
@@ -1051,5 +1102,38 @@ mod tests {
 
         assert_eq!(four_parsed.tiers().len(), 4);
         assert_eq!(two_parsed.tiers().len(), 2);
+    }
+
+    // ── Group 14: Diagnostics-returning detection ──────────────────
+
+    #[test]
+    fn detect_with_diagnostics_matches_detect_and_is_aligned() {
+        let img = load_fixture_image();
+        let board_json = load_fixture_board_json();
+        let (w, h) = (img.width(), img.height());
+        let pixels = img.as_raw();
+
+        let det = RinggridDetector::new(&board_json).unwrap();
+
+        let slim_json = det.detect(pixels, w, h).unwrap();
+        let slim: ringgrid::DetectionResult = serde_json::from_str(&slim_json).unwrap();
+
+        let combined_json = det.detect_with_diagnostics(pixels, w, h).unwrap();
+        let combined: serde_json::Value = serde_json::from_str(&combined_json).unwrap();
+
+        let result: ringgrid::DetectionResult =
+            serde_json::from_value(combined["result"].clone()).unwrap();
+        let diagnostics: ringgrid::DetectionDiagnostics =
+            serde_json::from_value(combined["diagnostics"].clone()).unwrap();
+
+        // detect() and detect_with_diagnostics() agree on the slim result.
+        assert_eq!(
+            slim.detected_markers.len(),
+            result.detected_markers.len(),
+            "diagnostics result marker count mismatch"
+        );
+        // Diagnostics align 1:1 with detected markers.
+        assert_eq!(diagnostics.markers.len(), result.detected_markers.len());
+        assert!(!result.detected_markers.is_empty());
     }
 }

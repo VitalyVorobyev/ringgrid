@@ -91,14 +91,14 @@ pub use detector::{
 pub use homography::RansacHomographyConfig;
 
 // Sub-configs
-pub use marker::{CodebookProfile, DecodeConfig};
+pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 // Geometry
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };
-pub use conic::Ellipse;
+pub use conic::{Ellipse, RansacConfig};
 pub use marker::MarkerSpec;
 pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
@@ -112,5 +112,5 @@ pub use marker::codebook;
 pub use marker::codec;
 pub use pixelmap::{
     CameraIntrinsics, CameraModel, DivisionModel, PixelMapper, RadialTangentialDistortion,
-    SelfUndistortConfig, SelfUndistortResult,
+    SelfUndistortConfig, SelfUndistortResult, UndistortConfig,
 };

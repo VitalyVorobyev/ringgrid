@@ -106,13 +106,6 @@ pub use marker::MarkerSpec;
 pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // Camera / distortion
-// These raw codebook/codec modules are re-exported for the ringgrid-cli diagnostic
-// commands (codebook-info, decode-test). They are not part of the stable library
-// API — external code should use the high-level Detector interface.
-#[doc(hidden)]
-pub use marker::codebook;
-#[doc(hidden)]
-pub use marker::codec;
 pub use pixelmap::{
     CameraIntrinsics, CameraModel, DivisionModel, PixelMapper, RadialTangentialDistortion,
     SelfUndistortConfig, SelfUndistortResult, UndistortConfig,

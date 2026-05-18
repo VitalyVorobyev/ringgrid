@@ -12,8 +12,17 @@
 //! compile-time constants in `codebook.rs`.
 
 use super::codebook::{
-    CODEBOOK, CODEBOOK_BITS, CODEBOOK_EXTENDED, CODEBOOK_EXTENDED_MIN_CYCLIC_DIST,
-    CODEBOOK_EXTENDED_SEED, CODEBOOK_MIN_CYCLIC_DIST, CODEBOOK_SEED,
+    CODEBOOK, CODEBOOK_BITS, CODEBOOK_EXTENDED, CODEBOOK_EXTENDED_EXTENSION_N,
+    CODEBOOK_EXTENDED_MIN_CYCLIC_DIST, CODEBOOK_EXTENDED_N, CODEBOOK_EXTENDED_SEED,
+    CODEBOOK_MIN_CYCLIC_DIST, CODEBOOK_N, CODEBOOK_SEED,
+};
+
+// Compile-time validation that the generated codebook size constants agree
+// with the embedded tables.
+const _: () = {
+    assert!(CODEBOOK.len() == CODEBOOK_N);
+    assert!(CODEBOOK_EXTENDED.len() == CODEBOOK_EXTENDED_N);
+    assert!(CODEBOOK_EXTENDED_N == CODEBOOK_N + CODEBOOK_EXTENDED_EXTENSION_N);
 };
 
 // ── Bit manipulation helpers ───────────────────────────────────────────
@@ -100,17 +109,6 @@ pub struct Match {
 }
 
 impl Codebook {
-    /// Create a codebook from a static slice of codewords.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn new(words: &'static [u16]) -> Self {
-        Self {
-            profile: CodebookProfile::Base,
-            words,
-            min_cyclic_dist: 1,
-            seed: 0,
-        }
-    }
-
     /// Create one of the embedded codebook profiles.
     pub fn from_profile(profile: CodebookProfile) -> Self {
         match profile {

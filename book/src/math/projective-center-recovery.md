@@ -88,7 +88,7 @@ Candidates are compared by eigenvalue separation first (preferring well-separate
 
 ## Gates in the Detection Pipeline
 
-The detector applies additional gates via `ProjectiveCenterParams`:
+The detector applies additional gates via `ProjectiveCenterConfig`:
 
 | Gate | Purpose |
 |---|---|

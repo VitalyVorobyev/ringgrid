@@ -96,7 +96,7 @@ fn parse_scale_tiers(tiers_json: &str) -> Result<ringgrid::ScaleTiers, JsValue> 
     if wire.tiers.is_empty() {
         return Err(JsValue::from_str("scale tiers must not be empty"));
     }
-    Ok(ringgrid::ScaleTiers(
+    Ok(ringgrid::ScaleTiers::new(
         wire.tiers
             .iter()
             .map(|t| ringgrid::ScaleTier::new(t.diameter_min_px, t.diameter_max_px))

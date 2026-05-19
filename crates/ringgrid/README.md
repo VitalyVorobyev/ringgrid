@@ -166,7 +166,7 @@ let detector = Detector::with_marker_diameter_hint(board, 32.0);
 let proposals = detector.propose(&image);
 let diagnostics = detector.propose_with_heatmap(&image);
 
-let result = ringgrid::proposal::find_ellipse_centers_with_heatmap(
+let result = ringgrid::find_ellipse_centers_with_heatmap(
     &image,
     &ProposalConfig {
         r_min: 4.0,

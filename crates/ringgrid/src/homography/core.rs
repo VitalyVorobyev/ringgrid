@@ -8,6 +8,8 @@
 use nalgebra::{Matrix3, Point2, Vector3};
 use projective_grid::estimate_homography as pg_estimate_homography;
 
+use crate::conic::RansacConfig;
+
 // ── Error type ───────────────────────────────────────────────────────────
 
 /// Errors produced by homography estimation/refinement routines.
@@ -121,32 +123,6 @@ pub fn estimate_homography_dlt(
 
 // ── RANSAC ───────────────────────────────────────────────────────────────
 
-/// RANSAC configuration for homography fitting.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-#[non_exhaustive]
-pub struct RansacHomographyConfig {
-    /// Maximum number of RANSAC iterations.
-    pub max_iters: usize,
-    /// Inlier threshold (reprojection error in pixels).
-    pub inlier_threshold: f64,
-    /// Minimum number of inliers for a valid model.
-    pub min_inliers: usize,
-    /// Random seed.
-    pub seed: u64,
-}
-
-impl Default for RansacHomographyConfig {
-    fn default() -> Self {
-        Self {
-            max_iters: 2000,
-            inlier_threshold: 5.0,
-            min_inliers: 6,
-            seed: 0,
-        }
-    }
-}
-
 /// Result of RANSAC homography fitting.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RansacHomographyResult {
@@ -190,7 +166,7 @@ fn sample_4_distinct(n: usize, rng: &mut rand::rngs::StdRng) -> [usize; 4] {
 pub fn fit_homography_ransac(
     src: &[[f64; 2]],
     dst: &[[f64; 2]],
-    config: &RansacHomographyConfig,
+    config: &RansacConfig,
 ) -> Result<RansacHomographyResult, HomographyError> {
     let n = src.len();
     if n < 4 {
@@ -368,7 +344,7 @@ mod tests {
             dst.push(d);
         }
 
-        let config = RansacHomographyConfig {
+        let config = RansacConfig {
             max_iters: 2000,
             inlier_threshold: 3.0,
             min_inliers: 6,

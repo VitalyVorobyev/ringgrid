@@ -331,7 +331,7 @@ pub fn select_adaptive_tiers(gray: &GrayImage, nominal_diameter_px: Option<f32>)
             let d_hi = d * 1.5;
             // Split at nominal with 5 % overlap to avoid a tier boundary gap.
             let d_split = d * 1.05;
-            ScaleTiers(vec![
+            ScaleTiers::new(vec![
                 ScaleTier::new(d_lo, d_split),
                 ScaleTier::new(d_split * 0.95, d_hi),
             ])

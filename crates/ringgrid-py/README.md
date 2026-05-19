@@ -219,14 +219,14 @@ Deeper theory and Rust-side derivation details:
 | `cfg.proposal` | `ProposalConfig` | Scharr-vote proposal generation |
 | `cfg.edge_sample` | `EdgeSampleConfig` | Radial edge sampling limits and density |
 | `cfg.outer_estimation` | `OuterEstimationConfig` | Outer-radius hypothesis generation from radial peaks |
-| `cfg.marker_spec` | `MarkerSpec` | Board-driven ring geometry assumptions |
+| `cfg.marker_spec` | `MarkerSpecConfig` | Board-driven ring geometry assumptions |
 | `cfg.outer_fit` | `OuterFitConfig` | Outer ellipse fit acceptance and scoring |
 | `cfg.inner_fit` | `InnerFitConfig` | Inner ellipse fit acceptance and penalties |
 | `cfg.decode` | `DecodeConfig` | Code-band sampling and decode strictness |
-| `cfg.seed_proposals` | `SeedProposalParams` | Seed-injected proposals for multi-pass flows |
-| `cfg.projective_center` | `ProjectiveCenterParams` | Projective-center recovery gates |
-| `cfg.completion` | `CompletionParams` | Homography-guided recovery of missing IDs |
-| `cfg.ransac_homography` | `RansacHomographyConfig` | Global homography fitting thresholds |
+| `cfg.seed_proposals` | `SeedProposalConfig` | Seed-injected proposals for multi-pass flows |
+| `cfg.projective_center` | `ProjectiveCenterConfig` | Projective-center recovery gates |
+| `cfg.completion` | `CompletionConfig` | Homography-guided recovery of missing IDs |
+| `cfg.ransac_homography` | `RansacConfig` | Global homography fitting thresholds |
 | `cfg.self_undistort` | `SelfUndistortConfig` | Division-model self-undistort estimation |
 | `cfg.id_correction` | `IdCorrectionConfig` | Hex-lattice ID verification and recovery |
 | `cfg.inner_as_outer_recovery` | `InnerAsOuterRecoveryConfig` | Recovery when outer fit locked onto the inner ring |

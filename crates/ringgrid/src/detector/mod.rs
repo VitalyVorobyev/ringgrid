@@ -20,10 +20,10 @@ pub(crate) use center_correction::{
 };
 pub(crate) use completion::{CompletionStats, complete_with_h};
 pub use config::{
-    AdvancedDetectConfig, CircleRefinementMethod, CompletionParams, DetectConfig,
+    AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
-    OuterFitConfig, ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers,
-    SeedProposalParams,
+    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier, ScaleTiers,
+    SeedProposalConfig,
 };
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::global_filter;

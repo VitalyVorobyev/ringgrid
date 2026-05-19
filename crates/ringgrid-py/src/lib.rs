@@ -308,7 +308,7 @@ fn scale_tiers_from_wire(wire: ScaleTiersWire) -> PyResult<ringgrid::ScaleTiers>
             tier.diameter_max_px,
         ));
     }
-    Ok(ringgrid::ScaleTiers(tiers))
+    Ok(ringgrid::ScaleTiers::new(tiers))
 }
 
 fn parse_scale_tiers(tiers_json: &str) -> PyResult<ringgrid::ScaleTiers> {

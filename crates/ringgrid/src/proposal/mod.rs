@@ -12,7 +12,7 @@
 //! types (board layouts, marker specs, etc.).
 //!
 //! ```no_run
-//! use ringgrid::proposal::{find_ellipse_centers, ProposalConfig};
+//! use ringgrid::{find_ellipse_centers, ProposalConfig};
 //!
 //! let image = image::open("photo.png").unwrap().to_luma8();
 //! let config = ProposalConfig {

@@ -24,7 +24,7 @@ mod marker {
     }
 
     #[derive(Debug, Clone)]
-    pub struct MarkerSpec {
+    pub struct MarkerSpecConfig {
         pub r_inner_expected: f32,
         pub inner_search_halfwidth: f32,
         pub inner_grad_polarity: GradPolarity,
@@ -35,7 +35,7 @@ mod marker {
         pub min_theta_consistency: f32,
     }
 
-    impl Default for MarkerSpec {
+    impl Default for MarkerSpecConfig {
         fn default() -> Self {
             let r_inner_expected = 0.328f32 / 0.672f32;
             Self {
@@ -51,7 +51,7 @@ mod marker {
         }
     }
 
-    impl MarkerSpec {
+    impl MarkerSpecConfig {
         pub fn search_window(&self) -> [f32; 2] {
             [
                 self.r_inner_expected - self.inner_search_halfwidth,
@@ -459,7 +459,7 @@ fn make_inner_fixture(
     width: u32,
     height: u32,
     seed: u64,
-) -> (GrayImage, conic::Ellipse, marker::MarkerSpec) {
+) -> (GrayImage, conic::Ellipse, marker::MarkerSpecConfig) {
     let mut img = GrayImage::new(width, height);
     let cx = width as f32 * 0.5;
     let cy = height as f32 * 0.5;
@@ -469,11 +469,11 @@ fn make_inner_fixture(
     let ca = angle.cos();
     let sa = angle.sin();
 
-    let spec = marker::MarkerSpec {
+    let spec = marker::MarkerSpecConfig {
         radial_samples: 64,
         theta_samples: 96,
         inner_grad_polarity: marker::GradPolarity::LightToDark,
-        ..marker::MarkerSpec::default()
+        ..marker::MarkerSpecConfig::default()
     };
     let r_inner = spec.r_inner_expected;
     let mut rng = StdRng::seed_from_u64(seed);

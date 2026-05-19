@@ -1,14 +1,15 @@
 use crate::RansacStats;
 use crate::board_layout::BoardLayout;
+use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
-use crate::homography::{self, RansacHomographyConfig};
+use crate::homography;
 
 /// Apply global homography RANSAC filter.
 ///
 /// Returns `(filtered markers, RANSAC result, stats)`.
 pub fn global_filter(
     markers: &[MarkerRecord],
-    config: &RansacHomographyConfig,
+    config: &RansacConfig,
     board: &BoardLayout,
 ) -> (
     Vec<MarkerRecord>,

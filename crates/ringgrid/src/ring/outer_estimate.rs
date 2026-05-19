@@ -85,24 +85,24 @@ pub struct OuterEstimationConfig {
     pub search_halfwidth_px: f32,
     /// Number of radial samples used to build the aggregated response.
     ///
-    /// Same convention as [`crate::MarkerSpec::radial_samples`], calibrated
+    /// Same convention as [`crate::MarkerSpecConfig::radial_samples`], calibrated
     /// independently for the outer estimation stage.
     pub radial_samples: usize,
     /// Aggregation method across theta.
     ///
-    /// Same convention as [`crate::MarkerSpec::aggregator`], applied to the outer
+    /// Same convention as [`crate::MarkerSpecConfig::aggregator`], applied to the outer
     /// radial profile.
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
     pub grad_polarity: GradPolarity,
     /// Minimum fraction of theta samples required for an estimate.
     ///
-    /// Same convention as [`crate::MarkerSpec::min_theta_coverage`], calibrated
+    /// Same convention as [`crate::MarkerSpecConfig::min_theta_coverage`], calibrated
     /// independently for the outer estimation stage.
     pub min_theta_coverage: f32,
     /// Minimum fraction of theta samples that must agree with the selected peak.
     ///
-    /// Same convention as [`crate::MarkerSpec::min_theta_consistency`]; the outer
+    /// Same convention as [`crate::MarkerSpecConfig::min_theta_consistency`]; the outer
     /// estimator uses a stricter default (0.35) than the inner estimator (0.25)
     /// because the outer edge is anchored to a scale prior.
     pub min_theta_consistency: f32,

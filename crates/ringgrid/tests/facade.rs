@@ -16,13 +16,9 @@
 //! to match.
 
 // ── Detector facade and proposal-only convenience helpers ───────────────────
-use ringgrid::{
-    Detector, propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
-    propose_with_marker_diameter, propose_with_marker_scale,
-};
+use ringgrid::{Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale};
 
-// ── Proposal module (standalone ellipse center detection) ───────────────────
-use ringgrid::proposal;
+// ── Proposal types (standalone ellipse center detection) ────────────────────
 use ringgrid::{Proposal, ProposalConfig, ProposalResult};
 use ringgrid::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
@@ -35,10 +31,10 @@ use ringgrid::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 
 // ── Configuration ───────────────────────────────────────────────────────────
 use ringgrid::{
-    AdvancedDetectConfig, CircleRefinementMethod, CompletionParams, DetectConfig,
+    AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
-    OuterFitConfig, ProjectiveCenterParams, ProposalDownscale, RansacHomographyConfig, ScaleTier,
-    ScaleTiers, SeedProposalParams,
+    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, RansacConfig, ScaleTier, ScaleTiers,
+    SeedProposalConfig,
 };
 
 // ── Sub-configs ─────────────────────────────────────────────────────────────
@@ -49,9 +45,9 @@ use ringgrid::{EdgeSampleConfig, OuterEstimationConfig};
 use ringgrid::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 
 // ── Geometry ────────────────────────────────────────────────────────────────
+use ringgrid::Ellipse;
 use ringgrid::{BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker};
-use ringgrid::{Ellipse, RansacConfig};
-use ringgrid::{MarkerSpec, PngTargetOptions, SvgTargetOptions, TargetGenerationError};
+use ringgrid::{MarkerSpecConfig, PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // ── Camera / distortion ─────────────────────────────────────────────────────
 use ringgrid::{
@@ -82,19 +78,18 @@ fn facade_names_resolve() {
     _assert_named::<RansacStats>();
     _assert_named::<AdvancedDetectConfig>();
     _assert_named::<CircleRefinementMethod>();
-    _assert_named::<CompletionParams>();
+    _assert_named::<CompletionConfig>();
     _assert_named::<DetectConfig>();
     _assert_named::<IdCorrectionConfig>();
     _assert_named::<InnerAsOuterRecoveryConfig>();
     _assert_named::<InnerFitConfig>();
     _assert_named::<MarkerScalePrior>();
     _assert_named::<OuterFitConfig>();
-    _assert_named::<ProjectiveCenterParams>();
+    _assert_named::<ProjectiveCenterConfig>();
     _assert_named::<ProposalDownscale>();
-    _assert_named::<RansacHomographyConfig>();
     _assert_named::<ScaleTier>();
     _assert_named::<ScaleTiers>();
-    _assert_named::<SeedProposalParams>();
+    _assert_named::<SeedProposalConfig>();
     _assert_named::<AngularAggregator>();
     _assert_named::<CodebookProfile>();
     _assert_named::<DecodeConfig>();
@@ -109,7 +104,7 @@ fn facade_names_resolve() {
     _assert_named::<BoardMarker>();
     _assert_named::<Ellipse>();
     _assert_named::<RansacConfig>();
-    _assert_named::<MarkerSpec>();
+    _assert_named::<MarkerSpecConfig>();
     _assert_named::<PngTargetOptions>();
     _assert_named::<SvgTargetOptions>();
     _assert_named::<TargetGenerationError>();
@@ -124,11 +119,8 @@ fn facade_names_resolve() {
     // Free functions referenced as values — proves the fn paths still resolve.
     // Each is bound to an explicitly typed `fn` item so the path is checked
     // without relying on type inference.
-    let _: fn(&image::GrayImage, &BoardLayout, f32) -> ProposalResult =
-        propose_with_heatmap_and_marker_diameter;
     let _: fn(&image::GrayImage, &BoardLayout, MarkerScalePrior) -> ProposalResult =
         propose_with_heatmap_and_marker_scale;
-    let _: fn(&image::GrayImage, &BoardLayout, f32) -> Vec<Proposal> = propose_with_marker_diameter;
     let _: fn(&image::GrayImage, &BoardLayout, MarkerScalePrior) -> Vec<Proposal> =
         propose_with_marker_scale;
     let _: fn(&image::GrayImage, &ProposalConfig) -> Vec<Proposal> = find_ellipse_centers;
@@ -137,9 +129,6 @@ fn facade_names_resolve() {
 
     // Trait used as a bound — proves the trait path still resolves.
     fn _accepts_mapper<M: PixelMapper>(_m: &M) {}
-
-    // The `proposal` module path must stay public.
-    let _: proposal::ProposalConfig = proposal::ProposalConfig::default();
 
     // Exercise a couple of facade items at runtime.
     let info: CodebookInfo = codebook_info(CodebookProfile::Base);

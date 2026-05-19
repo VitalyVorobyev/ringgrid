@@ -14,7 +14,7 @@ use crate::marker::codec::Codebook;
 use crate::ring::edge_sample::EdgeSampleResult;
 
 use super::{
-    CompletionParams, DetectConfig, OuterFitCandidate,
+    CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
     median_outer_radius_from_neighbors_px,
@@ -268,7 +268,7 @@ fn check_decode_gate(
 
 fn check_quality_gates(
     quality: &CandidateQuality,
-    params: &CompletionParams,
+    params: &CompletionConfig,
     r_expected: f32,
     max_angular_gap_rad: f64,
 ) -> Result<(), CompletionGateReject> {
@@ -624,7 +624,7 @@ mod tests {
             max_angular_gap_outer: 0.1,
             radii_cv: 0.0,
         };
-        let params = CompletionParams::default();
+        let params = CompletionConfig::default();
         let reject = check_quality_gates(&quality, &params, 20.0, std::f64::consts::FRAC_PI_2)
             .expect_err("expected gate fail");
         assert_eq!(reject.reason, CompletionGateRejectReason::ArcCoverageLow);

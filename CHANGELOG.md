@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Public API revision: a deliberate, batched breaking cleanup of the `ringgrid`
 crate surface. The goal is a small, stable contract — primary results stay
 compact, opt-in diagnostics are a separate channel, and per-stage tuning is no
-longer part of the durable API. See `API_REVISION.md` for the full audit.
+longer part of the durable API.
 
 ### Removed
 
@@ -29,6 +29,27 @@ longer part of the durable API. See `API_REVISION.md` for the full audit.
   `DetectionResult`.
 - **`DetectedMarker` fields `fit`, `decode`, `source`, `edge_points_outer`,
   `edge_points_inner`** — moved to the new `MarkerDiagnostics` type.
+- **BREAKING: `Ellipse::to_conic` is now crate-private (`pub(crate)`).** It
+  returned `ConicCoeffs`, a type in the private `conic` module that is not
+  re-exported — callers could invoke the method but never name its return
+  type, making it dead public API.
+- **BREAKING: `DecodeConfig::DEFAULT_*` associated constants are now
+  crate-private (`pub(crate)`).** The nine `DEFAULT_*` constants restated the
+  `Default` impl as public API; no other stage config exposed its defaults
+  this way. The `Default` impl remains the public contract for defaults.
+- **BREAKING: the `proposal` module is no longer a public path.**
+  `ringgrid::proposal` is now private — it was `pub` *and* its contents were
+  root re-exported, so every item was reachable twice. The five public items
+  (`Proposal`, `ProposalConfig`, `ProposalResult`, `find_ellipse_centers`,
+  `find_ellipse_centers_with_heatmap`) remain available at the crate root;
+  only the duplicate `ringgrid::proposal::*` access path is removed.
+- **BREAKING: `propose_with_marker_diameter` and
+  `propose_with_heatmap_and_marker_diameter` removed.** Each was exactly its
+  `_scale` sibling with `MarkerScalePrior::from_nominal_diameter_px` applied to
+  the argument — a public function for a one-call transform. Migration: call
+  `propose_with_marker_scale(img, board,
+  MarkerScalePrior::from_nominal_diameter_px(d))` (and likewise
+  `propose_with_heatmap_and_marker_scale`).
 
 ### Changed
 
@@ -61,6 +82,30 @@ longer part of the durable API. See `API_REVISION.md` for the full audit.
   `MarkerDiagnostics`, `DetectionDiagnostics`), and the result types can no
   longer be built with a struct literal from outside the crate. Construct them
   through their constructors or `Default` and mutate fields afterwards.
+- **BREAKING: four stage sub-config types renamed for naming consistency.**
+  Every per-stage tuning struct in `AdvancedDetectConfig` now ends in `Config`:
+  `CompletionParams` → `CompletionConfig`, `ProjectiveCenterParams` →
+  `ProjectiveCenterConfig`, `SeedProposalParams` → `SeedProposalConfig`, and
+  `MarkerSpec` → `MarkerSpecConfig`. Pure type renames — field names, the
+  `AdvancedDetectConfig` field names (`completion`, `projective_center`,
+  `seed_proposals`, `marker_spec`), and all serde JSON keys are unchanged.
+- **BREAKING: `RansacHomographyConfig` removed; merged into `RansacConfig`.**
+  The two types had the identical four-field shape (`max_iters`,
+  `inlier_threshold`, `min_inliers`, `seed`) and differed only in defaults.
+  `AdvancedDetectConfig::ransac_homography` keeps its field name but its type
+  is now `RansacConfig`; the homography defaults (`2000 / 5.0 / 6 / 0`) are
+  preserved by `AdvancedDetectConfig::default()`. `RansacConfig` gained
+  `#[non_exhaustive]` and `#[serde(default)]`. The `ransac_homography` serde
+  JSON key is unchanged. Python bindings rename the `RansacHomographyConfig`
+  dataclass to `RansacConfig` accordingly.
+- **BREAKING: `ScaleTiers` tuple field is now private.** `ScaleTiers` exposed
+  its `Vec<ScaleTier>` as a `pub` tuple field *and* offered a `tiers()`
+  accessor — two read paths for the same data, with the `pub` field letting any
+  consumer inject an empty tier list. The field is now private; construct
+  custom tier sets with the new `ScaleTiers::new(tiers: Vec<ScaleTier>)`
+  constructor and read them via `tiers()`. The preset constructors
+  (`four_tier_wide`, `two_tier_standard`, `single`, `from_detected_radii`) are
+  unchanged. The Python-level `ScaleTiers([...])` API is unaffected.
 
 ### Added
 

@@ -89,7 +89,7 @@ See [Adaptive Scale Detection](../detection-modes/adaptive-scale.md).
 
 ## Seed Injection in Two-Pass Modes
 
-When a pass-2 runs (either `detect_with_mapper` or `detect_with_self_undistort`), pass-1 detection centers become seed proposals for pass-2. Seeds are injected with a high score (`seed_score = 1e12` by default) so they are prioritized during candidate selection. The `SeedProposalParams` configuration controls:
+When a pass-2 runs (either `detect_with_mapper` or `detect_with_self_undistort`), pass-1 detection centers become seed proposals for pass-2. Seeds are injected with a high score (`seed_score = 1e12` by default) so they are prioritized during candidate selection. The `SeedProposalConfig` configuration controls:
 
 - `merge_radius_px`: Radius for merging seeds with detector-found proposals (default: 3.0 px).
 - `max_seeds`: Optional cap on the number of seeds consumed (default: 512).

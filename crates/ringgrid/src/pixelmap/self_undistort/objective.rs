@@ -123,7 +123,7 @@ pub(super) fn homography_self_error_px(
         return None;
     }
 
-    let ransac_cfg = homography::RansacHomographyConfig {
+    let ransac_cfg = crate::conic::RansacConfig {
         max_iters: 1000,
         inlier_threshold: 5.0,
         min_inliers: 8,

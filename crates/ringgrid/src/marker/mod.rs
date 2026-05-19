@@ -10,4 +10,4 @@ pub mod codec;
 pub use codec::CodebookProfile;
 pub use decode::{DecodeConfig, DecodeMetrics};
 pub use diagnostics::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
-pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpec};
+pub use marker_spec::{AngularAggregator, GradPolarity, MarkerSpecConfig};

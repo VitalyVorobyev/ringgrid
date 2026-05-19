@@ -58,7 +58,7 @@ mod homography;
 mod marker;
 mod pipeline;
 mod pixelmap;
-pub mod proposal;
+mod proposal;
 mod ring;
 mod target_generation;
 #[cfg(test)]
@@ -67,10 +67,7 @@ pub(crate) mod test_utils;
 // ── Public API ──────────────────────────────────────────────────────────
 
 // High-level detector facade and proposal-only convenience helpers
-pub use api::{
-    Detector, propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
-    propose_with_marker_diameter, propose_with_marker_scale,
-};
+pub use api::{Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale};
 
 // Proposal module (standalone ellipse center detection)
 pub use proposal::{Proposal, ProposalConfig, ProposalResult};
@@ -89,13 +86,13 @@ pub use marker::DecodeMetrics;
 pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics};
 
 // Configuration
+pub use conic::RansacConfig;
 pub use detector::{
-    AdvancedDetectConfig, CircleRefinementMethod, CompletionParams, DetectConfig,
+    AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
-    OuterFitConfig, ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers,
-    SeedProposalParams,
+    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier, ScaleTiers,
+    SeedProposalConfig,
 };
-pub use homography::RansacHomographyConfig;
 
 // Sub-configs
 pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
@@ -108,8 +105,8 @@ pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };
-pub use conic::{Ellipse, RansacConfig};
-pub use marker::MarkerSpec;
+pub use conic::Ellipse;
+pub use marker::MarkerSpecConfig;
 pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // Camera / distortion

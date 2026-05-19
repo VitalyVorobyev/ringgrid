@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::conic::RansacConfig;
 use crate::detector::marker_build::MarkerRecord;
-use crate::homography::{RansacHomographyConfig, fit_homography_ransac, homography_project};
+use crate::homography::{fit_homography_ransac, homography_project};
 
 use super::consistency::candidate_passes_local_consistency_gate;
 use super::local::candidate_reprojection_error;
@@ -100,7 +101,7 @@ fn fit_homography_model_from_trusted(
     }
     let (src_board_mm, dst_image_px) =
         build_homography_correspondences(&trusted_by_id, markers, board_index);
-    let ransac_cfg = RansacHomographyConfig {
+    let ransac_cfg = RansacConfig {
         max_iters,
         inlier_threshold,
         min_inliers: min_inliers.min(src_board_mm.len()).max(4),

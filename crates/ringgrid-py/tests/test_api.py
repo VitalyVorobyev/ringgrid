@@ -27,14 +27,14 @@ README_SECTION_TYPES: dict[str, type[object]] = {
     "proposal": ringgrid.ProposalConfig,
     "edge_sample": ringgrid.EdgeSampleConfig,
     "outer_estimation": ringgrid.OuterEstimationConfig,
-    "marker_spec": ringgrid.MarkerSpec,
+    "marker_spec": ringgrid.MarkerSpecConfig,
     "outer_fit": ringgrid.OuterFitConfig,
     "inner_fit": ringgrid.InnerFitConfig,
     "decode": ringgrid.DecodeConfig,
-    "seed_proposals": ringgrid.SeedProposalParams,
-    "projective_center": ringgrid.ProjectiveCenterParams,
-    "completion": ringgrid.CompletionParams,
-    "ransac_homography": ringgrid.RansacHomographyConfig,
+    "seed_proposals": ringgrid.SeedProposalConfig,
+    "projective_center": ringgrid.ProjectiveCenterConfig,
+    "completion": ringgrid.CompletionConfig,
+    "ransac_homography": ringgrid.RansacConfig,
     "self_undistort": ringgrid.SelfUndistortConfig,
     "id_correction": ringgrid.IdCorrectionConfig,
     "inner_as_outer_recovery": ringgrid.InnerAsOuterRecoveryConfig,
@@ -465,7 +465,7 @@ def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> Non
     )
 
     cfg.completion_enable = False
-    native_completion = ringgrid.CompletionParams.from_dict(
+    native_completion = ringgrid.CompletionConfig.from_dict(
         json.loads(native.dump_json())["advanced"]["completion"]
     )
     native_completion.enable = False

@@ -306,34 +306,6 @@ pub fn propose_with_heatmap_and_marker_scale(
     find_ellipse_centers_with_heatmap(image, &config)
 }
 
-/// Generate pass-1 center proposals using board geometry and a fixed marker
-/// diameter hint.
-pub fn propose_with_marker_diameter(
-    image: &GrayImage,
-    board: &BoardLayout,
-    marker_diameter_px: f32,
-) -> Vec<Proposal> {
-    propose_with_marker_scale(
-        image,
-        board,
-        MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
-    )
-}
-
-/// Generate pass-1 proposals with heatmap using board geometry and a fixed
-/// marker diameter hint.
-pub fn propose_with_heatmap_and_marker_diameter(
-    image: &GrayImage,
-    board: &BoardLayout,
-    marker_diameter_px: f32,
-) -> ProposalResult {
-    propose_with_heatmap_and_marker_scale(
-        image,
-        board,
-        MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,11 +475,19 @@ mod tests {
         let detector = Detector::with_marker_diameter_hint(board.clone(), 32.0);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
-        let free = propose_with_marker_diameter(&img, &board, 32.0);
+        let free = propose_with_marker_scale(
+            &img,
+            &board,
+            MarkerScalePrior::from_nominal_diameter_px(32.0),
+        );
         let detector_out = detector.propose(&img);
         assert_eq!(free, detector_out);
 
-        let free_diag = propose_with_heatmap_and_marker_diameter(&img, &board, 32.0);
+        let free_diag = propose_with_heatmap_and_marker_scale(
+            &img,
+            &board,
+            MarkerScalePrior::from_nominal_diameter_px(32.0),
+        );
         let detector_diag = detector.propose_with_heatmap(&img);
         assert_eq!(free_diag.proposals, detector_diag.proposals);
         assert_eq!(free_diag.heatmap, detector_diag.heatmap);

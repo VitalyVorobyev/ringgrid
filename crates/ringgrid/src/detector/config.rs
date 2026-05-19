@@ -1,6 +1,6 @@
 use crate::board_layout::BoardLayout;
-use crate::homography::RansacHomographyConfig;
-use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::conic::RansacConfig;
+use crate::marker::{DecodeConfig, MarkerSpecConfig};
 use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
@@ -45,7 +45,7 @@ pub(crate) fn derive_proposal_config(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
-pub struct SeedProposalParams {
+pub struct SeedProposalConfig {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
     /// Score assigned to injected seed proposals.
@@ -54,7 +54,7 @@ pub struct SeedProposalParams {
     pub max_seeds: Option<usize>,
 }
 
-impl Default for SeedProposalParams {
+impl Default for SeedProposalConfig {
     fn default() -> Self {
         Self {
             merge_radius_px: 3.0,
@@ -69,7 +69,7 @@ impl Default for SeedProposalParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
-pub struct CompletionParams {
+pub struct CompletionConfig {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
     /// Radial sampling extent (pixels) used for edge sampling around the prior center.
@@ -95,7 +95,7 @@ pub struct CompletionParams {
     ///
     /// Default: `false` (backward-compatible). Set to `true` for Scheimpflug / high-
     /// distortion setups where no calibrated camera model is available.
-    #[serde(default = "CompletionParams::default_require_perfect_decode")]
+    #[serde(default = "CompletionConfig::default_require_perfect_decode")]
     pub require_perfect_decode: bool,
     /// Maximum allowed coefficient of variation (std_dev / mean) of per-ray outer
     /// radii. High scatter indicates inner/outer edge contamination — rays landing on
@@ -106,11 +106,11 @@ pub struct CompletionParams {
     /// mean outer radius is below 1 px (degenerate fit).
     ///
     /// Default: `0.35` (35% coefficient of variation).
-    #[serde(default = "CompletionParams::default_max_radii_std_ratio")]
+    #[serde(default = "CompletionConfig::default_max_radii_std_ratio")]
     pub max_radii_std_ratio: f32,
 }
 
-impl CompletionParams {
+impl CompletionConfig {
     fn default_require_perfect_decode() -> bool {
         false
     }
@@ -120,7 +120,7 @@ impl CompletionParams {
     }
 }
 
-impl Default for CompletionParams {
+impl Default for CompletionConfig {
     fn default() -> Self {
         Self {
             enable: true,
@@ -140,7 +140,7 @@ impl Default for CompletionParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
-pub struct ProjectiveCenterParams {
+pub struct ProjectiveCenterConfig {
     /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
@@ -159,7 +159,7 @@ pub struct ProjectiveCenterParams {
     pub min_eig_separation: Option<f64>,
 }
 
-impl Default for ProjectiveCenterParams {
+impl Default for ProjectiveCenterConfig {
     fn default() -> Self {
         Self {
             use_expected_ratio: true,
@@ -450,9 +450,23 @@ impl ScaleTier {
 /// See [`crate::Detector::detect_adaptive`] and
 /// [`crate::Detector::detect_multiscale`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ScaleTiers(pub Vec<ScaleTier>);
+pub struct ScaleTiers(Vec<ScaleTier>);
 
 impl ScaleTiers {
+    /// Construct tiers from an explicit ordered tier list.
+    ///
+    /// This is the general-purpose constructor for callers building custom
+    /// tier sets; the preset constructors ([`four_tier_wide`](Self::four_tier_wide),
+    /// [`two_tier_standard`](Self::two_tier_standard), [`single`](Self::single),
+    /// [`from_detected_radii`](Self::from_detected_radii)) cover the common cases.
+    ///
+    /// The vec is accepted as-is; an empty vec yields tiers with no scales to
+    /// probe. Callers that require a non-empty set should validate before
+    /// constructing.
+    pub fn new(tiers: Vec<ScaleTier>) -> Self {
+        Self(tiers)
+    }
+
     /// Four overlapping tiers covering 8–220 px (27:1 diameter ratio).
     ///
     /// Tier boundaries: `[8,24]`, `[20,60]`, `[50,130]`, `[110,220]` px.
@@ -779,21 +793,21 @@ pub struct AdvancedDetectConfig {
     /// Proposal generation configuration.
     pub proposal: ProposalConfig,
     /// Seed-injection controls for multi-pass proposal generation.
-    pub seed_proposals: SeedProposalParams,
+    pub seed_proposals: SeedProposalConfig,
     /// Radial edge sampling configuration.
     pub edge_sample: EdgeSampleConfig,
     /// Marker decode configuration.
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
-    pub marker_spec: MarkerSpec,
+    pub marker_spec: MarkerSpecConfig,
     /// Robust inner ellipse fitting controls shared across pipeline stages.
     pub inner_fit: InnerFitConfig,
     /// Robust outer ellipse fitting controls shared across pipeline stages.
     pub outer_fit: OuterFitConfig,
     /// Projective-center recovery controls.
-    pub projective_center: ProjectiveCenterParams,
+    pub projective_center: ProjectiveCenterConfig,
     /// Homography-guided completion controls.
-    pub completion: CompletionParams,
+    pub completion: CompletionConfig,
     /// Minimum semi-axis for a valid outer ellipse.
     /// Derived from `marker_scale` by the config constructors; do not set directly.
     #[serde(skip)]
@@ -817,7 +831,7 @@ pub struct AdvancedDetectConfig {
     /// Set to `None` to disable the topology filter. Default: `None`.
     pub topology_filter_threshold_px: Option<f32>,
     /// RANSAC homography configuration.
-    pub ransac_homography: RansacHomographyConfig,
+    pub ransac_homography: RansacConfig,
     /// Structural ID verification and correction using hex neighborhood consensus.
     pub id_correction: IdCorrectionConfig,
     /// Automatic recovery for markers where the inner edge was incorrectly
@@ -845,21 +859,26 @@ impl Default for AdvancedDetectConfig {
         Self {
             outer_estimation: OuterEstimationConfig::default(),
             proposal: ProposalConfig::default(),
-            seed_proposals: SeedProposalParams::default(),
+            seed_proposals: SeedProposalConfig::default(),
             edge_sample: EdgeSampleConfig::default(),
             decode: DecodeConfig::default(),
-            marker_spec: MarkerSpec::default(),
+            marker_spec: MarkerSpecConfig::default(),
             inner_fit: InnerFitConfig::default(),
             outer_fit: OuterFitConfig::default(),
-            projective_center: ProjectiveCenterParams::default(),
-            completion: CompletionParams::default(),
+            projective_center: ProjectiveCenterConfig::default(),
+            completion: CompletionConfig::default(),
             min_semi_axis: 3.0,
             max_semi_axis: 15.0,
             max_aspect_ratio: 3.0,
             dedup_radius: 6.0,
             use_global_filter: true,
             topology_filter_threshold_px: None,
-            ransac_homography: RansacHomographyConfig::default(),
+            ransac_homography: RansacConfig {
+                max_iters: 2000,
+                inlier_threshold: 5.0,
+                min_inliers: 6,
+                seed: 0,
+            },
             id_correction: IdCorrectionConfig::default(),
             inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
             h_reproj_confidence_alpha: 0.2,

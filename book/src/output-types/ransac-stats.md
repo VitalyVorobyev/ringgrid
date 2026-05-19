@@ -49,7 +49,7 @@ When `p95_err_px` is significantly larger than `mean_err_px` (e.g., more than 3x
 
 ### Threshold
 
-The `threshold_px` field records the reprojection error threshold used during RANSAC. Any correspondence with error below this threshold is classified as an inlier. The default is 5.0 pixels (configurable via `RansacHomographyConfig::inlier_threshold`). After RANSAC selects the best model, the homography is refit using all inliers, and the final `n_inliers`, `mean_err_px`, and `p95_err_px` are recomputed against the refit model.
+The `threshold_px` field records the reprojection error threshold used during RANSAC. Any correspondence with error below this threshold is classified as an inlier. The default is 5.0 pixels (configurable via `RansacConfig::inlier_threshold`). After RANSAC selects the best model, the homography is refit using all inliers, and the final `n_inliers`, `mean_err_px`, and `p95_err_px` are recomputed against the refit model.
 
 ## Example JSON
 
@@ -65,4 +65,4 @@ The `threshold_px` field records the reprojection error threshold used during RA
 
 ## Absence
 
-When `DetectionDiagnostics::ransac` is `None`, no homography was fitted. This happens when fewer than 4 markers were decoded or when RANSAC failed to find enough inliers (controlled by `RansacHomographyConfig::min_inliers`, default 6).
+When `DetectionDiagnostics::ransac` is `None`, no homography was fitted. This happens when fewer than 4 markers were decoded or when RANSAC failed to find enough inliers (controlled by `RansacConfig::min_inliers`, default 6).

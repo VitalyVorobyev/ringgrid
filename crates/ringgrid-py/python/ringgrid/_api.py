@@ -1180,7 +1180,7 @@ class OuterFitConfig:
 
 
 @dataclass(slots=True)
-class CompletionParams:
+class CompletionConfig:
     enable: bool = True
     roi_radius_px: float = 30.0
     reproj_gate_px: float = 3.0
@@ -1192,7 +1192,7 @@ class CompletionParams:
     max_radii_std_ratio: float = 0.35
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CompletionParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "CompletionConfig":
         data = _require_mapping(data, name="data")
         return cls(
             enable=bool(data["enable"]),
@@ -1222,7 +1222,7 @@ class CompletionParams:
 
 
 @dataclass(slots=True)
-class ProjectiveCenterParams:
+class ProjectiveCenterConfig:
     use_expected_ratio: bool = True
     ratio_penalty_weight: float = 1.0
     max_center_shift_px: float | None = 40.0
@@ -1230,7 +1230,7 @@ class ProjectiveCenterParams:
     min_eig_separation: float = 1e-6
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectiveCenterParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectiveCenterConfig":
         data = _require_mapping(data, name="data")
         return cls(
             use_expected_ratio=bool(data["use_expected_ratio"]),
@@ -1252,13 +1252,13 @@ class ProjectiveCenterParams:
 
 
 @dataclass(slots=True)
-class SeedProposalParams:
+class SeedProposalConfig:
     merge_radius_px: float = 3.0
     seed_score: float = 1_000_000_000_000.0
     max_seeds: int | None = 512
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SeedProposalParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "SeedProposalConfig":
         data = _require_mapping(data, name="data")
         return cls(
             merge_radius_px=float(data["merge_radius_px"]),
@@ -1393,7 +1393,7 @@ class DecodeConfig:
 
 
 @dataclass(slots=True)
-class MarkerSpec:
+class MarkerSpecConfig:
     r_inner_expected: float = 0.48809522
     inner_search_halfwidth: float = 0.08
     inner_grad_polarity: str = "light_to_dark"
@@ -1404,7 +1404,7 @@ class MarkerSpec:
     min_theta_consistency: float = 0.25
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerSpec":
+    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerSpecConfig":
         data = _require_mapping(data, name="data")
         return cls(
             r_inner_expected=float(data["r_inner_expected"]),
@@ -1472,14 +1472,14 @@ class OuterEstimationConfig:
 
 
 @dataclass(slots=True)
-class RansacHomographyConfig:
+class RansacConfig:
     max_iters: int = 2000
     inlier_threshold: float = 5.0
     min_inliers: int = 6
     seed: int = 0
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "RansacHomographyConfig":
+    def from_dict(cls, data: Mapping[str, Any]) -> "RansacConfig":
         data = _require_mapping(data, name="data")
         return cls(
             max_iters=int(data["max_iters"]),
@@ -1829,33 +1829,33 @@ class DetectConfig:
         self._apply_overlay({"outer_fit": value.to_dict()}, refresh=True)
 
     @property
-    def completion(self) -> CompletionParams:
-        return CompletionParams.from_dict(self._resolved_value("completion"))
+    def completion(self) -> CompletionConfig:
+        return CompletionConfig.from_dict(self._resolved_value("completion"))
 
     @completion.setter
-    def completion(self, value: CompletionParams) -> None:
-        if not isinstance(value, CompletionParams):
-            raise TypeError("completion must be CompletionParams")
+    def completion(self, value: CompletionConfig) -> None:
+        if not isinstance(value, CompletionConfig):
+            raise TypeError("completion must be CompletionConfig")
         self._apply_overlay({"completion": value.to_dict()}, refresh=True)
 
     @property
-    def projective_center(self) -> ProjectiveCenterParams:
-        return ProjectiveCenterParams.from_dict(self._resolved_value("projective_center"))
+    def projective_center(self) -> ProjectiveCenterConfig:
+        return ProjectiveCenterConfig.from_dict(self._resolved_value("projective_center"))
 
     @projective_center.setter
-    def projective_center(self, value: ProjectiveCenterParams) -> None:
-        if not isinstance(value, ProjectiveCenterParams):
-            raise TypeError("projective_center must be ProjectiveCenterParams")
+    def projective_center(self, value: ProjectiveCenterConfig) -> None:
+        if not isinstance(value, ProjectiveCenterConfig):
+            raise TypeError("projective_center must be ProjectiveCenterConfig")
         self._apply_overlay({"projective_center": value.to_dict()}, refresh=True)
 
     @property
-    def seed_proposals(self) -> SeedProposalParams:
-        return SeedProposalParams.from_dict(self._resolved_value("seed_proposals"))
+    def seed_proposals(self) -> SeedProposalConfig:
+        return SeedProposalConfig.from_dict(self._resolved_value("seed_proposals"))
 
     @seed_proposals.setter
-    def seed_proposals(self, value: SeedProposalParams) -> None:
-        if not isinstance(value, SeedProposalParams):
-            raise TypeError("seed_proposals must be SeedProposalParams")
+    def seed_proposals(self, value: SeedProposalConfig) -> None:
+        if not isinstance(value, SeedProposalConfig):
+            raise TypeError("seed_proposals must be SeedProposalConfig")
         self._apply_overlay({"seed_proposals": value.to_dict()}, refresh=True)
 
     @property
@@ -1889,13 +1889,13 @@ class DetectConfig:
         self._apply_overlay({"decode": value.to_dict()}, refresh=True)
 
     @property
-    def marker_spec(self) -> MarkerSpec:
-        return MarkerSpec.from_dict(self._resolved_value("marker_spec"))
+    def marker_spec(self) -> MarkerSpecConfig:
+        return MarkerSpecConfig.from_dict(self._resolved_value("marker_spec"))
 
     @marker_spec.setter
-    def marker_spec(self, value: MarkerSpec) -> None:
-        if not isinstance(value, MarkerSpec):
-            raise TypeError("marker_spec must be MarkerSpec")
+    def marker_spec(self, value: MarkerSpecConfig) -> None:
+        if not isinstance(value, MarkerSpecConfig):
+            raise TypeError("marker_spec must be MarkerSpecConfig")
         self._apply_overlay({"marker_spec": value.to_dict()}, refresh=True)
 
     @property
@@ -1909,13 +1909,13 @@ class DetectConfig:
         self._apply_overlay({"outer_estimation": value.to_dict()}, refresh=True)
 
     @property
-    def ransac_homography(self) -> RansacHomographyConfig:
-        return RansacHomographyConfig.from_dict(self._resolved_value("ransac_homography"))
+    def ransac_homography(self) -> RansacConfig:
+        return RansacConfig.from_dict(self._resolved_value("ransac_homography"))
 
     @ransac_homography.setter
-    def ransac_homography(self, value: RansacHomographyConfig) -> None:
-        if not isinstance(value, RansacHomographyConfig):
-            raise TypeError("ransac_homography must be RansacHomographyConfig")
+    def ransac_homography(self, value: RansacConfig) -> None:
+        if not isinstance(value, RansacConfig):
+            raise TypeError("ransac_homography must be RansacConfig")
         self._apply_overlay({"ransac_homography": value.to_dict()}, refresh=True)
 
     @property
@@ -2645,19 +2645,19 @@ __all__ = [
     "BoardLayout",
     "BoardMarker",
     "CircleRefinementMethod",
-    "MarkerSpec",
+    "MarkerSpecConfig",
     "MarkerScalePrior",
     "RansacFitConfig",
     "InnerFitConfig",
     "OuterFitConfig",
-    "CompletionParams",
-    "ProjectiveCenterParams",
-    "SeedProposalParams",
+    "CompletionConfig",
+    "ProjectiveCenterConfig",
+    "SeedProposalConfig",
     "ProposalConfig",
     "EdgeSampleConfig",
     "DecodeConfig",
     "OuterEstimationConfig",
-    "RansacHomographyConfig",
+    "RansacConfig",
     "SelfUndistortConfig",
     "IdCorrectionConfig",
     "InnerAsOuterRecoveryConfig",

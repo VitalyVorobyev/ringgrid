@@ -4,7 +4,7 @@ The inner ellipse fit provides the second conic needed for [projective center co
 
 ## Search Region
 
-The expected inner ring radius is defined by `MarkerSpec.r_inner_expected` — the ratio of the inner edge radius to the outer edge radius in normalized coordinates. For the default marker geometry:
+The expected inner ring radius is defined by `MarkerSpecConfig.r_inner_expected` — the ratio of the inner edge radius to the outer edge radius in normalized coordinates. For the default marker geometry:
 
 - `r_inner_expected = 0.328 / 0.672 ≈ 0.488`
 

@@ -52,7 +52,7 @@ during inner ring estimation.
 
 Internally, ringgrid expresses all marker geometry in **outer-normalized
 coordinates** where the detected outer edge radius equals 1.0. This
-normalization makes the geometry scale-invariant: the same `MarkerSpec`
+normalization makes the geometry scale-invariant: the same `MarkerSpecConfig`
 parameters apply regardless of the marker's apparent size in the image.
 
 In these units, the expected inner edge radius is:
@@ -66,13 +66,13 @@ r_inner_expected = (inner_radius - ring_width) / (outer_radius + ring_width)
 The pitch cancels, so this ratio depends only on the relative proportions of
 the marker design, not on the physical scale.
 
-## The `MarkerSpec` type
+## The `MarkerSpecConfig` type
 
-The `MarkerSpec` struct encodes the expected marker geometry and controls how
+The `MarkerSpecConfig` struct encodes the expected marker geometry and controls how
 the inner ring estimator searches for the inner edge:
 
 ```rust
-pub struct MarkerSpec {
+pub struct MarkerSpecConfig {
     /// Expected inner radius as fraction of outer radius.
     pub r_inner_expected: f32,
     /// Allowed deviation in normalized radius around `r_inner_expected`.
@@ -145,5 +145,5 @@ The marker geometry must satisfy several constraints for reliable detection:
    detectable gradient peaks after optical blur, but narrow enough not to
    encroach on the code band.
 
-These relationships are baked into the `MarkerSpec` defaults and validated by
+These relationships are baked into the `MarkerSpecConfig` defaults and validated by
 the `BoardLayout` loader (see [Hex Lattice Layout](hex-lattice.md)).

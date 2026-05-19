@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::DetectedMarker;
+use crate::detector::MarkerRecord;
 
-fn sort_by_confidence(markers: Vec<DetectedMarker>) -> Vec<DetectedMarker> {
+fn sort_by_confidence(markers: Vec<MarkerRecord>) -> Vec<MarkerRecord> {
     let mut markers = markers;
     markers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
     markers
 }
 
-fn dedup_by_proximity(markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarker> {
+fn dedup_by_proximity(markers: Vec<MarkerRecord>, radius: f64) -> Vec<MarkerRecord> {
     let mut keep = vec![true; markers.len()];
     let r2 = radius * radius;
 
@@ -36,7 +36,7 @@ fn dedup_by_proximity(markers: Vec<DetectedMarker>, radius: f64) -> Vec<Detected
         .collect()
 }
 
-fn dedup_by_id_core(markers: Vec<DetectedMarker>) -> Vec<DetectedMarker> {
+fn dedup_by_id_core(markers: Vec<MarkerRecord>) -> Vec<MarkerRecord> {
     let mut best_idx: HashMap<usize, usize> = HashMap::new();
 
     for (index, marker) in markers.iter().enumerate() {
@@ -62,14 +62,14 @@ fn dedup_by_id_core(markers: Vec<DetectedMarker>) -> Vec<DetectedMarker> {
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within `radius`.
-pub fn dedup_markers(markers: Vec<DetectedMarker>, radius: f64) -> Vec<DetectedMarker> {
+pub fn dedup_markers(markers: Vec<MarkerRecord>, radius: f64) -> Vec<MarkerRecord> {
     let markers = sort_by_confidence(markers);
     dedup_by_proximity(markers, radius)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
 /// one with the highest confidence.
-pub fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
+pub fn dedup_by_id(markers: &mut Vec<MarkerRecord>) {
     let input = std::mem::take(markers);
     *markers = dedup_by_id_core(input);
 }
@@ -78,7 +78,7 @@ pub fn dedup_by_id(markers: &mut Vec<DetectedMarker>) {
 // Multi-scale merge
 // ---------------------------------------------------------------------------
 
-fn outer_radius(m: &DetectedMarker) -> f64 {
+fn outer_radius(m: &MarkerRecord) -> f64 {
     m.ellipse_outer
         .as_ref()
         .map(|e| e.mean_axis())
@@ -91,7 +91,7 @@ fn outer_radius(m: &DetectedMarker) -> f64 {
 /// outer radius of its `k` nearest spatial neighbors. A score of 1.0 means
 /// the radius equals the neighborhood median; lower values indicate
 /// outliers (possible wrong-tier detections).
-fn size_consistency_scores(markers: &[DetectedMarker], k_neighbors: usize) -> Vec<f64> {
+fn size_consistency_scores(markers: &[MarkerRecord], k_neighbors: usize) -> Vec<f64> {
     let n = markers.len();
     let k = k_neighbors.min(n.saturating_sub(1));
     let radii: Vec<f64> = markers.iter().map(outer_radius).collect();
@@ -159,10 +159,10 @@ fn size_consistency_scores(markers: &[DetectedMarker], k_neighbors: usize) -> Ve
 /// `k_neighbors = 6` matches the hex-lattice valence and mirrors the
 /// convention in [`InnerAsOuterRecoveryConfig`](super::config::InnerAsOuterRecoveryConfig).
 pub(crate) fn merge_multiscale_markers(
-    all_markers: Vec<DetectedMarker>,
+    all_markers: Vec<MarkerRecord>,
     dedup_radius: f64,
     k_neighbors: usize,
-) -> Vec<DetectedMarker> {
+) -> Vec<MarkerRecord> {
     if all_markers.is_empty() {
         return all_markers;
     }
@@ -207,7 +207,7 @@ pub(crate) fn merge_multiscale_markers(
         }
     }
 
-    let surviving: Vec<DetectedMarker> = all_markers
+    let surviving: Vec<MarkerRecord> = all_markers
         .into_iter()
         .enumerate()
         .filter_map(|(i, m)| keep[i].then_some(m))

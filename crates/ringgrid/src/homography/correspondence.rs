@@ -6,14 +6,14 @@ use std::collections::BTreeMap;
 use nalgebra::Matrix3;
 
 use crate::board_layout::BoardLayout;
-use crate::detector::DetectedMarker;
+use crate::detector::MarkerRecord;
 
 use super::core::homography_reprojection_error;
 
 /// Destination frame for homography correspondences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CorrespondenceDestinationFrame {
-    /// Image-space pixel centers (`DetectedMarker::center`).
+    /// Image-space pixel centers (`MarkerRecord::center`).
     Image,
     /// Working-space pixel centers (mapper output).
     Working,
@@ -83,12 +83,12 @@ struct CandidateEntry {
 
 fn marker_candidate<F>(
     marker_index: usize,
-    marker: &DetectedMarker,
+    marker: &MarkerRecord,
     board: &BoardLayout,
     map_dst_point: &mut F,
 ) -> Option<(usize, CandidateEntry)>
 where
-    F: FnMut(&DetectedMarker) -> Option<[f64; 2]>,
+    F: FnMut(&MarkerRecord) -> Option<[f64; 2]>,
 {
     let id = marker.id?;
     let board_xy = board.xy_mm(id)?;
@@ -109,14 +109,14 @@ where
 /// Source frame is board millimeters. Destination frame is labeled by
 /// `dst_frame` and populated via `map_dst_point`.
 pub(crate) fn collect_marker_correspondences<F>(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &BoardLayout,
     dst_frame: CorrespondenceDestinationFrame,
     duplicate_policy: DuplicateIdPolicy,
     mut map_dst_point: F,
 ) -> MarkerCorrespondences
 where
-    F: FnMut(&DetectedMarker) -> Option<[f64; 2]>,
+    F: FnMut(&MarkerRecord) -> Option<[f64; 2]>,
 {
     let mut corr = MarkerCorrespondences::new(dst_frame);
     match duplicate_policy {
@@ -225,12 +225,12 @@ pub(crate) fn mean_finite_masked_inlier_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn marker(id: Option<usize>, confidence: f32, center: [f64; 2]) -> DetectedMarker {
-        DetectedMarker {
+    fn marker(id: Option<usize>, confidence: f32, center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
             id,
             confidence,
             center,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 

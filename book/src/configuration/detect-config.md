@@ -59,44 +59,63 @@ let result = det.detect_adaptive(&image);
 let result = det.detect_adaptive_with_hint(&image, Some(32.0));
 ```
 
+## Stable vs advanced fields
+
+`DetectConfig` keeps only the durable user choices at the top level:
+
+- `board` — target geometry
+- `marker_scale` — expected marker diameter range
+- `circle_refinement` — post-fit center-correction method
+- `self_undistort` — division-model self-undistort policy
+- `advanced` — an `AdvancedDetectConfig` holding every per-stage tuning knob
+
+All stage tuning (proposal, edge sampling, fitting, decode, completion,
+homography RANSAC, ID correction, global-filter toggles, …) lives under the
+nested `advanced` field. The config dump/overlay JSON nests these under an
+`"advanced"` object.
+
 ## Post-construction tuning
 
-After building a `Detector`, use `config_mut()` to override individual fields:
+After building a `Detector`, use `config_mut()` to override individual fields.
+Top-level fields are set directly; per-stage knobs go through `advanced`:
 
 ```rust
 let mut det = Detector::new(board);
-det.config_mut().completion.enable = false;
-det.config_mut().use_global_filter = false;
 det.config_mut().self_undistort.enable = true;
+det.config_mut().advanced.completion.enable = false;
+det.config_mut().advanced.use_global_filter = false;
 ```
 
 Calling `set_marker_scale_prior()` or `set_marker_diameter_hint_px()` on `DetectConfig` re-derives all scale-coupled parameters automatically.
 
 ## Field reference
 
+The `Field` column shows the access path from a `DetectConfig` value. Per-stage
+knobs are reached through the `advanced` sub-config.
+
 | Field | Type | Default | Purpose |
 |---|---|---|---|
-| `marker_scale` | `MarkerScalePrior` | 14.0--66.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
-| `outer_estimation` | `OuterEstimationConfig` | (see sub-configs) | Outer-edge radius hypothesis generation from radial profile peaks. |
-| `proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
-| `seed_proposals` | `SeedProposalParams` | merge=3.0, score=1e12, max=512 | Controls seed injection for multi-pass detection. |
-| `edge_sample` | `EdgeSampleConfig` | (derived from scale) | Radial edge sampling range and ray count. `r_min`, `r_max` are auto-derived. |
-| `decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry; `codebook_profile` defaults to `base`. |
-| `marker_spec` | `MarkerSpec` | (derived from board) | Marker geometry specification. `r_inner_expected` is auto-derived from board inner/outer radius ratio. |
-| `inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
-| `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None` or `ProjectiveCenter`. |
-| `projective_center` | `ProjectiveCenterParams` | (see sub-configs) | Projective center recovery gates and tuning. `max_center_shift_px` is auto-derived from scale. |
-| `completion` | `CompletionParams` | (see sub-configs) | Completion at missing H-projected board positions. `roi_radius_px` is auto-derived from scale. |
-| `min_semi_axis` | `f64` | 3.0 | Minimum semi-axis length (px) for a valid outer ellipse. Auto-derived from scale. |
-| `max_semi_axis` | `f64` | 15.0 | Maximum semi-axis length (px) for a valid outer ellipse. Auto-derived from scale. |
-| `max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
-| `dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |
-| `use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |
-| `topology_filter_threshold_px` | `Option<f32>` | `None` | Hex-topology consistency filter threshold. After global filter, markers whose positions deviate from hex-neighbor midpoint predictions by more than this threshold are removed. `None` disables the filter. |
-| `ransac_homography` | `RansacHomographyConfig` | iters=2000, thresh=5.0 | RANSAC parameters for homography estimation. |
 | `board` | `BoardLayout` | empty | Board layout defining marker positions and geometry. |
-| `id_correction` | `IdCorrectionConfig` | enabled | Structural consistency verification/recovery of decoded IDs before global filter. |
+| `marker_scale` | `MarkerScalePrior` | 14.0--66.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
+| `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None` or `ProjectiveCenter`. |
 | `self_undistort` | `SelfUndistortConfig` | disabled | Self-undistort estimation from conic consistency of detected ring edges. |
+| `advanced.outer_estimation` | `OuterEstimationConfig` | (see sub-configs) | Outer-edge radius hypothesis generation from radial profile peaks. |
+| `advanced.proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
+| `advanced.seed_proposals` | `SeedProposalConfig` | merge=3.0, score=1e12, max=512 | Controls seed injection for multi-pass detection. |
+| `advanced.edge_sample` | `EdgeSampleConfig` | (derived from scale) | Radial edge sampling range and ray count. `r_min`, `r_max` are auto-derived. |
+| `advanced.decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry; `codebook_profile` defaults to `base`. |
+| `advanced.marker_spec` | `MarkerSpecConfig` | (derived from board) | Marker geometry specification. `r_inner_expected` is auto-derived from board inner/outer radius ratio. |
+| `advanced.inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
+| `advanced.outer_fit` | `OuterFitConfig` | (see sub-configs) | Robust outer ellipse fitting: RANSAC params, scoring weights. |
+| `advanced.projective_center` | `ProjectiveCenterConfig` | (see sub-configs) | Projective center recovery gates and tuning. `max_center_shift_px` is auto-derived from scale. |
+| `advanced.completion` | `CompletionConfig` | (see sub-configs) | Completion at missing H-projected board positions. `roi_radius_px` is auto-derived from scale. |
+| `advanced.max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
+| `advanced.dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |
+| `advanced.use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |
+| `advanced.topology_filter_threshold_px` | `Option<f32>` | `None` | Hex-topology consistency filter threshold. After global filter, markers whose positions deviate from hex-neighbor midpoint predictions by more than this threshold are removed. `None` disables the filter. |
+| `advanced.ransac_homography` | `RansacConfig` | iters=2000, thresh=5.0 | RANSAC parameters for homography estimation. |
+| `advanced.id_correction` | `IdCorrectionConfig` | enabled | Structural consistency verification/recovery of decoded IDs before global filter. |
+| `advanced.inner_as_outer_recovery` | `InnerAsOuterRecoveryConfig` | enabled | Recovery for markers whose outer fit locked onto the inner ring. |
 
 Fields marked "auto-derived" are overwritten by the constructors. If you modify `marker_scale` after construction, call `set_marker_scale_prior()` to re-derive them.
 

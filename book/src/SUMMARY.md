@@ -39,7 +39,7 @@
 - [Detection Output Format](output-format.md)
 - [Output Types](output-types/detection-result.md)
   - [DetectedMarker](output-types/detected-marker.md)
-  - [Fit & Decode Metrics](output-types/fit-metrics.md)
+  - [Fit, Decode & Marker Diagnostics](output-types/fit-metrics.md)
   - [RansacStats](output-types/ransac-stats.md)
 - [Detection Modes](detection-modes/simple.md)
   - [Proposal Diagnostics](detection-modes/proposal-diagnostics.md)

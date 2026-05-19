@@ -23,7 +23,7 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
     source: DetectionSource,
-) -> DetectionResult {
+) -> PipelineResult {
     let total_start = Instant::now();
 
     let fit_decode_start = Instant::now();
@@ -37,7 +37,7 @@ pub(super) fn run(
 
     tracing::info!(
         markers_after_fit_decode = fit_marker_count,
-        markers_final = result.detected_markers.len(),
+        markers_final = result.markers.len(),
         fit_decode_ms = duration_ms(fit_decode_elapsed),
         finalize_ms = duration_ms(finalize_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
@@ -54,10 +54,10 @@ fn run_pass2(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
-    pass1: &DetectionResult,
-) -> DetectionResult {
-    let seed_params = &config.seed_proposals;
-    let proposals = pass1.seed_proposals(seed_params.max_seeds);
+    pass1: &PipelineResult,
+) -> PipelineResult {
+    let seed_params = &config.advanced.seed_proposals;
+    let proposals = seed_proposals(&pass1.markers, seed_params.max_seeds);
     run(
         gray,
         config,
@@ -151,26 +151,35 @@ fn find_proposals_with_downscale(
 }
 
 pub(crate) fn proposal_seeds_for_config(gray: &GrayImage, config: &DetectConfig) -> Vec<Proposal> {
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
-    find_proposals_with_downscale(gray, &config.proposal, factor)
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
+    find_proposals_with_downscale(gray, &config.advanced.proposal, factor)
 }
 
 pub(crate) fn proposal_result_for_config(
     gray: &GrayImage,
     config: &DetectConfig,
 ) -> ProposalResult {
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
-    proposal_result_with_downscale(gray, &config.proposal, factor)
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
+    proposal_result_with_downscale(gray, &config.advanced.proposal, factor)
 }
 
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
-pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
     let total_start = Instant::now();
     let (image_width, image_height) = gray.dimensions();
 
-    let factor = config.proposal_downscale.resolve(config.marker_scale);
+    let factor = config
+        .advanced
+        .proposal_downscale
+        .resolve(config.marker_scale);
 
     let proposal_start = Instant::now();
     let proposals = proposal_seeds_for_config(gray, config);
@@ -186,7 +195,7 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
         image_height,
         proposals = proposal_count,
         proposal_downscale_factor = factor,
-        markers = result.detected_markers.len(),
+        markers = result.markers.len(),
         proposal_ms = duration_ms(proposal_elapsed),
         downstream_ms = duration_ms(downstream_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
@@ -198,15 +207,15 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> DetectionR
 
 /// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
 ///
-/// Returned marker centers are always image-space (`DetectedMarker.center`).
+/// Returned marker centers are always image-space (`MarkerRecord.center`).
 /// When a mapper is active, mapper-frame centers are preserved in
-/// `DetectedMarker.center_mapped` and homography frame metadata is set to
+/// `MarkerRecord.center_mapped` and homography frame metadata is set to
 /// `DetectionFrame::Working`.
 pub fn detect_with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
-) -> DetectionResult {
+) -> PipelineResult {
     let total_start = Instant::now();
 
     let pass1_start = Instant::now();
@@ -218,8 +227,8 @@ pub fn detect_with_mapper(
     let pass2_elapsed = pass2_start.elapsed();
 
     tracing::info!(
-        pass1_markers = pass1.detected_markers.len(),
-        markers_final = result.detected_markers.len(),
+        pass1_markers = pass1.markers.len(),
+        markers_final = result.markers.len(),
         pass1_ms = duration_ms(pass1_elapsed),
         pass2_ms = duration_ms(pass2_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
@@ -241,7 +250,7 @@ pub fn detect_with_mapper(
 pub(crate) fn detect_premerge(
     gray: &GrayImage,
     config: &DetectConfig,
-) -> Vec<crate::DetectedMarker> {
+) -> Vec<crate::detector::MarkerRecord> {
     let proposals = proposal_seeds_for_config(gray, config);
     let fit_markers =
         super::fit_decode::run(gray, config, None, proposals, DetectionSource::FitDecoded);
@@ -260,15 +269,15 @@ pub(crate) fn detect_premerge(
 /// 4. Runs global filter + completion + final H refit once on the merged pool.
 ///
 /// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
-/// `config.dedup_radius`.
+/// `config.advanced.dedup_radius`.
 pub fn detect_multiscale(
     gray: &GrayImage,
     config: &DetectConfig,
     tiers: &ScaleTiers,
-) -> DetectionResult {
+) -> PipelineResult {
     warn_center_correction_without_intrinsics(config, false);
 
-    let mut all_markers: Vec<crate::DetectedMarker> = Vec::new();
+    let mut all_markers: Vec<crate::detector::MarkerRecord> = Vec::new();
 
     for tier in tiers.tiers() {
         let mut tier_config = config.clone();
@@ -292,7 +301,7 @@ pub fn detect_multiscale(
         .iter()
         .map(|t| t.prior.diameter_min_px as f64)
         .fold(f64::INFINITY, f64::min);
-    let dedup_radius = (min_tier_d * 0.6).max(config.dedup_radius);
+    let dedup_radius = (min_tier_d * 0.6).max(config.advanced.dedup_radius);
 
     let merged = merge_multiscale_markers(all_markers, dedup_radius, 6);
 
@@ -322,7 +331,7 @@ pub fn select_adaptive_tiers(gray: &GrayImage, nominal_diameter_px: Option<f32>)
             let d_hi = d * 1.5;
             // Split at nominal with 5 % overlap to avoid a tier boundary gap.
             let d_split = d * 1.05;
-            ScaleTiers(vec![
+            ScaleTiers::new(vec![
                 ScaleTier::new(d_lo, d_split),
                 ScaleTier::new(d_split * 0.95, d_hi),
             ])
@@ -354,12 +363,12 @@ struct AdaptiveCandidateScore {
 }
 
 impl AdaptiveCandidateScore {
-    fn from_result(result: &DetectionResult) -> Self {
+    fn from_result(result: &PipelineResult) -> Self {
         let mut mapped = 0usize;
         let mut decoded = 0usize;
         let mut mapped_conf_sum = 0.0f64;
 
-        for marker in &result.detected_markers {
+        for marker in &result.markers {
             if marker.id.is_some() {
                 decoded += 1;
                 if marker.board_xy_mm.is_some() {
@@ -388,7 +397,7 @@ impl AdaptiveCandidateScore {
             decoded,
             ransac_neg_err_px,
             mean_confidence,
-            total: result.detected_markers.len(),
+            total: result.markers.len(),
         }
     }
 
@@ -501,9 +510,9 @@ fn detect_adaptive_candidates(
     gray: &GrayImage,
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
-) -> DetectionResult {
+) -> PipelineResult {
     let candidates = build_adaptive_candidates(gray, config, nominal_diameter_px);
-    let mut best_result: Option<DetectionResult> = None;
+    let mut best_result: Option<PipelineResult> = None;
     let mut best_score: Option<AdaptiveCandidateScore> = None;
     let mut best_label = "<none>";
 
@@ -537,7 +546,7 @@ fn detect_adaptive_candidates(
 /// Adaptive detection using automatically selected scale tiers.
 ///
 /// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.
-pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
     detect_adaptive_candidates(gray, config, None)
 }
 
@@ -550,7 +559,7 @@ pub fn detect_adaptive_with_hint(
     gray: &GrayImage,
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
-) -> DetectionResult {
+) -> PipelineResult {
     detect_adaptive_candidates(gray, config, nominal_diameter_px)
 }
 
@@ -559,7 +568,7 @@ pub fn detect_adaptive_with_hint(
 /// Runs a baseline pass first. If `config.self_undistort.enable` is true and
 /// enough markers with edge points are available, estimates a division-model
 /// mapper and re-runs pass-2 with seeded proposals.
-pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> DetectionResult {
+pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
     let total_start = Instant::now();
 
     let pass1_start = Instant::now();
@@ -571,7 +580,7 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> De
     }
 
     let su_result = match estimate_self_undistort(
-        &result.detected_markers,
+        &result.markers,
         result.image_size,
         su_cfg,
         Some(&config.board),
@@ -588,7 +597,7 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> De
             pass1_ms = duration_ms(pass1_elapsed),
             pass2_ms = duration_ms(pass2_start.elapsed()),
             total_ms = duration_ms(total_start.elapsed()),
-            markers_final = result.detected_markers.len(),
+            markers_final = result.markers.len(),
             "detect_with_self_undistort timing summary"
         );
     }
@@ -608,13 +617,13 @@ mod tests {
         inliers: usize,
         mean_err_px: f64,
     ) -> AdaptiveCandidateScore {
-        let mut result = DetectionResult {
-            detected_markers: (0..decoded)
+        let mut result = PipelineResult {
+            markers: (0..decoded)
                 .map(|i| {
-                    let mut marker = crate::DetectedMarker {
+                    let mut marker = crate::detector::MarkerRecord {
                         id: Some(i),
                         confidence: 0.8,
-                        ..crate::DetectedMarker::default()
+                        ..crate::detector::MarkerRecord::default()
                     };
                     if i < mapped {
                         marker.board_xy_mm = Some([0.0, 0.0]);
@@ -622,7 +631,7 @@ mod tests {
                     marker
                 })
                 .collect(),
-            ..DetectionResult::default()
+            ..PipelineResult::default()
         };
 
         if has_ransac {

@@ -47,7 +47,7 @@ pub enum AngularAggregator {
 ///       (inner_radius - ring_half_thickness) / (outer_radius + ring_half_thickness)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct MarkerSpec {
+pub struct MarkerSpecConfig {
     /// Expected inner radius as fraction of outer radius.
     pub r_inner_expected: f32,
     /// Allowed deviation in normalized radius around `r_inner_expected`.
@@ -88,7 +88,7 @@ pub struct MarkerSpec {
     pub min_theta_consistency: f32,
 }
 
-impl Default for MarkerSpec {
+impl Default for MarkerSpecConfig {
     fn default() -> Self {
         // From tools/gen_synth.py (default, non-stress):
         //   outer_radius        = pitch_mm * 0.6
@@ -116,7 +116,7 @@ impl Default for MarkerSpec {
     }
 }
 
-impl MarkerSpec {
+impl MarkerSpecConfig {
     /// Return normalized radial search window around `r_inner_expected`.
     pub fn search_window(&self) -> [f32; 2] {
         [

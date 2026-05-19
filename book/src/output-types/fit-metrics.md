@@ -1,12 +1,34 @@
-# FitMetrics & DecodeMetrics
+# FitMetrics, DecodeMetrics & MarkerDiagnostics
 
-These two structs provide detailed quality metrics for each detected marker. `FitMetrics` describes how well the ellipse(s) fit the observed edge points. `DecodeMetrics` describes how confidently the 16-sector code was matched to a codebook entry.
+These structs provide detailed quality metrics for each detected marker.
+`FitMetrics` describes how well the ellipse(s) fit the observed edge points.
+`DecodeMetrics` describes how confidently the 16-sector code was matched to a
+codebook entry. `MarkerDiagnostics` bundles both — plus the raw edge points and
+the producing pipeline stage — into the opt-in per-marker diagnostics channel.
 
-**Source:** `crates/ringgrid/src/detector/marker_build.rs` (FitMetrics), `crates/ringgrid/src/marker/decode.rs` (DecodeMetrics)
+**Source:** `crates/ringgrid/src/detector/marker_build.rs` (FitMetrics), `crates/ringgrid/src/marker/decode.rs` (DecodeMetrics), `crates/ringgrid/src/pipeline/result.rs` (MarkerDiagnostics)
+
+## MarkerDiagnostics
+
+`MarkerDiagnostics` carries the per-marker algorithm internals that were fields
+of `DetectedMarker` before v0.6. Obtain it via `Detector::detect_with_diagnostics`;
+the `DetectionDiagnostics::markers` vector is positionally aligned 1:1 with
+`DetectionResult::detected_markers`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fit` | `FitMetrics` | Fit quality metrics (always present). |
+| `decode` | `Option<DecodeMetrics>` | Decode quality metrics. Present when decoding was attempted. |
+| `source` | `DetectionSource` | Pipeline path that produced the marker: `fit_decoded`, `completion`, or `seeded_pass`. |
+| `edge_points_outer` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel outer edge inlier points used for ellipse fitting. |
+| `edge_points_inner` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel inner edge inlier points used for ellipse fitting. |
+
+`MarkerDiagnostics` is `#[non_exhaustive]` and derives `serde::Serialize` /
+`serde::Deserialize`.
 
 ## FitMetrics
 
-`FitMetrics` is always present on every `DetectedMarker`. It reports edge sampling coverage and ellipse fit quality.
+`FitMetrics` is present on every `MarkerDiagnostics` entry. It reports edge sampling coverage and ellipse fit quality.
 
 ### Fields
 
@@ -72,7 +94,7 @@ local ellipse fit looked good.
 
 ## DecodeMetrics
 
-`DecodeMetrics` is present on a `DetectedMarker` when code decoding was attempted. It reports the raw sampled word and the quality of the codebook match.
+`DecodeMetrics` is present on a `MarkerDiagnostics` entry when code decoding was attempted. It reports the raw sampled word and the quality of the codebook match.
 
 ### Fields
 

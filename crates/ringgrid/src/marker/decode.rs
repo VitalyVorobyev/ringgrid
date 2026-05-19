@@ -22,6 +22,7 @@ use super::codec::{Codebook, CodebookProfile};
 /// `margin` measures how far the second-best codeword is (higher = more
 /// confident).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct DecodeMetrics {
     /// Raw 16-bit word sampled from the code band.
     pub observed_word: u16,
@@ -46,6 +47,7 @@ pub struct DecodeMetrics {
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct DecodeConfig {
     /// Embedded codebook profile to match against.
     ///
@@ -56,19 +58,19 @@ pub struct DecodeConfig {
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the
     /// ellipse coordinate frame.
-    /// Default: [`DecodeConfig::DEFAULT_CODE_BAND_RATIO`].
+    /// Default: `0.76` (see the `Default` impl).
     pub code_band_ratio: f32,
     /// Number of angular samples per sector.
-    /// Default: [`DecodeConfig::DEFAULT_SAMPLES_PER_SECTOR`].
+    /// Default: `5` (see the `Default` impl).
     pub samples_per_sector: usize,
     /// Number of radial rings to sample within the code band.
-    /// Default: [`DecodeConfig::DEFAULT_N_RADIAL_RINGS`].
+    /// Default: `3` (see the `Default` impl).
     pub n_radial_rings: usize,
     /// Maximum Hamming distance for a valid decode.
-    /// Default: [`DecodeConfig::DEFAULT_MAX_DECODE_DIST`].
+    /// Default: `3` (see the `Default` impl).
     pub max_decode_dist: u8,
     /// Minimum confidence for a valid decode.
-    /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_CONFIDENCE`].
+    /// Default: `0.3` (see the `Default` impl).
     pub min_decode_confidence: f32,
     /// Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.
     ///
@@ -79,49 +81,49 @@ pub struct DecodeConfig {
     /// accepts only matches that are unambiguous within that profile's distance
     /// guarantee. For the shipped baseline profile this value is `2`.
     ///
-    /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_MARGIN`].
+    /// Default: `1` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_min_decode_margin")]
     pub min_decode_margin: u8,
     /// Minimum accepted sector-intensity contrast (`max - min`) before decode.
-    /// Default: [`DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST`].
+    /// Default: `0.03` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_min_decode_contrast")]
     pub min_decode_contrast: f32,
     /// Maximum iterations for iterative 2-means threshold refinement.
-    /// Default: [`DecodeConfig::DEFAULT_THRESHOLD_MAX_ITERS`].
+    /// Default: `10` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_threshold_max_iters")]
     pub threshold_max_iters: usize,
     /// Convergence epsilon for iterative 2-means threshold refinement.
     /// Stop when `|new_threshold - old_threshold| <= eps`.
-    /// Default: [`DecodeConfig::DEFAULT_THRESHOLD_CONVERGENCE_EPS`].
+    /// Default: `1e-4` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_threshold_convergence_eps")]
     pub threshold_convergence_eps: f32,
 }
 
 impl DecodeConfig {
     /// Default radial location of the code band as a fraction of outer radius.
-    pub const DEFAULT_CODE_BAND_RATIO: f32 = 0.76;
+    pub(crate) const DEFAULT_CODE_BAND_RATIO: f32 = 0.76;
     /// Default number of angular intensity samples per bit sector.
-    pub const DEFAULT_SAMPLES_PER_SECTOR: usize = 5;
+    pub(crate) const DEFAULT_SAMPLES_PER_SECTOR: usize = 5;
     /// Default number of concentric rings used for radial sampling.
-    pub const DEFAULT_N_RADIAL_RINGS: usize = 3;
+    pub(crate) const DEFAULT_N_RADIAL_RINGS: usize = 3;
     /// Default maximum Hamming distance accepted by decode.
-    pub const DEFAULT_MAX_DECODE_DIST: u8 = 3;
+    pub(crate) const DEFAULT_MAX_DECODE_DIST: u8 = 3;
     /// Minimum decode confidence with the corrected formula
     /// `clamp(1-dist/6) * clamp(margin/profile.min_cyclic_dist)`.
     /// A perfect decode (dist=0, margin≥2) scores 1.0; this threshold accepts
     /// matches down to dist=2 with margin≥1 on the shipped baseline profile.
-    pub const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.3;
+    pub(crate) const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.3;
     /// Minimum Hamming margin required for a valid decode.
     ///
     /// A margin of 0 means two codewords are equidistant from the observed word
     /// (genuinely ambiguous). Setting this to 1 (default) rejects such ties.
-    pub const DEFAULT_MIN_DECODE_MARGIN: u8 = 1;
+    pub(crate) const DEFAULT_MIN_DECODE_MARGIN: u8 = 1;
     /// Default minimum sector-intensity contrast (`max - min`) before decode.
-    pub const DEFAULT_MIN_DECODE_CONTRAST: f32 = 0.03;
+    pub(crate) const DEFAULT_MIN_DECODE_CONTRAST: f32 = 0.03;
     /// Default iteration cap for iterative 2-means threshold refinement.
-    pub const DEFAULT_THRESHOLD_MAX_ITERS: usize = 10;
+    pub(crate) const DEFAULT_THRESHOLD_MAX_ITERS: usize = 10;
     /// Default convergence epsilon for iterative 2-means threshold refinement.
-    pub const DEFAULT_THRESHOLD_CONVERGENCE_EPS: f32 = 1e-4;
+    pub(crate) const DEFAULT_THRESHOLD_CONVERGENCE_EPS: f32 = 1e-4;
 
     fn default_min_decode_contrast() -> f32 {
         Self::DEFAULT_MIN_DECODE_CONTRAST

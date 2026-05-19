@@ -11,7 +11,7 @@ use super::marker_build::{
 };
 use super::outer_fit::{OuterFitCandidate, OuterFitRejectReason, fit_outer_candidate_from_prior};
 use super::{DetectConfig, dedup_by_id, dedup_markers};
-use crate::detector::DetectedMarker;
+use crate::detector::MarkerRecord;
 use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::Proposal;
@@ -92,7 +92,7 @@ fn process_candidate(
     proposal: Proposal,
     ctx: &CandidateProcessContext<'_>,
     timing: &mut CandidateTimingStats,
-) -> Result<DetectedMarker, CandidateRejectReason> {
+) -> Result<MarkerRecord, CandidateRejectReason> {
     let Some(center_prior) = ctx.sampler.image_to_working_xy([proposal.x, proposal.y]) else {
         return Err(CandidateRejectReason::ProposalUnmappable);
     };
@@ -135,9 +135,9 @@ fn process_candidate(
     let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
         ctx.gray,
         &outer,
-        &ctx.config.marker_spec,
+        &ctx.config.advanced.marker_spec,
         ctx.mapper,
-        &ctx.config.inner_fit,
+        &ctx.config.advanced.inner_fit,
         false,
     );
     timing.inner_fit += inner_fit_start.elapsed();
@@ -152,7 +152,7 @@ fn process_candidate(
             inner_fit.reason_context
         );
     }
-    if ctx.config.inner_fit.require_inner_fit && inner_fit.ellipse_inner.is_none() {
+    if ctx.config.advanced.inner_fit.require_inner_fit && inner_fit.ellipse_inner.is_none() {
         return Err(CandidateRejectReason::InnerFitRequired);
     }
 
@@ -164,14 +164,14 @@ fn process_candidate(
         outer_ransac.as_ref(),
         &inner_fit,
         &fit_metrics,
-        &ctx.config.inner_fit,
+        &ctx.config.advanced.inner_fit,
     );
     let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
     let marker_id = decode_result.as_ref().map(|d| d.id);
     let outer_points = edge.outer_points;
     let inner_points = inner_fit.points_inner;
 
-    Ok(DetectedMarker {
+    Ok(MarkerRecord {
         id: marker_id,
         confidence,
         center,
@@ -182,7 +182,7 @@ fn process_candidate(
         fit: fit_metrics,
         decode: decode_metrics,
         source: ctx.source,
-        ..DetectedMarker::default()
+        ..MarkerRecord::default()
     })
 }
 
@@ -192,13 +192,13 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
     proposals: Vec<Proposal>,
     source: DetectionSource,
-) -> Vec<DetectedMarker> {
+) -> Vec<MarkerRecord> {
     let total_start = Instant::now();
     let input_count = proposals.len();
     tracing::info!("{} proposals found", input_count);
 
     let select_start = Instant::now();
-    let proposals = select_proposals_for_fit(proposals, config.proposal.max_candidates);
+    let proposals = select_proposals_for_fit(proposals, config.advanced.proposal.max_candidates);
     let select_elapsed = select_start.elapsed();
     if proposals.len() != input_count {
         tracing::info!(
@@ -218,7 +218,7 @@ pub(super) fn run(
         source,
     };
 
-    let mut markers: Vec<DetectedMarker> = Vec::new();
+    let mut markers: Vec<MarkerRecord> = Vec::new();
     let mut reject_reasons: HashMap<CandidateRejectReason, usize> = HashMap::new();
     let mut timing = CandidateTimingStats::default();
     for proposal in proposals {
@@ -249,7 +249,7 @@ pub(super) fn run(
 
     let accepted_before_dedup = markers.len();
     let dedup_start = Instant::now();
-    markers = dedup_markers(markers, config.dedup_radius);
+    markers = dedup_markers(markers, config.advanced.dedup_radius);
     dedup_by_id(&mut markers);
     let dedup_elapsed = dedup_start.elapsed();
 
@@ -292,7 +292,7 @@ mod tests {
         crate::test_utils::draw_ring_image(w, h, center, outer_radius, inner_radius, 24, 230)
     }
 
-    fn nearest_marker(markers: &[DetectedMarker], center: [f64; 2]) -> Option<&DetectedMarker> {
+    fn nearest_marker(markers: &[MarkerRecord], center: [f64; 2]) -> Option<&MarkerRecord> {
         markers.iter().min_by(|a, b| {
             let da = (a.center[0] - center[0]) * (a.center[0] - center[0])
                 + (a.center[1] - center[1]) * (a.center[1] - center[1]);
@@ -328,11 +328,11 @@ mod tests {
 
         let mut relaxed = DetectConfig::default();
         relaxed.set_marker_diameter_hint_px(outer_radius * 2.0);
-        relaxed.inner_fit.min_points = 1;
-        relaxed.inner_fit.min_inlier_ratio = 0.0;
-        relaxed.inner_fit.max_rms_residual = f64::INFINITY;
-        relaxed.inner_fit.max_center_shift_px = f64::INFINITY;
-        relaxed.inner_fit.max_ratio_abs_error = f64::INFINITY;
+        relaxed.advanced.inner_fit.min_points = 1;
+        relaxed.advanced.inner_fit.min_inlier_ratio = 0.0;
+        relaxed.advanced.inner_fit.max_rms_residual = f64::INFINITY;
+        relaxed.advanced.inner_fit.max_center_shift_px = f64::INFINITY;
+        relaxed.advanced.inner_fit.max_ratio_abs_error = f64::INFINITY;
 
         let relaxed_out = run(
             &img,
@@ -353,7 +353,7 @@ mod tests {
         );
 
         let mut strict = relaxed.clone();
-        strict.inner_fit.min_points = usize::MAX;
+        strict.advanced.inner_fit.min_points = usize::MAX;
 
         let strict_out = run(&img, &strict, None, proposals, DetectionSource::FitDecoded);
         assert!(
@@ -382,7 +382,7 @@ mod tests {
 
         let mut cfg = DetectConfig::default();
         cfg.set_marker_diameter_hint_px(outer_radius * 2.0);
-        cfg.proposal.max_candidates = Some(0);
+        cfg.advanced.proposal.max_candidates = Some(0);
 
         let out = run(&img, &cfg, None, proposals, DetectionSource::FitDecoded);
         assert!(

@@ -2,8 +2,8 @@ use nalgebra::{Matrix3, Vector3};
 
 use super::super::DivisionModel;
 use super::*;
-use crate::DetectedMarker;
 use crate::conic::fit_ellipse_direct;
+use crate::detector::MarkerRecord;
 
 fn circle_conic(radius: f64) -> Matrix3<f64> {
     Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -(radius * radius))
@@ -49,7 +49,7 @@ fn make_synthetic_marker(
     r_outer: f64,
     n_points: usize,
     distort: Option<&DivisionModel>,
-) -> DetectedMarker {
+) -> MarkerRecord {
     let q_inner = project_conic(&circle_conic(r_inner), h);
     let q_outer = project_conic(&circle_conic(r_outer), h);
 
@@ -71,7 +71,7 @@ fn make_synthetic_marker(
     let inner_ellipse = fit_ellipse_direct(&inner_pts);
 
     let center = projected_center(h);
-    DetectedMarker {
+    MarkerRecord {
         id: Some(0),
         confidence: 1.0,
         center,
@@ -79,7 +79,7 @@ fn make_synthetic_marker(
         ellipse_inner: inner_ellipse,
         edge_points_outer: Some(outer_pts),
         edge_points_inner: Some(inner_pts),
-        ..DetectedMarker::default()
+        ..MarkerRecord::default()
     }
 }
 
@@ -199,7 +199,7 @@ fn golden_section_finds_quadratic_min() {
 
 #[test]
 fn estimate_returns_none_for_few_markers() {
-    let markers: Vec<DetectedMarker> = vec![];
+    let markers: Vec<MarkerRecord> = vec![];
     let config = SelfUndistortConfig {
         enable: true,
         min_markers: 6,
@@ -227,7 +227,7 @@ fn estimate_recovers_lambda_synthetic() {
         Matrix3::new(0.97, -0.15, 300.0, 0.11, 0.91, 50.0, -4.0e-4, 6.0e-4, 1.0),
     ];
 
-    let markers: Vec<DetectedMarker> = homographies
+    let markers: Vec<MarkerRecord> = homographies
         .iter()
         .enumerate()
         .map(|(i, hi)| {

@@ -50,11 +50,11 @@ fn load_fixture_board() -> BoardLayout {
     assert_eq!(legacy.schema, "ringgrid.target.v3");
 
     let canonical = BoardLayout::default();
-    assert!((legacy.pitch_mm - canonical.pitch_mm).abs() < 1e-6);
-    assert_eq!(legacy.rows, canonical.rows);
-    assert_eq!(legacy.long_row_cols, canonical.long_row_cols);
-    assert!((legacy.marker_outer_radius_mm - canonical.marker_outer_radius_mm).abs() < 1e-6);
-    assert!((legacy.marker_inner_radius_mm - canonical.marker_inner_radius_mm).abs() < 1e-6);
+    assert!((legacy.pitch_mm - canonical.pitch_mm()).abs() < 1e-6);
+    assert_eq!(legacy.rows, canonical.rows());
+    assert_eq!(legacy.long_row_cols, canonical.long_row_cols());
+    assert!((legacy.marker_outer_radius_mm - canonical.marker_outer_radius_mm()).abs() < 1e-6);
+    assert!((legacy.marker_inner_radius_mm - canonical.marker_inner_radius_mm()).abs() < 1e-6);
 
     BoardLayout::with_name(
         legacy.name,
@@ -63,7 +63,7 @@ fn load_fixture_board() -> BoardLayout {
         legacy.long_row_cols,
         legacy.marker_outer_radius_mm,
         legacy.marker_inner_radius_mm,
-        canonical.marker_ring_width_mm,
+        canonical.marker_ring_width_mm(),
     )
     .expect("legacy fixture board geometry must remain valid")
 }

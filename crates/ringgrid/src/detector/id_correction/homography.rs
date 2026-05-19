@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::detector::marker_build::DetectedMarker;
-use crate::homography::{RansacHomographyConfig, fit_homography_ransac, homography_project};
+use crate::conic::RansacConfig;
+use crate::detector::marker_build::MarkerRecord;
+use crate::homography::{fit_homography_ransac, homography_project};
 
 use super::consistency::candidate_passes_local_consistency_gate;
 use super::local::candidate_reprojection_error;
@@ -19,7 +20,7 @@ fn seed_allowed_for_homography(trust: Trust) -> bool {
 
 #[inline]
 fn config_soft_lock_blocks_override(
-    marker: &DetectedMarker,
+    marker: &MarkerRecord,
     soft_lock_enable: bool,
     codebook_min_cyclic_dist: usize,
     candidate_id: usize,
@@ -32,7 +33,7 @@ fn config_soft_lock_blocks_override(
 }
 
 pub(super) fn collect_best_trusted_by_id<F>(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     trust: &[Trust],
     board_index: &super::index::BoardIndex,
     mut include: F,
@@ -67,7 +68,7 @@ where
 
 fn build_homography_correspondences(
     trusted_by_id: &BTreeMap<usize, usize>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board_index: &super::index::BoardIndex,
 ) -> (Vec<[f64; 2]>, Vec<[f64; 2]>) {
     let mut src_board_mm = Vec::<[f64; 2]>::with_capacity(trusted_by_id.len());
@@ -84,7 +85,7 @@ fn build_homography_correspondences(
 
 fn fit_homography_model_from_trusted(
     trusted_by_id: BTreeMap<usize, usize>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board_index: &super::index::BoardIndex,
     inlier_threshold: f64,
     min_inliers: usize,
@@ -100,7 +101,7 @@ fn fit_homography_model_from_trusted(
     }
     let (src_board_mm, dst_image_px) =
         build_homography_correspondences(&trusted_by_id, markers, board_index);
-    let ransac_cfg = RansacHomographyConfig {
+    let ransac_cfg = RansacConfig {
         max_iters,
         inlier_threshold,
         min_inliers: min_inliers.min(src_board_mm.len()).max(4),

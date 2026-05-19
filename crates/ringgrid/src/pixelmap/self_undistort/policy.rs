@@ -1,5 +1,5 @@
-use crate::DetectedMarker;
 use crate::board_layout::BoardLayout;
+use crate::detector::MarkerRecord;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;
@@ -14,7 +14,7 @@ pub(super) struct EstimateCandidate {
 
 pub(super) fn should_apply_model(
     candidate: EstimateCandidate,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
     board: Option<&BoardLayout>,
@@ -57,7 +57,7 @@ fn passes_range_edge_gate(lambda_opt: f64, config: &SelfUndistortConfig) -> bool
 
 fn passes_homography_validation(
     lambda_opt: f64,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
     board: Option<&BoardLayout>,

@@ -58,7 +58,7 @@ mod homography;
 mod marker;
 mod pipeline;
 mod pixelmap;
-pub mod proposal;
+mod proposal;
 mod ring;
 mod target_generation;
 #[cfg(test)]
@@ -67,50 +67,50 @@ pub(crate) mod test_utils;
 // ── Public API ──────────────────────────────────────────────────────────
 
 // High-level detector facade and proposal-only convenience helpers
-pub use api::{
-    Detector, propose_with_heatmap_and_marker_diameter, propose_with_heatmap_and_marker_scale,
-    propose_with_marker_diameter, propose_with_marker_scale,
-};
+pub use api::{Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale};
 
 // Proposal module (standalone ellipse center detection)
 pub use proposal::{Proposal, ProposalConfig, ProposalResult};
 pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
-// Result types
-pub use detector::{DetectedMarker, DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
+// Result types — slim, stable primary output of `Detector::detect`.
+pub use pipeline::{DetectedMarker, DetectionFrame, DetectionResult};
+
+// Diagnostics — opt-in debugging/tuning channel returned by
+// `Detector::detect_with_diagnostics`. `FitMetrics`, `DecodeMetrics`,
+// `RansacStats`, `DetectionSource`, `InnerFitReason`, and `InnerFitStatus` are
+// the field types of these diagnostics structs.
+pub use detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
-pub use pipeline::{DetectionFrame, DetectionResult};
+pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics};
 
 // Configuration
+pub use conic::RansacConfig;
 pub use detector::{
-    CircleRefinementMethod, CompletionParams, DetectConfig, IdCorrectionConfig,
-    InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior, OuterFitConfig,
-    ProjectiveCenterParams, ProposalDownscale, ScaleTier, ScaleTiers, SeedProposalParams,
+    AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
+    IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
+    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier, ScaleTiers,
+    SeedProposalConfig,
 };
-pub use homography::RansacHomographyConfig;
 
 // Sub-configs
-pub use marker::{CodebookProfile, DecodeConfig};
+pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
+
+// Codebook diagnostics (inspection helpers for the embedded codebook profiles)
+pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 
 // Geometry
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };
 pub use conic::Ellipse;
-pub use marker::MarkerSpec;
+pub use marker::MarkerSpecConfig;
 pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // Camera / distortion
-// These raw codebook/codec modules are re-exported for the ringgrid-cli diagnostic
-// commands (codebook-info, decode-test). They are not part of the stable library
-// API — external code should use the high-level Detector interface.
-#[doc(hidden)]
-pub use marker::codebook;
-#[doc(hidden)]
-pub use marker::codec;
 pub use pixelmap::{
     CameraIntrinsics, CameraModel, DivisionModel, PixelMapper, RadialTangentialDistortion,
-    SelfUndistortConfig, SelfUndistortResult,
+    SelfUndistortConfig, SelfUndistortResult, UndistortConfig,
 };

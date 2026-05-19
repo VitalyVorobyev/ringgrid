@@ -1,29 +1,54 @@
 # DetectedMarker
 
-`DetectedMarker` represents a single detected ring marker in the image. Each marker carries its decoded ID (when available), pixel-space center, fitted ellipse parameters, and quality metrics.
+`DetectedMarker` represents a single detected ring marker in the image. It is
+the slim, stable primary output: decoded ID (when available), pixel-space
+center, board coordinates, and the fitted ellipse parameters.
 
-**Source:** `crates/ringgrid/src/detector/marker_build.rs`
+Algorithm internals — fit metrics, decode metrics, raw edge points, and the
+producing pipeline stage — are **not** fields of `DetectedMarker`. They live in
+the opt-in [`MarkerDiagnostics`](fit-metrics.md#markerdiagnostics) channel,
+obtained via `Detector::detect_with_diagnostics`. Each `MarkerDiagnostics` is
+positionally aligned 1:1 with the corresponding `DetectedMarker`.
+
+`DetectedMarker` is `#[non_exhaustive]`: construct it via `Default` and mutate
+fields, rather than with a struct literal.
+
+**Source:** `crates/ringgrid/src/pipeline/result.rs`
 
 ## Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `Option<usize>` | Codebook index in the active profile. `None` if decoding was rejected due to insufficient confidence or Hamming distance. |
-| `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters (`BoardLayout::xy_mm` semantics). Present only when `id` is valid for the active board layout. |
 | `confidence` | `f32` | Combined detection and decode confidence in `[0, 1]`. |
 | `center` | `[f64; 2]` | Marker center in raw image pixel coordinates `[x, y]`. |
 | `center_mapped` | `Option<[f64; 2]>` | Marker center in working-frame coordinates. Present only when a `PixelMapper` is active. |
+| `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters (`BoardLayout::xy_mm` semantics). Present only when `id` is valid for the active board layout. |
 | `ellipse_outer` | `Option<Ellipse>` | Fitted outer ring ellipse parameters. |
 | `ellipse_inner` | `Option<Ellipse>` | Fitted inner ring ellipse parameters. Present when inner fitting succeeded. |
-| `edge_points_outer` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel outer edge inlier points used for ellipse fitting. |
-| `edge_points_inner` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel inner edge inlier points used for ellipse fitting. |
-| `fit` | `FitMetrics` | Fit quality metrics. See [FitMetrics](fit-metrics.md). |
-| `decode` | `Option<DecodeMetrics>` | Decode quality metrics. Present when decoding was attempted. See [FitMetrics & DecodeMetrics](fit-metrics.md). |
-| `source` | `DetectionSource` | Pipeline path that produced the final marker: `fit_decoded`, `completion`, or `seeded_pass`. |
+
+## Relocated diagnostics fields
+
+The following fields were on `DetectedMarker` before v0.6 and now live on the
+paired [`MarkerDiagnostics`](fit-metrics.md#markerdiagnostics) entry:
+
+- `fit` — fit quality metrics. See [FitMetrics](fit-metrics.md).
+- `decode` — decode quality metrics. See [DecodeMetrics](fit-metrics.md#decodemetrics).
+- `source` — pipeline path that produced the marker.
+- `edge_points_outer`, `edge_points_inner` — raw sub-pixel edge inlier points.
+
+Access them by zipping `result.detected_markers` with `diagnostics.markers`:
+
+```rust
+let (result, diagnostics) = detector.detect_with_diagnostics(&image);
+for (m, d) in result.detected_markers.iter().zip(&diagnostics.markers) {
+    println!("{:?} source={:?} pts={}", m.id, d.source, d.fit.n_points_outer);
+}
+```
 
 ## DetectionSource
 
-`DetectedMarker.source` tells you how the marker entered the final result:
+`MarkerDiagnostics.source` tells you how the marker entered the final result:
 
 - `fit_decoded` -- the normal proposal -> fit -> decode path
 - `completion` -- the homography-guided completion stage filled a missing board marker
@@ -57,7 +82,10 @@ Markers with `id: None` were detected (ellipse fitted successfully) but failed t
 - ID contradicted board-local structural consistency in `id_correction`.
 - Insufficient contrast in the code band.
 
-These markers still have valid `center`, `ellipse_outer`, and `fit` fields. They can be useful for distortion estimation or as candidate positions, but they do not contribute to the homography fit.
+These markers still have valid `center` and `ellipse_outer` fields, and their
+paired `MarkerDiagnostics` entry keeps the `fit` metrics. They can be useful for
+distortion estimation or as candidate positions, but they do not contribute to
+the homography fit.
 
 ## ID/board consistency contract
 
@@ -69,7 +97,7 @@ Final emitted markers enforce strict ID/layout consistency:
 
 ## Serialization
 
-`DetectedMarker` derives `serde::Serialize` and `serde::Deserialize`. All `Option` fields use `#[serde(skip_serializing_if = "Option::is_none")]`, so absent fields are omitted from JSON output.
+`DetectedMarker` derives `serde::Serialize` and `serde::Deserialize`. All `Option` fields use `#[serde(skip_serializing_if = "Option::is_none")]`, so absent fields are omitted from JSON output. The relocated fit/decode/source/edge-point fields serialize on the paired [`MarkerDiagnostics`](fit-metrics.md#markerdiagnostics) value instead.
 
 ## Example JSON
 
@@ -86,26 +114,7 @@ A fully decoded marker:
   },
   "ellipse_inner": {
     "cx": 800.4, "cy": 600.1, "a": 10.7, "b": 10.4, "angle": 0.06
-  },
-  "fit": {
-    "n_angles_total": 64,
-    "n_angles_with_both_edges": 60,
-    "n_points_outer": 60,
-    "n_points_inner": 55,
-    "ransac_inlier_ratio_outer": 0.95,
-    "ransac_inlier_ratio_inner": 0.91,
-    "rms_residual_outer": 0.28,
-    "rms_residual_inner": 0.35
-  },
-  "decode": {
-    "observed_word": 52419,
-    "best_id": 127,
-    "best_rotation": 7,
-    "best_dist": 0,
-    "margin": 4,
-    "decode_confidence": 0.92
-  },
-  "source": "fit_decoded"
+  }
 }
 ```
 
@@ -117,15 +126,10 @@ A marker that was detected but not decoded:
   "center": [200.1, 150.8],
   "ellipse_outer": {
     "cx": 200.1, "cy": 150.8, "a": 14.2, "b": 12.1, "angle": 0.78
-  },
-  "fit": {
-    "n_angles_total": 64,
-    "n_angles_with_both_edges": 31,
-    "n_points_outer": 42,
-    "n_points_inner": 0,
-    "ransac_inlier_ratio_outer": 0.72,
-    "rms_residual_outer": 0.89
-  },
-  "source": "fit_decoded"
+  }
 }
 ```
+
+The corresponding fit and decode metrics for these markers live in
+`diagnostics.markers` — see
+[FitMetrics, DecodeMetrics & MarkerDiagnostics](fit-metrics.md).

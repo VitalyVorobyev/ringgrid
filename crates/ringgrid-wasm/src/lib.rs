@@ -9,91 +9,25 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
-// ── Config dump / overlay types ────────────────────────────────────
+// ── Config dump / overlay helpers ──────────────────────────────────
 
-/// Serializable snapshot of all tunable detection parameters.
-/// Mirrors the Python bindings' `DetectConfigDump`.
-#[derive(Serialize, Deserialize, Clone)]
-struct DetectConfigDump {
-    marker_scale: ringgrid::MarkerScalePrior,
-    circle_refinement: ringgrid::CircleRefinementMethod,
-    inner_fit: ringgrid::InnerFitConfig,
-    outer_fit: ringgrid::OuterFitConfig,
-    completion: ringgrid::CompletionParams,
-    projective_center: ringgrid::ProjectiveCenterParams,
-    seed_proposals: ringgrid::SeedProposalParams,
-    proposal: ringgrid::ProposalConfig,
-    edge_sample: ringgrid::EdgeSampleConfig,
-    decode: ringgrid::DecodeConfig,
-    marker_spec: ringgrid::MarkerSpec,
-    outer_estimation: ringgrid::OuterEstimationConfig,
-    ransac_homography: ringgrid::RansacHomographyConfig,
-    self_undistort: ringgrid::SelfUndistortConfig,
-    id_correction: ringgrid::IdCorrectionConfig,
-    inner_as_outer_recovery: ringgrid::InnerAsOuterRecoveryConfig,
-    dedup_radius: f64,
-    max_aspect_ratio: f64,
-    use_global_filter: bool,
-    h_reproj_confidence_alpha: f32,
-    topology_filter_threshold_px: Option<f32>,
-    proposal_downscale: ringgrid::ProposalDownscale,
+/// Serialize a [`ringgrid::DetectConfig`] to its JSON representation.
+///
+/// Stage-tuning parameters nest under the `"advanced"` object. The board layout
+/// is `#[serde(skip)]`; it is supplied separately when reconstituting a config.
+fn config_to_json(config: &ringgrid::DetectConfig) -> Result<serde_json::Value, JsValue> {
+    serde_json::to_value(config).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-fn config_to_dump(config: &ringgrid::DetectConfig) -> DetectConfigDump {
-    DetectConfigDump {
-        marker_scale: config.marker_scale,
-        circle_refinement: config.circle_refinement,
-        inner_fit: config.inner_fit.clone(),
-        outer_fit: config.outer_fit.clone(),
-        completion: config.completion.clone(),
-        projective_center: config.projective_center.clone(),
-        seed_proposals: config.seed_proposals.clone(),
-        proposal: config.proposal.clone(),
-        edge_sample: config.edge_sample.clone(),
-        decode: config.decode.clone(),
-        marker_spec: config.marker_spec.clone(),
-        outer_estimation: config.outer_estimation.clone(),
-        ransac_homography: config.ransac_homography.clone(),
-        self_undistort: config.self_undistort.clone(),
-        id_correction: config.id_correction.clone(),
-        inner_as_outer_recovery: config.inner_as_outer_recovery.clone(),
-        dedup_radius: config.dedup_radius,
-        max_aspect_ratio: config.max_aspect_ratio,
-        use_global_filter: config.use_global_filter,
-        h_reproj_confidence_alpha: config.h_reproj_confidence_alpha,
-        topology_filter_threshold_px: config.topology_filter_threshold_px,
-        proposal_downscale: config.proposal_downscale,
-    }
-}
-
-fn dump_to_config(
+/// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
+/// attaching `board` and re-deriving the board-coupled / scale-coupled fields.
+fn config_from_json(
     board: ringgrid::BoardLayout,
-    dump: &DetectConfigDump,
-) -> ringgrid::DetectConfig {
-    let mut config =
-        ringgrid::DetectConfig::from_target_and_scale_prior(board, dump.marker_scale);
-    config.circle_refinement = dump.circle_refinement;
-    config.inner_fit = dump.inner_fit.clone();
-    config.outer_fit = dump.outer_fit.clone();
-    config.completion = dump.completion.clone();
-    config.projective_center = dump.projective_center.clone();
-    config.seed_proposals = dump.seed_proposals.clone();
-    config.proposal = dump.proposal.clone();
-    config.edge_sample = dump.edge_sample.clone();
-    config.decode = dump.decode.clone();
-    config.marker_spec = dump.marker_spec.clone();
-    config.outer_estimation = dump.outer_estimation.clone();
-    config.ransac_homography = dump.ransac_homography.clone();
-    config.self_undistort = dump.self_undistort.clone();
-    config.id_correction = dump.id_correction.clone();
-    config.inner_as_outer_recovery = dump.inner_as_outer_recovery.clone();
-    config.dedup_radius = dump.dedup_radius;
-    config.max_aspect_ratio = dump.max_aspect_ratio;
-    config.use_global_filter = dump.use_global_filter;
-    config.h_reproj_confidence_alpha = dump.h_reproj_confidence_alpha;
-    config.topology_filter_threshold_px = dump.topology_filter_threshold_px;
-    config.proposal_downscale = dump.proposal_downscale;
-    config
+    config_json: &serde_json::Value,
+) -> Result<ringgrid::DetectConfig, JsValue> {
+    let config: ringgrid::DetectConfig = serde_json::from_value(config_json.clone())
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(config.with_board(board))
 }
 
 fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
@@ -112,104 +46,32 @@ fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
     }
 }
 
-fn parse_overlay_object(
-    overlay_json: &str,
-) -> Result<serde_json::Map<String, serde_json::Value>, JsValue> {
+fn parse_overlay_object(overlay_json: &str) -> Result<serde_json::Value, JsValue> {
     let overlay: serde_json::Value =
         serde_json::from_str(overlay_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
     match overlay {
-        serde_json::Value::Object(obj) => Ok(obj),
+        obj @ serde_json::Value::Object(_) => Ok(obj),
         _ => Err(JsValue::from_str("config overlay must be a JSON object")),
     }
 }
 
-fn merge_overlay_value<T>(current: &T, overlay: serde_json::Value) -> Result<T, JsValue>
-where
-    T: Serialize + serde::de::DeserializeOwned,
-{
-    let mut merged =
-        serde_json::to_value(current).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    merge_json_value(&mut merged, overlay);
-    serde_json::from_value(merged).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-
+/// Apply a partial config overlay onto `config`.
+///
+/// The overlay is a (possibly partial) [`ringgrid::DetectConfig`] JSON object;
+/// stage tuning nests under `"advanced"`. It is recursively merged onto the
+/// current config's JSON form so a deeply nested partial section (e.g.
+/// `{"advanced": {"completion": {"enable": false}}}`) overrides only the named
+/// leaves. After the merge the config is deserialized and the board re-attached,
+/// which re-derives all board- and scale-coupled fields.
 fn apply_config_overlay(
     config: &mut ringgrid::DetectConfig,
     overlay_json: &str,
 ) -> Result<(), JsValue> {
-    let mut overlay = parse_overlay_object(overlay_json)?;
-
-    if let Some(value) = overlay.remove("marker_scale") {
-        let marker_scale = merge_overlay_value(&config.marker_scale, value)?;
-        config.set_marker_scale_prior(marker_scale);
-    }
-    if let Some(value) = overlay.remove("circle_refinement") {
-        config.circle_refinement = merge_overlay_value(&config.circle_refinement, value)?;
-    }
-    if let Some(value) = overlay.remove("inner_fit") {
-        config.inner_fit = merge_overlay_value(&config.inner_fit, value)?;
-    }
-    if let Some(value) = overlay.remove("outer_fit") {
-        config.outer_fit = merge_overlay_value(&config.outer_fit, value)?;
-    }
-    if let Some(value) = overlay.remove("completion") {
-        config.completion = merge_overlay_value(&config.completion, value)?;
-    }
-    if let Some(value) = overlay.remove("projective_center") {
-        config.projective_center = merge_overlay_value(&config.projective_center, value)?;
-    }
-    if let Some(value) = overlay.remove("seed_proposals") {
-        config.seed_proposals = merge_overlay_value(&config.seed_proposals, value)?;
-    }
-    if let Some(value) = overlay.remove("proposal") {
-        config.proposal = merge_overlay_value(&config.proposal, value)?;
-    }
-    if let Some(value) = overlay.remove("edge_sample") {
-        config.edge_sample = merge_overlay_value(&config.edge_sample, value)?;
-    }
-    if let Some(value) = overlay.remove("decode") {
-        config.decode = merge_overlay_value(&config.decode, value)?;
-    }
-    if let Some(value) = overlay.remove("marker_spec") {
-        config.marker_spec = merge_overlay_value(&config.marker_spec, value)?;
-    }
-    if let Some(value) = overlay.remove("outer_estimation") {
-        config.outer_estimation = merge_overlay_value(&config.outer_estimation, value)?;
-    }
-    if let Some(value) = overlay.remove("ransac_homography") {
-        config.ransac_homography = merge_overlay_value(&config.ransac_homography, value)?;
-    }
-    if let Some(value) = overlay.remove("self_undistort") {
-        config.self_undistort = merge_overlay_value(&config.self_undistort, value)?;
-    }
-    if let Some(value) = overlay.remove("id_correction") {
-        config.id_correction = merge_overlay_value(&config.id_correction, value)?;
-    }
-    if let Some(value) = overlay.remove("inner_as_outer_recovery") {
-        config.inner_as_outer_recovery =
-            merge_overlay_value(&config.inner_as_outer_recovery, value)?;
-    }
-    if let Some(value) = overlay.remove("dedup_radius") {
-        config.dedup_radius = merge_overlay_value(&config.dedup_radius, value)?;
-    }
-    if let Some(value) = overlay.remove("max_aspect_ratio") {
-        config.max_aspect_ratio = merge_overlay_value(&config.max_aspect_ratio, value)?;
-    }
-    if let Some(value) = overlay.remove("use_global_filter") {
-        config.use_global_filter = merge_overlay_value(&config.use_global_filter, value)?;
-    }
-    if let Some(value) = overlay.remove("h_reproj_confidence_alpha") {
-        config.h_reproj_confidence_alpha =
-            merge_overlay_value(&config.h_reproj_confidence_alpha, value)?;
-    }
-    if let Some(value) = overlay.remove("topology_filter_threshold_px") {
-        config.topology_filter_threshold_px =
-            merge_overlay_value(&config.topology_filter_threshold_px, value)?;
-    }
-    if let Some(value) = overlay.remove("proposal_downscale") {
-        config.proposal_downscale = merge_overlay_value(&config.proposal_downscale, value)?;
-    }
-
+    let overlay = parse_overlay_object(overlay_json)?;
+    let board = config.board.clone();
+    let mut merged = config_to_json(config)?;
+    merge_json_value(&mut merged, overlay);
+    *config = config_from_json(board, &merged)?;
     Ok(())
 }
 
@@ -234,7 +96,7 @@ fn parse_scale_tiers(tiers_json: &str) -> Result<ringgrid::ScaleTiers, JsValue> 
     if wire.tiers.is_empty() {
         return Err(JsValue::from_str("scale tiers must not be empty"));
     }
-    Ok(ringgrid::ScaleTiers(
+    Ok(ringgrid::ScaleTiers::new(
         wire.tiers
             .iter()
             .map(|t| ringgrid::ScaleTier::new(t.diameter_min_px, t.diameter_max_px))
@@ -402,9 +264,9 @@ impl RinggridDetector {
         config_json: &str,
     ) -> Result<RinggridDetector, JsValue> {
         let board = parse_board(board_json)?;
-        let dump: DetectConfigDump =
+        let config_value: serde_json::Value =
             serde_json::from_str(config_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let config = dump_to_config(board, &dump);
+        let config = config_from_json(board, &config_value)?;
         Ok(Self {
             detector: ringgrid::Detector::with_config(config),
             last_heatmap: None,
@@ -416,7 +278,7 @@ impl RinggridDetector {
 
     /// Get current detection config as a JSON string.
     pub fn config_json(&self) -> Result<String, JsValue> {
-        to_json(&config_to_dump(self.detector.config()))
+        to_json(self.detector.config())
     }
 
     /// Apply a partial config overlay (only provided fields are updated).
@@ -433,6 +295,45 @@ impl RinggridDetector {
         let gray = validate_gray(pixels, width, height)?;
         let result = self.detector.detect(&gray);
         to_json(&result)
+    }
+
+    /// Detect markers from grayscale pixels, returning the slim result plus
+    /// opt-in detection diagnostics.
+    ///
+    /// Returns a JSON object `{"result": DetectionResult, "diagnostics":
+    /// DetectionDiagnostics}`. `diagnostics.markers` is positionally aligned
+    /// 1:1 with `result.detected_markers`.
+    pub fn detect_with_diagnostics(
+        &self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<String, JsValue> {
+        validate_dimensions(width, height)?;
+        let gray = validate_gray(pixels, width, height)?;
+        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        to_json(&DetectionWithDiagnostics {
+            result,
+            diagnostics,
+        })
+    }
+
+    /// Detect markers from RGBA pixels, returning the slim result plus opt-in
+    /// detection diagnostics. See [`detect_with_diagnostics`](Self::detect_with_diagnostics).
+    pub fn detect_with_diagnostics_rgba(
+        &self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<String, JsValue> {
+        validate_dimensions(width, height)?;
+        validate_rgba(pixels, width, height)?;
+        let gray = rgba_to_gray(pixels, width, height);
+        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        to_json(&DetectionWithDiagnostics {
+            result,
+            diagnostics,
+        })
     }
 
     /// Adaptive detection from grayscale pixels. Returns JSON string (DetectionResult).
@@ -626,7 +527,7 @@ pub fn default_board_json() -> String {
 pub fn default_config_json(board_json: &str) -> Result<String, JsValue> {
     let board = parse_board(board_json)?;
     let config = ringgrid::DetectConfig::from_target(board);
-    to_json(&config_to_dump(&config))
+    to_json(&config)
 }
 
 /// Four-tier wide scale tiers preset as JSON.
@@ -659,6 +560,18 @@ pub fn version() -> String {
 struct ProposalPayload<'a> {
     image_size: [u32; 2],
     proposals: &'a [ringgrid::Proposal],
+}
+
+/// Combined payload for the diagnostics-returning detection entry points.
+///
+/// The slim [`ringgrid::DetectionResult`] and the opt-in
+/// [`ringgrid::DetectionDiagnostics`] are nested under `result` and
+/// `diagnostics`; `diagnostics.markers` aligns 1:1 with
+/// `result.detected_markers`.
+#[derive(serde::Serialize)]
+struct DetectionWithDiagnostics {
+    result: ringgrid::DetectionResult,
+    diagnostics: ringgrid::DetectionDiagnostics,
 }
 
 #[cfg(test)]
@@ -775,9 +688,9 @@ mod tests {
         let json = default_board_json();
         let board = ringgrid::BoardLayout::from_json_str(&json).unwrap();
         let default = ringgrid::BoardLayout::default();
-        assert_eq!(board.rows, default.rows);
-        assert_eq!(board.long_row_cols, default.long_row_cols);
-        assert!((board.pitch_mm - default.pitch_mm).abs() < 1e-6);
+        assert_eq!(board.rows(), default.rows());
+        assert_eq!(board.long_row_cols(), default.long_row_cols());
+        assert!((board.pitch_mm() - default.pitch_mm()).abs() < 1e-6);
     }
 
     // ── Group 4: Detection parity (grayscale) ──────────────────────
@@ -1051,16 +964,16 @@ mod tests {
         let board_json = load_fixture_board_json();
         let mut det = RinggridDetector::new(&board_json).unwrap();
 
-        // Verify completion is enabled by default
+        // Verify completion is enabled by default. Stage tuning nests under "advanced".
         let cfg: serde_json::Value = serde_json::from_str(&det.config_json().unwrap()).unwrap();
-        assert_eq!(cfg["completion"]["enable"], true);
+        assert_eq!(cfg["advanced"]["completion"]["enable"], true);
 
-        // Disable completion via overlay
-        det.update_config(r#"{"completion": {"enable": false}}"#)
+        // Disable completion via overlay (nested under "advanced").
+        det.update_config(r#"{"advanced": {"completion": {"enable": false}}}"#)
             .unwrap();
 
         let cfg2: serde_json::Value = serde_json::from_str(&det.config_json().unwrap()).unwrap();
-        assert_eq!(cfg2["completion"]["enable"], false);
+        assert_eq!(cfg2["advanced"]["completion"]["enable"], false);
     }
 
     #[test]
@@ -1069,23 +982,29 @@ mod tests {
         let mut det = RinggridDetector::new(&board_json).unwrap();
 
         det.update_config(
-            r#"{"completion": {"require_perfect_decode": true, "max_attempts": 17}}"#,
+            r#"{"advanced": {"completion": {"require_perfect_decode": true, "max_attempts": 17}}}"#,
         )
         .unwrap();
-        det.update_config(r#"{"completion": {"enable": false}}"#)
+        det.update_config(r#"{"advanced": {"completion": {"enable": false}}}"#)
             .unwrap();
 
         let cfg: serde_json::Value = serde_json::from_str(&det.config_json().unwrap()).unwrap();
-        assert_eq!(cfg["completion"]["enable"], false);
-        assert_eq!(cfg["completion"]["require_perfect_decode"], true);
-        assert_eq!(cfg["completion"]["max_attempts"].as_u64(), Some(17));
+        assert_eq!(cfg["advanced"]["completion"]["enable"], false);
+        assert_eq!(cfg["advanced"]["completion"]["require_perfect_decode"], true);
+        assert_eq!(
+            cfg["advanced"]["completion"]["max_attempts"].as_u64(),
+            Some(17)
+        );
     }
 
     #[test]
     fn default_config_json_parses() {
         let board_json = load_fixture_board_json();
         let config_str = default_config_json(&board_json).unwrap();
-        let _: DetectConfigDump = serde_json::from_str(&config_str).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&config_str).unwrap();
+        // Stage tuning nests under "advanced" in the new schema.
+        assert!(value.get("advanced").is_some());
+        let _: ringgrid::DetectConfig = serde_json::from_value(value).unwrap();
     }
 
     // ── Group 11: Multiscale detection parity ─────────────────────
@@ -1183,5 +1102,38 @@ mod tests {
 
         assert_eq!(four_parsed.tiers().len(), 4);
         assert_eq!(two_parsed.tiers().len(), 2);
+    }
+
+    // ── Group 14: Diagnostics-returning detection ──────────────────
+
+    #[test]
+    fn detect_with_diagnostics_matches_detect_and_is_aligned() {
+        let img = load_fixture_image();
+        let board_json = load_fixture_board_json();
+        let (w, h) = (img.width(), img.height());
+        let pixels = img.as_raw();
+
+        let det = RinggridDetector::new(&board_json).unwrap();
+
+        let slim_json = det.detect(pixels, w, h).unwrap();
+        let slim: ringgrid::DetectionResult = serde_json::from_str(&slim_json).unwrap();
+
+        let combined_json = det.detect_with_diagnostics(pixels, w, h).unwrap();
+        let combined: serde_json::Value = serde_json::from_str(&combined_json).unwrap();
+
+        let result: ringgrid::DetectionResult =
+            serde_json::from_value(combined["result"].clone()).unwrap();
+        let diagnostics: ringgrid::DetectionDiagnostics =
+            serde_json::from_value(combined["diagnostics"].clone()).unwrap();
+
+        // detect() and detect_with_diagnostics() agree on the slim result.
+        assert_eq!(
+            slim.detected_markers.len(),
+            result.detected_markers.len(),
+            "diagnostics result marker count mismatch"
+        );
+        // Diagnostics align 1:1 with detected markers.
+        assert_eq!(diagnostics.markers.len(), result.detected_markers.len());
+        assert!(!result.detected_markers.is_empty());
     }
 }

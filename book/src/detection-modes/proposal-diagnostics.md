@@ -62,11 +62,11 @@ result = ringgrid.propose_with_heatmap("photo.png", config=config)
 
 ## Rust API
 
-The standalone `proposal` module provides entry points that work on any
-grayscale image, independent of the ringgrid detection pipeline:
+ringgrid re-exports standalone proposal entry points at the crate root. They
+work on any grayscale image, independent of the ringgrid detection pipeline:
 
 ```rust
-use ringgrid::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap, ProposalConfig};
+use ringgrid::{find_ellipse_centers, find_ellipse_centers_with_heatmap, ProposalConfig};
 
 let config = ProposalConfig {
     r_min: 5.0,

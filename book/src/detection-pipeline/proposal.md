@@ -98,7 +98,7 @@ This mechanism serves two purposes:
 1. **Re-detection with improved geometry:** Pass-2 runs with a pixel mapper that corrects for lens distortion, so re-fitting at known centers produces more accurate ellipses.
 2. **Recovery of weak detections:** Markers that were detected in pass-1 but might be below threshold in the working frame still get a chance to be evaluated.
 
-The `SeedProposalParams` configuration controls seed injection:
+The `SeedProposalConfig` configuration controls seed injection:
 
 - `merge_radius_px` (default: 3.0): Prevents duplicate proposals when a seed and a gradient-detected proposal coincide.
 - `max_seeds` (default: 512): Caps the number of seeds to prevent excessive computation.
@@ -133,7 +133,7 @@ Additionally, `max_candidates` in `ProposalConfig` limits the total proposals em
 The proposal module exposes a standalone API for general-purpose ellipse/circle center detection, independent of ringgrid's marker-specific pipeline:
 
 ```rust
-use ringgrid::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap, ProposalConfig};
+use ringgrid::{find_ellipse_centers, find_ellipse_centers_with_heatmap, ProposalConfig};
 
 let config = ProposalConfig { r_min: 5.0, r_max: 30.0, min_distance: 15.0, ..Default::default() };
 let proposals = find_ellipse_centers(&gray_image, &config);

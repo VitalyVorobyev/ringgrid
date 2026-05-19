@@ -4,7 +4,7 @@
 
 ---
 
-## SeedProposalParams
+## SeedProposalConfig
 
 Controls seed injection for multi-pass detection. In the two-pass pipeline, pass-1 detections are injected as high-priority seed proposals for pass-2.
 
@@ -18,7 +18,7 @@ Controls seed injection for multi-pass detection. In the two-pass pipeline, pass
 
 ---
 
-## CompletionParams
+## CompletionConfig
 
 Controls the homography-guided completion stage. After the global homography filter identifies inliers, the pipeline projects all board marker positions into the image and attempts local fits at positions where no marker was detected. Completion only runs when a valid homography is available.
 
@@ -66,7 +66,7 @@ Controls structural ID verification/recovery that runs in finalize after project
 
 ---
 
-## ProjectiveCenterParams
+## ProjectiveCenterConfig
 
 Controls projective center recovery from the inner/outer conic pencil. When enabled, the detector computes an unbiased center estimate from the intersection geometry of the inner and outer fitted ellipses, correcting for perspective bias in the naive ellipse-center estimate.
 
@@ -138,11 +138,11 @@ assert!(method.uses_projective_center());
 
 ---
 
-## RansacHomographyConfig
+## RansacConfig (homography)
 
-Controls the RANSAC homography estimation used for global filtering and completion. The homography maps board-space marker positions (mm) to image-space pixel coordinates.
+The `ransac_homography` field of `AdvancedDetectConfig` is a `RansacConfig` that controls the RANSAC homography estimation used for global filtering and completion. The homography maps board-space marker positions (mm) to image-space pixel coordinates. `RansacConfig` is the shared RANSAC parameter struct, also embedded as the `ransac` field of `InnerFitConfig`.
 
-| Field | Type | Default | Description |
+| Field | Type | Default (homography) | Description |
 |---|---|---|---|
 | `max_iters` | `usize` | 2000 | Maximum RANSAC iterations. |
 | `inlier_threshold` | `f64` | 5.0 | Inlier threshold: maximum reprojection error (px) for a correspondence to be counted as an inlier. |

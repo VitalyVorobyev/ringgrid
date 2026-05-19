@@ -97,7 +97,7 @@ where `project(H, [x, y])` computes the projective mapping `H·[x, y, 1]ᵀ` and
 6. After all iterations, **refit** from all inliers of the best model
 7. Recompute inlier mask with the refit H
 
-**Configuration** (`RansacHomographyConfig`):
+**Configuration** (`RansacConfig`):
 
 | Parameter | Default | Purpose |
 |---|---|---|

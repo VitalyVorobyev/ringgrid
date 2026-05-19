@@ -1,6 +1,6 @@
 use crate::board_layout::BoardLayout;
-use crate::homography::RansacHomographyConfig;
-use crate::marker::{DecodeConfig, MarkerSpec};
+use crate::conic::RansacConfig;
+use crate::marker::{DecodeConfig, MarkerSpecConfig};
 use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
@@ -44,7 +44,8 @@ pub(crate) fn derive_proposal_config(
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct SeedProposalParams {
+#[non_exhaustive]
+pub struct SeedProposalConfig {
     /// Radius (pixels) used to merge seed centers with detector proposals.
     pub merge_radius_px: f32,
     /// Score assigned to injected seed proposals.
@@ -53,7 +54,7 @@ pub struct SeedProposalParams {
     pub max_seeds: Option<usize>,
 }
 
-impl Default for SeedProposalParams {
+impl Default for SeedProposalConfig {
     fn default() -> Self {
         Self {
             merge_radius_px: 3.0,
@@ -67,7 +68,8 @@ impl Default for SeedProposalParams {
 /// missing IDs at H-projected board locations.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct CompletionParams {
+#[non_exhaustive]
+pub struct CompletionConfig {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
     /// Radial sampling extent (pixels) used for edge sampling around the prior center.
@@ -93,7 +95,7 @@ pub struct CompletionParams {
     ///
     /// Default: `false` (backward-compatible). Set to `true` for Scheimpflug / high-
     /// distortion setups where no calibrated camera model is available.
-    #[serde(default = "CompletionParams::default_require_perfect_decode")]
+    #[serde(default = "CompletionConfig::default_require_perfect_decode")]
     pub require_perfect_decode: bool,
     /// Maximum allowed coefficient of variation (std_dev / mean) of per-ray outer
     /// radii. High scatter indicates inner/outer edge contamination — rays landing on
@@ -104,11 +106,11 @@ pub struct CompletionParams {
     /// mean outer radius is below 1 px (degenerate fit).
     ///
     /// Default: `0.35` (35% coefficient of variation).
-    #[serde(default = "CompletionParams::default_max_radii_std_ratio")]
+    #[serde(default = "CompletionConfig::default_max_radii_std_ratio")]
     pub max_radii_std_ratio: f32,
 }
 
-impl CompletionParams {
+impl CompletionConfig {
     fn default_require_perfect_decode() -> bool {
         false
     }
@@ -118,7 +120,7 @@ impl CompletionParams {
     }
 }
 
-impl Default for CompletionParams {
+impl Default for CompletionConfig {
     fn default() -> Self {
         Self {
             enable: true,
@@ -137,7 +139,8 @@ impl Default for CompletionParams {
 /// Projective-only unbiased center recovery from inner/outer conics.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct ProjectiveCenterParams {
+#[non_exhaustive]
+pub struct ProjectiveCenterConfig {
     /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
@@ -156,7 +159,7 @@ pub struct ProjectiveCenterParams {
     pub min_eig_separation: Option<f64>,
 }
 
-impl Default for ProjectiveCenterParams {
+impl Default for ProjectiveCenterConfig {
     fn default() -> Self {
         Self {
             use_expected_ratio: true,
@@ -171,6 +174,7 @@ impl Default for ProjectiveCenterParams {
 /// Configuration for robust inner ellipse fitting from outer-fit hints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InnerFitConfig {
     /// Minimum number of sampled points required to attempt a fit.
     pub min_points: usize,
@@ -247,6 +251,7 @@ impl Default for InnerFitConfig {
 /// Configuration for robust outer ellipse fitting from sampled edge points.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct OuterFitConfig {
     /// Minimum number of sampled points required to attempt direct LS fit.
     pub min_direct_fit_points: usize,
@@ -445,9 +450,23 @@ impl ScaleTier {
 /// See [`crate::Detector::detect_adaptive`] and
 /// [`crate::Detector::detect_multiscale`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ScaleTiers(pub Vec<ScaleTier>);
+pub struct ScaleTiers(Vec<ScaleTier>);
 
 impl ScaleTiers {
+    /// Construct tiers from an explicit ordered tier list.
+    ///
+    /// This is the general-purpose constructor for callers building custom
+    /// tier sets; the preset constructors ([`four_tier_wide`](Self::four_tier_wide),
+    /// [`two_tier_standard`](Self::two_tier_standard), [`single`](Self::single),
+    /// [`from_detected_radii`](Self::from_detected_radii)) cover the common cases.
+    ///
+    /// The vec is accepted as-is; an empty vec yields tiers with no scales to
+    /// probe. Callers that require a non-empty set should validate before
+    /// constructing.
+    pub fn new(tiers: Vec<ScaleTier>) -> Self {
+        Self(tiers)
+    }
+
     /// Four overlapping tiers covering 8–220 px (27:1 diameter ratio).
     ///
     /// Tier boundaries: `[8,24]`, `[20,60]`, `[50,130]`, `[110,220]` px.
@@ -555,6 +574,7 @@ impl ScaleTiers {
 /// This guarantees no wrong IDs reach the global filter or completion stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct IdCorrectionConfig {
     /// Enable structural ID verification and correction.
     pub enable: bool,
@@ -664,6 +684,7 @@ impl Default for IdCorrectionConfig {
 /// the inner ring even under the relaxed thresholds.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InnerAsOuterRecoveryConfig {
     /// Enable inner-as-outer recovery (default: `true`).
     pub enable: bool,
@@ -756,49 +777,44 @@ impl ProposalDownscale {
     }
 }
 
-/// Top-level detection configuration.
+/// Advanced per-stage tuning parameters for the detection pipeline.
 ///
-/// Contains all parameters that control the detection pipeline. Use one of the
-/// recommended constructors rather than constructing directly:
-///
-/// - [`DetectConfig::from_target`] — default scale prior
-/// - [`DetectConfig::from_target_and_scale_prior`] — explicit scale range
-/// - [`DetectConfig::from_target_and_marker_diameter`] — fixed diameter hint
-///
-/// These constructors auto-derive scale-dependent parameters (proposal radii,
-/// edge search windows, validation bounds) from the board geometry and marker
-/// scale prior. Individual fields can be tuned after construction.
-#[derive(Debug, Clone)]
-pub struct DetectConfig {
-    /// Marker diameter prior (range) in working-frame pixels.
-    pub marker_scale: MarkerScalePrior,
+/// These fields control the internal behavior of individual pipeline stages
+/// (proposal generation, edge sampling, ellipse fitting, decoding, ID
+/// correction, completion). Most users never need to touch them — the
+/// [`DetectConfig`] constructors derive sensible scale-dependent values.
+/// Override individual fields for fine-grained tuning of difficult scenes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct AdvancedDetectConfig {
     /// Outer edge estimation configuration (anchored on `marker_scale`).
     pub outer_estimation: OuterEstimationConfig,
     /// Proposal generation configuration.
     pub proposal: ProposalConfig,
     /// Seed-injection controls for multi-pass proposal generation.
-    pub seed_proposals: SeedProposalParams,
+    pub seed_proposals: SeedProposalConfig,
     /// Radial edge sampling configuration.
     pub edge_sample: EdgeSampleConfig,
     /// Marker decode configuration.
     pub decode: DecodeConfig,
     /// Marker geometry specification and estimator controls.
-    pub marker_spec: MarkerSpec,
+    pub marker_spec: MarkerSpecConfig,
     /// Robust inner ellipse fitting controls shared across pipeline stages.
     pub inner_fit: InnerFitConfig,
     /// Robust outer ellipse fitting controls shared across pipeline stages.
     pub outer_fit: OuterFitConfig,
-    /// Post-fit circle refinement method selector.
-    pub circle_refinement: CircleRefinementMethod,
     /// Projective-center recovery controls.
-    pub projective_center: ProjectiveCenterParams,
+    pub projective_center: ProjectiveCenterConfig,
     /// Homography-guided completion controls.
-    pub completion: CompletionParams,
+    pub completion: CompletionConfig,
     /// Minimum semi-axis for a valid outer ellipse.
     /// Derived from `marker_scale` by the config constructors; do not set directly.
+    #[serde(skip)]
     pub(crate) min_semi_axis: f64,
     /// Maximum semi-axis for a valid outer ellipse.
     /// Derived from `marker_scale` by the config constructors; do not set directly.
+    #[serde(skip)]
     pub(crate) max_semi_axis: f64,
     /// Maximum aspect ratio (a/b) for a valid ellipse.
     pub max_aspect_ratio: f64,
@@ -815,11 +831,7 @@ pub struct DetectConfig {
     /// Set to `None` to disable the topology filter. Default: `None`.
     pub topology_filter_threshold_px: Option<f32>,
     /// RANSAC homography configuration.
-    pub ransac_homography: RansacHomographyConfig,
-    /// Board layout: marker positions and geometry.
-    pub board: BoardLayout,
-    /// Self-undistort estimation controls.
-    pub self_undistort: SelfUndistortConfig,
+    pub ransac_homography: RansacConfig,
     /// Structural ID verification and correction using hex neighborhood consensus.
     pub id_correction: IdCorrectionConfig,
     /// Automatic recovery for markers where the inner edge was incorrectly
@@ -842,6 +854,79 @@ pub struct DetectConfig {
     pub proposal_downscale: ProposalDownscale,
 }
 
+impl Default for AdvancedDetectConfig {
+    fn default() -> Self {
+        Self {
+            outer_estimation: OuterEstimationConfig::default(),
+            proposal: ProposalConfig::default(),
+            seed_proposals: SeedProposalConfig::default(),
+            edge_sample: EdgeSampleConfig::default(),
+            decode: DecodeConfig::default(),
+            marker_spec: MarkerSpecConfig::default(),
+            inner_fit: InnerFitConfig::default(),
+            outer_fit: OuterFitConfig::default(),
+            projective_center: ProjectiveCenterConfig::default(),
+            completion: CompletionConfig::default(),
+            min_semi_axis: 3.0,
+            max_semi_axis: 15.0,
+            max_aspect_ratio: 3.0,
+            dedup_radius: 6.0,
+            use_global_filter: true,
+            topology_filter_threshold_px: None,
+            ransac_homography: RansacConfig {
+                max_iters: 2000,
+                inlier_threshold: 5.0,
+                min_inliers: 6,
+                seed: 0,
+            },
+            id_correction: IdCorrectionConfig::default(),
+            inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
+            h_reproj_confidence_alpha: 0.2,
+            proposal_downscale: ProposalDownscale::default(),
+        }
+    }
+}
+
+/// Top-level detection configuration.
+///
+/// Holds the durable user choices that shape detection: board geometry, marker
+/// scale prior, center-refinement method, and self-undistort policy. All
+/// per-stage tuning lives under [`AdvancedDetectConfig`] in the `advanced`
+/// field.
+///
+/// Use one of the recommended constructors rather than constructing directly:
+///
+/// - [`DetectConfig::from_target`] — default scale prior
+/// - [`DetectConfig::from_target_and_scale_prior`] — explicit scale range
+/// - [`DetectConfig::from_target_and_marker_diameter`] — fixed diameter hint
+///
+/// These constructors auto-derive scale-dependent parameters (proposal radii,
+/// edge search windows, validation bounds) from the board geometry and marker
+/// scale prior. Individual fields can be tuned after construction.
+///
+/// A `DetectConfig` deserialized from JSON has a default `board` (board layout
+/// is not serialized) and zeroed derived bounds. Call
+/// [`DetectConfig::with_board`] to attach the real board and re-derive all
+/// scale- and geometry-coupled parameters.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct DetectConfig {
+    /// Board layout: marker positions and geometry.
+    ///
+    /// Not serialized — supply it via a constructor or [`DetectConfig::with_board`].
+    #[serde(skip)]
+    pub board: BoardLayout,
+    /// Marker diameter prior (range) in working-frame pixels.
+    pub marker_scale: MarkerScalePrior,
+    /// Post-fit circle refinement method selector.
+    pub circle_refinement: CircleRefinementMethod,
+    /// Self-undistort estimation controls.
+    pub self_undistort: SelfUndistortConfig,
+    /// Advanced per-stage tuning parameters.
+    pub advanced: AdvancedDetectConfig,
+}
+
 impl DetectConfig {
     /// Build a configuration with scale-dependent parameters derived from a
     /// marker diameter range and a runtime target layout.
@@ -850,10 +935,10 @@ impl DetectConfig {
     /// individual fields can be overridden as needed.
     pub fn from_target_and_scale_prior(board: BoardLayout, marker_scale: MarkerScalePrior) -> Self {
         let mut cfg = Self {
+            board,
             marker_scale: marker_scale.normalized(),
             ..Default::default()
         };
-        cfg.board = board;
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
         cfg
@@ -870,6 +955,22 @@ impl DetectConfig {
             board,
             MarkerScalePrior::from_nominal_diameter_px(diameter_px),
         )
+    }
+
+    /// Attach a board layout and re-derive all scale- and geometry-coupled
+    /// parameters.
+    ///
+    /// `board` is `#[serde(skip)]`, so a `DetectConfig` deserialized from JSON
+    /// carries a default board and zeroed derived ellipse bounds. This is the
+    /// single entry point for consumers that load a config from JSON: it sets
+    /// the real board, then re-runs the geometry- and scale-prior derivation
+    /// (proposal radii, edge search windows, validation bounds) so callers do
+    /// not duplicate that logic.
+    pub fn with_board(mut self, board: BoardLayout) -> Self {
+        self.board = board;
+        apply_target_geometry_priors(&mut self);
+        apply_marker_scale_prior(&mut self);
+        self
     }
 
     /// Update marker scale prior and re-derive all scale-coupled parameters.
@@ -904,31 +1005,11 @@ impl DetectConfig {
 impl Default for DetectConfig {
     fn default() -> Self {
         let mut cfg = Self {
-            marker_scale: MarkerScalePrior::default(),
-            outer_estimation: OuterEstimationConfig::default(),
-            proposal: ProposalConfig::default(),
-            seed_proposals: SeedProposalParams::default(),
-            edge_sample: EdgeSampleConfig::default(),
-            decode: DecodeConfig::default(),
-            marker_spec: MarkerSpec::default(),
-            inner_fit: InnerFitConfig::default(),
-            outer_fit: OuterFitConfig::default(),
-            circle_refinement: CircleRefinementMethod::default(),
-            projective_center: ProjectiveCenterParams::default(),
-            completion: CompletionParams::default(),
-            min_semi_axis: 3.0,
-            max_semi_axis: 15.0,
-            max_aspect_ratio: 3.0,
-            dedup_radius: 6.0,
-            use_global_filter: true,
-            topology_filter_threshold_px: None,
-            ransac_homography: RansacHomographyConfig::default(),
             board: BoardLayout::default(),
+            marker_scale: MarkerScalePrior::default(),
+            circle_refinement: CircleRefinementMethod::default(),
             self_undistort: SelfUndistortConfig::default(),
-            id_correction: IdCorrectionConfig::default(),
-            inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
-            h_reproj_confidence_alpha: 0.2,
-            proposal_downscale: ProposalDownscale::default(),
+            advanced: AdvancedDetectConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);
         apply_marker_scale_prior(&mut cfg);
@@ -943,24 +1024,25 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     let outer_radius_min_px = d_min * 0.5;
     let outer_radius_max_px = d_max * 0.5;
     let r_nom = d_nom * 0.5;
-    config.proposal = derive_proposal_config(&config.board, config.marker_scale, &config.proposal);
+    let adv = &mut config.advanced;
+    adv.proposal = derive_proposal_config(&config.board, config.marker_scale, &adv.proposal);
 
     // Edge sampling range
-    config.edge_sample.r_max = outer_radius_max_px * 2.0;
-    config.edge_sample.r_min = 1.5;
+    adv.edge_sample.r_max = outer_radius_max_px * 2.0;
+    adv.edge_sample.r_min = 1.5;
     let desired_halfwidth = ((outer_radius_max_px - outer_radius_min_px) * 0.5).max(2.0);
     let base_halfwidth = OuterEstimationConfig::default().search_halfwidth_px;
-    config.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);
+    adv.outer_estimation.search_halfwidth_px = desired_halfwidth.max(base_halfwidth);
 
     // Ellipse validation bounds
-    config.min_semi_axis = (outer_radius_min_px as f64 * 0.3).max(2.0);
-    config.max_semi_axis = (outer_radius_max_px as f64 * 2.5).max(config.min_semi_axis);
+    adv.min_semi_axis = (outer_radius_min_px as f64 * 0.3).max(2.0);
+    adv.max_semi_axis = (outer_radius_max_px as f64 * 2.5).max(adv.min_semi_axis);
 
     // Completion ROI
-    config.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
+    adv.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
 
     // Projective center max shift
-    config.projective_center.max_center_shift_px = Some((2.0 * r_nom) as f64);
+    adv.projective_center.max_center_shift_px = Some((2.0 * r_nom) as f64);
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
@@ -981,8 +1063,8 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
     let outer_edge = outer + edge_pad;
     if inner_edge > 0.0 && inner_edge < outer_edge {
         let r_inner_expected = (inner_edge / outer_edge).clamp(0.1, 0.95);
-        config.marker_spec.r_inner_expected = r_inner_expected;
-        config.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
+        config.advanced.marker_spec.r_inner_expected = r_inner_expected;
+        config.advanced.decode.code_band_ratio = (0.5 * (1.0 + r_inner_expected)).clamp(0.2, 0.98);
     }
 }
 
@@ -1046,10 +1128,10 @@ mod tests {
     #[test]
     fn detect_config_includes_fit_configs() {
         let cfg = DetectConfig::default();
-        assert_eq!(cfg.inner_fit.min_points, 20);
-        assert_eq!(cfg.inner_fit.ransac.min_inliers, 8);
-        assert_eq!(cfg.outer_fit.min_direct_fit_points, 6);
-        assert_eq!(cfg.outer_fit.ransac.min_inliers, 6);
+        assert_eq!(cfg.advanced.inner_fit.min_points, 20);
+        assert_eq!(cfg.advanced.inner_fit.ransac.min_inliers, 8);
+        assert_eq!(cfg.advanced.outer_fit.min_direct_fit_points, 6);
+        assert_eq!(cfg.advanced.outer_fit.ransac.min_inliers, 6);
     }
 
     #[test]
@@ -1065,22 +1147,60 @@ mod tests {
         assert!((cfg.proposal_spacing_ratio() - spacing_ratio).abs() < 1.0e-6);
         assert!((cfg.proposal_spacing_min_px() - spacing_min_px).abs() < 1.0e-6);
         assert!((cfg.proposal_spacing_max_px() - spacing_max_px).abs() < 1.0e-6);
-        assert!((cfg.proposal.r_min - (0.15 * spacing_min_px).max(2.0)).abs() < 1.0e-6);
+        assert!((cfg.advanced.proposal.r_min - (0.15 * spacing_min_px).max(2.0)).abs() < 1.0e-6);
         assert!(
-            (cfg.proposal.r_max - (0.45 * spacing_max_px).min(1.35 * outer_radius_max_px)).abs()
+            (cfg.advanced.proposal.r_max - (0.45 * spacing_max_px).min(1.35 * outer_radius_max_px))
+                .abs()
                 < 1.0e-6
         );
         let expected_nms = (0.16 * d_min).max(4.0);
         let expected_min_dist = expected_nms.max(0.85 * spacing_min_px);
-        assert!((cfg.proposal.min_distance - expected_min_dist).abs() < 1.0e-6);
+        assert!((cfg.advanced.proposal.min_distance - expected_min_dist).abs() < 1.0e-6);
     }
 
     #[test]
     fn fixed_marker_hint_keeps_spacing_aware_seed_distance() {
         let cfg = DetectConfig::from_target_and_marker_diameter(BoardLayout::default(), 32.0);
-        assert!((cfg.proposal.r_min - 6.928203).abs() < 1.0e-5);
-        assert!((cfg.proposal.r_max - 20.784609).abs() < 1.0e-5);
-        assert!((cfg.proposal.min_distance - 39.259_815).abs() < 1.0e-5);
+        assert!((cfg.advanced.proposal.r_min - 6.928203).abs() < 1.0e-5);
+        assert!((cfg.advanced.proposal.r_max - 20.784609).abs() < 1.0e-5);
+        assert!((cfg.advanced.proposal.min_distance - 39.259_815).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn detect_config_json_roundtrip_preserves_effective_config() {
+        let board = BoardLayout::default();
+        let mut original = DetectConfig::from_target_and_marker_diameter(board.clone(), 32.0);
+        original.circle_refinement = CircleRefinementMethod::None;
+        original.advanced.completion.enable = false;
+        original.advanced.id_correction.max_iters = 9;
+        original.self_undistort.enable = true;
+
+        let json = serde_json::to_string(&original).expect("serialize DetectConfig");
+        let deserialized: DetectConfig =
+            serde_json::from_str(&json).expect("deserialize DetectConfig");
+        // board is #[serde(skip)] — reattach it to re-derive geometry/scale fields.
+        let restored = deserialized.with_board(board);
+
+        assert_eq!(restored.circle_refinement, original.circle_refinement);
+        assert_eq!(
+            restored.advanced.completion.enable,
+            original.advanced.completion.enable
+        );
+        assert_eq!(
+            restored.advanced.id_correction.max_iters,
+            original.advanced.id_correction.max_iters
+        );
+        assert_eq!(
+            restored.self_undistort.enable,
+            original.self_undistort.enable
+        );
+        // Scale-derived fields match because with_board re-runs derivation.
+        assert!(
+            (restored.advanced.proposal.r_min - original.advanced.proposal.r_min).abs() < 1.0e-6
+        );
+        assert!((restored.advanced.min_semi_axis - original.advanced.min_semi_axis).abs() < 1.0e-9);
+        assert!((restored.advanced.max_semi_axis - original.advanced.max_semi_axis).abs() < 1.0e-9);
+        assert_eq!(restored.board.n_markers(), original.board.n_markers());
     }
 
     #[test]

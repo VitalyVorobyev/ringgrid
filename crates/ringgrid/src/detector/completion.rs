@@ -5,8 +5,8 @@ use nalgebra::Point2;
 use projective_grid::GridIndex;
 use projective_grid::hex::hex_predict_grid_position;
 
-use crate::DetectedMarker;
 use crate::conic::Ellipse;
+use crate::detector::MarkerRecord;
 use crate::detector::id_correction::{affine_to_image, fit_local_affine};
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
@@ -14,7 +14,7 @@ use crate::marker::codec::Codebook;
 use crate::ring::edge_sample::EdgeSampleResult;
 
 use super::{
-    CompletionParams, DetectConfig, OuterFitCandidate,
+    CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
     median_outer_radius_from_neighbors_px,
@@ -156,7 +156,7 @@ fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
 
 fn local_affine_completion_seed(
     target_board_xy: [f64; 2],
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &crate::board_layout::BoardLayout,
 ) -> Option<[f64; 2]> {
     const MAX_NEIGHBORS: usize = 4;
@@ -206,7 +206,7 @@ fn hex_neighbor_seed(
 fn projected_completion_seed(
     id: usize,
     h: &nalgebra::Matrix3<f64>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &crate::board_layout::BoardLayout,
     hex_grid: &HashMap<GridIndex, Point2<f32>>,
 ) -> Option<[f64; 2]> {
@@ -268,7 +268,7 @@ fn check_decode_gate(
 
 fn check_quality_gates(
     quality: &CandidateQuality,
-    params: &CompletionParams,
+    params: &CompletionConfig,
     r_expected: f32,
     max_angular_gap_rad: f64,
 ) -> Result<(), CompletionGateReject> {
@@ -346,7 +346,7 @@ fn evaluate_completion_candidate(
     active_codebook_min_cyclic_dist: u8,
     stats: &mut CompletionStats,
 ) -> Result<CandidateQuality, ()> {
-    let params = &config.completion;
+    let params = &config.advanced.completion;
     let quality = compute_candidate_quality(
         &cand.edge,
         &cand.outer,
@@ -359,7 +359,7 @@ fn evaluate_completion_candidate(
         &quality,
         params,
         r_expected,
-        config.outer_fit.max_angular_gap_rad,
+        config.advanced.outer_fit.max_angular_gap_rad,
     ) {
         tracing::trace!(
             "Completion id={} gate_reject={} context={:?}",
@@ -392,7 +392,7 @@ fn evaluate_completion_candidate(
     Ok(quality)
 }
 
-/// Build the final `DetectedMarker` for an accepted completion candidate.
+/// Build the final `MarkerRecord` for an accepted completion candidate.
 ///
 /// Performs inner ellipse fit, computes fit/decode metrics, and assembles the
 /// marker struct.
@@ -403,13 +403,13 @@ fn assemble_completion_marker(
     quality: &CandidateQuality,
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
-) -> DetectedMarker {
+) -> MarkerRecord {
     let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
         gray,
         &cand.outer,
-        &config.marker_spec,
+        &config.advanced.marker_spec,
         mapper,
-        &config.inner_fit,
+        &config.advanced.inner_fit,
         false,
     );
     let fit = fit_metrics_with_inner(
@@ -425,7 +425,7 @@ fn assemble_completion_marker(
         .map(|d| d.decode_confidence)
         .unwrap_or(quality.fit_confidence);
 
-    DetectedMarker {
+    MarkerRecord {
         id: Some(id),
         confidence,
         center: quality.center,
@@ -436,7 +436,7 @@ fn assemble_completion_marker(
         fit,
         decode: decode_metrics,
         source: DetectionSource::Completion,
-        ..DetectedMarker::default()
+        ..MarkerRecord::default()
     }
 }
 
@@ -458,13 +458,13 @@ fn try_complete_marker(
     gray: &GrayImage,
     id: usize,
     projected_center: [f64; 2],
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     stats: &mut CompletionStats,
-) -> Option<DetectedMarker> {
+) -> Option<MarkerRecord> {
     let active_codebook_min_cyclic_dist =
-        Codebook::from_profile(config.decode.codebook_profile).min_cyclic_dist() as u8;
+        Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
     let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
         .unwrap_or(config.marker_scale.nominal_outer_radius_px());
 
@@ -520,14 +520,14 @@ fn try_complete_marker(
 pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
-    markers: &mut Vec<DetectedMarker>,
+    markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     board: &crate::board_layout::BoardLayout,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
 ) -> CompletionStats {
     use std::collections::HashSet;
 
-    let params = &config.completion;
+    let params = &config.advanced.completion;
     if !params.enable {
         return CompletionStats::default();
     }
@@ -624,7 +624,7 @@ mod tests {
             max_angular_gap_outer: 0.1,
             radii_cv: 0.0,
         };
-        let params = CompletionParams::default();
+        let params = CompletionConfig::default();
         let reject = check_quality_gates(&quality, &params, 20.0, std::f64::consts::FRAC_PI_2)
             .expect_err("expected gate fail");
         assert_eq!(reject.reason, CompletionGateRejectReason::ArcCoverageLow);
@@ -639,8 +639,8 @@ mod tests {
         }
     }
 
-    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
-        DetectedMarker {
+    fn marker_with_id(id: usize, center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
             id: Some(id),
             confidence: 1.0,
             center,
@@ -653,7 +653,7 @@ mod tests {
             }),
             fit: FitMetrics::default(),
             source: DetectionSource::FitDecoded,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
@@ -663,7 +663,7 @@ mod tests {
         let target_id = 16usize;
         let neighbor_ids = [0usize, 1usize, 14usize, 15usize];
         let affine = [[2.0, 0.1, 5.0], [-0.2, 1.5, 7.0]];
-        let markers: Vec<DetectedMarker> = neighbor_ids
+        let markers: Vec<MarkerRecord> = neighbor_ids
             .iter()
             .map(|&id| {
                 let board_xy = board.xy_mm(id).expect("board xy");

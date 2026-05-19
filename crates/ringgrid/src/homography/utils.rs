@@ -1,17 +1,19 @@
 //! Higher-level homography utilities: refitting, statistics, format conversion.
 
 use crate::board_layout::BoardLayout;
-use crate::detector::DetectedMarker;
+use crate::detector::MarkerRecord;
 
-use super::core::{RansacHomographyConfig, RansacStats, fit_homography_ransac};
+use crate::conic::RansacConfig;
+
+use super::core::{RansacStats, fit_homography_ransac};
 use super::{
     CorrespondenceDestinationFrame, DuplicateIdPolicy, collect_marker_correspondences,
     collect_masked_inlier_errors, mean_and_p95, reprojection_errors,
 };
 
 pub(crate) fn refit_homography(
-    markers: &[DetectedMarker],
-    config: &RansacHomographyConfig,
+    markers: &[MarkerRecord],
+    config: &RansacConfig,
     board: &BoardLayout,
 ) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
     let correspondences = collect_marker_correspondences(
@@ -30,7 +32,7 @@ pub(crate) fn refit_homography(
     }
 
     // Use a light RANSAC (most outliers already removed)
-    let light_config = RansacHomographyConfig {
+    let light_config = RansacConfig {
         max_iters: 500,
         inlier_threshold: config.inlier_threshold,
         min_inliers: config.min_inliers,
@@ -71,7 +73,7 @@ pub(crate) fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
 
 pub(crate) fn mean_reproj_error_px(
     h: &nalgebra::Matrix3<f64>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &BoardLayout,
 ) -> f64 {
     let correspondences = collect_marker_correspondences(
@@ -102,7 +104,7 @@ pub(crate) fn mean_reproj_error_px(
 
 pub(crate) fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     thresh_px: f64,
     board: &BoardLayout,
 ) -> Option<RansacStats> {

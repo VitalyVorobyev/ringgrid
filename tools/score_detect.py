@@ -35,10 +35,32 @@ def visible_gt_markers(gt_data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def load_pred(path: str) -> tuple[list[dict], dict]:
-    """Load predicted (detected) markers and metadata."""
+    """Load predicted (detected) markers and metadata.
+
+    Handles both detection-JSON schemas:
+    - legacy (<=0.5): per-marker ``decode``/``fit``/``source`` and result
+      ``ransac`` live at the top level.
+    - v0.6+: those algorithm internals are nested under a ``diagnostics``
+      object — ``diagnostics.markers[i]`` (aligned 1:1 with
+      ``detected_markers[i]``) and ``diagnostics.ransac``.
+
+    For v0.6+ JSON, the per-marker diagnostics are folded back into each
+    marker dict and ``ransac`` is lifted to the top level, so downstream
+    scoring code that reads ``m["decode"]`` / ``pred_data["ransac"]`` keeps
+    working regardless of schema.
+    """
     with open(path) as f:
         data = json.load(f)
-    return data["detected_markers"], data
+    markers = data["detected_markers"]
+    diagnostics = data.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        diag_markers = diagnostics.get("markers") or []
+        for marker, diag in zip(markers, diag_markers):
+            for key, value in diag.items():
+                marker.setdefault(key, value)
+        if "ransac" not in data and diagnostics.get("ransac") is not None:
+            data["ransac"] = diagnostics["ransac"]
+    return markers, data
 
 
 def dist2(a: list, b: list) -> float:

@@ -4,10 +4,7 @@ mod core;
 mod correspondence;
 pub(crate) mod utils;
 
-pub use core::{
-    RansacHomographyConfig, RansacHomographyResult, RansacStats, fit_homography_ransac,
-    homography_project,
-};
+pub use core::{RansacHomographyResult, RansacStats, fit_homography_ransac, homography_project};
 
 pub(crate) use correspondence::{
     CorrespondenceDestinationFrame, DuplicateIdPolicy, collect_marker_correspondences,

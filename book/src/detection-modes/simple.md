@@ -91,11 +91,12 @@ let detector = Detector::from_target_json_file(Path::new("target.json"))?;
 ## Post-Construction Tuning
 
 After creating the detector you can adjust individual configuration fields through
-`config_mut()`. For example, to disable the completion stage:
+`config_mut()`. Per-stage tuning lives under the `advanced` sub-config; for
+example, to disable the completion stage:
 
 ```rust
 let mut detector = Detector::new(board);
-detector.config_mut().completion.enable = false;
+detector.config_mut().advanced.completion.enable = false;
 ```
 
 ## Serializing Results
@@ -108,10 +109,12 @@ let json = serde_json::to_string_pretty(&result)?;
 std::fs::write("output.json", json)?;
 ```
 
-The output JSON contains detected markers with their IDs, centers, ellipse
-parameters, fit metrics, detection source, and (when available) the
-board-to-image homography. See [Detection Output Format](../output-format.md)
-for the full serialized schema.
+The output JSON of a bare `DetectionResult` contains detected markers with their
+IDs, centers, ellipse parameters, and (when available) the board-to-image
+homography. Per-marker fit metrics, decode metrics, and detection source are not
+part of `DetectionResult` — request them via `detector.detect_with_diagnostics(&image)`,
+which also returns a `DetectionDiagnostics`. See
+[Detection Output Format](../output-format.md) for the full serialized schema.
 
 ## Source Files
 

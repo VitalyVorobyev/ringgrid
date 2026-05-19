@@ -7,7 +7,7 @@
 use image::GrayImage;
 
 use crate::conic::Ellipse;
-use crate::marker::{GradPolarity, MarkerSpec};
+use crate::marker::{GradPolarity, MarkerSpecConfig};
 use crate::pixelmap::PixelMapper;
 
 use super::edge_sample::DistortionAwareSampler;
@@ -80,7 +80,7 @@ pub struct InnerEstimate {
 /// success, or an early-return `InnerEstimate` on failure.
 #[allow(clippy::type_complexity)]
 fn setup_inner_search_window(
-    spec: &MarkerSpec,
+    spec: &MarkerSpecConfig,
     n_r: usize,
 ) -> Result<([f32; 2], Vec<Polarity>, bool, bool, RadialSampleGrid), InnerEstimate> {
     let mut window = spec.search_window();
@@ -134,7 +134,7 @@ fn select_best_polarity_hypothesis(
     polarity_candidates: &[Polarity],
     agg_resp: &[f32],
     scan: &RadialScanResult,
-    spec: &MarkerSpec,
+    spec: &MarkerSpecConfig,
     window: [f32; 2],
     n_r: usize,
     store_response: bool,
@@ -211,7 +211,7 @@ fn select_best_polarity_hypothesis(
 pub fn estimate_inner_scale_from_outer_with_mapper(
     gray: &GrayImage,
     outer: &Ellipse,
-    spec: &MarkerSpec,
+    spec: &MarkerSpecConfig,
     mapper: Option<&dyn PixelMapper>,
     store_response: bool,
 ) -> InnerEstimate {
@@ -382,14 +382,14 @@ mod tests {
             angle: 0.0,
         };
 
-        let spec = MarkerSpec {
+        let spec = MarkerSpecConfig {
             r_inner_expected: r_inner / r_outer,
             inner_grad_polarity: GradPolarity::LightToDark,
             inner_search_halfwidth: 0.08,
             theta_samples: 64,
             radial_samples: 64,
             min_theta_coverage: 0.5,
-            ..MarkerSpec::default()
+            ..MarkerSpecConfig::default()
         };
 
         let est =

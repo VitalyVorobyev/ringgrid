@@ -364,7 +364,9 @@ level:
 - `center_frame`
 - `homography_frame`
 - `image_size`
-- optional `homography`, `ransac`, and `self_undistort`
+- optional `homography` and `self_undistort`
+- a nested `diagnostics` object carrying per-marker algorithm internals
+  (`diagnostics.markers`) and homography RANSAC statistics (`diagnostics.ransac`)
 
 The CLI may add extra top-level fields:
 

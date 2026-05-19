@@ -282,7 +282,7 @@ use ringgrid::BoardLayout;
 use std::path::Path;
 
 let board = BoardLayout::from_json_file(Path::new("board_spec.json"))?;
-println!("{} markers on '{}'", board.n_markers(), board.name);
+println!("{} markers on '{}'", board.n_markers(), board.name());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

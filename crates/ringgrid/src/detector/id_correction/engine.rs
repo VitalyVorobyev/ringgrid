@@ -1,6 +1,6 @@
 use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
-use crate::detector::marker_build::DetectedMarker;
+use crate::detector::marker_build::MarkerRecord;
 use crate::marker::codec::{Codebook, CodebookProfile};
 
 use super::bootstrap::bootstrap_trust_anchors;
@@ -16,7 +16,7 @@ use super::workspace::IdCorrectionWorkspace;
 ///
 /// Mutates `markers` in-place. Returns statistics about the corrections made.
 pub(crate) fn verify_and_correct_ids(
-    markers: &mut Vec<DetectedMarker>,
+    markers: &mut Vec<MarkerRecord>,
     board: &BoardLayout,
     config: &IdCorrectionConfig,
     codebook_profile: CodebookProfile,
@@ -76,8 +76,8 @@ mod tests {
         conf: f32,
         dist: u8,
         margin: u8,
-    ) -> DetectedMarker {
-        DetectedMarker {
+    ) -> MarkerRecord {
+        MarkerRecord {
             id: Some(id),
             center,
             confidence: conf,
@@ -96,12 +96,12 @@ mod tests {
                 b: 22.0,
                 angle: 0.0,
             }),
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
-    fn marker_no_id(center: [f64; 2], conf: f32) -> DetectedMarker {
-        DetectedMarker {
+    fn marker_no_id(center: [f64; 2], conf: f32) -> MarkerRecord {
+        MarkerRecord {
             id: None,
             center,
             confidence: conf,
@@ -112,7 +112,7 @@ mod tests {
                 b: 22.0,
                 angle: 0.0,
             }),
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
@@ -173,7 +173,7 @@ mod tests {
             .expect("must find non-neighbor wrong id");
 
         let scale = 4.0f64;
-        let mut markers = Vec::<DetectedMarker>::new();
+        let mut markers = Vec::<MarkerRecord>::new();
         let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];
@@ -218,7 +218,7 @@ mod tests {
             .expect("board must have marker with >=3 neighbors");
 
         let scale = 4.0f64;
-        let mut base = Vec::<DetectedMarker>::new();
+        let mut base = Vec::<MarkerRecord>::new();
         let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];

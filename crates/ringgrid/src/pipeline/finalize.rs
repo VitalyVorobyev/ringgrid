@@ -13,9 +13,9 @@ use super::{
     warn_center_correction_without_intrinsics,
 };
 use crate::board_layout::BoardLayout;
-use crate::detector::{DetectedMarker, DetectionSource};
+use crate::detector::{DetectionSource, MarkerRecord};
 use crate::homography::RansacStats;
-use crate::pipeline::{DetectionFrame, DetectionResult};
+use crate::pipeline::{DetectionFrame, PipelineResult};
 use crate::pixelmap::PixelMapper;
 
 const AXIS_RATIO_RELATIVE_TOLERANCE: f64 = 0.25;
@@ -25,7 +25,7 @@ fn duration_ms(duration: std::time::Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
 
-fn marker_inner_outer_axis_ratio(marker: &DetectedMarker) -> Option<f64> {
+fn marker_inner_outer_axis_ratio(marker: &MarkerRecord) -> Option<f64> {
     let inner = marker.ellipse_inner?;
     let outer = marker.ellipse_outer?;
     let inner_axis = inner.mean_axis();
@@ -50,7 +50,7 @@ fn median_f64(mut values: Vec<f64>) -> Option<f64> {
     })
 }
 
-fn clear_axis_ratio_outlier_ids(markers: &mut [DetectedMarker]) -> usize {
+fn clear_axis_ratio_outlier_ids(markers: &mut [MarkerRecord]) -> usize {
     let reference = median_f64(
         markers
             .iter()
@@ -89,13 +89,13 @@ fn clear_axis_ratio_outlier_ids(markers: &mut [DetectedMarker]) -> usize {
 }
 
 struct FilterPhaseOutput {
-    markers: Vec<DetectedMarker>,
+    markers: Vec<MarkerRecord>,
     h_current: Option<nalgebra::Matrix3<f64>>,
     ransac_stats: Option<RansacStats>,
 }
 
-fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> FilterPhaseOutput {
-    if !config.use_global_filter {
+fn filter_with_h(fit_markers: Vec<MarkerRecord>, config: &DetectConfig) -> FilterPhaseOutput {
+    if !config.advanced.use_global_filter {
         return FilterPhaseOutput {
             markers: fit_markers,
             h_current: None,
@@ -103,8 +103,11 @@ fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> Fil
         };
     }
 
-    let (filtered, h_result, stats) =
-        global_filter(&fit_markers, &config.ransac_homography, &config.board);
+    let (filtered, h_result, stats) = global_filter(
+        &fit_markers,
+        &config.advanced.ransac_homography,
+        &config.board,
+    );
     let h_current = h_result.as_ref().map(|r| r.h);
 
     FilterPhaseOutput {
@@ -116,7 +119,7 @@ fn filter_with_h(fit_markers: Vec<DetectedMarker>, config: &DetectConfig) -> Fil
 
 /// Build a hex grid map from decoded markers, mapping `(q, r)` → image center.
 pub(crate) fn build_hex_grid_map(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &BoardLayout,
 ) -> HashMap<GridIndex, Point2<f32>> {
     markers
@@ -137,7 +140,7 @@ pub(crate) fn build_hex_grid_map(
 /// Remove markers whose image-space positions are inconsistent with their hex
 /// neighbors (midpoint prediction). Returns the number of markers removed.
 fn topology_filter(
-    markers: &mut Vec<DetectedMarker>,
+    markers: &mut Vec<MarkerRecord>,
     board: &BoardLayout,
     threshold_px: f32,
 ) -> usize {
@@ -173,12 +176,12 @@ fn topology_filter(
 
 fn phase_completion(
     gray: &GrayImage,
-    final_markers: &mut Vec<DetectedMarker>,
+    final_markers: &mut Vec<MarkerRecord>,
     h_current: Option<&nalgebra::Matrix3<f64>>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> CompletionStats {
-    if !config.completion.enable {
+    if !config.advanced.completion.enable {
         return CompletionStats::default();
     }
 
@@ -190,14 +193,18 @@ fn phase_completion(
 }
 
 fn phase_final_h(
-    final_markers: &[DetectedMarker],
+    final_markers: &[MarkerRecord],
     h_current: Option<nalgebra::Matrix3<f64>>,
     mut ransac_stats: Option<RansacStats>,
     config: &DetectConfig,
 ) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
     let final_h_matrix = if final_markers.len() >= 10 {
-        let h_refit = refit_homography(final_markers, &config.ransac_homography, &config.board)
-            .map(|(h, _)| h);
+        let h_refit = refit_homography(
+            final_markers,
+            &config.advanced.ransac_homography,
+            &config.board,
+        )
+        .map(|(h, _)| h);
         match (h_current, h_refit) {
             (Some(h_cur), Some(h_new)) => {
                 let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.board);
@@ -223,7 +230,7 @@ fn phase_final_h(
             compute_h_stats(
                 h,
                 final_markers,
-                config.ransac_homography.inlier_threshold,
+                config.advanced.ransac_homography.inlier_threshold,
                 &config.board,
             )
         })
@@ -232,7 +239,7 @@ fn phase_final_h(
     (final_h, final_ransac)
 }
 
-fn drop_unmappable_markers(markers: &mut Vec<DetectedMarker>, mapper: &dyn PixelMapper) -> usize {
+fn drop_unmappable_markers(markers: &mut Vec<MarkerRecord>, mapper: &dyn PixelMapper) -> usize {
     let before = markers.len();
     markers.retain(|m| {
         mapper
@@ -244,7 +251,7 @@ fn drop_unmappable_markers(markers: &mut Vec<DetectedMarker>, mapper: &dyn Pixel
 }
 
 fn drop_unmappable_markers_with_warning(
-    markers: &mut Vec<DetectedMarker>,
+    markers: &mut Vec<MarkerRecord>,
     mapper: Option<&dyn PixelMapper>,
 ) {
     let Some(mapper) = mapper else {
@@ -259,7 +266,7 @@ fn drop_unmappable_markers_with_warning(
     }
 }
 
-fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper) {
+fn map_centers_to_image(markers: &mut [MarkerRecord], mapper: &dyn PixelMapper) {
     for marker in markers.iter_mut() {
         let center_mapped = marker.center;
         marker.center_mapped = Some(center_mapped);
@@ -269,7 +276,7 @@ fn map_centers_to_image(markers: &mut [DetectedMarker], mapper: &dyn PixelMapper
     }
 }
 
-fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &BoardLayout) -> usize {
+fn sync_marker_board_correspondence(markers: &mut [MarkerRecord], board: &BoardLayout) -> usize {
     let mut cleared_invalid_ids = 0usize;
     for marker in markers.iter_mut() {
         match marker.id {
@@ -291,7 +298,7 @@ fn sync_marker_board_correspondence(markers: &mut [DetectedMarker], board: &Boar
 }
 
 fn sync_marker_board_correspondence_with_logging(
-    markers: &mut [DetectedMarker],
+    markers: &mut [MarkerRecord],
     board: &BoardLayout,
 ) {
     let cleared_invalid_ids = sync_marker_board_correspondence(markers, board);
@@ -303,7 +310,7 @@ fn sync_marker_board_correspondence_with_logging(
 }
 
 fn annotate_h_reprojection_and_adjust_confidence(
-    markers: &mut [DetectedMarker],
+    markers: &mut [MarkerRecord],
     final_h: Option<[[f64; 3]; 3]>,
     alpha: f32,
 ) {
@@ -341,13 +348,13 @@ fn annotate_h_reprojection_and_adjust_confidence(
 /// enabled. Called identically by both finalize paths, eliminating duplication.
 fn apply_post_filter_fixup(
     gray: &GrayImage,
-    markers: &mut [DetectedMarker],
+    markers: &mut [MarkerRecord],
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
-    let k = config.inner_as_outer_recovery.k_neighbors;
+    let k = config.advanced.inner_as_outer_recovery.k_neighbors;
     annotate_neighbor_radius_ratios(markers, k);
-    if config.inner_as_outer_recovery.enable {
+    if config.advanced.inner_as_outer_recovery.enable {
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.board);
         annotate_neighbor_radius_ratios(markers, k);
@@ -384,12 +391,12 @@ fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectio
 
 fn finalize_no_global_filter_result(
     gray: &GrayImage,
-    mut corrected_markers: Vec<DetectedMarker>,
+    mut corrected_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     homography_frame: DetectionFrame,
     image_size: [u32; 2],
-) -> DetectionResult {
+) -> PipelineResult {
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
 
@@ -408,17 +415,17 @@ fn finalize_no_global_filter_result(
     apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
     let post_fixup_elapsed = post_fixup_start.elapsed();
 
-    let result = DetectionResult {
-        detected_markers: corrected_markers,
+    let result = PipelineResult {
+        markers: corrected_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
         image_size,
-        ..DetectionResult::default()
+        ..PipelineResult::default()
     };
 
     tracing::info!(
         markers_in,
-        markers_out = result.detected_markers.len(),
+        markers_out = result.markers.len(),
         map_to_image_ms = duration_ms(map_to_image_elapsed),
         sync_board_ms = duration_ms(sync_elapsed),
         post_fixup_ms = duration_ms(post_fixup_elapsed),
@@ -431,12 +438,12 @@ fn finalize_no_global_filter_result(
 
 fn finalize_global_filter_result(
     gray: &GrayImage,
-    corrected_markers: Vec<DetectedMarker>,
+    corrected_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     homography_frame: DetectionFrame,
     image_size: [u32; 2],
-) -> DetectionResult {
+) -> PipelineResult {
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
 
@@ -448,7 +455,7 @@ fn finalize_global_filter_result(
     let h_current = filter_phase.h_current;
 
     let topology_start = Instant::now();
-    let n_topology_removed = if let Some(threshold) = config.topology_filter_threshold_px {
+    let n_topology_removed = if let Some(threshold) = config.advanced.topology_filter_threshold_px {
         topology_filter(&mut final_markers, &config.board, threshold)
     } else {
         0
@@ -495,7 +502,7 @@ fn finalize_global_filter_result(
     annotate_h_reprojection_and_adjust_confidence(
         &mut final_markers,
         final_h,
-        config.h_reproj_confidence_alpha,
+        config.advanced.h_reproj_confidence_alpha,
     );
     let reproj_annotate_elapsed = reproj_annotate_start.elapsed();
 
@@ -515,14 +522,14 @@ fn finalize_global_filter_result(
     apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
     let post_fixup_elapsed = post_fixup_start.elapsed();
 
-    let result = DetectionResult {
-        detected_markers: final_markers,
+    let result = PipelineResult {
+        markers: final_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
         image_size,
         homography: final_h,
         ransac: final_ransac,
-        ..DetectionResult::default()
+        ..PipelineResult::default()
     };
 
     tracing::info!(
@@ -530,7 +537,7 @@ fn finalize_global_filter_result(
         markers_after_filter,
         n_topology_removed,
         markers_after_completion,
-        markers_out = result.detected_markers.len(),
+        markers_out = result.markers.len(),
         global_filter_ms = duration_ms(filter_elapsed),
         topology_ms = duration_ms(topology_elapsed),
         completion_ms = duration_ms(completion_elapsed),
@@ -555,21 +562,21 @@ fn finalize_global_filter_result(
 ///
 /// Called once per scale tier by `detect_multiscale`.
 pub(super) fn finalize_premerge(
-    fit_markers: Vec<DetectedMarker>,
+    fit_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
-) -> Vec<DetectedMarker> {
+) -> Vec<MarkerRecord> {
     let mut corrected_markers = fit_markers;
 
     if config.circle_refinement.uses_projective_center() {
         apply_projective_centers(&mut corrected_markers, config);
     }
 
-    if config.id_correction.enable {
+    if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.board,
-            &config.id_correction,
-            config.decode.codebook_profile,
+            &config.advanced.id_correction,
+            config.advanced.decode.codebook_profile,
         );
         log_id_correction_summary(&stats);
     }
@@ -585,10 +592,10 @@ pub(super) fn finalize_premerge(
 /// homography, and completion parameters.
 pub(super) fn finalize_postmerge(
     gray: &GrayImage,
-    merged_markers: Vec<DetectedMarker>,
+    merged_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> DetectionResult {
+) -> PipelineResult {
     let (w, h) = gray.dimensions();
     let image_size = [w, h];
     let homography_frame = if mapper.is_some() {
@@ -597,7 +604,7 @@ pub(super) fn finalize_postmerge(
         DetectionFrame::Image
     };
 
-    if !config.use_global_filter {
+    if !config.advanced.use_global_filter {
         return finalize_no_global_filter_result(
             gray,
             merged_markers,
@@ -620,10 +627,10 @@ pub(super) fn finalize_postmerge(
 
 pub(super) fn run(
     gray: &GrayImage,
-    fit_markers: Vec<DetectedMarker>,
+    fit_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-) -> DetectionResult {
+) -> PipelineResult {
     let total_start = Instant::now();
     let (w, h) = gray.dimensions();
     let image_size = [w, h];
@@ -644,19 +651,19 @@ pub(super) fn run(
     let projective_center_elapsed = projective_center_start.elapsed();
 
     let id_correction_start = Instant::now();
-    if config.id_correction.enable {
+    if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.board,
-            &config.id_correction,
-            config.decode.codebook_profile,
+            &config.advanced.id_correction,
+            config.advanced.decode.codebook_profile,
         );
         log_id_correction_summary(&stats);
     }
     let id_correction_elapsed = id_correction_start.elapsed();
 
     let tail_start = Instant::now();
-    if !config.use_global_filter {
+    if !config.advanced.use_global_filter {
         let result = finalize_no_global_filter_result(
             gray,
             corrected_markers,
@@ -667,7 +674,7 @@ pub(super) fn run(
         );
         tracing::info!(
             markers_in,
-            markers_out = result.detected_markers.len(),
+            markers_out = result.markers.len(),
             projective_center_ms = duration_ms(projective_center_elapsed),
             id_correction_ms = duration_ms(id_correction_elapsed),
             tail_ms = duration_ms(tail_start.elapsed()),
@@ -686,7 +693,7 @@ pub(super) fn run(
     );
     tracing::info!(
         markers_in,
-        markers_out = result.detected_markers.len(),
+        markers_out = result.markers.len(),
         projective_center_ms = duration_ms(projective_center_elapsed),
         id_correction_ms = duration_ms(id_correction_elapsed),
         tail_ms = duration_ms(tail_start.elapsed()),
@@ -701,7 +708,7 @@ mod axis_ratio_tests {
     use super::*;
     use crate::conic::Ellipse;
 
-    fn marker_with_ratio(id: usize, ratio: f64, source: DetectionSource) -> DetectedMarker {
+    fn marker_with_ratio(id: usize, ratio: f64, source: DetectionSource) -> MarkerRecord {
         let outer = Ellipse {
             cx: 0.0,
             cy: 0.0,
@@ -716,14 +723,14 @@ mod axis_ratio_tests {
             b: 20.0 * ratio,
             angle: 0.0,
         };
-        DetectedMarker {
+        MarkerRecord {
             id: Some(id),
             confidence: 1.0,
             center: [id as f64, 0.0],
             ellipse_outer: Some(outer),
             ellipse_inner: Some(inner),
             source,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
@@ -785,36 +792,37 @@ mod tests {
         }
     }
 
-    fn marker(center: [f64; 2]) -> DetectedMarker {
-        DetectedMarker {
+    fn marker(center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
             confidence: 1.0,
             center,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
-    fn marker_with_id(id: usize, center: [f64; 2]) -> DetectedMarker {
-        DetectedMarker {
+    fn marker_with_id(id: usize, center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
             id: Some(id),
             confidence: 1.0,
             center,
-            ..DetectedMarker::default()
+            ..MarkerRecord::default()
         }
     }
 
     fn no_global_filter_config() -> DetectConfig {
-        DetectConfig {
-            use_global_filter: false,
+        let mut config = DetectConfig {
             circle_refinement: crate::CircleRefinementMethod::None,
             ..DetectConfig::default()
-        }
+        };
+        config.advanced.use_global_filter = false;
+        config
     }
 
     #[test]
     fn no_mapper_keeps_image_space_centers() {
         let img = GrayImage::new(100, 80);
         let markers = vec![marker([12.0, 22.0])];
-        let result = run(&img, markers, &no_global_filter_config(), None);
+        let (result, _) = run(&img, markers, &no_global_filter_config(), None).split();
 
         assert_eq!(result.center_frame, DetectionFrame::Image);
         assert_eq!(result.homography_frame, DetectionFrame::Image);
@@ -830,7 +838,7 @@ mod tests {
         let config = no_global_filter_config();
         let expected = config.board.xy_mm(0).expect("board marker 0");
         let markers = vec![marker_with_id(0, [12.0, 22.0])];
-        let result = run(&img, markers, &config, None);
+        let (result, _) = run(&img, markers, &config, None).split();
 
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].id, Some(0));
@@ -847,7 +855,7 @@ mod tests {
         let expected = config.board.xy_mm(1).expect("board marker 1");
         let markers = vec![marker_with_id(1, [20.0, 30.0])];
         let mapper = OffsetMapper;
-        let result = run(&img, markers, &config, Some(&mapper));
+        let (result, _) = run(&img, markers, &config, Some(&mapper)).split();
 
         assert_eq!(result.center_frame, DetectionFrame::Image);
         assert_eq!(result.homography_frame, DetectionFrame::Working);
@@ -866,7 +874,7 @@ mod tests {
         let img = GrayImage::new(100, 80);
         let markers = vec![marker([10.0, 10.0]), marker([60.0, 10.0])];
         let mapper = RejectingMapper;
-        let result = run(&img, markers, &no_global_filter_config(), Some(&mapper));
+        let (result, _) = run(&img, markers, &no_global_filter_config(), Some(&mapper)).split();
 
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].center, [10.0, 10.0]);
@@ -880,7 +888,7 @@ mod tests {
         let config = no_global_filter_config();
         let invalid_id = config.board.max_marker_id() + 1;
         let markers = vec![marker_with_id(invalid_id, [12.0, 22.0])];
-        let result = run(&img, markers, &config, None);
+        let (result, _) = run(&img, markers, &config, None).split();
 
         assert_eq!(result.detected_markers.len(), 1);
         assert_eq!(result.detected_markers[0].id, None);
@@ -892,7 +900,7 @@ mod tests {
         let img = GrayImage::new(100, 80);
         let config = no_global_filter_config();
         let markers = vec![marker([12.0, 22.0]), marker_with_id(0, [20.0, 30.0])];
-        let result = run(&img, markers, &config, None);
+        let (result, _) = run(&img, markers, &config, None).split();
         let json = serde_json::to_value(&result).expect("serialize detection result");
         let detected = json
             .get("detected_markers")

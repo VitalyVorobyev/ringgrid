@@ -2,7 +2,7 @@ use image::GrayImage;
 
 use super::config::InnerFitConfig;
 use crate::conic::{self, Ellipse};
-use crate::marker::MarkerSpec;
+use crate::marker::MarkerSpecConfig;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::ring::inner_estimate::{
@@ -372,7 +372,7 @@ fn check_inner_fit_gates(
 pub(crate) fn fit_inner_ellipse_from_outer_hint(
     gray: &GrayImage,
     outer: &Ellipse,
-    spec: &MarkerSpec,
+    spec: &MarkerSpecConfig,
     mapper: Option<&dyn PixelMapper>,
     cfg: &InnerFitConfig,
     store_response: bool,
@@ -509,11 +509,11 @@ mod tests {
             b: r_out as f64,
             angle: 0.0,
         };
-        let spec = MarkerSpec {
+        let spec = MarkerSpecConfig {
             r_inner_expected: r_in / r_out,
             inner_search_halfwidth: 0.12,
             inner_grad_polarity: GradPolarity::LightToDark,
-            ..MarkerSpec::default()
+            ..MarkerSpecConfig::default()
         };
 
         let res = fit_inner_ellipse_from_outer_hint(

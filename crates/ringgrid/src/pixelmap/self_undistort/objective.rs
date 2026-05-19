@@ -1,6 +1,6 @@
-use crate::DetectedMarker;
 use crate::board_layout::BoardLayout;
 use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
+use crate::detector::MarkerRecord;
 use crate::homography;
 
 use super::super::{DivisionModel, PixelMapper};
@@ -17,7 +17,7 @@ pub(super) struct HomographySelfError {
     pub n_inliers: usize,
 }
 
-pub(super) fn collect_marker_edge_data(markers: &[DetectedMarker]) -> Vec<MarkerEdgeData> {
+pub(super) fn collect_marker_edge_data(markers: &[MarkerRecord]) -> Vec<MarkerEdgeData> {
     markers
         .iter()
         .filter_map(|m| {
@@ -98,7 +98,7 @@ pub(super) fn conic_consistency_objective(
 }
 
 pub(super) fn homography_self_error_px(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board: &BoardLayout,
     mapper: &dyn PixelMapper,
 ) -> Option<HomographySelfError> {
@@ -123,7 +123,7 @@ pub(super) fn homography_self_error_px(
         return None;
     }
 
-    let ransac_cfg = homography::RansacHomographyConfig {
+    let ransac_cfg = crate::conic::RansacConfig {
         max_iters: 1000,
         inlier_threshold: 5.0,
         min_inliers: 8,

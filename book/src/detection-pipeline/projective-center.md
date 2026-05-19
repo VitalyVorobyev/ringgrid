@@ -21,11 +21,11 @@ Each marker is corrected exactly once — fit-decode markers before the global f
 
 ### Configuration
 
-`ProjectiveCenterParams` controls the correction:
+`ProjectiveCenterConfig` controls the correction:
 
 Projective center is enabled by setting `CircleRefinementMethod::ProjectiveCenter` (the default) in `DetectConfig`. Set `CircleRefinementMethod::None` to disable it.
 
-`ProjectiveCenterParams` controls the correction details:
+`ProjectiveCenterConfig` controls the correction details:
 
 | Parameter | Default | Purpose |
 |---|---|---|
@@ -66,7 +66,7 @@ When fewer than 4 decoded markers are available, the global filter is skipped an
 
 ### Configuration
 
-`RansacHomographyConfig`:
+`RansacConfig`:
 
 | Parameter | Default | Purpose |
 |---|---|---|

@@ -127,12 +127,14 @@ impl Conic2D {
     }
 }
 
-/// Configuration for RANSAC ellipse fitting.
+/// Configuration for RANSAC fitting (ellipse and homography).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
 pub struct RansacConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,
-    /// Inlier threshold (algebraic distance, after normalization).
+    /// Inlier distance threshold in pixels.
     pub inlier_threshold: f64,
     /// Minimum number of inliers for a valid model.
     pub min_inliers: usize,
@@ -166,6 +168,7 @@ impl ConicCoeffs {
     /// Normalize conic coefficients so that A + C = 1 (trace of quadratic part).
     /// This makes the algebraic distance comparable across different conics.
     /// Returns `None` if A + C ≈ 0 (degenerate / hyperbola-like).
+    #[cfg(test)]
     pub fn normalized(&self) -> Option<Self> {
         let [a, b, c, d, e, f] = self.0;
         let trace = a + c;
@@ -219,7 +222,7 @@ impl Ellipse {
     }
 
     /// Convert back to conic coefficients.
-    pub fn to_conic(self) -> ConicCoeffs {
+    pub(crate) fn to_conic(self) -> ConicCoeffs {
         ellipse_to_conic(&self)
     }
 

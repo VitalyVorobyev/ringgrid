@@ -1,5 +1,5 @@
-use crate::DetectedMarker;
 use crate::board_layout::BoardLayout;
+use crate::detector::MarkerRecord;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;
@@ -39,7 +39,7 @@ struct OptimizationOutcome {
 /// outer edge points with sufficient count and homography-based objective is
 /// unavailable.
 pub fn estimate_self_undistort(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
     board: Option<&BoardLayout>,
@@ -65,7 +65,7 @@ pub fn estimate_self_undistort(
 }
 
 fn select_objective_strategy<'a>(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
     board: Option<&'a BoardLayout>,
@@ -92,7 +92,7 @@ fn select_objective_strategy<'a>(
 }
 
 fn optimize_strategy(
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
     strategy: ObjectiveStrategy<'_>,

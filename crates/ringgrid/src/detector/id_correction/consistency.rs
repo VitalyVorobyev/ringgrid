@@ -1,4 +1,4 @@
-use crate::detector::marker_build::DetectedMarker;
+use crate::detector::marker_build::MarkerRecord;
 
 use super::index::dist2;
 use super::types::{ConsistencyEvidence, ScrubStage, Trust};
@@ -9,7 +9,7 @@ use super::workspace::{
 
 pub(super) fn local_edge_neighbor_ids(
     marker_index: usize,
-    markers: &[DetectedMarker],
+    markers: &[MarkerRecord],
     board_index: &super::index::BoardIndex,
     outer_radii_px: &[f64],
     outer_mul: f64,

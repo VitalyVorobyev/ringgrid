@@ -719,19 +719,21 @@ class FitMetrics:
 
 @dataclass(slots=True)
 class DetectedMarker:
-    """Single detected marker with geometry, ID, and metrics."""
+    """Single detected marker: refined geometry plus the decoded ID.
+
+    Slim, stable primary output. Algorithm internals (fit metrics, decode
+    metrics, raw edge sample points, stage provenance) live in the separate
+    opt-in :class:`MarkerDiagnostics` channel — request them via
+    :meth:`Detector.detect_with_diagnostics`.
+    """
 
     confidence: float
     center: list[float]
-    fit: FitMetrics
     id: int | None = None
     center_mapped: list[float] | None = None
     board_xy_mm: list[float] | None = None
     ellipse_outer: Ellipse | None = None
     ellipse_inner: Ellipse | None = None
-    edge_points_outer: list[list[float]] | None = None
-    edge_points_inner: list[list[float]] | None = None
-    decode: DecodeMetrics | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectedMarker":
@@ -747,28 +749,56 @@ class DetectedMarker:
             ellipse_inner=None
             if data.get("ellipse_inner") is None
             else Ellipse.from_dict(data["ellipse_inner"]),
-            edge_points_outer=_optional_points(data.get("edge_points_outer")),
-            edge_points_inner=_optional_points(data.get("edge_points_inner")),
-            fit=FitMetrics.from_dict(data["fit"]),
-            decode=None
-            if data.get("decode") is None
-            else DecodeMetrics.from_dict(data["decode"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "confidence": float(self.confidence),
             "center": [float(self.center[0]), float(self.center[1])],
-            "fit": self.fit.to_dict(),
         }
         _set_optional(out, "id", self.id)
         _set_optional(out, "center_mapped", self.center_mapped)
         _set_optional(out, "board_xy_mm", self.board_xy_mm)
         _set_optional(out, "ellipse_outer", None if self.ellipse_outer is None else self.ellipse_outer.to_dict())
         _set_optional(out, "ellipse_inner", None if self.ellipse_inner is None else self.ellipse_inner.to_dict())
+        return out
+
+
+@dataclass(slots=True)
+class MarkerDiagnostics:
+    """Detailed per-marker algorithm internals.
+
+    Opt-in diagnostics counterpart to :class:`DetectedMarker`. Each
+    ``MarkerDiagnostics`` is positionally aligned 1:1 with the corresponding
+    :class:`DetectedMarker` in :attr:`DetectionResult.detected_markers`.
+    """
+
+    fit: FitMetrics
+    source: str = "fit_decoded"
+    decode: DecodeMetrics | None = None
+    edge_points_outer: list[list[float]] | None = None
+    edge_points_inner: list[list[float]] | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerDiagnostics":
+        return cls(
+            fit=FitMetrics.from_dict(data["fit"]),
+            source=str(data.get("source", "fit_decoded")),
+            decode=None
+            if data.get("decode") is None
+            else DecodeMetrics.from_dict(data["decode"]),
+            edge_points_outer=_optional_points(data.get("edge_points_outer")),
+            edge_points_inner=_optional_points(data.get("edge_points_inner")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "fit": self.fit.to_dict(),
+            "source": str(self.source),
+        }
+        _set_optional(out, "decode", None if self.decode is None else self.decode.to_dict())
         _set_optional(out, "edge_points_outer", self.edge_points_outer)
         _set_optional(out, "edge_points_inner", self.edge_points_inner)
-        _set_optional(out, "decode", None if self.decode is None else self.decode.to_dict())
         return out
 
 
@@ -924,9 +954,13 @@ class SelfUndistortResult:
 
 @dataclass(slots=True)
 class DetectionResult:
-    """Full detector output for one image.
+    """Detector output for one image.
 
-    All geometry and quality fields match the Rust `DetectionResult` schema.
+    Slim, stable primary result: detected markers, frame metadata, and an
+    optional board-to-image homography. Matches the Rust `DetectionResult`
+    schema. Algorithm internals and RANSAC statistics are not part of this type;
+    obtain them via :meth:`Detector.detect_with_diagnostics`.
+
     Use :meth:`to_dict`, :meth:`to_json`, and :meth:`plot` for downstream tasks.
     """
 
@@ -935,7 +969,6 @@ class DetectionResult:
     homography_frame: DetectionFrame
     image_size: list[int]
     homography: list[list[float]] | None = None
-    ransac: RansacStats | None = None
     self_undistort: SelfUndistortResult | None = None
 
     @classmethod
@@ -947,7 +980,6 @@ class DetectionResult:
             homography_frame=DetectionFrame(str(data["homography_frame"])),
             image_size=[int(data["image_size"][0]), int(data["image_size"][1])],
             homography=_optional_h(data.get("homography")),
-            ransac=None if data.get("ransac") is None else RansacStats.from_dict(data["ransac"]),
             self_undistort=None
             if data.get("self_undistort") is None
             else SelfUndistortResult.from_dict(data["self_undistort"]),
@@ -966,7 +998,6 @@ class DetectionResult:
             "image_size": [int(self.image_size[0]), int(self.image_size[1])],
         }
         _set_optional(out, "homography", self.homography)
-        _set_optional(out, "ransac", None if self.ransac is None else self.ransac.to_dict())
         _set_optional(
             out,
             "self_undistort",
@@ -1006,6 +1037,43 @@ class DetectionResult:
             show_confidence=show_confidence,
             alpha=alpha,
         )
+
+
+@dataclass(slots=True)
+class DetectionDiagnostics:
+    """Opt-in detection diagnostics for debugging and tuning.
+
+    Returned alongside a :class:`DetectionResult` by
+    :meth:`Detector.detect_with_diagnostics`. Carries per-marker algorithm
+    internals and homography RANSAC statistics.
+
+    :attr:`markers` is positionally aligned 1:1 with
+    :attr:`DetectionResult.detected_markers`: ``markers[i]`` describes the
+    ``DetectedMarker`` at the same index ``i``.
+    """
+
+    markers: list[MarkerDiagnostics]
+    ransac: RansacStats | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "DetectionDiagnostics":
+        markers = [MarkerDiagnostics.from_dict(m) for m in data.get("markers", [])]
+        return cls(
+            markers=markers,
+            ransac=None if data.get("ransac") is None else RansacStats.from_dict(data["ransac"]),
+        )
+
+    @classmethod
+    def from_json(cls, path_or_json: str | Path) -> "DetectionDiagnostics":
+        """Load from JSON text or a JSON file path."""
+        return cls.from_dict(_json_loads_path_or_text(path_or_json))
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "markers": [m.to_dict() for m in self.markers],
+        }
+        _set_optional(out, "ransac", None if self.ransac is None else self.ransac.to_dict())
+        return out
 
 
 @dataclass(slots=True)
@@ -1112,7 +1180,7 @@ class OuterFitConfig:
 
 
 @dataclass(slots=True)
-class CompletionParams:
+class CompletionConfig:
     enable: bool = True
     roi_radius_px: float = 30.0
     reproj_gate_px: float = 3.0
@@ -1124,7 +1192,7 @@ class CompletionParams:
     max_radii_std_ratio: float = 0.35
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CompletionParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "CompletionConfig":
         data = _require_mapping(data, name="data")
         return cls(
             enable=bool(data["enable"]),
@@ -1154,7 +1222,7 @@ class CompletionParams:
 
 
 @dataclass(slots=True)
-class ProjectiveCenterParams:
+class ProjectiveCenterConfig:
     use_expected_ratio: bool = True
     ratio_penalty_weight: float = 1.0
     max_center_shift_px: float | None = 40.0
@@ -1162,7 +1230,7 @@ class ProjectiveCenterParams:
     min_eig_separation: float = 1e-6
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectiveCenterParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectiveCenterConfig":
         data = _require_mapping(data, name="data")
         return cls(
             use_expected_ratio=bool(data["use_expected_ratio"]),
@@ -1184,13 +1252,13 @@ class ProjectiveCenterParams:
 
 
 @dataclass(slots=True)
-class SeedProposalParams:
+class SeedProposalConfig:
     merge_radius_px: float = 3.0
     seed_score: float = 1_000_000_000_000.0
     max_seeds: int | None = 512
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SeedProposalParams":
+    def from_dict(cls, data: Mapping[str, Any]) -> "SeedProposalConfig":
         data = _require_mapping(data, name="data")
         return cls(
             merge_radius_px=float(data["merge_radius_px"]),
@@ -1325,7 +1393,7 @@ class DecodeConfig:
 
 
 @dataclass(slots=True)
-class MarkerSpec:
+class MarkerSpecConfig:
     r_inner_expected: float = 0.48809522
     inner_search_halfwidth: float = 0.08
     inner_grad_polarity: str = "light_to_dark"
@@ -1336,7 +1404,7 @@ class MarkerSpec:
     min_theta_consistency: float = 0.25
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerSpec":
+    def from_dict(cls, data: Mapping[str, Any]) -> "MarkerSpecConfig":
         data = _require_mapping(data, name="data")
         return cls(
             r_inner_expected=float(data["r_inner_expected"]),
@@ -1404,14 +1472,14 @@ class OuterEstimationConfig:
 
 
 @dataclass(slots=True)
-class RansacHomographyConfig:
+class RansacConfig:
     max_iters: int = 2000
     inlier_threshold: float = 5.0
     min_inliers: int = 6
     seed: int = 0
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "RansacHomographyConfig":
+    def from_dict(cls, data: Mapping[str, Any]) -> "RansacConfig":
         data = _require_mapping(data, name="data")
         return cls(
             max_iters=int(data["max_iters"]),
@@ -1587,6 +1655,31 @@ class InnerAsOuterRecoveryConfig:
         }
 
 
+#: Config keys that nest under the ``"advanced"`` object in the Rust
+#: ``DetectConfig`` JSON. Stable user-facing keys (``marker_scale``,
+#: ``circle_refinement``, ``self_undistort``) stay at the top level.
+_ADVANCED_KEYS: frozenset[str] = frozenset(
+    {
+        "outer_estimation",
+        "proposal",
+        "seed_proposals",
+        "edge_sample",
+        "decode",
+        "marker_spec",
+        "inner_fit",
+        "outer_fit",
+        "projective_center",
+        "completion",
+        "max_aspect_ratio",
+        "dedup_radius",
+        "use_global_filter",
+        "ransac_homography",
+        "id_correction",
+        "inner_as_outer_recovery",
+    }
+)
+
+
 class DetectConfig:
     """High-level detector configuration with typed section properties.
 
@@ -1623,16 +1716,56 @@ class DetectConfig:
         """Return a snapshot of the fully resolved config dictionary."""
         return self._snapshot()
 
+    @staticmethod
+    def _nest_overlay(overlay: Mapping[str, Any]) -> dict[str, Any]:
+        """Route an overlay's keys to the Rust JSON layout.
+
+        Keys in :data:`_ADVANCED_KEYS` are wrapped under an ``"advanced"``
+        object; stable keys stay at the top level.
+        """
+        top: dict[str, Any] = {}
+        advanced: dict[str, Any] = {}
+        for key, value in overlay.items():
+            if str(key) in _ADVANCED_KEYS:
+                advanced[str(key)] = value
+            else:
+                top[str(key)] = value
+        if advanced:
+            top["advanced"] = advanced
+        return top
+
+    def _resolved_value(self, key: str) -> Any:
+        """Read a config section/field, transparently looking under ``advanced``."""
+        resolved = self._resolved()
+        if key in _ADVANCED_KEYS:
+            return resolved["advanced"][key]
+        return resolved[key]
+
     def _patch_cached_overlay(self, overlay: Mapping[str, Any]) -> None:
         if self._resolved_cache is None:
             return
         for key, value in overlay.items():
-            self._resolved_cache[str(key)] = copy.deepcopy(value)
+            key = str(key)
+            if key in _ADVANCED_KEYS:
+                advanced = self._resolved_cache.get("advanced")
+                if not isinstance(advanced, dict):
+                    self._refresh_snapshot()
+                    return
+                advanced[key] = copy.deepcopy(value)
+            else:
+                self._resolved_cache[key] = copy.deepcopy(value)
 
     def _patch_cached_section_field(self, section_name: str, field_name: str, value: Any) -> None:
         if self._resolved_cache is None:
             return
-        section = self._resolved_cache.get(section_name)
+        container = self._resolved_cache
+        if section_name in _ADVANCED_KEYS:
+            advanced = self._resolved_cache.get("advanced")
+            if not isinstance(advanced, dict):
+                self._refresh_snapshot()
+                return
+            container = advanced
+        section = container.get(section_name)
         if not isinstance(section, dict):
             self._refresh_snapshot()
             return
@@ -1640,7 +1773,7 @@ class DetectConfig:
 
     def _apply_overlay(self, overlay: dict[str, Any], *, refresh: bool = False) -> None:
         payload = dict(overlay)
-        self._core.apply_overlay_json(json.dumps(payload))
+        self._core.apply_overlay_json(json.dumps(self._nest_overlay(payload)))
         if refresh:
             self._refresh_snapshot()
         else:
@@ -1654,7 +1787,9 @@ class DetectConfig:
         field_name: str,
         value: Any,
     ) -> None:
-        self._core.apply_overlay_json(json.dumps({section_name: section.to_dict()}))
+        self._core.apply_overlay_json(
+            json.dumps(self._nest_overlay({section_name: section.to_dict()}))
+        )
         self._patch_cached_section_field(section_name, field_name, value)
         self._version += 1
 
@@ -1675,8 +1810,7 @@ class DetectConfig:
 
     @property
     def inner_fit(self) -> InnerFitConfig:
-        resolved = self._resolved()
-        return InnerFitConfig.from_dict(resolved["inner_fit"])
+        return InnerFitConfig.from_dict(self._resolved_value("inner_fit"))
 
     @inner_fit.setter
     def inner_fit(self, value: InnerFitConfig) -> None:
@@ -1686,8 +1820,7 @@ class DetectConfig:
 
     @property
     def outer_fit(self) -> OuterFitConfig:
-        resolved = self._resolved()
-        return OuterFitConfig.from_dict(resolved["outer_fit"])
+        return OuterFitConfig.from_dict(self._resolved_value("outer_fit"))
 
     @outer_fit.setter
     def outer_fit(self, value: OuterFitConfig) -> None:
@@ -1696,42 +1829,38 @@ class DetectConfig:
         self._apply_overlay({"outer_fit": value.to_dict()}, refresh=True)
 
     @property
-    def completion(self) -> CompletionParams:
-        resolved = self._resolved()
-        return CompletionParams.from_dict(resolved["completion"])
+    def completion(self) -> CompletionConfig:
+        return CompletionConfig.from_dict(self._resolved_value("completion"))
 
     @completion.setter
-    def completion(self, value: CompletionParams) -> None:
-        if not isinstance(value, CompletionParams):
-            raise TypeError("completion must be CompletionParams")
+    def completion(self, value: CompletionConfig) -> None:
+        if not isinstance(value, CompletionConfig):
+            raise TypeError("completion must be CompletionConfig")
         self._apply_overlay({"completion": value.to_dict()}, refresh=True)
 
     @property
-    def projective_center(self) -> ProjectiveCenterParams:
-        resolved = self._resolved()
-        return ProjectiveCenterParams.from_dict(resolved["projective_center"])
+    def projective_center(self) -> ProjectiveCenterConfig:
+        return ProjectiveCenterConfig.from_dict(self._resolved_value("projective_center"))
 
     @projective_center.setter
-    def projective_center(self, value: ProjectiveCenterParams) -> None:
-        if not isinstance(value, ProjectiveCenterParams):
-            raise TypeError("projective_center must be ProjectiveCenterParams")
+    def projective_center(self, value: ProjectiveCenterConfig) -> None:
+        if not isinstance(value, ProjectiveCenterConfig):
+            raise TypeError("projective_center must be ProjectiveCenterConfig")
         self._apply_overlay({"projective_center": value.to_dict()}, refresh=True)
 
     @property
-    def seed_proposals(self) -> SeedProposalParams:
-        resolved = self._resolved()
-        return SeedProposalParams.from_dict(resolved["seed_proposals"])
+    def seed_proposals(self) -> SeedProposalConfig:
+        return SeedProposalConfig.from_dict(self._resolved_value("seed_proposals"))
 
     @seed_proposals.setter
-    def seed_proposals(self, value: SeedProposalParams) -> None:
-        if not isinstance(value, SeedProposalParams):
-            raise TypeError("seed_proposals must be SeedProposalParams")
+    def seed_proposals(self, value: SeedProposalConfig) -> None:
+        if not isinstance(value, SeedProposalConfig):
+            raise TypeError("seed_proposals must be SeedProposalConfig")
         self._apply_overlay({"seed_proposals": value.to_dict()}, refresh=True)
 
     @property
     def proposal(self) -> ProposalConfig:
-        resolved = self._resolved()
-        return ProposalConfig.from_dict(resolved["proposal"])
+        return ProposalConfig.from_dict(self._resolved_value("proposal"))
 
     @proposal.setter
     def proposal(self, value: ProposalConfig) -> None:
@@ -1741,8 +1870,7 @@ class DetectConfig:
 
     @property
     def edge_sample(self) -> EdgeSampleConfig:
-        resolved = self._resolved()
-        return EdgeSampleConfig.from_dict(resolved["edge_sample"])
+        return EdgeSampleConfig.from_dict(self._resolved_value("edge_sample"))
 
     @edge_sample.setter
     def edge_sample(self, value: EdgeSampleConfig) -> None:
@@ -1752,8 +1880,7 @@ class DetectConfig:
 
     @property
     def decode(self) -> DecodeConfig:
-        resolved = self._resolved()
-        return DecodeConfig.from_dict(resolved["decode"])
+        return DecodeConfig.from_dict(self._resolved_value("decode"))
 
     @decode.setter
     def decode(self, value: DecodeConfig) -> None:
@@ -1762,20 +1889,18 @@ class DetectConfig:
         self._apply_overlay({"decode": value.to_dict()}, refresh=True)
 
     @property
-    def marker_spec(self) -> MarkerSpec:
-        resolved = self._resolved()
-        return MarkerSpec.from_dict(resolved["marker_spec"])
+    def marker_spec(self) -> MarkerSpecConfig:
+        return MarkerSpecConfig.from_dict(self._resolved_value("marker_spec"))
 
     @marker_spec.setter
-    def marker_spec(self, value: MarkerSpec) -> None:
-        if not isinstance(value, MarkerSpec):
-            raise TypeError("marker_spec must be MarkerSpec")
+    def marker_spec(self, value: MarkerSpecConfig) -> None:
+        if not isinstance(value, MarkerSpecConfig):
+            raise TypeError("marker_spec must be MarkerSpecConfig")
         self._apply_overlay({"marker_spec": value.to_dict()}, refresh=True)
 
     @property
     def outer_estimation(self) -> OuterEstimationConfig:
-        resolved = self._resolved()
-        return OuterEstimationConfig.from_dict(resolved["outer_estimation"])
+        return OuterEstimationConfig.from_dict(self._resolved_value("outer_estimation"))
 
     @outer_estimation.setter
     def outer_estimation(self, value: OuterEstimationConfig) -> None:
@@ -1784,14 +1909,13 @@ class DetectConfig:
         self._apply_overlay({"outer_estimation": value.to_dict()}, refresh=True)
 
     @property
-    def ransac_homography(self) -> RansacHomographyConfig:
-        resolved = self._resolved()
-        return RansacHomographyConfig.from_dict(resolved["ransac_homography"])
+    def ransac_homography(self) -> RansacConfig:
+        return RansacConfig.from_dict(self._resolved_value("ransac_homography"))
 
     @ransac_homography.setter
-    def ransac_homography(self, value: RansacHomographyConfig) -> None:
-        if not isinstance(value, RansacHomographyConfig):
-            raise TypeError("ransac_homography must be RansacHomographyConfig")
+    def ransac_homography(self, value: RansacConfig) -> None:
+        if not isinstance(value, RansacConfig):
+            raise TypeError("ransac_homography must be RansacConfig")
         self._apply_overlay({"ransac_homography": value.to_dict()}, refresh=True)
 
     @property
@@ -1807,8 +1931,7 @@ class DetectConfig:
 
     @property
     def id_correction(self) -> IdCorrectionConfig:
-        resolved = self._resolved()
-        return IdCorrectionConfig.from_dict(resolved["id_correction"])
+        return IdCorrectionConfig.from_dict(self._resolved_value("id_correction"))
 
     @id_correction.setter
     def id_correction(self, value: IdCorrectionConfig) -> None:
@@ -1818,8 +1941,7 @@ class DetectConfig:
 
     @property
     def inner_as_outer_recovery(self) -> InnerAsOuterRecoveryConfig:
-        resolved = self._resolved()
-        return InnerAsOuterRecoveryConfig.from_dict(resolved["inner_as_outer_recovery"])
+        return InnerAsOuterRecoveryConfig.from_dict(self._resolved_value("inner_as_outer_recovery"))
 
     @inner_as_outer_recovery.setter
     def inner_as_outer_recovery(self, value: InnerAsOuterRecoveryConfig) -> None:
@@ -1838,8 +1960,7 @@ class DetectConfig:
 
     @property
     def dedup_radius(self) -> float:
-        resolved = self._resolved()
-        return float(resolved["dedup_radius"])
+        return float(self._resolved_value("dedup_radius"))
 
     @dedup_radius.setter
     def dedup_radius(self, value: float) -> None:
@@ -1847,8 +1968,7 @@ class DetectConfig:
 
     @property
     def max_aspect_ratio(self) -> float:
-        resolved = self._resolved()
-        return float(resolved["max_aspect_ratio"])
+        return float(self._resolved_value("max_aspect_ratio"))
 
     @max_aspect_ratio.setter
     def max_aspect_ratio(self, value: float) -> None:
@@ -1894,8 +2014,7 @@ class DetectConfig:
 
     @property
     def use_global_filter(self) -> bool:
-        resolved = self._resolved()
-        return bool(resolved["use_global_filter"])
+        return bool(self._resolved_value("use_global_filter"))
 
     @use_global_filter.setter
     def use_global_filter(self, value: bool) -> None:
@@ -2006,15 +2125,42 @@ class Detector:
         mapper: CameraModel | DivisionModel,
     ) -> DetectionResult:
         """Run two-pass detection with an explicit pixel mapper."""
-        if isinstance(mapper, CameraModel):
-            payload = mapper._to_mapper_payload()
-        elif isinstance(mapper, DivisionModel):
-            payload = mapper._to_mapper_payload()
-        else:
-            raise TypeError("mapper must be CameraModel or DivisionModel")
-
+        payload = _coerce_mapper_payload(mapper)
         result_json = self._detect_impl(image=image, mapper_payload=payload)
         return DetectionResult.from_dict(json.loads(result_json))
+
+    def detect_with_diagnostics(
+        self,
+        image: np.ndarray | str | Path,
+    ) -> tuple[DetectionResult, DetectionDiagnostics]:
+        """Run detection and also return opt-in detection diagnostics.
+
+        Behaves exactly like :meth:`detect` — the returned
+        :class:`DetectionResult` is identical — but additionally yields a
+        :class:`DetectionDiagnostics` carrying per-marker fit/decode metrics,
+        raw edge sample points, stage provenance, and homography RANSAC
+        statistics. ``diagnostics.markers`` is aligned 1:1 with
+        ``result.detected_markers``.
+        """
+        combined_json = self._detect_with_diagnostics_impl(
+            image=image, mapper_payload=None
+        )
+        return _split_detection_with_diagnostics(combined_json)
+
+    def detect_with_mapper_diagnostics(
+        self,
+        image: np.ndarray | str | Path,
+        mapper: CameraModel | DivisionModel,
+    ) -> tuple[DetectionResult, DetectionDiagnostics]:
+        """Two-pass detection with a pixel mapper, returning diagnostics too.
+
+        Mapper-variant counterpart of :meth:`detect_with_diagnostics`.
+        """
+        payload = _coerce_mapper_payload(mapper)
+        combined_json = self._detect_with_diagnostics_impl(
+            image=image, mapper_payload=payload
+        )
+        return _split_detection_with_diagnostics(combined_json)
 
     def detect_adaptive(
         self,
@@ -2130,6 +2276,28 @@ class Detector:
             return self._core.detect_path(image_path)
         return self._core.detect_with_mapper_path(image_path, json.dumps(dict(mapper_payload)))
 
+    def _detect_with_diagnostics_impl(
+        self,
+        *,
+        image: np.ndarray | str | Path,
+        mapper_payload: Mapping[str, Any] | None,
+    ) -> str:
+        self._refresh_core_if_needed()
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            if mapper_payload is None:
+                return self._core.detect_with_diagnostics_array(image)
+            return self._core.detect_with_mapper_diagnostics_array(
+                image, json.dumps(dict(mapper_payload))
+            )
+
+        image_path = _coerce_path(image)
+        if mapper_payload is None:
+            return self._core.detect_with_diagnostics_path(image_path)
+        return self._core.detect_with_mapper_diagnostics_path(
+            image_path, json.dumps(dict(mapper_payload))
+        )
+
     def _detect_adaptive_impl(
         self,
         *,
@@ -2193,6 +2361,25 @@ class Detector:
 
 
 __version__ = _package_version()
+
+
+def _coerce_mapper_payload(
+    mapper: "CameraModel | DivisionModel",
+) -> Mapping[str, Any]:
+    """Validate a pixel mapper and return its wire payload."""
+    if isinstance(mapper, (CameraModel, DivisionModel)):
+        return mapper._to_mapper_payload()
+    raise TypeError("mapper must be CameraModel or DivisionModel")
+
+
+def _split_detection_with_diagnostics(
+    combined_json: str,
+) -> tuple["DetectionResult", "DetectionDiagnostics"]:
+    """Parse a `{"result": ..., "diagnostics": ...}` payload."""
+    combined = json.loads(combined_json)
+    result = DetectionResult.from_dict(combined["result"])
+    diagnostics = DetectionDiagnostics.from_dict(combined["diagnostics"])
+    return result, diagnostics
 
 
 def _optional_float(value: Any) -> float | None:
@@ -2458,19 +2645,19 @@ __all__ = [
     "BoardLayout",
     "BoardMarker",
     "CircleRefinementMethod",
-    "MarkerSpec",
+    "MarkerSpecConfig",
     "MarkerScalePrior",
     "RansacFitConfig",
     "InnerFitConfig",
     "OuterFitConfig",
-    "CompletionParams",
-    "ProjectiveCenterParams",
-    "SeedProposalParams",
+    "CompletionConfig",
+    "ProjectiveCenterConfig",
+    "SeedProposalConfig",
     "ProposalConfig",
     "EdgeSampleConfig",
     "DecodeConfig",
     "OuterEstimationConfig",
-    "RansacHomographyConfig",
+    "RansacConfig",
     "SelfUndistortConfig",
     "IdCorrectionConfig",
     "InnerAsOuterRecoveryConfig",

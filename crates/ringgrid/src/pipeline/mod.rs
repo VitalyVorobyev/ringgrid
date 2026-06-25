@@ -23,6 +23,7 @@ mod time_compat;
 
 pub use result::{
     DetectedMarker, DetectionDiagnostics, DetectionFrame, DetectionResult, MarkerDiagnostics,
+    StageTimings,
 };
 
 pub(crate) use finalize::build_hex_grid_map;

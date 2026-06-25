@@ -454,6 +454,27 @@ mod tests {
     }
 
     #[test]
+    fn detect_with_diagnostics_populates_single_pass_timings() {
+        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let detector = Detector::with_config(cfg);
+        let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
+
+        let (_result, diagnostics) = detector.detect_with_diagnostics(&img);
+        let timings = diagnostics
+            .timings
+            .expect("single-pass detection surfaces stage timings");
+
+        // Each stage is non-negative and the end-to-end total is at least as
+        // large as any single stage it contains.
+        assert!(timings.proposal_ms >= 0.0);
+        assert!(timings.fit_decode_ms >= 0.0);
+        assert!(timings.finalize_ms >= 0.0);
+        assert!(timings.total_ms >= timings.proposal_ms);
+        assert!(timings.total_ms >= timings.fit_decode_ms);
+        assert!(timings.total_ms >= timings.finalize_ms);
+    }
+
+    #[test]
     fn detector_proposal_methods_consistent() {
         let cfg = DetectConfig::from_target(BoardLayout::default());
         let detector = Detector::with_config(cfg);

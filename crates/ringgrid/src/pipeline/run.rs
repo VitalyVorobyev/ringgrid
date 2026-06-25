@@ -32,17 +32,29 @@ pub(super) fn run(
     let fit_marker_count = fit_markers.len();
 
     let finalize_start = Instant::now();
-    let result = super::finalize::run(gray, fit_markers, config, mapper);
+    let mut result = super::finalize::run(gray, fit_markers, config, mapper);
     let finalize_elapsed = finalize_start.elapsed();
+    let total_elapsed = total_start.elapsed();
 
     tracing::info!(
         markers_after_fit_decode = fit_marker_count,
         markers_final = result.markers.len(),
         fit_decode_ms = duration_ms(fit_decode_elapsed),
         finalize_ms = duration_ms(finalize_elapsed),
-        total_ms = duration_ms(total_start.elapsed()),
+        total_ms = duration_ms(total_elapsed),
         "pipeline timing summary"
     );
+
+    // Surface the downstream stage split on the result. `proposal_ms` is filled
+    // in by `detect_single_pass`, which owns the proposal stage; the `total_ms`
+    // recorded here covers fit/decode + finalize and is overwritten with the
+    // full end-to-end total by the single-pass caller.
+    result.timings = Some(StageTimings {
+        proposal_ms: 0.0,
+        fit_decode_ms: duration_ms(fit_decode_elapsed),
+        finalize_ms: duration_ms(finalize_elapsed),
+        total_ms: duration_ms(total_elapsed),
+    });
 
     result
 }
@@ -187,8 +199,9 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineRe
     let proposal_count = proposals.len();
 
     let downstream_start = Instant::now();
-    let result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
+    let mut result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
     let downstream_elapsed = downstream_start.elapsed();
+    let total_elapsed = total_start.elapsed();
 
     tracing::info!(
         image_width,
@@ -198,9 +211,16 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineRe
         markers = result.markers.len(),
         proposal_ms = duration_ms(proposal_elapsed),
         downstream_ms = duration_ms(downstream_elapsed),
-        total_ms = duration_ms(total_start.elapsed()),
+        total_ms = duration_ms(total_elapsed),
         "detect_single_pass timing summary"
     );
+
+    // Complete the stage timings recorded by `run`: add the proposal stage this
+    // function owns and the full end-to-end total (proposal + downstream).
+    if let Some(timings) = result.timings.as_mut() {
+        timings.proposal_ms = duration_ms(proposal_elapsed);
+        timings.total_ms = duration_ms(total_elapsed);
+    }
 
     result
 }

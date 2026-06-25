@@ -26,6 +26,13 @@ enum Commands {
     /// Detect markers in an image.
     Detect(CliDetectArgs),
 
+    /// Benchmark per-stage detection timing over one or more images.
+    ///
+    /// Runs single-pass detection with warmup + repeats, reports the median
+    /// per-stage wall-clock, and writes a JSON report consumed by
+    /// `tools/gen_pages_perf.py` to build the documentation performance page.
+    Bench(CliBenchArgs),
+
     /// Generate canonical board_spec.json plus printable SVG/PNG target files.
     GenTarget(CliGenTargetArgs),
 
@@ -901,6 +908,7 @@ fn main() -> CliResult<()> {
 
     match cli.command {
         Commands::Detect(args) => run_detect(&args),
+        Commands::Bench(args) => run_bench(&args),
         Commands::GenTarget(args) => run_gen_target(&args),
         Commands::CodebookInfo => run_codebook_info(),
 
@@ -1213,6 +1221,173 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     )?;
     std::fs::write(&args.out, &json)?;
     tracing::info!("Results written to {}", args.out.display());
+
+    Ok(())
+}
+
+// ── bench ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Args)]
+struct CliBenchArgs {
+    /// Input image to benchmark. Repeat the flag to benchmark several images.
+    #[arg(long, required = true)]
+    image: Vec<PathBuf>,
+
+    /// Board layout JSON (target specification). Omitted uses the built-in board.
+    #[arg(long)]
+    target: Option<PathBuf>,
+
+    /// Output path for the timing report JSON.
+    #[arg(long)]
+    out: PathBuf,
+
+    /// Number of timed repeats per image (median is reported).
+    #[arg(long, default_value_t = 9)]
+    repeats: usize,
+
+    /// Number of warmup iterations per image (not timed).
+    #[arg(long, default_value_t = 2)]
+    warmup: usize,
+
+    /// Fixed marker outer diameter in pixels (scale hint). Omitted uses the
+    /// default marker-scale prior derived from the board.
+    #[arg(long)]
+    marker_diameter: Option<f64>,
+}
+
+/// Per-image entry of the bench report (the measurement-owned subset of the
+/// performance-page `images[]` schema; presentation fields are added by
+/// `tools/gen_pages_perf.py`).
+#[derive(serde::Serialize)]
+struct BenchImageReport {
+    file: String,
+    width: u32,
+    height: u32,
+    /// Proposal (raw center) count — maps to the page's `raw_corners`.
+    raw_corners: usize,
+    /// Total detected markers — maps to the page's `labelled`.
+    labelled: usize,
+    /// Decoded markers (valid ID) — maps to the page's `markers`.
+    markers: usize,
+    proposal_ms: f64,
+    fit_decode_ms: f64,
+    finalize_ms: f64,
+    total_ms: f64,
+}
+
+#[derive(serde::Serialize)]
+struct BenchReport {
+    repeats: usize,
+    source: String,
+    images: Vec<BenchImageReport>,
+}
+
+/// Median of a sample set (sorts in place). Returns 0.0 for an empty slice.
+fn median(samples: &mut [f64]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    samples.sort_by(|a, b| a.total_cmp(b));
+    let n = samples.len();
+    if n % 2 == 1 {
+        samples[n / 2]
+    } else {
+        0.5 * (samples[n / 2 - 1] + samples[n / 2])
+    }
+}
+
+fn run_bench(args: &CliBenchArgs) -> CliResult<()> {
+    let board = match &args.target {
+        Some(path) => ringgrid::BoardLayout::from_json_file(path).map_err(|e| -> CliError {
+            format!("Failed to load target spec {}: {}", path.display(), e).into()
+        })?,
+        None => ringgrid::BoardLayout::default(),
+    };
+    let config = match args.marker_diameter {
+        Some(d) => ringgrid::DetectConfig::from_target_and_scale_prior(
+            board,
+            ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32),
+        ),
+        None => ringgrid::DetectConfig::from_target(board),
+    };
+    let detector = ringgrid::Detector::with_config(config);
+    let repeats = args.repeats.max(1);
+
+    let mut images = Vec::with_capacity(args.image.len());
+    for image_path in &args.image {
+        let img = image::open(image_path).map_err(|e| -> CliError {
+            format!("Failed to open image {}: {}", image_path.display(), e).into()
+        })?;
+        let gray = img.to_luma8();
+        let (width, height) = gray.dimensions();
+
+        // Proposal count is deterministic; one call matches what detection uses.
+        let raw_corners = detector.propose(&gray).len();
+
+        for _ in 0..args.warmup {
+            let _ = detector.detect_with_diagnostics(&gray);
+        }
+
+        let mut proposal = Vec::with_capacity(repeats);
+        let mut fit_decode = Vec::with_capacity(repeats);
+        let mut finalize = Vec::with_capacity(repeats);
+        let mut total = Vec::with_capacity(repeats);
+        let mut labelled = 0usize;
+        let mut markers = 0usize;
+        for _ in 0..repeats {
+            let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+            let timings = diagnostics.timings.ok_or_else(|| -> CliError {
+                "single-pass detection produced no timings".into()
+            })?;
+            proposal.push(timings.proposal_ms);
+            fit_decode.push(timings.fit_decode_ms);
+            finalize.push(timings.finalize_ms);
+            total.push(timings.total_ms);
+            labelled = result.detected_markers.len();
+            markers = result
+                .detected_markers
+                .iter()
+                .filter(|m| m.id.is_some())
+                .count();
+        }
+
+        let proposal_ms = median(&mut proposal);
+        let fit_decode_ms = median(&mut fit_decode);
+        let finalize_ms = median(&mut finalize);
+        let total_ms = median(&mut total);
+        tracing::info!(
+            file = %image_path.display(),
+            width,
+            height,
+            raw_corners,
+            labelled,
+            markers,
+            total_p50_ms = total_ms,
+            "benchmarked image"
+        );
+
+        images.push(BenchImageReport {
+            file: image_path.display().to_string(),
+            width,
+            height,
+            raw_corners,
+            labelled,
+            markers,
+            proposal_ms,
+            fit_decode_ms,
+            finalize_ms,
+            total_ms,
+        });
+    }
+
+    let report = BenchReport {
+        repeats,
+        source: format!("ringgrid bench --repeats {repeats}"),
+        images,
+    };
+    let json = serde_json::to_string_pretty(&report)?;
+    std::fs::write(&args.out, &json)?;
+    tracing::info!("Bench report written to {}", args.out.display());
 
     Ok(())
 }

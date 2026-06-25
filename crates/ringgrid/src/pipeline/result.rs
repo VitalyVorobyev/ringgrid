@@ -134,6 +134,38 @@ pub struct DetectionDiagnostics {
     /// Homography RANSAC statistics, if a homography was fitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ransac: Option<crate::homography::RansacStats>,
+    /// Per-stage wall-clock timing for single-pass detection, if measured.
+    ///
+    /// Populated by single-pass
+    /// [`Detector::detect_with_diagnostics`](crate::Detector::detect_with_diagnostics);
+    /// `None` for multi-scale / adaptive detection, which fans out across scale
+    /// tiers and has no single three-stage breakdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<StageTimings>,
+}
+
+/// Wall-clock timing for the major single-pass detection stages, in milliseconds.
+///
+/// Returned inside [`DetectionDiagnostics`] from single-pass
+/// [`Detector::detect_with_diagnostics`](crate::Detector::detect_with_diagnostics).
+/// The three stage fields sum to approximately [`total_ms`](Self::total_ms);
+/// `total_ms` additionally captures minor inter-stage overhead.
+///
+/// Timing uses a platform-portable clock and is therefore available on native
+/// and WASM targets alike.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct StageTimings {
+    /// Proposal stage (center detection) wall-clock, in milliseconds.
+    pub proposal_ms: f64,
+    /// Fit + decode stage (outer/inner ellipse fit, codebook decode, dedup),
+    /// in milliseconds.
+    pub fit_decode_ms: f64,
+    /// Finalize stage (center correction, ID correction, global homography
+    /// filter, completion, final H refit) wall-clock, in milliseconds.
+    pub finalize_ms: f64,
+    /// End-to-end wall-clock for the whole single-pass detection, in milliseconds.
+    pub total_ms: f64,
 }
 
 impl DetectionResult {
@@ -172,6 +204,8 @@ pub(crate) struct PipelineResult {
     pub ransac: Option<crate::homography::RansacStats>,
     /// Estimated self-undistort division model, if self-undistort was run.
     pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
+    /// Per-stage wall-clock timing, populated by single-pass detection.
+    pub timings: Option<StageTimings>,
 }
 
 impl PipelineResult {
@@ -199,6 +233,7 @@ impl PipelineResult {
         let diag = DetectionDiagnostics {
             markers: diagnostics,
             ransac: self.ransac,
+            timings: self.timings,
         };
         (result, diag)
     }

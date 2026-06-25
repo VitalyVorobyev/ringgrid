@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use image::GrayImage;
 use nalgebra::Point2;
-use projective_grid::GridIndex;
+use projective_grid::GridCoords;
 use projective_grid::hex::hex_find_inconsistent_corners;
 
 use super::{
@@ -121,7 +121,7 @@ fn filter_with_h(fit_markers: Vec<MarkerRecord>, config: &DetectConfig) -> Filte
 pub(crate) fn build_hex_grid_map(
     markers: &[MarkerRecord],
     board: &BoardLayout,
-) -> HashMap<GridIndex, Point2<f32>> {
+) -> HashMap<GridCoords, Point2<f32>> {
     markers
         .iter()
         .filter_map(|m| {
@@ -130,7 +130,7 @@ pub(crate) fn build_hex_grid_map(
             let q = bm.q? as i32;
             let r = bm.r? as i32;
             Some((
-                GridIndex { i: q, j: r },
+                GridCoords { i: q, j: r },
                 Point2::new(m.center[0] as f32, m.center[1] as f32),
             ))
         })
@@ -149,7 +149,7 @@ fn topology_filter(
     if inconsistent.is_empty() {
         return 0;
     }
-    let bad_indices: std::collections::HashSet<GridIndex> =
+    let bad_indices: std::collections::HashSet<GridCoords> =
         inconsistent.iter().map(|(idx, _)| *idx).collect();
     let before = markers.len();
     markers.retain(|m| {
@@ -160,7 +160,7 @@ fn topology_filter(
         let (Some(q), Some(r)) = (bm.q, bm.r) else {
             return true;
         };
-        !bad_indices.contains(&GridIndex {
+        !bad_indices.contains(&GridCoords {
             i: q as i32,
             j: r as i32,
         })

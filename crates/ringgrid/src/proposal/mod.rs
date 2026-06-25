@@ -141,12 +141,14 @@ fn compute_via_radsym(
     }
     let abs_threshold = config.grad_threshold * max_mag;
 
-    let rsd_config = radsym::RsdConfig {
-        radii,
-        gradient_threshold: abs_threshold,
-        polarity: radsym::Polarity::Both,
-        smoothing_factor: 0.5,
-    };
+    // radsym 0.2 marks `RsdConfig` `#[non_exhaustive]`, so it can no longer be
+    // built with a struct literal from outside the crate. Start from the
+    // defaults and override the fields the proposal stage drives.
+    let mut rsd_config = radsym::RsdConfig::default();
+    rsd_config.radii = radii;
+    rsd_config.gradient_threshold = abs_threshold;
+    rsd_config.polarity = radsym::Polarity::Both;
+    rsd_config.smoothing_factor = 0.5;
 
     let response = match radsym::rsd_response_fused(&gradient, &rsd_config) {
         Ok(r) => r,
@@ -171,11 +173,11 @@ fn compute_via_radsym(
     // Initial budget: generous to allow distance suppression to work properly
     let initial_budget = config.max_candidates.unwrap_or(4096).max(512);
 
-    let nms_config = radsym::NmsConfig {
-        radius: nms_radius,
-        threshold: nms_threshold,
-        max_detections: initial_budget,
-    };
+    // radsym 0.2 marks `NmsConfig` `#[non_exhaustive]`; override post-default.
+    let mut nms_config = radsym::NmsConfig::default();
+    nms_config.radius = nms_radius;
+    nms_config.threshold = nms_threshold;
+    nms_config.max_detections = initial_budget;
 
     let radsym_proposals =
         radsym::extract_proposals(&response, &nms_config, radsym::Polarity::Both);

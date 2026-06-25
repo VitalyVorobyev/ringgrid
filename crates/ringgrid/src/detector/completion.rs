@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use image::GrayImage;
 use nalgebra::Point2;
-use projective_grid::GridIndex;
+use projective_grid::GridCoords;
 use projective_grid::hex::hex_predict_grid_position;
 
 use crate::conic::Ellipse;
@@ -193,13 +193,13 @@ fn local_affine_completion_seed(
 
 fn hex_neighbor_seed(
     id: usize,
-    hex_grid: &HashMap<GridIndex, Point2<f32>>,
+    hex_grid: &HashMap<GridCoords, Point2<f32>>,
     board: &crate::board_layout::BoardLayout,
 ) -> Option<[f64; 2]> {
     let bm = board.marker(id)?;
     let q = bm.q? as i32;
     let r = bm.r? as i32;
-    let predicted = hex_predict_grid_position(hex_grid, GridIndex { i: q, j: r })?;
+    let predicted = hex_predict_grid_position(hex_grid, GridCoords { i: q, j: r })?;
     Some([f64::from(predicted.x), f64::from(predicted.y)])
 }
 
@@ -208,7 +208,7 @@ fn projected_completion_seed(
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
     board: &crate::board_layout::BoardLayout,
-    hex_grid: &HashMap<GridIndex, Point2<f32>>,
+    hex_grid: &HashMap<GridCoords, Point2<f32>>,
 ) -> Option<[f64; 2]> {
     let board_xy = board.xy_mm(id)?;
     let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];

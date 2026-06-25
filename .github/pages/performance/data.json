@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "cpu": "Apple M4 Pro",
+    "rustc": "1.95.0",
+    "git_sha": "29e4da3",
+    "generated": "2026-06-25",
+    "repeats": 15,
+    "source": "tools/gen_pages_perf.py"
+  },
+  "images": [
+    {
+      "label": "Coded ring board \u2014 real capture",
+      "kind": "ringgrid",
+      "file": "testdata/target_3_split_00.png",
+      "width": 720,
+      "height": 540,
+      "raw_corners": 93,
+      "labelled": 78,
+      "markers": 78,
+      "proposal_ms": 15.129083999999999,
+      "fit_decode_ms": 8.621375,
+      "finalize_ms": 4.454625,
+      "img": "./img/target_3_split_00.png",
+      "note": "Dense hex lattice, decoded to absolute IDs with homography."
+    },
+    {
+      "label": "Synthetic board #1",
+      "kind": "synthetic",
+      "file": "synth/img_0000.png",
+      "width": 1280,
+      "height": 960,
+      "raw_corners": 203,
+      "labelled": 203,
+      "markers": 203,
+      "proposal_ms": 31.520208,
+      "fit_decode_ms": 24.32325,
+      "finalize_ms": 8.748458000000001,
+      "img": "./img/synth_0000.png",
+      "note": "Generated target, <1 px blur \u2014 also scored for accuracy."
+    },
+    {
+      "label": "Synthetic board #2",
+      "kind": "synthetic",
+      "file": "synth/img_0001.png",
+      "width": 1280,
+      "height": 960,
+      "raw_corners": 203,
+      "labelled": 203,
+      "markers": 203,
+      "proposal_ms": 31.701624999999996,
+      "fit_decode_ms": 24.280708,
+      "finalize_ms": 8.834833,
+      "img": "./img/synth_0001.png",
+      "note": "Generated target, <1 px blur \u2014 also scored for accuracy."
+    }
+  ],
+  "end_to_end": {
+    "desc": "End-to-end single-pass latency (median of 15 repeats) on public sample images.",
+    "frames": [
+      {
+        "file": "testdata/target_3_split_00.png",
+        "note": "Dense hex lattice, decoded to absolute IDs with homography.",
+        "ms": 28.259375
+      },
+      {
+        "file": "synth/img_0000.png",
+        "note": "Generated target, <1 px blur \u2014 also scored for accuracy.",
+        "ms": 64.478708
+      },
+      {
+        "file": "synth/img_0001.png",
+        "note": "Generated target, <1 px blur \u2014 also scored for accuracy.",
+        "ms": 64.947167
+      }
+    ]
+  },
+  "accuracy": {
+    "desc": "Synthetic reference set (3 boards, <1 px blur) scored against generated ground truth. Centre error is the mean per-marker distance to the true centre; lower is sharper. Projective-centre refinement removes the perspective bias of the raw ellipse centre.",
+    "sets": [
+      {
+        "label": "No refinement",
+        "precision": 1.0,
+        "recall": 1.0,
+        "center_mean_px": 0.08487004730559349,
+        "h_vs_gt_mean_px": 0.03549133942351027,
+        "h_vs_gt_p95_px": 0.06180247897392472
+      },
+      {
+        "label": "Projective centre",
+        "precision": 1.0,
+        "recall": 1.0,
+        "center_mean_px": 0.06004752697886368,
+        "h_vs_gt_mean_px": 0.019468395481356305,
+        "h_vs_gt_p95_px": 0.03475467388820989
+      }
+    ]
+  }
+}

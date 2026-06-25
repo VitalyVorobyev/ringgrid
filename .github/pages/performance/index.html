@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ringgrid · Performance</title>
+<meta name="description" content="Per-image, per-stage detection timing and sub-pixel accuracy for ringgrid, measured on public sample boards." />
+<link rel="icon" type="image/svg+xml" href="../img/vv-logo.svg" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #060a14; --blue: #5b9dff; --amber: #f2a93d; --teal: #33c6e3;
+    --green: #3ddc84; --rose: #ff6b6b; --ink: #d8e3f2; --muted: #8294b0;
+    --card: #0b1426; --edge: #1b2740; --track: #0e1726;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background:
+      radial-gradient(1100px 700px at 14% -10%, rgba(91,157,255,.12), transparent 60%),
+      radial-gradient(1000px 720px at 102% 112%, rgba(242,169,61,.08), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 30px 24px 80px; }
+  a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+  a.back:hover { color: var(--blue); }
+  header.top { margin: 14px 0 6px; }
+  h1 {
+    font-size: 30px; margin: 0; letter-spacing: -.02em;
+    background: linear-gradient(96deg, var(--blue), #eef4fb 55%, var(--amber));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    display: inline-block;
+  }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 6px; max-width: 70ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; }
+  .chip { background: var(--card); border: 1px solid var(--edge); border-radius: 999px;
+    padding: 5px 12px; font-size: 12.5px; color: var(--muted); }
+  .chip b { color: var(--ink); font-weight: 600; }
+  h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+    margin: 44px 0 14px; font-weight: 700; }
+  .card { background: var(--card); border: 1px solid var(--edge); border-radius: 14px;
+    padding: 20px 22px; margin-bottom: 16px; }
+  .imgcard h3 { margin: 0 0 2px; font-size: 18px; }
+  .imgcard .preview { display: block; width: 100%; max-width: 100%; height: auto;
+    border-radius: 10px; border: 1px solid var(--edge); margin: 0 0 14px; background: var(--track); }
+  .imgcard .file { color: var(--muted); font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .imgcard .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 14px; font-size: 12.5px; color: var(--muted); }
+  .imgcard .meta b { color: var(--ink); font-weight: 600; }
+  .kindtag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 6px;
+    background: rgba(91,157,255,.14); color: var(--blue); vertical-align: middle; margin-left: 8px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .barrow { display: grid; grid-template-columns: 132px 1fr 118px; align-items: center; gap: 12px; margin: 6px 0; }
+  .barrow .bl { font-size: 12.5px; color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track { background: var(--track); border-radius: 6px; height: 18px; position: relative; overflow: hidden;
+    border: 1px solid rgba(255,255,255,.04); }
+  .fill { height: 100%; border-radius: 6px; }
+  .barrow .bv { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; }
+  .barrow .bv .mut { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge); }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td code, .file code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 44px; border-top: 1px solid var(--edge); padding-top: 16px; }
+  .desc { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .err { color: var(--rose); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../">&larr; ringgrid</a>
+  <header class="top">
+    <h1>Performance</h1>
+    <div class="sub">Where the milliseconds go, measured per image on public sample boards — not generic
+      aggregates. Single-pass detection runs in three stages: proposal (center detection), fit + decode
+      (ellipse fitting and 16-sector ID decode), and finalize (center correction, hex-neighbor ID
+      consensus, homography, and completion).</div>
+  </header>
+  <div class="chips" id="chips"></div>
+
+  <h2>Per-image stage breakdown</h2>
+  <div class="desc">Per-stage median wall-clock from <code>ringgrid bench</code>, which runs the <b>complete</b>
+    single-pass detector on each public image. Proposal scales with image area; fit + decode scales with marker
+    count; finalize covers the board-level reasoning — homography RANSAC, hex-neighbor ID consensus, and completion
+    of markers missing from the first pass.</div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--amber)"></i> proposal (center detection)</span>
+    <span><i class="sw" style="background:var(--blue)"></i> fit + decode (ellipse fit + ID)</span>
+    <span><i class="sw" style="background:var(--teal)"></i> finalize (homography, ID consensus, completion)</span>
+  </div>
+  <div id="imagecards"></div>
+
+  <h2>End-to-end latency — public frames</h2>
+  <div class="card">
+    <p class="desc" id="e2e-desc"></p>
+    <table id="e2e"><thead><tr><th>Frame</th><th></th><th class="num">p50 (ms)</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div id="acc-section">
+    <h2>Accuracy — synthetic ground truth</h2>
+    <p class="desc" id="acc-desc"></p>
+    <div id="accuracy"></div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+const C = { amber: "#f2a93d", blue: "#5b9dff", teal: "#33c6e3", muted: "#8294b0" };
+const fmt = (v, d = 3) => v == null ? "—" : v.toFixed(d);
+const pct = v => v == null ? "—" : (100 * v).toFixed(1) + "%";
+
+function bar(label, fills, valueHtml, max) {
+  const row = document.createElement("div"); row.className = "barrow";
+  const bl = document.createElement("div"); bl.className = "bl"; bl.textContent = label;
+  const track = document.createElement("div"); track.className = "track";
+  fills.forEach(f => {
+    const d = document.createElement("div"); d.className = "fill";
+    d.style.width = Math.max(0.5, 100 * f.v / max) + "%"; d.style.background = f.color;
+    d.style.height = "100%"; d.style.position = "absolute"; d.style.top = "0";
+    track.appendChild(d);
+  });
+  const bv = document.createElement("div"); bv.className = "bv"; bv.innerHTML = valueHtml;
+  row.append(bl, track, bv); return row;
+}
+
+function renderImageCard(img) {
+  const card = document.createElement("div"); card.className = "card imgcard";
+
+  if (img.img) {
+    const fig = document.createElement("img"); fig.className = "preview";
+    fig.src = img.img; fig.alt = img.label; fig.loading = "lazy";
+    card.appendChild(fig);
+  }
+
+  const h = document.createElement("h3");
+  h.innerHTML = img.label + '<span class="kindtag">' + img.kind + "</span>";
+  const file = document.createElement("div"); file.className = "file";
+  file.innerHTML = "<code>" + img.file + "</code>";
+  const meta = document.createElement("div"); meta.className = "meta";
+  let metaHtml = "<span><b>" + img.width + "×" + img.height + "</b> px</span>" +
+    "<span><b>" + img.raw_corners + "</b> raw corners</span>" +
+    "<span><b>" + img.labelled + "</b> labelled</span>";
+  if (img.markers != null) metaHtml += "<span><b>" + img.markers + "</b> markers</span>";
+  meta.innerHTML = metaHtml;
+  card.append(h, file, meta);
+
+  // Three single-pass detector stages, flat median fields (ms).
+  const stages = [
+    { label: "proposal", v: img.proposal_ms, color: C.amber },
+    { label: "fit + decode", v: img.fit_decode_ms, color: C.blue },
+    { label: "finalize", v: img.finalize_ms, color: C.teal },
+  ].filter(s => s.v != null);
+  const max = Math.max(...stages.map(s => s.v), 0) || 1;
+  stages.forEach(s => {
+    card.appendChild(bar(s.label, [{ v: s.v, color: s.color }], fmt(s.v), max));
+  });
+
+  if (img.note) {
+    const n = document.createElement("p"); n.className = "desc";
+    n.style.margin = "12px 0 0"; n.style.borderTop = "1px solid var(--edge)"; n.style.paddingTop = "10px";
+    n.textContent = img.note; card.appendChild(n);
+  }
+  return card;
+}
+
+function renderAccuracyCard(set) {
+  const card = document.createElement("div"); card.className = "card imgcard";
+
+  const h = document.createElement("h3");
+  h.innerHTML = set.label + '<span class="kindtag">accuracy</span>';
+  card.appendChild(h);
+
+  if (set.precision != null)
+    card.appendChild(bar("precision", [{ v: set.precision, color: C.blue }], pct(set.precision), 1));
+  if (set.recall != null)
+    card.appendChild(bar("recall", [{ v: set.recall, color: C.teal }], pct(set.recall), 1));
+
+  const meta = document.createElement("div"); meta.className = "meta"; meta.style.marginTop = "14px";
+  let html = "";
+  if (set.center_mean_px != null)
+    html += "<span>center error <b>" + fmt(set.center_mean_px) + "</b> px</span>";
+  if (set.h_vs_gt_mean_px != null)
+    html += "<span>homography vs GT <b>" + fmt(set.h_vs_gt_mean_px) + "</b> px</span>";
+  if (set.h_vs_gt_p95_px != null)
+    html += "<span>H p95 <b>" + fmt(set.h_vs_gt_p95_px) + "</b> px</span>";
+  meta.innerHTML = html;
+  card.appendChild(meta);
+  return card;
+}
+
+function renderAccuracy(data) {
+  const acc = data.accuracy;
+  const section = document.getElementById("acc-section");
+  if (!acc || !Array.isArray(acc.sets) || acc.sets.length === 0) {
+    section.style.display = "none";
+    return;
+  }
+  document.getElementById("acc-desc").textContent = acc.desc || "";
+  const host = document.getElementById("accuracy");
+  acc.sets.forEach(s => host.appendChild(renderAccuracyCard(s)));
+}
+
+function render(data) {
+  const m = data.meta;
+  document.getElementById("chips").innerHTML = [
+    ["", m.cpu], ["rustc", m.rustc], ["git", m.git_sha], ["date", m.generated],
+    ["bench", "×" + m.repeats + " reps"]
+  ].map(([k, v]) => '<span class="chip">' + (k ? k + " " : "") + "<b>" + v + "</b></span>").join("");
+
+  const ic = document.getElementById("imagecards");
+  data.images.forEach(img => ic.appendChild(renderImageCard(img)));
+
+  document.getElementById("e2e-desc").textContent = data.end_to_end.desc;
+  const e2e = document.querySelector("#e2e tbody");
+  data.end_to_end.frames.forEach(f => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td><code>" + f.file + "</code></td><td class='mut' style='color:var(--muted)'>" +
+      (f.note || "") + "</td><td class='num'>" + f.ms.toFixed(2) + "</td>";
+    e2e.appendChild(tr);
+  });
+
+  renderAccuracy(data);
+
+  document.getElementById("foot").innerHTML =
+    "Timing is the median of " + m.repeats + " repeats from <code>" + m.source +
+    "</code> on " + m.cpu + " (rustc " + m.rustc + "). Accuracy is scored against synthetic " +
+    "ground truth. Methodology lives in <code>docs/performance.md</code>.";
+}
+
+fetch("./data.json").then(r => r.json()).then(render).catch(e => {
+  document.getElementById("imagecards").innerHTML =
+    '<div class="card err">Could not load data.json: ' + e + "</div>";
+});
+</script>
+</body>
+</html>

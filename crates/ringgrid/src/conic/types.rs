@@ -185,6 +185,24 @@ impl ConicCoeffs {
         a * x * x + b * x * y + c * y * y + d * x + e * y + f
     }
 
+    /// Approximate geometric (Sampson) distance from a point to this conic:
+    /// the algebraic distance divided by the gradient magnitude.
+    ///
+    /// Operating on the conic directly lets a scoring loop convert the model to
+    /// conic coefficients once and reuse it across all points, instead of
+    /// recomputing the conversion per point.
+    pub fn sampson_distance(&self, x: f64, y: f64) -> f64 {
+        let [ca, cb, cc, cd, ce, _cf] = self.0;
+        let alg = self.algebraic_distance(x, y);
+        let gx = 2.0 * ca * x + cb * y + cd;
+        let gy = cb * x + 2.0 * cc * y + ce;
+        let grad_mag_sq = gx * gx + gy * gy;
+        if grad_mag_sq < 1e-30 {
+            return alg.abs();
+        }
+        alg.abs() / grad_mag_sq.sqrt()
+    }
+
     /// Check whether the conic represents an ellipse (discriminant B²−4AC < 0).
     pub fn is_ellipse(&self) -> bool {
         let [a, b, c, ..] = self.0;
@@ -246,16 +264,7 @@ impl Ellipse {
     /// Uses the algebraic distance divided by the gradient magnitude as a
     /// first-order approximation (Sampson distance).
     pub fn sampson_distance(&self, x: f64, y: f64) -> f64 {
-        let c = self.to_conic();
-        let [ca, cb, cc, cd, ce, _cf] = c.0;
-        let alg = c.algebraic_distance(x, y);
-        let gx = 2.0 * ca * x + cb * y + cd;
-        let gy = cb * x + 2.0 * cc * y + ce;
-        let grad_mag_sq = gx * gx + gy * gy;
-        if grad_mag_sq < 1e-30 {
-            return alg.abs();
-        }
-        alg.abs() / grad_mag_sq.sqrt()
+        self.to_conic().sampson_distance(x, y)
     }
 }
 

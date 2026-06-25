@@ -50,6 +50,9 @@
 //! See [`DetectionResult::center_frame`] and [`DetectionResult::homography_frame`]
 //! for the frame metadata on each result.
 
+// The public API is fully documented; this lint keeps it that way.
+#![warn(missing_docs)]
+
 mod api;
 mod board_layout;
 mod conic;
@@ -83,7 +86,7 @@ pub use pipeline::{DetectedMarker, DetectionFrame, DetectionResult};
 pub use detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
 pub use homography::RansacStats;
 pub use marker::DecodeMetrics;
-pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics};
+pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
 
 // Configuration
 pub use conic::RansacConfig;

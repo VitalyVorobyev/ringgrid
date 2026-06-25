@@ -7,7 +7,8 @@ use crate::detector::dedup::merge_multiscale_markers;
 use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
-    Proposal, ProposalConfig, ProposalResult, find_ellipse_centers_with_heatmap,
+    Proposal, ProposalConfig, ProposalResult, find_ellipse_centers,
+    find_ellipse_centers_with_heatmap,
 };
 use image::{ImageBuffer, Luma};
 use std::collections::HashSet;
@@ -32,17 +33,29 @@ pub(super) fn run(
     let fit_marker_count = fit_markers.len();
 
     let finalize_start = Instant::now();
-    let result = super::finalize::run(gray, fit_markers, config, mapper);
+    let mut result = super::finalize::run(gray, fit_markers, config, mapper);
     let finalize_elapsed = finalize_start.elapsed();
+    let total_elapsed = total_start.elapsed();
 
     tracing::info!(
         markers_after_fit_decode = fit_marker_count,
         markers_final = result.markers.len(),
         fit_decode_ms = duration_ms(fit_decode_elapsed),
         finalize_ms = duration_ms(finalize_elapsed),
-        total_ms = duration_ms(total_start.elapsed()),
+        total_ms = duration_ms(total_elapsed),
         "pipeline timing summary"
     );
+
+    // Surface the downstream stage split on the result. `proposal_ms` is filled
+    // in by `detect_single_pass`, which owns the proposal stage; the `total_ms`
+    // recorded here covers fit/decode + finalize and is overwritten with the
+    // full end-to-end total by the single-pass caller.
+    result.timings = Some(StageTimings {
+        proposal_ms: 0.0,
+        fit_decode_ms: duration_ms(fit_decode_elapsed),
+        finalize_ms: duration_ms(finalize_elapsed),
+        total_ms: duration_ms(total_elapsed),
+    });
 
     result
 }
@@ -103,13 +116,17 @@ fn resize_heatmap_to_image_space(
     image::imageops::resize(&heatmap_img, w, h, image::imageops::FilterType::Triangle).into_raw()
 }
 
-fn proposal_result_with_downscale(
+/// Shared downscale setup: when `factor > 1`, produce the resized image, the
+/// distance-scaled proposal config, and the x/y scale factors back to image
+/// space. Returns `None` when no downscaling is needed (`factor <= 1`), so the
+/// caller can run on the original image.
+fn downscale_setup(
     gray: &GrayImage,
     proposal_config: &ProposalConfig,
     factor: u32,
-) -> ProposalResult {
+) -> Option<(GrayImage, ProposalConfig, f32, f32)> {
     if factor <= 1 {
-        return find_ellipse_centers_with_heatmap(gray, proposal_config);
+        return None;
     }
 
     let (w, h) = gray.dimensions();
@@ -131,23 +148,49 @@ fn proposal_result_with_downscale(
     scaled_config.r_max /= distance_scale;
     scaled_config.min_distance /= distance_scale;
 
+    Some((small, scaled_config, scale_x, scale_y))
+}
+
+fn proposal_result_with_downscale(
+    gray: &GrayImage,
+    proposal_config: &ProposalConfig,
+    factor: u32,
+) -> ProposalResult {
+    let Some((small, scaled_config, scale_x, scale_y)) =
+        downscale_setup(gray, proposal_config, factor)
+    else {
+        return find_ellipse_centers_with_heatmap(gray, proposal_config);
+    };
+
+    let (w, h) = gray.dimensions();
+    let (small_w, small_h) = small.dimensions();
     let small_result = find_ellipse_centers_with_heatmap(&small, &scaled_config);
-    let proposals = rescale_proposals_to_image_space(small_result.proposals, scale_x, scale_y);
-    let heatmap = resize_heatmap_to_image_space(small_result.heatmap, small_w, small_h, w, h);
 
     ProposalResult {
         image_size: [w, h],
-        proposals,
-        heatmap,
+        proposals: rescale_proposals_to_image_space(small_result.proposals, scale_x, scale_y),
+        heatmap: resize_heatmap_to_image_space(small_result.heatmap, small_w, small_h, w, h),
     }
 }
 
+/// Proposal seeds only (no heatmap).
+///
+/// The detection pipeline discards the vote heatmap, so this skips computing it
+/// — and, under downscaling, skips the full-image heatmap resize entirely. The
+/// returned proposals are identical to those from
+/// [`proposal_result_with_downscale`]; only the heatmap byproduct is omitted.
 fn find_proposals_with_downscale(
     gray: &GrayImage,
     proposal_config: &ProposalConfig,
     factor: u32,
 ) -> Vec<Proposal> {
-    proposal_result_with_downscale(gray, proposal_config, factor).proposals
+    match downscale_setup(gray, proposal_config, factor) {
+        None => find_ellipse_centers(gray, proposal_config),
+        Some((small, scaled_config, scale_x, scale_y)) => {
+            let small_proposals = find_ellipse_centers(&small, &scaled_config);
+            rescale_proposals_to_image_space(small_proposals, scale_x, scale_y)
+        }
+    }
 }
 
 pub(crate) fn proposal_seeds_for_config(gray: &GrayImage, config: &DetectConfig) -> Vec<Proposal> {
@@ -187,8 +230,9 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineRe
     let proposal_count = proposals.len();
 
     let downstream_start = Instant::now();
-    let result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
+    let mut result = run(gray, config, None, proposals, DetectionSource::FitDecoded);
     let downstream_elapsed = downstream_start.elapsed();
+    let total_elapsed = total_start.elapsed();
 
     tracing::info!(
         image_width,
@@ -198,9 +242,16 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineRe
         markers = result.markers.len(),
         proposal_ms = duration_ms(proposal_elapsed),
         downstream_ms = duration_ms(downstream_elapsed),
-        total_ms = duration_ms(total_start.elapsed()),
+        total_ms = duration_ms(total_elapsed),
         "detect_single_pass timing summary"
     );
+
+    // Complete the stage timings recorded by `run`: add the proposal stage this
+    // function owns and the full end-to-end total (proposal + downstream).
+    if let Some(timings) = result.timings.as_mut() {
+        timings.proposal_ms = duration_ms(proposal_elapsed);
+        timings.total_ms = duration_ms(total_elapsed);
+    }
 
     result
 }

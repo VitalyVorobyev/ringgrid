@@ -20,7 +20,7 @@ env:
 jobs:
   build-docs:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -43,6 +43,11 @@ jobs:
         with:
           tool: mdbook
 
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
       - name: Build mdbook
         run: mdbook build book
 
@@ -51,33 +56,31 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --all-features --no-deps
 
+      - name: Build WASM demo
+        run: wasm-pack build crates/ringgrid-wasm --target web --release
+
       - name: Assemble site
         run: |
-          mkdir -p target/site
-          cp -r target/doc/* target/site/
+          mkdir -p target/site/api target/site/demo target/site/testdata
+          # Landing page + performance dashboard (committed static source).
+          cp -r .github/pages/index.html .github/pages/img .github/pages/performance target/site/
+          # User guide (mdBook) at /book.
           cp -r book/book target/site/book
-
-      - name: Set landing page
-        run: |
-          cat > target/site/index.html <<'EOF'
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8" />
-            <title>ringgrid documentation</title>
-            <style>
-              body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; }
-              a { display: block; margin: 12px 0; font-size: 1.2em; }
-            </style>
-          </head>
-          <body>
-            <h1>ringgrid</h1>
-            <p>Pure-Rust detector for coded ring calibration targets.</p>
-            <a href="book/index.html">User Guide (mdbook)</a>
-            <a href="ringgrid/index.html">API Reference (rustdoc)</a>
-          </body>
-          </html>
+          # API reference (rustdoc) at /api, with a redirect to the facade crate.
+          cp -r target/doc/. target/site/api/
+          cat > target/site/api/index.html <<'EOF'
+          <!doctype html><meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=ringgrid/index.html">
+          <link rel="canonical" href="ringgrid/index.html">
+          <a href="ringgrid/index.html">ringgrid API reference</a>
           EOF
+          # WASM demo at /demo; pkg/ at site root (the demo imports ../pkg/), plus
+          # the sample image the demo's "Load Test Image" button fetches.
+          cp crates/ringgrid-wasm/demo/index.html target/site/demo/index.html
+          cp -r crates/ringgrid-wasm/pkg target/site/pkg
+          cp testdata/target_3_split_00.png target/site/testdata/
+          # Disable Jekyll so rustdoc _-prefixed files and pkg/ are served verbatim.
+          touch target/site/.nojekyll
 
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v5

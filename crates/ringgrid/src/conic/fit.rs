@@ -147,10 +147,11 @@ pub fn rms_sampson_distance(ellipse: &Ellipse, points: &[[f64; 2]]) -> f64 {
     if points.is_empty() {
         return 0.0;
     }
+    let conic = ellipse.to_conic();
     let sum_sq: f64 = points
         .iter()
         .map(|&[x, y]| {
-            let d = ellipse.sampson_distance(x, y);
+            let d = conic.sampson_distance(x, y);
             d * d
         })
         .sum();

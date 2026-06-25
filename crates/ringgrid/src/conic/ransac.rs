@@ -40,11 +40,14 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
             continue;
         };
 
-        // Count inliers using Sampson distance (reuse mask buffer)
+        // Count inliers using Sampson distance (reuse mask buffer).
+        // Convert the candidate to conic coefficients once, then score every
+        // point against it instead of reconverting per point.
+        let conic = ellipse.to_conic();
         mask.fill(false);
         let mut inlier_count = 0usize;
         for (i, &[x, y]) in points.iter().enumerate() {
-            let dist = ellipse.sampson_distance(x, y);
+            let dist = conic.sampson_distance(x, y);
             if dist < config.inlier_threshold {
                 mask[i] = true;
                 inlier_count += 1;
@@ -89,10 +92,11 @@ pub fn fit_ellipse_ransac(points: &[[f64; 2]], config: &RansacConfig) -> Option<
         .and_then(|conic| conic.to_ellipse())
         .or(best_ellipse)?;
 
-    // Recompute inlier count with final model using Sampson distance
+    // Recompute inlier count with final model using Sampson distance.
+    let final_conic = final_ellipse.to_conic();
     let mut final_count = 0;
     for &[x, y] in points {
-        let dist = final_ellipse.sampson_distance(x, y);
+        let dist = final_conic.sampson_distance(x, y);
         if dist < config.inlier_threshold {
             final_count += 1;
         }

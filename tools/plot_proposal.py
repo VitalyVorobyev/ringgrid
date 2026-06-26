@@ -79,8 +79,7 @@ def proposal_config_dict(config: ringgrid.ProposalConfig) -> dict:
         "grad_threshold": float(config.grad_threshold),
         "min_distance": float(config.min_distance),
         "min_vote_frac": float(config.min_vote_frac),
-        "accum_sigma": float(config.accum_sigma),
-        "edge_thinning": bool(config.edge_thinning),
+        "radius_step": int(getattr(config, "radius_step", 1)),
         "max_candidates": (
             None if getattr(config, "max_candidates", None) is None else int(config.max_candidates)
         ),
@@ -151,10 +150,8 @@ def build_config(args: argparse.Namespace) -> ringgrid.ProposalConfig:
         config.grad_threshold = args.grad_threshold
     if args.min_vote_frac is not None:
         config.min_vote_frac = args.min_vote_frac
-    if args.accum_sigma is not None:
-        config.accum_sigma = args.accum_sigma
-    if args.edge_thinning is not None:
-        config.edge_thinning = args.edge_thinning
+    if args.radius_step is not None:
+        config.radius_step = args.radius_step
     if args.max_candidates is not None:
         config.max_candidates = args.max_candidates
     return config
@@ -176,8 +173,7 @@ def main() -> int:
     parser.add_argument("--min-distance", type=float, default=None, help="Minimum distance between proposals (px)")
     parser.add_argument("--grad-threshold", type=float, default=None, help="Gradient magnitude threshold (fraction of max)")
     parser.add_argument("--min-vote-frac", type=float, default=None, help="Minimum accumulator peak (fraction of max)")
-    parser.add_argument("--accum-sigma", type=float, default=None, help="Gaussian smoothing sigma")
-    parser.add_argument("--edge-thinning", type=lambda s: s.lower() in ("true", "1", "yes"), default=None, help="Enable Canny-style gradient NMS (true/false)")
+    parser.add_argument("--radius-step", type=int, default=None, help="Stride between voting radii (1 = every integer radius)")
     parser.add_argument("--max-candidates", type=int, default=None, help="Optional hard cap on proposals")
 
     parser.add_argument(

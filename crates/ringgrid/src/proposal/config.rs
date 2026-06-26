@@ -25,12 +25,10 @@
 ///   magnitude; pixels below this are not used for voting.
 /// - [`min_vote_frac`](Self::min_vote_frac) — fraction of the accumulator
 ///   peak; candidate centers below this are discarded.
-/// - [`accum_sigma`](Self::accum_sigma) — Gaussian smoothing applied to the
-///   vote accumulator before peak extraction.
 /// - [`max_candidates`](Self::max_candidates) — optional hard cap on the
 ///   number of returned proposals.
-/// - [`edge_thinning`](Self::edge_thinning) — Canny-style gradient-direction
-///   NMS to thin edges before voting (reduces strong-edge count by 60-80%).
+/// - [`radius_step`](Self::radius_step) — stride between voting radii; raise
+///   it to trade accumulator sensitivity for proposal-stage speed.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ProposalConfig {
@@ -48,18 +46,22 @@ pub struct ProposalConfig {
     pub grad_threshold: f32,
     /// Minimum accumulator value for a proposal (fraction of max).
     pub min_vote_frac: f32,
-    /// Gaussian sigma for accumulator smoothing.
-    pub accum_sigma: f32,
     /// Optional cap on number of proposals returned (after score sorting).
     #[serde(default)]
     pub max_candidates: Option<usize>,
-    /// Enable Canny-style edge thinning before voting.
+    /// Step (in pixels) between consecutive voting radii.
     ///
-    /// When `true`, non-maximum suppression along the gradient direction
-    /// reduces multi-pixel edge bands to single-pixel ridges, typically
-    /// cutting the strong-edge count by 60-80% and proportionally reducing
-    /// the voting workload.
-    pub edge_thinning: bool,
+    /// `1` (the default) tests every integer radius in `[r_min, r_max]`. Values
+    /// `> 1` subsample the radius set — `2` tests every other radius
+    /// (≈ halves proposal voting cost), and so on — trading accumulator
+    /// sensitivity for proposal-stage speed. The maximum radius is always
+    /// included so the largest features still vote; values are clamped to a
+    /// minimum of `1`.
+    ///
+    /// Subsampling is **opt-in**: on the regression suite, `radius_step = 2`
+    /// cuts proposal time ~29 % but lowers recall on blurry / low-contrast and
+    /// real-world scenes (rtv3d −2.9 %), so the default keeps full coverage.
+    pub radius_step: u32,
 }
 
 impl Default for ProposalConfig {
@@ -70,9 +72,8 @@ impl Default for ProposalConfig {
             min_distance: 7.0,
             grad_threshold: 0.05,
             min_vote_frac: 0.1,
-            accum_sigma: 2.0,
             max_candidates: None,
-            edge_thinning: true,
+            radius_step: 1,
         }
     }
 }

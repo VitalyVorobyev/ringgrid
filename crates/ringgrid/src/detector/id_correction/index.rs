@@ -48,13 +48,17 @@ impl BoardIndex {
     /// Find the nearest board marker to `xy_mm` within `tolerance_mm`.
     pub(super) fn nearest_within(&self, xy_mm: [f64; 2], tolerance_mm: f64) -> Option<usize> {
         let tol2 = tolerance_mm * tolerance_mm;
-        let mut best_id = None;
+        let mut best_id: Option<usize> = None;
         let mut best_d2 = tol2;
         for (&id, &bxy) in &self.id_to_xy {
             let dx = xy_mm[0] - bxy[0] as f64;
             let dy = xy_mm[1] - bxy[1] as f64;
             let d2 = dx * dx + dy * dy;
-            if d2 < best_d2 {
+            // Strict `<` keeps the initial `tol2` an exclusive bound; the
+            // equidistant tie-break (lower id wins) makes the result
+            // deterministic regardless of `HashMap` iteration order, matching
+            // `nearest_k_ids`.
+            if d2 < best_d2 || (d2 == best_d2 && best_id.is_some_and(|b| id < b)) {
                 best_d2 = d2;
                 best_id = Some(id);
             }
@@ -94,4 +98,36 @@ pub(super) fn dist2(a: [f64; 2], b: [f64; 2]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     dx * dx + dy * dy
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_with(positions: &[(usize, [f32; 2])]) -> BoardIndex {
+        BoardIndex {
+            id_to_xy: positions.iter().copied().collect(),
+            board_neighbors: HashMap::new(),
+            pitch_mm: 1.0,
+        }
+    }
+
+    #[test]
+    fn nearest_within_breaks_ties_by_lower_id() {
+        // ids 7 and 3 are exactly equidistant from the query at [1, 0]; the
+        // lower id (3) must always win, regardless of `HashMap` iteration order.
+        // A fresh index per iteration re-seeds the map's `RandomState` so this
+        // exercises order-independence rather than one fixed ordering.
+        for _ in 0..64 {
+            let idx = index_with(&[(7, [0.0, 0.0]), (3, [2.0, 0.0]), (42, [9.0, 9.0])]);
+            assert_eq!(idx.nearest_within([1.0, 0.0], 5.0), Some(3));
+        }
+    }
+
+    #[test]
+    fn nearest_within_respects_tolerance() {
+        let idx = index_with(&[(1, [0.0, 0.0])]);
+        assert_eq!(idx.nearest_within([0.5, 0.0], 1.0), Some(1));
+        assert_eq!(idx.nearest_within([5.0, 0.0], 1.0), None);
+    }
 }

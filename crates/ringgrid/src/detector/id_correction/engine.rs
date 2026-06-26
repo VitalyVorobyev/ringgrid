@@ -5,7 +5,7 @@ use crate::marker::codec::{Codebook, CodebookProfile};
 
 use super::bootstrap::bootstrap_trust_anchors;
 use super::cleanup::{cleanup_unverified_markers, finalize_correction_stats};
-use super::consistency::scrub_inconsistent_ids;
+use super::consistency::{confirm_ids_by_consistency, scrub_inconsistent_ids};
 use super::diagnostics::diagnose_unverified_reasons;
 use super::homography::{fit_anchor_homography_for_local_stage, run_homography_fallback};
 use super::local::{run_adaptive_local_recovery, run_post_consistency_refill};
@@ -56,6 +56,13 @@ pub(crate) fn verify_and_correct_ids(
     }
 
     run_post_consistency_refill(&mut ws);
+
+    // Promote correct non-exact decodes that the voting stages could not reach
+    // but whose neighborhood structurally confirms them, so cleanup does not
+    // drop them in sparse/partial views.
+    let n_confirmed = confirm_ids_by_consistency(&mut ws);
+    tracing::debug!(n_confirmed, "id_correction confirm-by-consistency complete");
+
     diagnose_unverified_reasons(&mut ws, final_outer_mul);
     cleanup_unverified_markers(&mut ws);
     finalize_correction_stats(&mut ws);
@@ -205,6 +212,101 @@ mod tests {
         let stats = verify_and_correct_ids(&mut markers, &board, &cfg, CodebookProfile::Base);
         assert!(stats.n_ids_cleared_inconsistent_pre >= 1);
         assert!(markers.iter().any(|m| m.id == Some(center_id)));
+    }
+
+    #[test]
+    fn confirm_by_consistency_rescues_sparse_correct_decode() {
+        // Sparse/partial view: a correctly-decoded but non-exact, low-confidence
+        // center marker has exactly one board-adjacent decoded neighbor. Voting
+        // cannot promote it (1 neighbor ⇒ no affine, no adjacent pair ⇒ no
+        // votes), so without confirm-by-consistency cleanup drops it despite the
+        // ID being correct. With the promotion path it survives.
+        let board = BoardLayout::default();
+        let board_index = BoardIndex::build(&board);
+        let (&center_id, neighbors) = board_index
+            .board_neighbors
+            .iter()
+            .find(|(_, nbrs)| !nbrs.is_empty())
+            .expect("board must have a marker with >=1 neighbor");
+        let near_id = neighbors[0];
+        let far_ids: Vec<usize> = board_index
+            .id_to_xy
+            .keys()
+            .copied()
+            .filter(|id| *id != center_id && *id != near_id)
+            .take(2)
+            .collect();
+        assert_eq!(far_ids.len(), 2, "need two extra ids for bootstrap seeds");
+
+        let scale = 4.0f64;
+        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
+        let px = |id: usize| {
+            let xy = board_index.id_to_xy[&id];
+            [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale]
+        };
+        let center_px = px(center_id);
+
+        // Markers: one near exact anchor (board-adjacent to center) + two far
+        // exact anchors (out of the center's neighborhood, purely to satisfy the
+        // ≥2 bootstrap seeds) + the non-exact, low-confidence center decode.
+        let build = || {
+            vec![
+                marker_with_id(near_id, px(near_id), 0.95, 0, min_cyclic_dist),
+                marker_with_id(
+                    far_ids[0],
+                    [center_px[0] + 200.0, center_px[1]],
+                    0.95,
+                    0,
+                    min_cyclic_dist,
+                ),
+                marker_with_id(
+                    far_ids[1],
+                    [center_px[0], center_px[1] + 200.0],
+                    0.95,
+                    0,
+                    min_cyclic_dist,
+                ),
+                marker_with_id(center_id, center_px, 0.5, 1, 1),
+            ]
+        };
+        let center_of = |markers: &[MarkerRecord]| {
+            markers
+                .iter()
+                .find(|m| m.center == center_px)
+                .expect("center marker present")
+                .id
+        };
+
+        // Disabled: the correct id is cleared (reproduces the bug).
+        let mut off = build();
+        let cfg_off = IdCorrectionConfig {
+            homography_fallback_enable: false,
+            auto_search_radius_outer_muls: vec![2.4, 3.5],
+            max_iters: 3,
+            confirm_by_consistency: false,
+            ..IdCorrectionConfig::default()
+        };
+        let stats_off = verify_and_correct_ids(&mut off, &board, &cfg_off, CodebookProfile::Base);
+        assert_eq!(
+            center_of(&off),
+            None,
+            "without confirm, correct id is dropped"
+        );
+        assert_eq!(stats_off.n_confirmed_by_consistency, 0);
+
+        // Enabled: the correct id survives via confirm-by-consistency.
+        let mut on = build();
+        let cfg_on = IdCorrectionConfig {
+            confirm_by_consistency: true,
+            ..cfg_off.clone()
+        };
+        let stats_on = verify_and_correct_ids(&mut on, &board, &cfg_on, CodebookProfile::Base);
+        assert_eq!(
+            center_of(&on),
+            Some(center_id),
+            "with confirm, the correct non-exact id is promoted and kept"
+        );
+        assert!(stats_on.n_confirmed_by_consistency >= 1);
     }
 
     #[test]

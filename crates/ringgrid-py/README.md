@@ -280,9 +280,8 @@ centers before local fitting.
 | `grad_threshold` | `0.05` | Fraction of max gradient magnitude used to keep votes. Raise it in noisy scenes; lower it for low-contrast imagery. |
 | `min_distance` | derived | Minimum distance between proposals (px). Re-derived from `cfg.marker_scale`. |
 | `min_vote_frac` | `0.1` | Minimum accumulator peak fraction relative to the best proposal. Raise to be stricter, lower to keep weaker peaks. |
-| `accum_sigma` | `2.0` | Gaussian blur on the accumulator before NMS. Higher values smooth noisy peaks but can merge close candidates. |
 | `max_candidates` | `None` | Optional hard cap on proposals. Use only when you must bound runtime in cluttered scenes. |
-| `edge_thinning` | `false` | Apply Canny-style gradient NMS before voting. Reduces strong-edge count by 60-80%, speeding up the vote loop. |
+| `radius_step` | `1` | Stride between voting radii. `1` (default) tests every integer radius; `2`+ subsamples (≈ halves proposal cost at `2`) but lowers recall on blurry/real scenes. The max radius is always included. |
 
 ### `edge_sample`
 

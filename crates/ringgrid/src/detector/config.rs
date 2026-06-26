@@ -596,6 +596,13 @@ pub struct IdCorrectionConfig {
     pub consistency_min_support_edges: usize,
     /// Maximum allowed contradiction fraction in local consistency checks.
     pub consistency_max_contradiction_frac: f32,
+    /// Promote a decoded ID to trusted when its local neighborhood structurally
+    /// confirms it (support edges ≥ `consistency_min_support_edges`, zero
+    /// contradiction edges, and no confident vote against it), even when the
+    /// voting stages produced no candidate. Recovers correct non-exact decodes
+    /// in sparse/partial/blurry views that would otherwise be cleared by
+    /// cleanup. Default: true.
+    pub confirm_by_consistency: bool,
     /// When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:
     /// they are not overridden during normal recovery and only cleared on
     /// strict structural contradiction.
@@ -652,6 +659,7 @@ impl Default for IdCorrectionConfig {
             consistency_min_neighbors: 1,
             consistency_min_support_edges: 1,
             consistency_max_contradiction_frac: 0.5,
+            confirm_by_consistency: true,
             soft_lock_exact_decode: true,
             min_votes: 2,
             min_votes_recover: 1,

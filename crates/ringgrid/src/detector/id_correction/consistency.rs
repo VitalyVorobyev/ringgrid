@@ -254,3 +254,44 @@ pub(super) fn candidate_passes_local_consistency_gate(
     let contradiction_frac = contradiction_edges as f64 / total as f64;
     contradiction_frac <= f64::from(ws.config.consistency_max_contradiction_frac)
 }
+
+/// Promote decoded IDs the voting stages could not reach but whose local
+/// neighborhood structurally confirms them.
+///
+/// In sparse/partial/blurry views a correctly-decoded but non-exact marker may
+/// have no affine and no adjacent voting pair (⇒ zero votes), so it is never
+/// promoted to trusted and would be cleared by `cleanup_unverified_markers`
+/// despite being correct. This pass trusts such a marker when its decoded ID is
+/// structurally clean: at least one board-adjacent neighbor supports it and no
+/// neighbor contradicts it. It is precision-first — it never confirms an ID that
+/// a confident local vote actively disputes (`strong_vote_mismatch`).
+pub(super) fn confirm_ids_by_consistency(ws: &mut IdCorrectionWorkspace<'_>) -> usize {
+    if !ws.config.confirm_by_consistency {
+        return 0;
+    }
+    let mut confirmed = 0usize;
+    for i in 0..ws.markers.len() {
+        if ws.trust[i].is_trusted() {
+            continue;
+        }
+        let Some(id) = ws.markers[i].id else {
+            continue;
+        };
+        // Only confirm genuine decodes whose ID exists on the board.
+        if ws.markers[i].decode.is_none() || !ws.board_index.id_to_xy.contains_key(&id) {
+            continue;
+        }
+        let evidence = consistency_evidence_for_id(ws, i, id);
+        let strong_vote_mismatch = evidence.vote_mismatch && evidence.vote_winner_frac >= 0.60;
+        if evidence.n_neighbors >= ws.config.consistency_min_neighbors
+            && evidence.support_edges >= ws.config.consistency_min_support_edges
+            && evidence.contradiction_edges == 0
+            && !strong_vote_mismatch
+        {
+            ws.trust[i] = Trust::ConfirmedConsistent;
+            ws.stats.n_confirmed_by_consistency += 1;
+            confirmed += 1;
+        }
+    }
+    confirmed
+}

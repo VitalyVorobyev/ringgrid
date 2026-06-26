@@ -18,16 +18,6 @@ Kx =    [ -10  0  10 ]    Ky =    [  0    0   0 ]
 
 The implementation uses `imageproc::gradients::horizontal_scharr` and `vertical_scharr` to produce i16 gradient images `gx` and `gy`.
 
-### Edge Thinning (Canny-style Gradient NMS)
-
-When `edge_thinning` is enabled (default: `true`), a Canny-style non-maximum suppression pass thins multi-pixel edge bands down to single-pixel ridges before voting. For each pixel with non-zero gradient:
-
-1. Quantize the gradient direction to one of 4 directions (0, 45, 90, 135 degrees) using integer ratio tests — no `atan2` needed.
-2. Compare the pixel's gradient magnitude squared against its two neighbors along the quantized direction.
-3. Suppress (zero out) pixels that are not local maxima along the gradient direction.
-
-This typically reduces the strong-edge count by 60–80%, which proportionally reduces the cost of the voting loop — the dominant expense in proposal generation. The thinning uses integer `i32` magnitude-squared comparisons throughout to avoid floating-point overhead.
-
 ### Gradient Magnitude Thresholding
 
 The maximum gradient magnitude across the image is computed, and a threshold is set as a fraction of this maximum:
@@ -46,7 +36,7 @@ For each qualifying pixel at position `(x, y)` with gradient `(gx, gy)` and magn
 
 1. Compute the unit gradient direction: `(dx, dy) = (gx/mag, gy/mag)`
 2. For each sign in `{-1, +1}`:
-   - Walk along the direction `sign * (dx, dy)` at integer radius steps from `r_min` to `r_max`
+   - Walk along the direction `sign * (dx, dy)` at radii from `r_min` to `r_max`, stepping by `radius_step` (default 1 = every integer radius). The top of the range is always voted. Setting `radius_step` above 1 subsamples the radius set to cut voting cost roughly proportionally, at the expense of accumulator sensitivity (lower recall on blurry/low-contrast scenes) — it is opt-in.
    - At each voted position, deposit `mag` into the accumulator using bilinear interpolation
 
 Bilinear interpolation ensures sub-pixel accuracy in the accumulator. The vote weight is the gradient magnitude, so stronger edges contribute more to the accumulator peak.
@@ -55,7 +45,7 @@ Voting in both directions (positive and negative gradient) ensures that both the
 
 ### Accumulator Smoothing
 
-The raw accumulator is smoothed with a Gaussian blur (sigma controlled by `accum_sigma`, default: 2.0 px). This merges nearby votes that are slightly misaligned due to discretization, producing cleaner peaks.
+The raw accumulator is smoothed with a Gaussian blur (radius-relative smoothing applied by the radsym backend). This merges nearby votes that are slightly misaligned due to discretization, producing cleaner peaks.
 
 ### Two-Step Non-Maximum Suppression
 
@@ -114,8 +104,7 @@ The `ProposalConfig` struct controls all proposal parameters:
 | `min_distance` | 7.0 | Minimum distance between output proposals (pixels) |
 | `grad_threshold` | 0.05 | Gradient magnitude threshold (fraction of max) |
 | `min_vote_frac` | 0.1 | Minimum accumulator value (fraction of max) |
-| `accum_sigma` | 2.0 | Gaussian sigma for accumulator smoothing |
-| `edge_thinning` | true | Apply Canny-style gradient NMS before voting |
+| `radius_step` | 1 | Stride between voting radii (`1` = every integer radius; `2`+ subsamples for speed at the cost of recall; max radius always included) |
 | `max_candidates` | None | Optional cap on proposals returned |
 
 These defaults are overridden by `DetectConfig` when a `MarkerScalePrior` is set. The scale prior drives:

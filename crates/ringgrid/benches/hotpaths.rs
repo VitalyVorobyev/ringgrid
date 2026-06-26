@@ -299,9 +299,9 @@ fn proposal_config() -> ringgrid::ProposalConfig {
         grad_threshold: 0.04,
         min_distance: 5.0,
         min_vote_frac: 0.06,
-        accum_sigma: 1.5,
         max_candidates: Some(600),
-        edge_thinning: false,
+        // Match the production default so the bench reflects shipped behavior.
+        radius_step: 1,
     }
 }
 

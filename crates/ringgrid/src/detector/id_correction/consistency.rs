@@ -295,3 +295,120 @@ pub(super) fn confirm_ids_by_consistency(ws: &mut IdCorrectionWorkspace<'_>) -> 
     }
     confirmed
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::config::IdCorrectionConfig;
+
+    fn evidence(
+        n_neighbors: usize,
+        support_edges: usize,
+        contradiction_edges: usize,
+        vote_mismatch: bool,
+        vote_winner_frac: f64,
+    ) -> ConsistencyEvidence {
+        let contradiction_frac = if n_neighbors == 0 {
+            0.0
+        } else {
+            contradiction_edges as f64 / n_neighbors as f64
+        };
+        ConsistencyEvidence {
+            n_neighbors,
+            support_edges,
+            contradiction_edges,
+            contradiction_frac,
+            vote_mismatch,
+            vote_winner_frac,
+        }
+    }
+
+    // --- not soft-locked: a marker is precision-first cleared on weak structure ---
+
+    #[test]
+    fn keeps_marker_below_min_neighbors() {
+        // Default `consistency_min_neighbors == 1`: zero neighbors ⇒ never clear,
+        // even with no support (avoids clearing isolated-but-correct markers).
+        let cfg = IdCorrectionConfig::default();
+        assert!(!should_clear_by_consistency(
+            evidence(0, 0, 0, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn keeps_structurally_clean_marker() {
+        let cfg = IdCorrectionConfig::default();
+        // 3 supporting neighbors, no contradictions, no vote dispute ⇒ keep.
+        assert!(!should_clear_by_consistency(
+            evidence(3, 3, 0, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_marker_with_no_support() {
+        let cfg = IdCorrectionConfig::default();
+        // support_edges (0) < consistency_min_support_edges (1) ⇒ clear.
+        assert!(should_clear_by_consistency(
+            evidence(2, 0, 2, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_marker_with_contradiction_majority() {
+        let cfg = IdCorrectionConfig::default();
+        // contradiction_frac 3/4 = 0.75 > 0.5 even though one neighbor supports.
+        assert!(should_clear_by_consistency(
+            evidence(4, 1, 3, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_on_strong_vote_mismatch_only() {
+        let cfg = IdCorrectionConfig::default();
+        // Clean edges, but a confident local vote (>= 0.60) disputes the id.
+        assert!(should_clear_by_consistency(
+            evidence(2, 2, 0, true, 0.70),
+            false,
+            &cfg
+        ));
+        // A weak vote mismatch (< 0.60) is not enough to clear a clean marker.
+        assert!(!should_clear_by_consistency(
+            evidence(2, 2, 0, true, 0.55),
+            false,
+            &cfg
+        ));
+    }
+
+    // --- soft-locked exact decodes: only strict structural contradiction clears ---
+
+    #[test]
+    fn soft_locked_marker_survives_partial_contradiction() {
+        let cfg = IdCorrectionConfig::default();
+        // One support edge present ⇒ a soft-locked exact decode is protected even
+        // with two contradictions (requires support == 0 to clear).
+        assert!(!should_clear_by_consistency(
+            evidence(3, 1, 2, false, 0.0),
+            true,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn soft_locked_marker_cleared_on_strict_contradiction() {
+        let cfg = IdCorrectionConfig::default();
+        // Zero support and >= 2 contradictions ⇒ even a soft-locked decode clears.
+        assert!(should_clear_by_consistency(
+            evidence(2, 0, 2, false, 0.0),
+            true,
+            &cfg
+        ));
+    }
+}

@@ -1,11 +1,9 @@
 use super::time_compat::Instant;
-use std::collections::HashMap;
 
 use image::GrayImage;
-use nalgebra::Point2;
-use projective_grid::GridCoords;
-use projective_grid::hex::hex_find_inconsistent_corners;
 
+use super::axis_ratio_filter::remove_axis_ratio_outliers;
+use super::geometric_verify::{GeometricVerifyStats, geometric_verify_filter};
 use super::{
     CompletionStats, DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
     complete_with_h, compute_h_stats, global_filter, matrix3_to_array, mean_reproj_error_px,
@@ -13,79 +11,14 @@ use super::{
     warn_center_correction_without_intrinsics,
 };
 use crate::board_layout::BoardLayout;
-use crate::detector::{DetectionSource, MarkerRecord};
+use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, PipelineResult};
 use crate::pixelmap::PixelMapper;
 
-const AXIS_RATIO_RELATIVE_TOLERANCE: f64 = 0.25;
-
 #[inline]
 fn duration_ms(duration: std::time::Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
-}
-
-fn marker_inner_outer_axis_ratio(marker: &MarkerRecord) -> Option<f64> {
-    let inner = marker.ellipse_inner?;
-    let outer = marker.ellipse_outer?;
-    let inner_axis = inner.mean_axis();
-    let outer_axis = outer.mean_axis();
-    if !inner_axis.is_finite() || !outer_axis.is_finite() || inner_axis <= 0.0 || outer_axis <= 0.0
-    {
-        return None;
-    }
-    Some(inner_axis / outer_axis)
-}
-
-fn median_f64(mut values: Vec<f64>) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = values.len() / 2;
-    Some(if values.len().is_multiple_of(2) {
-        0.5 * (values[mid - 1] + values[mid])
-    } else {
-        values[mid]
-    })
-}
-
-fn clear_axis_ratio_outlier_ids(markers: &mut [MarkerRecord]) -> usize {
-    let reference = median_f64(
-        markers
-            .iter()
-            .filter(|marker| marker.id.is_some() && marker.source != DetectionSource::Completion)
-            .filter_map(marker_inner_outer_axis_ratio)
-            .collect(),
-    );
-    let Some(reference) = reference.filter(|ratio| ratio.is_finite() && *ratio > 0.0) else {
-        return 0;
-    };
-
-    let mut cleared = 0usize;
-    for marker in markers.iter_mut() {
-        let Some(id) = marker.id else {
-            continue;
-        };
-        let Some(ratio) = marker_inner_outer_axis_ratio(marker) else {
-            continue;
-        };
-        let rel_err = (ratio - reference).abs() / reference;
-        if rel_err > AXIS_RATIO_RELATIVE_TOLERANCE {
-            tracing::warn!(
-                id,
-                observed_ratio = ratio,
-                reference_ratio = reference,
-                rel_err,
-                "clearing marker id due to inner/outer axis-ratio inconsistency"
-            );
-            marker.id = None;
-            marker.board_xy_mm = None;
-            marker.fit.h_reproj_err_px = None;
-            cleared += 1;
-        }
-    }
-    cleared
 }
 
 struct FilterPhaseOutput {
@@ -117,63 +50,6 @@ fn filter_with_h(fit_markers: Vec<MarkerRecord>, config: &DetectConfig) -> Filte
     }
 }
 
-/// Build a hex grid map from decoded markers, mapping `(q, r)` → image center.
-pub(crate) fn build_hex_grid_map(
-    markers: &[MarkerRecord],
-    board: &BoardLayout,
-) -> HashMap<GridCoords, Point2<f32>> {
-    markers
-        .iter()
-        .filter_map(|m| {
-            let id = m.id?;
-            let bm = board.marker(id)?;
-            let q = bm.q? as i32;
-            let r = bm.r? as i32;
-            Some((
-                GridCoords { i: q, j: r },
-                Point2::new(m.center[0] as f32, m.center[1] as f32),
-            ))
-        })
-        .collect()
-}
-
-/// Remove markers whose image-space positions are inconsistent with their hex
-/// neighbors (midpoint prediction). Returns the number of markers removed.
-fn topology_filter(
-    markers: &mut Vec<MarkerRecord>,
-    board: &BoardLayout,
-    threshold_px: f32,
-) -> usize {
-    let grid = build_hex_grid_map(markers, board);
-    let inconsistent = hex_find_inconsistent_corners(&grid, threshold_px);
-    if inconsistent.is_empty() {
-        return 0;
-    }
-    let bad_indices: std::collections::HashSet<GridCoords> =
-        inconsistent.iter().map(|(idx, _)| *idx).collect();
-    let before = markers.len();
-    markers.retain(|m| {
-        let Some(id) = m.id else { return true };
-        let Some(bm) = board.marker(id) else {
-            return true;
-        };
-        let (Some(q), Some(r)) = (bm.q, bm.r) else {
-            return true;
-        };
-        !bad_indices.contains(&GridCoords {
-            i: q as i32,
-            j: r as i32,
-        })
-    });
-    let removed = before - markers.len();
-    tracing::debug!(
-        removed,
-        threshold_px,
-        "topology filter: removed spatially inconsistent markers"
-    );
-    removed
-}
-
 fn phase_completion(
     gray: &GrayImage,
     final_markers: &mut Vec<MarkerRecord>,
@@ -197,7 +73,7 @@ fn phase_final_h(
     h_current: Option<nalgebra::Matrix3<f64>>,
     mut ransac_stats: Option<RansacStats>,
     config: &DetectConfig,
-) -> (Option<[[f64; 3]; 3]>, Option<RansacStats>) {
+) -> (Option<nalgebra::Matrix3<f64>>, Option<RansacStats>) {
     let final_h_matrix = if final_markers.len() >= 10 {
         let h_refit = refit_homography(
             final_markers,
@@ -223,7 +99,6 @@ fn phase_final_h(
         h_current
     };
 
-    let final_h = final_h_matrix.as_ref().map(matrix3_to_array);
     let final_ransac = final_h_matrix
         .as_ref()
         .and_then(|h| {
@@ -236,7 +111,7 @@ fn phase_final_h(
         })
         .or_else(|| ransac_stats.take());
 
-    (final_h, final_ransac)
+    (final_h_matrix, final_ransac)
 }
 
 fn drop_unmappable_markers(markers: &mut Vec<MarkerRecord>, mapper: &dyn PixelMapper) -> usize {
@@ -309,46 +184,12 @@ fn sync_marker_board_correspondence_with_logging(
     );
 }
 
-fn annotate_h_reprojection_and_adjust_confidence(
-    markers: &mut [MarkerRecord],
-    final_h: Option<[[f64; 3]; 3]>,
-    alpha: f32,
-) {
-    let Some(h) = final_h else {
-        return;
-    };
-
-    for marker in markers {
-        let Some(board_xy) = marker.board_xy_mm.as_ref() else {
-            continue;
-        };
-        let x = board_xy[0];
-        let y = board_xy[1];
-        let pw = h[0][0] * x + h[0][1] * y + h[0][2];
-        let ph = h[1][0] * x + h[1][1] * y + h[1][2];
-        let pz = h[2][0] * x + h[2][1] * y + h[2][2];
-        if pz.abs() <= 1e-15 {
-            continue;
-        }
-
-        let px = pw / pz;
-        let py = ph / pz;
-        let dx = px - marker.center[0];
-        let dy = py - marker.center[1];
-        let err = (dx * dx + dy * dy).sqrt() as f32;
-        marker.fit.h_reproj_err_px = Some(err);
-        if alpha > 0.0 {
-            marker.confidence *= 1.0 / (1.0 + alpha * err);
-        }
-    }
-}
-
 /// Runs `annotate_neighbor_radius_ratios`, then optionally runs
 /// `try_recover_inner_as_outer` (+ re-sync + re-annotate) when recovery is
 /// enabled. Called identically by both finalize paths, eliminating duplication.
 fn apply_post_filter_fixup(
     gray: &GrayImage,
-    markers: &mut [MarkerRecord],
+    markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
@@ -359,11 +200,10 @@ fn apply_post_filter_fixup(
         sync_marker_board_correspondence(markers, &config.board);
         annotate_neighbor_radius_ratios(markers, k);
     }
-    let cleared = clear_axis_ratio_outlier_ids(markers);
-    if cleared > 0 {
-        sync_marker_board_correspondence(markers, &config.board);
+    let removed = remove_axis_ratio_outliers(markers);
+    if removed > 0 {
         annotate_neighbor_radius_ratios(markers, k);
-        tracing::info!(cleared, "axis-ratio consistency filter cleared marker ids");
+        tracing::info!(removed, "axis-ratio consistency filter removed markers");
     }
 }
 
@@ -454,14 +294,6 @@ fn finalize_global_filter_result(
     let markers_after_filter = final_markers.len();
     let h_current = filter_phase.h_current;
 
-    let topology_start = Instant::now();
-    let n_topology_removed = if let Some(threshold) = config.advanced.topology_filter_threshold_px {
-        topology_filter(&mut final_markers, &config.board, threshold)
-    } else {
-        0
-    };
-    let topology_elapsed = topology_start.elapsed();
-
     let n_before_completion = final_markers.len();
 
     let completion_start = Instant::now();
@@ -478,7 +310,7 @@ fn finalize_global_filter_result(
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
 
     let final_h_start = Instant::now();
-    let (final_h, final_ransac) = phase_final_h(
+    let (final_h_mat, final_ransac) = phase_final_h(
         &final_markers,
         h_current,
         filter_phase.ransac_stats.take(),
@@ -486,28 +318,39 @@ fn finalize_global_filter_result(
     );
     let final_h_elapsed = final_h_start.elapsed();
 
+    // Sync id → board_xy_mm before the gate. This is id-only (no center-frame
+    // dependency), so it is safe ahead of the image remap and gives the global
+    // reprojection test the board positions it needs.
+    let sync_start = Instant::now();
+    sync_marker_board_correspondence_with_logging(&mut final_markers, &config.board);
+    let sync_elapsed = sync_start.elapsed();
+
+    // Final precision-first geometric verification, in the working frame (where
+    // `final_h` was fit), over all markers including completed ones — before
+    // centers are remapped to image space.
+    let geom_start = Instant::now();
+    let geom_stats = if config.advanced.geometric_verify {
+        geometric_verify_filter(
+            &mut final_markers,
+            final_h_mat.as_ref(),
+            &config.board,
+            config.advanced.ransac_homography.inlier_threshold,
+        )
+    } else {
+        GeometricVerifyStats::default()
+    };
+    let geom_elapsed = geom_start.elapsed();
+
+    let final_h = final_h_mat.as_ref().map(matrix3_to_array);
+
     let map_to_image_start = Instant::now();
     if let Some(mapper) = mapper {
         map_centers_to_image(&mut final_markers, mapper);
     }
     let map_to_image_elapsed = map_to_image_start.elapsed();
 
-    let sync_start = Instant::now();
-    sync_marker_board_correspondence_with_logging(&mut final_markers, &config.board);
-    let sync_elapsed = sync_start.elapsed();
-
-    // Annotate per-marker H-reprojection error and apply confidence soft-penalty
-    // now that board_xy_mm and image-space centers are both available.
-    let reproj_annotate_start = Instant::now();
-    annotate_h_reprojection_and_adjust_confidence(
-        &mut final_markers,
-        final_h,
-        config.advanced.h_reproj_confidence_alpha,
-    );
-    let reproj_annotate_elapsed = reproj_annotate_start.elapsed();
-
     tracing::info!(
-        "{} markers after global filter/completion",
+        "{} markers after global filter/completion/verify",
         final_markers.len(),
     );
     tracing::debug!(
@@ -535,16 +378,15 @@ fn finalize_global_filter_result(
     tracing::info!(
         markers_in,
         markers_after_filter,
-        n_topology_removed,
         markers_after_completion,
+        n_geom_removed = geom_stats.n_removed_total,
         markers_out = result.markers.len(),
         global_filter_ms = duration_ms(filter_elapsed),
-        topology_ms = duration_ms(topology_elapsed),
         completion_ms = duration_ms(completion_elapsed),
         final_h_ms = duration_ms(final_h_elapsed),
-        map_to_image_ms = duration_ms(map_to_image_elapsed),
         sync_board_ms = duration_ms(sync_elapsed),
-        reproj_annotate_ms = duration_ms(reproj_annotate_elapsed),
+        geom_verify_ms = duration_ms(geom_elapsed),
+        map_to_image_ms = duration_ms(map_to_image_elapsed),
         post_fixup_ms = duration_ms(post_fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize(global filter) timing summary"
@@ -701,63 +543,6 @@ pub(super) fn run(
         "finalize stage timing summary"
     );
     result
-}
-
-#[cfg(test)]
-mod axis_ratio_tests {
-    use super::*;
-    use crate::conic::Ellipse;
-
-    fn marker_with_ratio(id: usize, ratio: f64, source: DetectionSource) -> MarkerRecord {
-        let outer = Ellipse {
-            cx: 0.0,
-            cy: 0.0,
-            a: 20.0,
-            b: 20.0,
-            angle: 0.0,
-        };
-        let inner = Ellipse {
-            cx: 0.0,
-            cy: 0.0,
-            a: 20.0 * ratio,
-            b: 20.0 * ratio,
-            angle: 0.0,
-        };
-        MarkerRecord {
-            id: Some(id),
-            confidence: 1.0,
-            center: [id as f64, 0.0],
-            ellipse_outer: Some(outer),
-            ellipse_inner: Some(inner),
-            source,
-            ..MarkerRecord::default()
-        }
-    }
-
-    #[test]
-    fn axis_ratio_filter_clears_strong_outliers() {
-        let mut markers = vec![
-            marker_with_ratio(0, 0.50, DetectionSource::FitDecoded),
-            marker_with_ratio(1, 0.49, DetectionSource::FitDecoded),
-            marker_with_ratio(2, 0.51, DetectionSource::SeededPass),
-            marker_with_ratio(3, 0.30, DetectionSource::Completion),
-        ];
-        let cleared = clear_axis_ratio_outlier_ids(&mut markers);
-        assert_eq!(cleared, 1);
-        assert_eq!(markers[3].id, None);
-    }
-
-    #[test]
-    fn axis_ratio_filter_keeps_in_family_markers() {
-        let mut markers = vec![
-            marker_with_ratio(0, 0.50, DetectionSource::FitDecoded),
-            marker_with_ratio(1, 0.49, DetectionSource::FitDecoded),
-            marker_with_ratio(2, 0.52, DetectionSource::Completion),
-        ];
-        let cleared = clear_axis_ratio_outlier_ids(&mut markers);
-        assert_eq!(cleared, 0);
-        assert!(markers.iter().all(|marker| marker.id.is_some()));
-    }
 }
 
 #[cfg(test)]

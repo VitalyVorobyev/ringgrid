@@ -16,12 +16,14 @@ pub fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
     match *agg {
         AngularAggregator::Median => {
             let mid = values.len() / 2;
-            let (_, median, _) =
-                values.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+            // `total_cmp` is a total order over f32 (orders identically to
+            // `partial_cmp` for finite values) so a stray NaN sorts to an end
+            // instead of panicking the comparator.
+            let (_, median, _) = values.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
             *median
         }
         AngularAggregator::TrimmedMean { trim_fraction } => {
-            values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            values.sort_by(|a, b| a.total_cmp(b));
             let tf = trim_fraction.clamp(0.0, 0.45);
             let k = (values.len() as f32 * tf).floor() as usize;
             let start = k.min(values.len());
@@ -42,13 +44,13 @@ pub fn peak_idx(values: &[f32], pol: Polarity) -> usize {
         Polarity::Pos => values
             .iter()
             .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(i, _)| i)
             .unwrap(),
         Polarity::Neg => values
             .iter()
             .enumerate()
-            .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .min_by(|a, b| a.1.total_cmp(b.1))
             .map(|(i, _)| i)
             .unwrap(),
     }
@@ -126,4 +128,57 @@ pub fn theta_consistency(per_theta_peaks: &[f32], r_star: f32, r_step: f32, min_
         .filter(|&&r| (r - r_star).abs() <= delta)
         .count();
     n_close as f32 / per_theta_peaks.len().max(1) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_median_returns_middle_value() {
+        let mut v = [3.0f32, 1.0, 2.0];
+        let m = aggregate(&mut v, &AngularAggregator::Median);
+        assert_eq!(m, 2.0);
+    }
+
+    #[test]
+    fn aggregate_trimmed_mean_drops_extremes() {
+        let mut v = [0.0f32, 1.0, 2.0, 3.0, 100.0];
+        let m = aggregate(
+            &mut v,
+            &AngularAggregator::TrimmedMean { trim_fraction: 0.2 },
+        );
+        // Trimming 20% off each end removes 0.0 and 100.0, leaving mean(1,2,3)=2.
+        assert!((m - 2.0).abs() < 1e-6, "trimmed mean = {m}");
+    }
+
+    #[test]
+    fn aggregate_does_not_panic_on_nan() {
+        // Before the `total_cmp` fix these comparators panicked on NaN.
+        let mut median_vals = [1.0f32, f32::NAN, 2.0];
+        let _ = aggregate(&mut median_vals, &AngularAggregator::Median);
+        let mut trimmed_vals = [1.0f32, f32::NAN, 2.0, 3.0];
+        let _ = aggregate(
+            &mut trimmed_vals,
+            &AngularAggregator::TrimmedMean {
+                trim_fraction: 0.25,
+            },
+        );
+    }
+
+    #[test]
+    fn peak_idx_finds_extrema() {
+        assert_eq!(peak_idx(&[0.1, 0.9, 0.3], Polarity::Pos), 1);
+        assert_eq!(peak_idx(&[0.1, -0.9, 0.3], Polarity::Neg), 1);
+    }
+
+    #[test]
+    fn peak_idx_does_not_panic_on_nan() {
+        // A valid index is returned and no panic occurs with NaN present.
+        let with_nan = [0.1f32, f32::NAN, 0.5];
+        let i_pos = peak_idx(&with_nan, Polarity::Pos);
+        let i_neg = peak_idx(&with_nan, Polarity::Neg);
+        assert!(i_pos < with_nan.len());
+        assert!(i_neg < with_nan.len());
+    }
 }

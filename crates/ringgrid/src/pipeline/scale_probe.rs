@@ -134,9 +134,10 @@ pub(crate) fn scale_probe(gray: &GrayImage, k_proposals: usize, n_theta: usize) 
         min_distance: 4.0,
         grad_threshold: 0.05,
         min_vote_frac: 0.05,
-        accum_sigma: 2.0,
         max_candidates: Some(k_proposals),
-        edge_thinning: false,
+        // Full radius coverage: the probe sweeps a very wide range to locate the
+        // dominant scale, so it keeps every radius rather than subsampling.
+        radius_step: 1,
     };
 
     let proposals = find_ellipse_centers(gray, &probe_proposal_cfg);

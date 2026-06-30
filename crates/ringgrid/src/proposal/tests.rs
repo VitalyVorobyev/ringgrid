@@ -44,9 +44,8 @@ fn test_ring_proposal_finds_center() {
         grad_threshold: 0.03,
         min_distance: 5.0,
         min_vote_frac: 0.05,
-        accum_sigma: 1.5,
         max_candidates: None,
-        edge_thinning: false,
+        radius_step: 1,
     };
 
     let proposals = find_ellipse_centers(&img, &config);
@@ -76,9 +75,8 @@ fn proposal_result_matches_proposals_and_heatmap_shape() {
         grad_threshold: 0.03,
         min_distance: 5.0,
         min_vote_frac: 0.05,
-        accum_sigma: 1.5,
         max_candidates: None,
-        edge_thinning: false,
+        radius_step: 1,
     };
 
     let plain = find_ellipse_centers(&img, &config);
@@ -122,9 +120,8 @@ fn min_distance_enforced_on_fixture() {
         grad_threshold: 0.05,
         min_distance: 18.0,
         min_vote_frac: 0.1,
-        accum_sigma: 2.0,
         max_candidates: Some(64),
-        edge_thinning: false,
+        radius_step: 1,
     };
 
     let proposals = find_ellipse_centers(&img, &config);
@@ -149,7 +146,7 @@ fn min_distance_enforced_on_fixture() {
 fn fixture_produces_proposals() {
     let img = load_fixture_image();
     let config = ProposalConfig {
-        edge_thinning: false,
+        radius_step: 1,
         ..ProposalConfig::default()
     };
 

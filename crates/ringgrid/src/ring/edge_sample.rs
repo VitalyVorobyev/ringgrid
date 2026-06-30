@@ -123,7 +123,10 @@ pub fn bilinear_sample_u8(img: &GrayImage, x: f32, y: f32) -> f32 {
 #[inline]
 pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32> {
     let (w, h) = img.dimensions();
-    if w < 2 || h < 2 || x < 0.0 || y < 0.0 {
+    // Reject non-finite coordinates up front: NaN comparisons are all false, so
+    // without this guard a NaN `x`/`y` slips past the bounds check and produces
+    // `Some(NaN)`, which later panics at `partial_cmp(...).unwrap()` reductions.
+    if w < 2 || h < 2 || !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
         return None;
     }
     let x0 = x.floor() as u32;
@@ -177,6 +180,26 @@ mod tests {
             expected,
             val
         );
+    }
+
+    #[test]
+    fn bilinear_sample_rejects_non_finite_coords() {
+        let mut img = GrayImage::new(4, 4);
+        img.put_pixel(1, 1, image::Luma([200]));
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(
+                bilinear_sample_u8_checked(&img, bad, 1.5),
+                None,
+                "non-finite x={bad} must return None"
+            );
+            assert_eq!(
+                bilinear_sample_u8_checked(&img, 1.5, bad),
+                None,
+                "non-finite y={bad} must return None"
+            );
+        }
+        // A valid finite sample still succeeds.
+        assert!(bilinear_sample_u8_checked(&img, 1.5, 1.5).is_some());
     }
 
     #[test]

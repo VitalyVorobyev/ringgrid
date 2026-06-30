@@ -1282,9 +1282,8 @@ class ProposalConfig:
     grad_threshold: float = 0.05
     min_distance: float = 10.0
     min_vote_frac: float = 0.1
-    accum_sigma: float = 2.0
     max_candidates: int | None = None
-    edge_thinning: bool = False
+    radius_step: int = 1
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ProposalConfig":
@@ -1295,9 +1294,8 @@ class ProposalConfig:
             grad_threshold=float(data["grad_threshold"]),
             min_distance=float(data["min_distance"]),
             min_vote_frac=float(data["min_vote_frac"]),
-            accum_sigma=float(data["accum_sigma"]),
             max_candidates=_optional_int(data.get("max_candidates")),
-            edge_thinning=bool(data.get("edge_thinning", False)),
+            radius_step=int(data.get("radius_step", 1)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1307,8 +1305,7 @@ class ProposalConfig:
             "grad_threshold": float(self.grad_threshold),
             "min_distance": float(self.min_distance),
             "min_vote_frac": float(self.min_vote_frac),
-            "accum_sigma": float(self.accum_sigma),
-            "edge_thinning": bool(self.edge_thinning),
+            "radius_step": int(self.radius_step),
         }
         _set_optional(
             out, "max_candidates", None if self.max_candidates is None else int(self.max_candidates)

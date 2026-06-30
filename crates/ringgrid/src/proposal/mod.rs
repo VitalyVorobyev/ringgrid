@@ -90,16 +90,24 @@ pub fn find_ellipse_centers_with_heatmap(
 
 /// Build RSD radii from the continuous `[r_min, r_max]` range.
 ///
-/// Uses every integer radius in the range. RSD is fast enough per-radius
-/// that we don't need to cap — the pipeline's `ProposalDownscale` already
-/// handles reducing the image and radii for large images.
-fn build_radii(r_min: f32, r_max: f32) -> Vec<u32> {
+/// Tests integer radii from `r_min` to `r_max` with stride `step` (clamped to
+/// ≥ 1). `step > 1` subsamples the radius set to cut voting cost roughly
+/// proportionally; the maximum radius is always included so the largest
+/// features still cast votes. The pipeline's `ProposalDownscale` independently
+/// reduces the image (and thus the radii) for large images.
+fn build_radii(r_min: f32, r_max: f32, step: u32) -> Vec<u32> {
     let lo = (r_min.ceil() as u32).max(1);
     let hi = r_max.floor() as u32;
     if hi < lo {
         return Vec::new();
     }
-    (lo..=hi).collect()
+    let step = step.max(1) as usize;
+    let mut radii: Vec<u32> = (lo..=hi).step_by(step).collect();
+    // Keep the top of the range even when the stride skips past it.
+    if radii.last() != Some(&hi) {
+        radii.push(hi);
+    }
+    radii
 }
 
 /// Core implementation: run radsym RSD and convert results.
@@ -114,7 +122,7 @@ fn compute_via_radsym(
         return (Vec::new(), heatmap);
     }
 
-    let radii = build_radii(config.r_min, config.r_max);
+    let radii = build_radii(config.r_min, config.r_max, config.radius_step);
     if radii.is_empty() {
         let heatmap = keep_heatmap.then(|| vec![0.0; w as usize * h as usize]);
         return (Vec::new(), heatmap);

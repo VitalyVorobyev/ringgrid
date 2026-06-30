@@ -55,7 +55,7 @@ config = ringgrid.ProposalConfig(
     r_min=5.0,
     r_max=40.0,
     min_distance=15.0,
-    edge_thinning=True,
+    radius_step=1,
 )
 result = ringgrid.propose_with_heatmap("photo.png", config=config)
 ```
@@ -104,8 +104,7 @@ sees radial symmetry evidence.
 | `min_distance` | 10.0 | Minimum distance between output proposals (pixels) |
 | `grad_threshold` | 0.05 | Gradient magnitude threshold (fraction of max) |
 | `min_vote_frac` | 0.1 | Minimum accumulator peak (fraction of max) |
-| `accum_sigma` | 2.0 | Gaussian smoothing sigma |
-| `edge_thinning` | true | Apply Canny-style gradient NMS before voting |
+| `radius_step` | 1 | Stride between voting radii (`1` = every integer radius; `2`+ subsamples for speed at the cost of recall; max radius always included) |
 | `max_candidates` | None | Optional hard cap on proposals |
 
 ## Visualization Tool

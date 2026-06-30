@@ -13,12 +13,15 @@
 //!
 //! See `docs/pipeline_analysis.md` for a detailed architecture write-up.
 
+mod axis_ratio_filter;
 mod finalize;
 mod fit_decode;
+mod geometric_verify;
 mod prelude;
 mod result;
 mod run;
 mod scale_probe;
+mod stats;
 mod time_compat;
 
 pub use result::{
@@ -26,7 +29,7 @@ pub use result::{
     StageTimings,
 };
 
-pub(crate) use finalize::build_hex_grid_map;
+pub(crate) use geometric_verify::build_hex_grid_map;
 pub(crate) use prelude::*;
 pub(crate) use result::{PipelineResult, seed_proposals};
 

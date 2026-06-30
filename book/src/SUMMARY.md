@@ -41,6 +41,7 @@
   - [DetectedMarker](output-types/detected-marker.md)
   - [Fit, Decode & Marker Diagnostics](output-types/fit-metrics.md)
   - [RansacStats](output-types/ransac-stats.md)
+- [Detection Quality & Rejection](detection-quality.md)
 - [Detection Modes](detection-modes/simple.md)
   - [Proposal Diagnostics](detection-modes/proposal-diagnostics.md)
   - [Adaptive Scale Detection](detection-modes/adaptive-scale.md)

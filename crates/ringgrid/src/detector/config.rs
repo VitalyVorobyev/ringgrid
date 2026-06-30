@@ -830,14 +830,19 @@ pub struct AdvancedDetectConfig {
     pub dedup_radius: f64,
     /// Enable global homography filtering (requires board spec).
     pub use_global_filter: bool,
-    /// Hex-topology consistency filter threshold (pixels).
+    /// Final precision-first geometric verification gate.
     ///
-    /// After global filter and ID correction, each decoded marker's position is
-    /// compared against the midpoint predicted by its hex neighbors. Markers
-    /// that deviate by more than this threshold are removed.
+    /// After the final homography, each decoded marker is checked against its
+    /// hex-neighbor midpoint prediction (locally affine, so distortion-robust)
+    /// and, as a gross-blunder backstop, against its final-H reprojection
+    /// residual. Both thresholds adapt to the observed inlier residual
+    /// distribution, so the gate stays recall-safe on clean and lens-distorted
+    /// boards alike. Markers the lattice judges geometrically inconsistent are
+    /// removed, so only trusted board correspondences reach the output.
     ///
-    /// Set to `None` to disable the topology filter. Default: `None`.
-    pub topology_filter_threshold_px: Option<f32>,
+    /// Disable (`false`) to keep every decoded marker and apply your own
+    /// filtering. Default: `true`.
+    pub geometric_verify: bool,
     /// RANSAC homography configuration.
     pub ransac_homography: RansacConfig,
     /// Structural ID verification and correction using hex neighborhood consensus.
@@ -845,15 +850,6 @@ pub struct AdvancedDetectConfig {
     /// Automatic recovery for markers where the inner edge was incorrectly
     /// fitted as the outer ellipse.
     pub inner_as_outer_recovery: InnerAsOuterRecoveryConfig,
-    /// Soft confidence penalty alpha for H-reprojection error.
-    ///
-    /// After the final homography is estimated, each marker's confidence is
-    /// multiplied by `1 / (1 + alpha * h_reproj_err_px)`. Markers with small
-    /// reprojection errors are unaffected; geometrically inconsistent markers
-    /// (e.g. 5 px error) are penalised by roughly `1 / (1 + 0.2 * 5) = 0.5`.
-    ///
-    /// Set to `0.0` to disable the penalty. Default: `0.2`.
-    pub h_reproj_confidence_alpha: f32,
     /// Optional image downscaling before proposal generation.
     ///
     /// When markers are large, running proposals on a smaller image is much
@@ -880,7 +876,7 @@ impl Default for AdvancedDetectConfig {
             max_aspect_ratio: 3.0,
             dedup_radius: 6.0,
             use_global_filter: true,
-            topology_filter_threshold_px: None,
+            geometric_verify: true,
             ransac_homography: RansacConfig {
                 max_iters: 2000,
                 inlier_threshold: 5.0,
@@ -889,7 +885,6 @@ impl Default for AdvancedDetectConfig {
             },
             id_correction: IdCorrectionConfig::default(),
             inner_as_outer_recovery: InnerAsOuterRecoveryConfig::default(),
-            h_reproj_confidence_alpha: 0.2,
             proposal_downscale: ProposalDownscale::default(),
         }
     }

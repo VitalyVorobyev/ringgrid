@@ -1670,6 +1670,7 @@ _ADVANCED_KEYS: frozenset[str] = frozenset(
         "max_aspect_ratio",
         "dedup_radius",
         "use_global_filter",
+        "geometric_verify",
         "ransac_homography",
         "id_correction",
         "inner_as_outer_recovery",
@@ -2016,6 +2017,14 @@ class DetectConfig:
     @use_global_filter.setter
     def use_global_filter(self, value: bool) -> None:
         self._apply_overlay({"use_global_filter": bool(value)})
+
+    @property
+    def geometric_verify(self) -> bool:
+        return bool(self._resolved_value("geometric_verify"))
+
+    @geometric_verify.setter
+    def geometric_verify(self, value: bool) -> None:
+        self._apply_overlay({"geometric_verify": bool(value)})
 
     @property
     def self_undistort_enable(self) -> bool:

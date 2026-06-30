@@ -458,9 +458,8 @@ class ProposalConfig:
     grad_threshold: float
     min_distance: float
     min_vote_frac: float
-    accum_sigma: float
     max_candidates: int | None
-    edge_thinning: bool
+    radius_step: int
     def __init__(
         self,
         r_min: float = ...,
@@ -468,9 +467,8 @@ class ProposalConfig:
         grad_threshold: float = ...,
         min_distance: float = ...,
         min_vote_frac: float = ...,
-        accum_sigma: float = ...,
         max_candidates: int | None = ...,
-        edge_thinning: bool = ...,
+        radius_step: int = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProposalConfig: ...
@@ -765,6 +763,10 @@ class DetectConfig:
     def use_global_filter(self) -> bool: ...
     @use_global_filter.setter
     def use_global_filter(self, value: bool) -> None: ...
+    @property
+    def geometric_verify(self) -> bool: ...
+    @geometric_verify.setter
+    def geometric_verify(self, value: bool) -> None: ...
     @property
     def self_undistort_enable(self) -> bool: ...
     @self_undistort_enable.setter

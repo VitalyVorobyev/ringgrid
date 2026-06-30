@@ -39,10 +39,18 @@ pub(super) fn local_edge_neighbor_ids(
     out
 }
 
-fn anchor_edge_support_counts(
+/// Count `(support, contradiction)` board-adjacency edges to decoded neighbors
+/// whose trust state satisfies `keep`. Support = the neighbor is one board hop
+/// from `assumed_id`; contradiction = the neighbor is decoded but not adjacent.
+///
+/// Filtering by trust is what keeps confirmation/scrub decisions anchored to
+/// ground truth: counting *any* decoded neighbor would let a chain of mutually
+/// board-adjacent untrusted decodes vouch for each other.
+fn edge_support_counts(
     ws: &IdCorrectionWorkspace<'_>,
     marker_index: usize,
     assumed_id: usize,
+    keep: impl Fn(Trust) -> bool,
 ) -> (usize, usize) {
     let neighbors = local_edge_neighbor_ids(
         marker_index,
@@ -54,13 +62,13 @@ fn anchor_edge_support_counts(
     let mut support = 0usize;
     let mut contradiction = 0usize;
     for id_j in neighbors {
-        let is_anchor = ws
+        let kept = ws
             .markers
             .iter()
             .enumerate()
             .find_map(|(j, m)| (m.id == Some(id_j)).then_some(ws.trust[j]))
-            .is_some_and(|t| t.is_anchor());
-        if !is_anchor {
+            .is_some_and(&keep);
+        if !kept {
             continue;
         }
         if ws.board_index.are_neighbors(assumed_id, id_j) {
@@ -171,7 +179,8 @@ pub(super) fn scrub_inconsistent_ids(
             continue;
         }
         let evidence = consistency_evidence_for_id(ws, i, id);
-        let (support_anchor, contradiction_anchor) = anchor_edge_support_counts(ws, i, id);
+        let (support_anchor, contradiction_anchor) =
+            edge_support_counts(ws, i, id, Trust::is_anchor);
         let recovered_two_neighbor_contradiction = matches!(stage, ScrubStage::Post)
             && matches!(
                 ws.trust[i],
@@ -282,9 +291,14 @@ pub(super) fn confirm_ids_by_consistency(ws: &mut IdCorrectionWorkspace<'_>) -> 
             continue;
         }
         let evidence = consistency_evidence_for_id(ws, i, id);
+        // Precision: the support must come from *trusted* neighbors. Counting any
+        // decoded neighbor (as `evidence.support_edges` does) would let a chain of
+        // mutually board-adjacent untrusted decodes self-confirm — each seeing the
+        // others as support — keeping false IDs that cleanup would otherwise clear.
+        let (trusted_support, _) = edge_support_counts(ws, i, id, Trust::is_trusted);
         let strong_vote_mismatch = evidence.vote_mismatch && evidence.vote_winner_frac >= 0.60;
         if evidence.n_neighbors >= ws.config.consistency_min_neighbors
-            && evidence.support_edges >= ws.config.consistency_min_support_edges
+            && trusted_support >= ws.config.consistency_min_support_edges
             && evidence.contradiction_edges == 0
             && !strong_vote_mismatch
         {
@@ -294,4 +308,121 @@ pub(super) fn confirm_ids_by_consistency(ws: &mut IdCorrectionWorkspace<'_>) -> 
         }
     }
     confirmed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::config::IdCorrectionConfig;
+
+    fn evidence(
+        n_neighbors: usize,
+        support_edges: usize,
+        contradiction_edges: usize,
+        vote_mismatch: bool,
+        vote_winner_frac: f64,
+    ) -> ConsistencyEvidence {
+        let contradiction_frac = if n_neighbors == 0 {
+            0.0
+        } else {
+            contradiction_edges as f64 / n_neighbors as f64
+        };
+        ConsistencyEvidence {
+            n_neighbors,
+            support_edges,
+            contradiction_edges,
+            contradiction_frac,
+            vote_mismatch,
+            vote_winner_frac,
+        }
+    }
+
+    // --- not soft-locked: a marker is precision-first cleared on weak structure ---
+
+    #[test]
+    fn keeps_marker_below_min_neighbors() {
+        // Default `consistency_min_neighbors == 1`: zero neighbors ⇒ never clear,
+        // even with no support (avoids clearing isolated-but-correct markers).
+        let cfg = IdCorrectionConfig::default();
+        assert!(!should_clear_by_consistency(
+            evidence(0, 0, 0, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn keeps_structurally_clean_marker() {
+        let cfg = IdCorrectionConfig::default();
+        // 3 supporting neighbors, no contradictions, no vote dispute ⇒ keep.
+        assert!(!should_clear_by_consistency(
+            evidence(3, 3, 0, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_marker_with_no_support() {
+        let cfg = IdCorrectionConfig::default();
+        // support_edges (0) < consistency_min_support_edges (1) ⇒ clear.
+        assert!(should_clear_by_consistency(
+            evidence(2, 0, 2, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_marker_with_contradiction_majority() {
+        let cfg = IdCorrectionConfig::default();
+        // contradiction_frac 3/4 = 0.75 > 0.5 even though one neighbor supports.
+        assert!(should_clear_by_consistency(
+            evidence(4, 1, 3, false, 0.0),
+            false,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn clears_on_strong_vote_mismatch_only() {
+        let cfg = IdCorrectionConfig::default();
+        // Clean edges, but a confident local vote (>= 0.60) disputes the id.
+        assert!(should_clear_by_consistency(
+            evidence(2, 2, 0, true, 0.70),
+            false,
+            &cfg
+        ));
+        // A weak vote mismatch (< 0.60) is not enough to clear a clean marker.
+        assert!(!should_clear_by_consistency(
+            evidence(2, 2, 0, true, 0.55),
+            false,
+            &cfg
+        ));
+    }
+
+    // --- soft-locked exact decodes: only strict structural contradiction clears ---
+
+    #[test]
+    fn soft_locked_marker_survives_partial_contradiction() {
+        let cfg = IdCorrectionConfig::default();
+        // One support edge present ⇒ a soft-locked exact decode is protected even
+        // with two contradictions (requires support == 0 to clear).
+        assert!(!should_clear_by_consistency(
+            evidence(3, 1, 2, false, 0.0),
+            true,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn soft_locked_marker_cleared_on_strict_contradiction() {
+        let cfg = IdCorrectionConfig::default();
+        // Zero support and >= 2 contradictions ⇒ even a soft-locked decode clears.
+        assert!(should_clear_by_consistency(
+            evidence(2, 0, 2, false, 0.0),
+            true,
+            &cfg
+        ));
+    }
 }

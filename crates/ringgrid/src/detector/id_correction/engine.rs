@@ -310,6 +310,83 @@ mod tests {
     }
 
     #[test]
+    fn confirm_by_consistency_requires_trusted_support() {
+        // Precision (codex review on #49): two mutually board-adjacent but
+        // *untrusted*, non-exact decodes must NOT self-confirm. Each sees the
+        // other as a decoded board-neighbor, but neither is trusted, so
+        // confirm-by-consistency must leave them unconfirmed (and cleanup clears
+        // them) rather than locking in a possibly-false ID chain.
+        let board = BoardLayout::default();
+        let board_index = BoardIndex::build(&board);
+        let (&center_id, neighbors) = board_index
+            .board_neighbors
+            .iter()
+            .find(|(_, nbrs)| !nbrs.is_empty())
+            .expect("board must have a marker with >=1 neighbor");
+        let near_id = neighbors[0];
+        let far_ids: Vec<usize> = board_index
+            .id_to_xy
+            .keys()
+            .copied()
+            .filter(|id| *id != center_id && *id != near_id && !neighbors.contains(id))
+            .take(2)
+            .collect();
+        assert_eq!(far_ids.len(), 2, "need two far bootstrap seeds");
+
+        let scale = 4.0f64;
+        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
+        let px = |id: usize| {
+            let xy = board_index.id_to_xy[&id];
+            [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale]
+        };
+        let center_px = px(center_id);
+
+        // center + near are BOTH non-exact, low-confidence (never become anchors)
+        // and mutually board-adjacent. The two far *exact* anchors sit 300px away
+        // (outside any neighbor gate) purely to satisfy the >=2 bootstrap seeds,
+        // so center/near have no trusted neighbor.
+        let mut markers = vec![
+            marker_with_id(center_id, center_px, 0.5, 1, 1),
+            marker_with_id(near_id, px(near_id), 0.5, 1, 1),
+            marker_with_id(
+                far_ids[0],
+                [center_px[0] + 300.0, center_px[1]],
+                0.95,
+                0,
+                min_cyclic_dist,
+            ),
+            marker_with_id(
+                far_ids[1],
+                [center_px[0], center_px[1] + 300.0],
+                0.95,
+                0,
+                min_cyclic_dist,
+            ),
+        ];
+        let cfg = IdCorrectionConfig {
+            confirm_by_consistency: true,
+            homography_fallback_enable: false,
+            auto_search_radius_outer_muls: vec![2.4, 3.5],
+            max_iters: 3,
+            ..IdCorrectionConfig::default()
+        };
+        let stats = verify_and_correct_ids(&mut markers, &board, &cfg, CodebookProfile::Base);
+
+        assert_eq!(
+            stats.n_confirmed_by_consistency, 0,
+            "an untrusted board-adjacent chain must not self-confirm"
+        );
+        // The untrusted decodes are not promoted, so cleanup clears them.
+        let id_at = |p: [f64; 2]| markers.iter().find(|m| m.center == p).and_then(|m| m.id);
+        assert_eq!(id_at(center_px), None, "untrusted center must be cleared");
+        assert_eq!(
+            id_at(px(near_id)),
+            None,
+            "untrusted neighbor must be cleared"
+        );
+    }
+
+    #[test]
     fn deterministic_assignments_and_stats() {
         let board = BoardLayout::default();
         let board_index = BoardIndex::build(&board);

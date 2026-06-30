@@ -67,7 +67,7 @@ fn edge_support_counts(
             .iter()
             .enumerate()
             .find_map(|(j, m)| (m.id == Some(id_j)).then_some(ws.trust[j]))
-            .is_some_and(|t| keep(t));
+            .is_some_and(&keep);
         if !kept {
             continue;
         }

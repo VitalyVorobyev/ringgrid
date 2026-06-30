@@ -458,9 +458,8 @@ class ProposalConfig:
     grad_threshold: float
     min_distance: float
     min_vote_frac: float
-    accum_sigma: float
     max_candidates: int | None
-    edge_thinning: bool
+    radius_step: int
     def __init__(
         self,
         r_min: float = ...,
@@ -468,9 +467,8 @@ class ProposalConfig:
         grad_threshold: float = ...,
         min_distance: float = ...,
         min_vote_frac: float = ...,
-        accum_sigma: float = ...,
         max_candidates: int | None = ...,
-        edge_thinning: bool = ...,
+        radius_step: int = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProposalConfig: ...

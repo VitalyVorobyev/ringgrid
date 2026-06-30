@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-30
+
+Production-grade precision for sensor calibration. Detection now provably rejects
+markers that are geometrically inconsistent with the hex lattice, so only trusted
+`{id, board_xy_mm, center}` correspondences reach the output — a single false
+correspondence poisons a calibration bundle-adjust, so precision is paramount.
+This is a precision-first behavior change: a few geometrically impossible
+detections that previously survived (with merely reduced confidence) are now
+removed.
+
+### Added
+
+- **Final geometric verification gate** (`AdvancedDetectConfig::geometric_verify`,
+  default `true`). After the final homography, every decoded marker is checked
+  against the hex lattice via two complementary tests and removed if inconsistent:
+  a **local hex-midpoint** prediction (homography-free, locally affine so robust
+  to lens distortion) and a **global final-H reprojection** backstop for boundary
+  markers. Both thresholds adapt to the observed inlier-residual distribution
+  (`max(floor, median + k·MAD)`), so the gate is recall-safe on clean and
+  distorted boards alike. Set `geometric_verify = false` to keep every decoded
+  marker and apply your own filtering.
+- **Confirm-by-consistency** ID recovery
+  (`IdCorrectionConfig::confirm_by_consistency`, default `true`): correctly
+  decoded but non-exact markers in sparse/partial views that the voting stages
+  cannot reach are promoted to trusted when a board-adjacent neighbor supports
+  them and none contradicts — precision-first, never confirming an ID a confident
+  local vote disputes.
+- Opt-in `ProposalConfig::radius_step` to subsample voting radii for a faster
+  proposal stage (default `1` = full coverage; subsampling trades recall under
+  blur and is therefore opt-in).
+
+### Changed
+
+- **BREAKING (behavior): markers geometrically inconsistent with the hex lattice
+  are now removed** rather than kept with a softened confidence. For calibration
+  consumers a `Some(id)` marker is now a trusted, lattice-consistent
+  correspondence.
+- The axis-ratio consistency filter now **removes** outlier markers instead of
+  clearing their `id` (which previously left a phantom `id: None` blob that
+  scoring counts as a false positive).
+- `FitMetrics::h_reproj_err_px` is now computed in the working frame by the
+  geometric verification gate (fixing a latent frame-mixing inflation under an
+  active distortion mapper); the gate is its sole writer.
+- Hardening: non-finite guard in radial edge sampling, NaN-safe `total_cmp`
+  ordering in radial-profile aggregation, and a deterministic ID tie-break in
+  nearest-neighbor lookup.
+
+### Removed
+
+- **BREAKING: `AdvancedDetectConfig::topology_filter_threshold_px`** — superseded
+  by the always-adaptive `geometric_verify` gate. The old fixed-threshold filter
+  shipped disabled because no single threshold suited both clean and distorted
+  boards; the adaptive gate makes that choice automatically and ships on.
+- **BREAKING: `AdvancedDetectConfig::h_reproj_confidence_alpha`** and its soft
+  confidence penalty — replaced by the hard geometric gate. The soft penalty also
+  wrongly down-weighted true peripheral markers under uncorrected distortion.
+- Dead `ProposalConfig` fields `edge_thinning` and `accum_sigma` (never read by
+  the radsym-0.2 adapter).
+
+Old JSON configs carrying the removed fields still deserialize (unknown fields are
+ignored); only Rust callers that named those fields need updating.
+
 ## [0.6.0] — 2026-05-18
 
 Public API revision: a deliberate, batched breaking cleanup of the `ringgrid`

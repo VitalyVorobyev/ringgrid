@@ -112,7 +112,7 @@ knobs are reached through the `advanced` sub-config.
 | `advanced.max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
 | `advanced.dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |
 | `advanced.use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |
-| `advanced.topology_filter_threshold_px` | `Option<f32>` | `None` | Hex-topology consistency filter threshold. After global filter, markers whose positions deviate from hex-neighbor midpoint predictions by more than this threshold are removed. `None` disables the filter. |
+| `advanced.geometric_verify` | `bool` | `true` | Final precision-first geometric verification gate. After the final homography, each decoded marker is checked against its hex-neighbor midpoint prediction (locally affine, so distortion-robust) and its final-H reprojection residual, with thresholds that adapt to the observed inlier-residual distribution. Markers the lattice judges inconsistent are removed, so only trusted board correspondences reach the output. Set `false` to keep every decoded marker and filter yourself. See [Detection Quality & Rejection](../detection-quality.md). |
 | `advanced.ransac_homography` | `RansacConfig` | iters=2000, thresh=5.0 | RANSAC parameters for homography estimation. |
 | `advanced.id_correction` | `IdCorrectionConfig` | enabled | Structural consistency verification/recovery of decoded IDs before global filter. |
 | `advanced.inner_as_outer_recovery` | `InnerAsOuterRecoveryConfig` | enabled | Recovery for markers whose outer fit locked onto the inner ring. |

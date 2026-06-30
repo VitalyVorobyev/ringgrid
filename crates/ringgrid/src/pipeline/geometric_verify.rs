@@ -91,6 +91,43 @@ fn adaptive_threshold(values: &[f64], floor: f64, k: f64) -> f64 {
     floor.max(median + k * MAD_TO_SIGMA * mad)
 }
 
+/// Populate [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) for every decoded
+/// marker as the working-frame distance between its center and its board position
+/// projected through `final_h`. The **sole writer** of that diagnostic.
+///
+/// Runs whether or not the hard gate is enabled, so callers that opt out of
+/// rejection (`geometric_verify = false`) still receive the residual for their
+/// own filtering. The value is `None` for markers without a board id and for
+/// every marker when there is no `final_h`.
+pub(super) fn annotate_h_reproj_err_px(
+    markers: &mut [MarkerRecord],
+    final_h: Option<&Matrix3<f64>>,
+) {
+    let Some(h) = final_h else {
+        for m in markers.iter_mut() {
+            m.fit.h_reproj_err_px = None;
+        }
+        return;
+    };
+    for m in markers.iter_mut() {
+        let (Some(_id), Some(board_xy)) = (m.id, m.board_xy_mm) else {
+            m.fit.h_reproj_err_px = None;
+            continue;
+        };
+        let (x, y) = (board_xy[0], board_xy[1]);
+        let pw = h[(0, 0)] * x + h[(0, 1)] * y + h[(0, 2)];
+        let ph = h[(1, 0)] * x + h[(1, 1)] * y + h[(1, 2)];
+        let pz = h[(2, 0)] * x + h[(2, 1)] * y + h[(2, 2)];
+        if pz.abs() <= 1e-15 {
+            m.fit.h_reproj_err_px = None;
+            continue;
+        }
+        let dx = pw / pz - m.center[0];
+        let dy = ph / pz - m.center[1];
+        m.fit.h_reproj_err_px = Some((dx * dx + dy * dy).sqrt() as f32);
+    }
+}
+
 /// Final precision-first geometric verification gate.
 ///
 /// Runs in the working frame (where `final_h` was fit), after completion and the
@@ -106,9 +143,9 @@ fn adaptive_threshold(values: &[f64], floor: f64, k: f64) -> f64 {
 ///    center vs its board position projected through `final_h`. Catches boundary
 ///    markers that lack a complete neighbor pair for the local test.
 ///
-/// Also (re)populates [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) for
-/// every decoded marker in the working frame — the gate is the sole writer of
-/// that diagnostic.
+/// Delegates to [`annotate_h_reproj_err_px`] to populate
+/// [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) before reading it for the
+/// global test, so the diagnostic is identical whether or not the gate runs.
 pub(super) fn geometric_verify_filter(
     markers: &mut Vec<MarkerRecord>,
     final_h: Option<&Matrix3<f64>>,
@@ -136,30 +173,17 @@ pub(super) fn geometric_verify_filter(
         .map(|(c, _)| *c)
         .collect();
 
-    // --- Global final-H residual test; also repopulates h_reproj_err_px ---
+    // --- Global final-H residual test (reads the annotated diagnostic) ---
+    // Annotation is the sole writer of h_reproj_err_px and runs even when the
+    // gate is disabled; here the global backstop just consumes those residuals.
+    annotate_h_reproj_err_px(markers, final_h);
     let mut t_global: Option<f64> = None;
     let mut flagged_global_ids: HashSet<usize> = HashSet::new();
-    if let Some(h) = final_h {
-        let mut global_by_id: Vec<(usize, f64)> = Vec::new();
-        for m in markers.iter_mut() {
-            let (Some(id), Some(board_xy)) = (m.id, m.board_xy_mm) else {
-                m.fit.h_reproj_err_px = None;
-                continue;
-            };
-            let (x, y) = (board_xy[0], board_xy[1]);
-            let pw = h[(0, 0)] * x + h[(0, 1)] * y + h[(0, 2)];
-            let ph = h[(1, 0)] * x + h[(1, 1)] * y + h[(1, 2)];
-            let pz = h[(2, 0)] * x + h[(2, 1)] * y + h[(2, 2)];
-            if pz.abs() <= 1e-15 {
-                m.fit.h_reproj_err_px = None;
-                continue;
-            }
-            let dx = pw / pz - m.center[0];
-            let dy = ph / pz - m.center[1];
-            let r = (dx * dx + dy * dy).sqrt();
-            m.fit.h_reproj_err_px = Some(r as f32);
-            global_by_id.push((id, r));
-        }
+    if final_h.is_some() {
+        let global_by_id: Vec<(usize, f64)> = markers
+            .iter()
+            .filter_map(|m| Some((m.id?, f64::from(m.fit.h_reproj_err_px?))))
+            .collect();
         let global_residuals: Vec<f64> = global_by_id.iter().map(|(_, r)| *r).collect();
         let tg = adaptive_threshold(
             &global_residuals,
@@ -172,10 +196,6 @@ pub(super) fn geometric_verify_filter(
             .map(|(id, _)| *id)
             .collect();
         t_global = Some(tg);
-    } else {
-        for m in markers.iter_mut() {
-            m.fit.h_reproj_err_px = None;
-        }
     }
 
     // --- Reject = union, single retain pass ---
@@ -512,5 +532,33 @@ mod tests {
         // median = 5.5, MAD = 2.5 ⇒ 5.5 + 1·1.4826·2.5 = 9.2065
         let got = adaptive_threshold(&vals, 0.0, 1.0);
         assert!((got - 9.2065).abs() < 1e-3, "got {got}");
+    }
+
+    #[test]
+    fn annotate_populates_diagnostic_without_rejecting() {
+        // Opt-out path (geometric_verify = false): annotation runs independently
+        // of rejection, so callers still get h_reproj_err_px for their own filter.
+        let board = board();
+        let h = affine_h(5.0, 100.0, 100.0);
+        let mut markers = clean_lattice(&board, &h);
+        let n = markers.len();
+        annotate_h_reproj_err_px(&mut markers, Some(&h));
+        assert_eq!(markers.len(), n, "annotation must not remove markers");
+        assert!(
+            markers.iter().all(|m| m.fit.h_reproj_err_px.is_some()),
+            "every decoded marker receives a reprojection residual"
+        );
+    }
+
+    #[test]
+    fn annotate_clears_diagnostic_without_homography() {
+        let board = board();
+        let h = affine_h(5.0, 100.0, 100.0);
+        let mut markers = clean_lattice(&board, &h);
+        for m in markers.iter_mut() {
+            m.fit.h_reproj_err_px = Some(3.0); // stale value from a prior frame
+        }
+        annotate_h_reproj_err_px(&mut markers, None);
+        assert!(markers.iter().all(|m| m.fit.h_reproj_err_px.is_none()));
     }
 }

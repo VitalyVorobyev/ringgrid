@@ -3,7 +3,9 @@ use super::time_compat::Instant;
 use image::GrayImage;
 
 use super::axis_ratio_filter::remove_axis_ratio_outliers;
-use super::geometric_verify::{GeometricVerifyStats, geometric_verify_filter};
+use super::geometric_verify::{
+    GeometricVerifyStats, annotate_h_reproj_err_px, geometric_verify_filter,
+};
 use super::{
     CompletionStats, DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
     complete_with_h, compute_h_stats, global_filter, matrix3_to_array, mean_reproj_error_px,
@@ -337,6 +339,9 @@ fn finalize_global_filter_result(
             config.advanced.ransac_homography.inlier_threshold,
         )
     } else {
+        // Gate disabled: still annotate the reprojection diagnostic so opt-out
+        // callers can apply their own filtering (as the docs recommend).
+        annotate_h_reproj_err_px(&mut final_markers, final_h_mat.as_ref());
         GeometricVerifyStats::default()
     };
     let geom_elapsed = geom_start.elapsed();

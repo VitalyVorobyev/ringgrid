@@ -116,6 +116,27 @@ fn phase_final_h(
     (final_h_matrix, final_ransac)
 }
 
+/// Run the geometric verification gate, or — when it is disabled — only annotate
+/// the reprojection diagnostic so opt-out callers can filter on it themselves.
+/// Returns the gate stats (empty when disabled).
+fn phase_geometric_verify(
+    markers: &mut Vec<MarkerRecord>,
+    final_h: Option<&nalgebra::Matrix3<f64>>,
+    config: &DetectConfig,
+) -> GeometricVerifyStats {
+    if config.advanced.geometric_verify {
+        geometric_verify_filter(
+            markers,
+            final_h,
+            &config.board,
+            config.advanced.ransac_homography.inlier_threshold,
+        )
+    } else {
+        annotate_h_reproj_err_px(markers, final_h);
+        GeometricVerifyStats::default()
+    }
+}
+
 fn drop_unmappable_markers(markers: &mut Vec<MarkerRecord>, mapper: &dyn PixelMapper) -> usize {
     let before = markers.len();
     markers.retain(|m| {
@@ -331,19 +352,7 @@ fn finalize_global_filter_result(
     // `final_h` was fit), over all markers including completed ones — before
     // centers are remapped to image space.
     let geom_start = Instant::now();
-    let geom_stats = if config.advanced.geometric_verify {
-        geometric_verify_filter(
-            &mut final_markers,
-            final_h_mat.as_ref(),
-            &config.board,
-            config.advanced.ransac_homography.inlier_threshold,
-        )
-    } else {
-        // Gate disabled: still annotate the reprojection diagnostic so opt-out
-        // callers can apply their own filtering (as the docs recommend).
-        annotate_h_reproj_err_px(&mut final_markers, final_h_mat.as_ref());
-        GeometricVerifyStats::default()
-    };
+    let geom_stats = phase_geometric_verify(&mut final_markers, final_h_mat.as_ref(), config);
     let geom_elapsed = geom_start.elapsed();
 
     let final_h = final_h_mat.as_ref().map(matrix3_to_array);

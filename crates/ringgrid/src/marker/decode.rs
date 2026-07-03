@@ -780,7 +780,11 @@ mod tests {
         let (result, diag) =
             decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
         let result = result.expect("eccentric marker should decode");
-        assert_eq!(result.id, 123, "decoded id should be 123, got {}", result.id);
+        assert_eq!(
+            result.id, 123,
+            "decoded id should be 123, got {}",
+            result.id
+        );
         assert_eq!(result.dist, 0, "eccentric decode should be exact");
         assert!(!diag.inverted_used);
     }

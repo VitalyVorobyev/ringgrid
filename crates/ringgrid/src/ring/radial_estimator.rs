@@ -46,6 +46,9 @@ pub(crate) struct RadialScanResult {
     curves_flat: Vec<f32>,
     per_theta_peak_pos: Vec<f32>,
     per_theta_peak_neg: Vec<f32>,
+    /// Ray angle (radians) for each valid theta sample, aligned with the
+    /// per-theta peak vectors. Lets callers fit angular models to the peaks.
+    valid_theta_angles: Vec<f32>,
 }
 
 impl RadialScanResult {
@@ -53,6 +56,13 @@ impl RadialScanResult {
     #[inline]
     pub(crate) fn coverage(&self) -> f32 {
         self.n_valid_theta as f32 / self.n_total_theta.max(1) as f32
+    }
+
+    /// Ray angles (radians) of the valid theta samples, aligned with
+    /// [`Self::per_theta_peaks`].
+    #[inline]
+    pub(crate) fn valid_theta_angles(&self) -> &[f32] {
+        &self.valid_theta_angles
     }
 
     /// Per-theta peak radii for the requested derivative polarity.
@@ -118,13 +128,14 @@ where
     let mut i_vals = vec![0.0f32; n_r];
     let mut d_vals = vec![0.0f32; n_r];
     let mut n_valid_theta = 0usize;
+    let mut valid_theta_angles = Vec::<f32>::with_capacity(n_total_theta);
 
     let d_theta = 2.0 * std::f32::consts::PI / n_total_theta as f32;
     let c_step = d_theta.cos();
     let s_step = d_theta.sin();
     let mut ct = 1.0f32;
     let mut st = 0.0f32;
-    for _ in 0..n_total_theta {
+    for ti in 0..n_total_theta {
         if sample_theta_profile(ct, st, &grid.r_samples, &mut i_vals) {
             radial_profile::radial_derivative_into(&i_vals, grid.r_step, &mut d_vals);
             radial_profile::smooth_3point(&mut d_vals);
@@ -137,6 +148,7 @@ where
                 per_theta_peak_neg
                     .push(grid.r_samples[radial_profile::peak_idx(&d_vals, Polarity::Neg)]);
             }
+            valid_theta_angles.push(ti as f32 * d_theta);
             n_valid_theta += 1;
         }
 
@@ -153,6 +165,7 @@ where
         curves_flat,
         per_theta_peak_pos,
         per_theta_peak_neg,
+        valid_theta_angles,
     }
 }
 

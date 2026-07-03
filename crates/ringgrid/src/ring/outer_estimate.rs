@@ -39,6 +39,36 @@ pub enum OuterEstimateFailure {
     NoPolarityCandidates,
 }
 
+/// Second-harmonic radius model `r(θ) = c0 + c1·cos 2θ + c2·sin 2θ`.
+///
+/// This is the first-order radial signature of an eccentric (elliptical)
+/// ring seen from its center: the edge radius oscillates at twice the ray
+/// angle. A circle has `c1 = c2 = 0`.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct RadialHarmonic {
+    /// Mean radius (pixels).
+    pub c0: f32,
+    /// cos(2θ) coefficient (pixels).
+    pub c1: f32,
+    /// sin(2θ) coefficient (pixels).
+    pub c2: f32,
+}
+
+impl RadialHarmonic {
+    /// Model radius at ray angle `theta` (radians).
+    #[inline]
+    pub fn radius_at(&self, theta: f32) -> f32 {
+        let (s, c) = (2.0 * theta).sin_cos();
+        self.c0 + self.c1 * c + self.c2 * s
+    }
+
+    /// Peak radial deviation from the mean radius (pixels).
+    #[inline]
+    pub fn amplitude(&self) -> f32 {
+        (self.c1 * self.c1 + self.c2 * self.c2).sqrt()
+    }
+}
+
 /// Candidate outer-radius hypothesis from aggregated radial response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OuterHypothesis {
@@ -46,8 +76,17 @@ pub struct OuterHypothesis {
     pub r_outer_px: f32,
     /// Absolute aggregated peak magnitude.
     pub peak_strength: f32,
-    /// Fraction of per-theta peaks close to `r_outer_px`.
+    /// Fraction of per-theta peaks close to `r_outer_px` (or to the
+    /// eccentricity model when one is attached).
     pub theta_consistency: f32,
+    /// Eccentricity-aware radius model fitted to the per-theta peaks.
+    ///
+    /// Present when the per-theta peak field is well explained by a
+    /// second-harmonic (elliptical) radius oscillation around this
+    /// hypothesis. Downstream edge sampling recenters each ray's local
+    /// search on `r_outer_px + (model.radius_at(θ) − model.c0)`.
+    #[serde(default)]
+    pub radius_model: Option<RadialHarmonic>,
 }
 
 /// Outer-radius estimation result with optional debug traces.
@@ -146,6 +185,93 @@ fn failed_outer_estimate(
         radial_response_agg: None,
         r_samples,
     }
+}
+
+/// Least-squares fit of [`RadialHarmonic`] to `(angle, radius)` pairs.
+///
+/// Returns `None` when there are too few points or the normal equations are
+/// singular (e.g. degenerate angular coverage).
+fn fit_radial_harmonic_lsq(angles: &[f32], radii: &[f32]) -> Option<RadialHarmonic> {
+    const MIN_POINTS: usize = 8;
+    debug_assert_eq!(angles.len(), radii.len());
+    if angles.len() < MIN_POINTS {
+        return None;
+    }
+
+    // Normal equations for the basis [1, cos 2θ, sin 2θ] in f64.
+    let (mut sc, mut ss, mut scc, mut sss, mut scs) = (0.0f64, 0.0, 0.0, 0.0, 0.0);
+    let (mut sr, mut src, mut srs) = (0.0f64, 0.0, 0.0);
+    for (&theta, &r) in angles.iter().zip(radii) {
+        let (s, c) = (2.0 * f64::from(theta)).sin_cos();
+        let r = f64::from(r);
+        sc += c;
+        ss += s;
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        sr += r;
+        src += r * c;
+        srs += r * s;
+    }
+    let n = angles.len() as f64;
+    let a = nalgebra::Matrix3::new(n, sc, ss, sc, scc, scs, ss, scs, sss);
+    let b = nalgebra::Vector3::new(sr, src, srs);
+    let x = a.lu().solve(&b)?;
+    let model = RadialHarmonic {
+        c0: x[0] as f32,
+        c1: x[1] as f32,
+        c2: x[2] as f32,
+    };
+    (model.c0.is_finite() && model.c1.is_finite() && model.c2.is_finite()).then_some(model)
+}
+
+/// An eccentricity-model fit together with its own quality measure.
+struct HarmonicFit {
+    model: RadialHarmonic,
+    /// RMS of the inlier residuals of the final fit (pixels). A genuine
+    /// elliptical signature is explained well by the model (RMS near the
+    /// radial quantization); a fit that merely chases noise carries an
+    /// amplitude comparable to its own residuals.
+    inlier_rms: f32,
+}
+
+/// Fit an eccentricity model to the per-theta peak field, with one
+/// outlier-rejection refit round (rays locked onto the wrong edge bias a
+/// plain least-squares fit).
+fn fit_radial_harmonic(angles: &[f32], radii: &[f32], r_step: f32) -> Option<HarmonicFit> {
+    let first = fit_radial_harmonic_lsq(angles, radii)?;
+
+    let mut abs_residuals: Vec<f32> = angles
+        .iter()
+        .zip(radii)
+        .map(|(&theta, &r)| (r - first.radius_at(theta)).abs())
+        .collect();
+    let mid = abs_residuals.len() / 2;
+    let (_, mad, _) = abs_residuals.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
+    let inlier_tol = (3.0 * *mad).max(r_step);
+
+    let mut in_angles = Vec::with_capacity(angles.len());
+    let mut in_radii = Vec::with_capacity(radii.len());
+    for (&theta, &r) in angles.iter().zip(radii) {
+        if (r - first.radius_at(theta)).abs() <= inlier_tol {
+            in_angles.push(theta);
+            in_radii.push(r);
+        }
+    }
+    let model = if in_angles.len() == angles.len() {
+        first
+    } else {
+        fit_radial_harmonic_lsq(&in_angles, &in_radii).unwrap_or(first)
+    };
+
+    let mut rms_sq = 0.0f32;
+    for (&theta, &r) in in_angles.iter().zip(&in_radii) {
+        let res = r - model.radius_at(theta);
+        rms_sq += res * res;
+    }
+    let inlier_rms = (rms_sq / in_angles.len().max(1) as f32).sqrt();
+
+    Some(HarmonicFit { model, inlier_rms })
 }
 
 fn find_local_peaks(score: &[f32]) -> Vec<usize> {
@@ -258,6 +384,54 @@ fn execute_outer_radial_scan(
     Ok(scan)
 }
 
+/// Fraction of per-theta peaks within tolerance of the eccentricity model.
+///
+/// Mirrors [`radial_profile::theta_consistency`], but measures each peak
+/// against the model radius at its own ray angle instead of one constant
+/// radius — a strongly eccentric ring has peaks spread over ±amplitude that
+/// are all consistent with a single elliptical edge.
+fn theta_consistency_with_model(
+    per_theta_peaks: &[f32],
+    angles: &[f32],
+    model: &RadialHarmonic,
+    r_step: f32,
+    min_delta: f32,
+) -> f32 {
+    let delta = (4.0 * r_step).max(min_delta);
+    let n_close = per_theta_peaks
+        .iter()
+        .zip(angles)
+        .filter(|&(&r, &theta)| (r - model.radius_at(theta)).abs() <= delta)
+        .count();
+    n_close as f32 / per_theta_peaks.len().max(1) as f32
+}
+
+/// Attach-gates for the eccentricity model on one hypothesis.
+///
+/// The model must describe the same edge as the aggregated peak (`c0` close
+/// to `r_star`), stay a plausible ellipse (bounded relative amplitude),
+/// oscillate more than the constant-radius consistency tolerance already
+/// absorbs (below that it cannot help), and carry an amplitude that clearly
+/// exceeds its own residual noise — a fit chasing a noisy (e.g. heavily
+/// blurred) peak field fails the SNR gate, keeping the constant-radius path
+/// in charge instead of dragging per-ray refine centers off the true edge.
+fn model_applies_to_peak(
+    fit: &HarmonicFit,
+    r_star: f32,
+    window: [f32; 2],
+    consistency_delta: f32,
+) -> bool {
+    const MAX_RELATIVE_AMPLITUDE: f32 = 0.35;
+    const MIN_AMPLITUDE_TO_NOISE: f32 = 2.0;
+    let model = &fit.model;
+    let half_window = 0.5 * (window[1] - window[0]);
+    model.c0.is_finite()
+        && (model.c0 - r_star).abs() <= 0.5 * half_window
+        && model.amplitude() >= consistency_delta
+        && model.amplitude() <= MAX_RELATIVE_AMPLITUDE * model.c0
+        && model.amplitude() >= MIN_AMPLITUDE_TO_NOISE * fit.inlier_rms
+}
+
 /// Find peaks in the aggregated response for a single polarity and assemble
 /// up to two `OuterHypothesis` entries that pass theta-consistency gating.
 fn build_hypotheses_for_polarity(
@@ -290,6 +464,16 @@ fn build_hypotheses_for_polarity(
     peaks.sort_by(|&a, &b| score_vec[b].total_cmp(&score_vec[a]));
 
     let per_theta = scan.per_theta_peaks(pol);
+    let window = [
+        scan.grid.r_samples[0],
+        scan.grid.r_samples[scan.grid.r_samples.len() - 1],
+    ];
+
+    // One eccentricity model per polarity: the per-theta peak field is a
+    // property of the scan, not of an individual aggregated peak. The delta
+    // matches the theta-consistency tolerance below.
+    let consistency_delta = (4.0 * scan.grid.r_step).max(0.75);
+    let harmonic = fit_radial_harmonic(scan.valid_theta_angles(), per_theta, scan.grid.r_step);
 
     let mut hypotheses: Vec<OuterHypothesis> = Vec::new();
     let mut best_strength = None::<f32>;
@@ -310,8 +494,31 @@ fn build_hypotheses_for_polarity(
             break;
         }
 
-        let theta_consistency =
+        let constant_consistency =
             radial_profile::theta_consistency(per_theta, r_star, scan.grid.r_step, 0.75);
+
+        // The model earns its place only by explaining the peak field strictly
+        // better than the constant radius; ties keep the legacy path.
+        let (radius_model, theta_consistency) = match harmonic
+            .as_ref()
+            .filter(|fit| model_applies_to_peak(fit, r_star, window, consistency_delta))
+        {
+            Some(fit) => {
+                let model_consistency = theta_consistency_with_model(
+                    per_theta,
+                    scan.valid_theta_angles(),
+                    &fit.model,
+                    scan.grid.r_step,
+                    0.75,
+                );
+                if model_consistency > constant_consistency {
+                    (Some(fit.model), model_consistency)
+                } else {
+                    (None, constant_consistency)
+                }
+            }
+            None => (None, constant_consistency),
+        };
 
         if theta_consistency < cfg.min_theta_consistency {
             continue;
@@ -321,6 +528,7 @@ fn build_hypotheses_for_polarity(
             r_outer_px: r_star,
             peak_strength,
             theta_consistency,
+            radius_model,
         });
 
         if hypotheses.len() >= 2 {
@@ -493,6 +701,139 @@ mod tests {
             "r_found {:.2} should be near expected {:.2}",
             r_found,
             r_outer
+        );
+    }
+
+    #[test]
+    fn fit_radial_harmonic_recovers_elliptical_signature() {
+        // Synthesize per-theta peaks from a known model plus quantization noise.
+        let truth = RadialHarmonic {
+            c0: 27.0,
+            c1: 2.4,
+            c2: -1.1,
+        };
+        let n = 48;
+        let angles: Vec<f32> = (0..n)
+            .map(|i| i as f32 * 2.0 * std::f32::consts::PI / n as f32)
+            .collect();
+        let radii: Vec<f32> = angles
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| truth.radius_at(t) + if i % 2 == 0 { 0.15 } else { -0.15 })
+            .collect();
+
+        let fit = fit_radial_harmonic(&angles, &radii, 0.4).expect("fit succeeds");
+        let m = fit.model;
+        assert!((m.c0 - truth.c0).abs() < 0.1, "c0 {:.3}", m.c0);
+        assert!((m.c1 - truth.c1).abs() < 0.1, "c1 {:.3}", m.c1);
+        assert!((m.c2 - truth.c2).abs() < 0.1, "c2 {:.3}", m.c2);
+        assert!(
+            fit.inlier_rms <= 0.2,
+            "clean signal should have small residual RMS, got {:.3}",
+            fit.inlier_rms
+        );
+    }
+
+    #[test]
+    fn fit_radial_harmonic_rejects_contaminated_rays() {
+        // A sixth of the rays lock onto a much closer (inner) edge — a
+        // realistic partial-occlusion level. The outlier-rejection round must
+        // keep the fit on the outer signature. (At contamination approaching
+        // the MAD breakdown the fit stays biased; the `model_applies_to_peak`
+        // gate then rejects it and the constant-radius path takes over.)
+        let truth = RadialHarmonic {
+            c0: 27.0,
+            c1: 2.0,
+            c2: 0.0,
+        };
+        let n = 48;
+        let angles: Vec<f32> = (0..n)
+            .map(|i| i as f32 * 2.0 * std::f32::consts::PI / n as f32)
+            .collect();
+        let radii: Vec<f32> = angles
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| {
+                if i % 6 == 0 {
+                    20.0 // inner-edge contamination
+                } else {
+                    truth.radius_at(t)
+                }
+            })
+            .collect();
+
+        let fit = fit_radial_harmonic(&angles, &radii, 0.4).expect("fit succeeds");
+        let m = fit.model;
+        assert!(
+            (m.c0 - truth.c0).abs() < 0.5,
+            "contaminated c0 {:.3} should stay near 27",
+            m.c0
+        );
+        assert!((m.c1 - truth.c1).abs() < 0.5, "c1 {:.3}", m.c1);
+    }
+
+    #[test]
+    fn outer_estimator_attaches_model_on_eccentric_ring() {
+        // Elliptic dark ring with amplitude (a-b)/2 = 3 px: per-theta peaks
+        // spread over ±3 px, well past the constant-radius consistency
+        // tolerance, so the estimator needs the eccentricity model.
+        let w = 160u32;
+        let h = 160u32;
+        let cx = 80.0f32;
+        let cy = 80.0f32;
+        let a = 30.0f32;
+        let b = 24.0f32;
+        let angle = 0.4f32;
+
+        let ca = angle.cos();
+        let sa = angle.sin();
+        let mut img = GrayImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let xr = ca * dx + sa * dy;
+                let yr = -sa * dx + ca * dy;
+                let rho = ((xr / a).powi(2) + (yr / b).powi(2)).sqrt();
+                let val: f32 = if (0.55..=1.0).contains(&rho) {
+                    0.15
+                } else {
+                    0.9
+                };
+                img.put_pixel(x, y, Luma([(val * 255.0).round() as u8]));
+            }
+        }
+        let img = blur_gray(&img, 1.0);
+
+        let r_mean = 0.5 * (a + b);
+        let cfg = OuterEstimationConfig {
+            search_halfwidth_px: 6.0,
+            ..OuterEstimationConfig::default()
+        };
+
+        let est =
+            estimate_outer_from_prior_with_mapper(&img, [cx, cy], r_mean, &cfg, 64, None, false);
+        assert_eq!(
+            est.status,
+            OuterStatus::Ok,
+            "eccentric outer estimate failed: {:?}",
+            est.failure
+        );
+        let hyp = &est.hypotheses[0];
+        let model = hyp
+            .radius_model
+            .as_ref()
+            .expect("eccentric ring should attach a radius model");
+        // Amplitude should reflect (a - b) / 2 = 3 px.
+        assert!(
+            (model.amplitude() - 3.0).abs() < 1.0,
+            "model amplitude {:.2} should be near 3.0",
+            model.amplitude()
+        );
+        assert!(
+            hyp.theta_consistency >= cfg.min_theta_consistency,
+            "model-based consistency {:.2} should pass the gate",
+            hyp.theta_consistency
         );
     }
 }

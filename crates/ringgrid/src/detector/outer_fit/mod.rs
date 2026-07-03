@@ -150,7 +150,7 @@ fn evaluate_hypothesis(
     let (outer_points, outer_radii) = sampling::collect_outer_edge_points_near_radius(
         ctx.sampler,
         ctx.center_prior,
-        hyp.r_outer_px,
+        hyp,
         ctx.r_expected,
         ctx.pol,
         ctx.edge_cfg,

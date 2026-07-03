@@ -125,13 +125,14 @@ fn pick_best_radius_on_ray(
 pub(super) fn collect_outer_edge_points_near_radius(
     sampler: DistortionAwareSampler<'_>,
     center_prior: [f32; 2],
-    r0: f32,
+    hyp: &crate::ring::outer_estimate::OuterHypothesis,
     r_expected: f32,
     pol: Polarity,
     edge_cfg: &EdgeSampleConfig,
     refine_halfwidth_px: f32,
 ) -> (Vec<[f64; 2]>, Vec<f32>) {
     let n_t = edge_cfg.n_rays.max(8);
+    let r0 = hyp.r_outer_px;
 
     let mut outer_points = Vec::with_capacity(n_t);
     let mut outer_radii = Vec::with_capacity(n_t);
@@ -140,11 +141,20 @@ pub(super) fn collect_outer_edge_points_near_radius(
         let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
         let ray_dir = [theta.cos(), theta.sin()];
 
+        // Eccentric markers: recenter this ray's local search on the
+        // hypothesis radius plus the model's differential radius offset, so
+        // the narrow refine window tracks the elliptical edge instead of
+        // losing the rays near the major/minor axes.
+        let ray_r0 = match &hyp.radius_model {
+            Some(model) => r0 + (model.radius_at(theta) - model.c0),
+            None => r0,
+        };
+
         let Some(r) = pick_best_radius_on_ray(
             sampler,
             center_prior,
             ray_dir,
-            r0,
+            ray_r0,
             pol,
             edge_cfg,
             refine_halfwidth_px,
@@ -287,10 +297,16 @@ mod tests {
             ..EdgeSampleConfig::default()
         };
 
+        let hyp = crate::ring::outer_estimate::OuterHypothesis {
+            r_outer_px: inner_radius,
+            peak_strength: 1.0,
+            theta_consistency: 1.0,
+            radius_model: None,
+        };
         let (points, radii) = collect_outer_edge_points_near_radius(
             sampler,
             center,
-            inner_radius,
+            &hyp,
             outer_radius,
             Polarity::Pos,
             &edge_cfg,

@@ -1082,9 +1082,9 @@ dependencies = [
 
 [[package]]
 name = "projective-grid"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04c6ff1a535e642c2e3729c31677556ec2351db090c685906f09da8b6b35790a"
+checksum = "393db536d6155586a7432d508733475de7786b96b50cfe825268670f66f96916"
 dependencies = [
  "delaunator",
  "kiddo",
@@ -1197,9 +1197,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "radsym"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d78cf67d536b598ea1679ceedc6153360c30ec6dbd40a0179bd2e2f366c08b"
+checksum = "e61462fa4315df31344873553e96fea0798d19a193c0d8f4ff5b20e95dfa4d52"
 dependencies = [
  "box-image-pyramid",
  "nalgebra",

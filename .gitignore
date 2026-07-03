@@ -16,3 +16,4 @@ uv.lock
 crates/ringgrid-wasm/pkg/
 target
 API_REVISION.md
+docs/rectring.pdf

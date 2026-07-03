@@ -35,6 +35,14 @@ pub(crate) fn apply_projective_centers(markers: &mut [MarkerRecord], config: &De
         ..Default::default()
     };
 
+    // `None` means "auto": a correction jumping further than the nominal marker
+    // diameter (2 × nominal radius) is treated as a solver artifact.
+    let max_shift_px = config
+        .advanced
+        .projective_center
+        .max_correction_shift_px
+        .unwrap_or(f64::from(config.marker_scale.nominal_diameter_px()));
+
     let mut n_missing_conics = 0usize;
     let mut n_solver_failed = 0usize;
     let mut n_rejected_shift = 0usize;
@@ -77,9 +85,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [MarkerRecord], config: &De
         let dx = center_projective[0] - center_before[0];
         let dy = center_projective[1] - center_before[1];
         let center_shift = (dx * dx + dy * dy).sqrt();
-        if let Some(max_shift_px) = config.advanced.projective_center.max_correction_shift_px
-            && (!center_shift.is_finite() || center_shift > max_shift_px)
-        {
+        if !center_shift.is_finite() || center_shift > max_shift_px {
             n_rejected_shift += 1;
             continue;
         }

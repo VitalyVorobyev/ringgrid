@@ -1236,7 +1236,8 @@ class CompletionConfig:
 class ProjectiveCenterConfig:
     use_expected_ratio: bool = True
     ratio_penalty_weight: float = 1.0
-    max_correction_shift_px: float | None = 40.0
+    # None means "auto": the gate falls back to the nominal marker diameter.
+    max_correction_shift_px: float | None = None
     max_selected_residual: float = 0.25
     min_eig_separation: float = 1e-6
 

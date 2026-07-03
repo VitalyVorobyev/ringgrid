@@ -204,7 +204,7 @@ Default `marker_scale` derivations for `DetectConfig(BoardLayout.default())`
 - `advanced.edge_sample.r_max = 2.0 * radius_max_px` -> `66.0`
 - `advanced.outer_estimation.search_halfwidth_px = max(max((radius_max_px - radius_min_px) * 0.5, 2.0), 13.0)` -> `13.0`
 - `advanced.completion.roi_radius_px = clamp(0.75 * nominal_diameter_px, 24.0, 80.0)` -> `30.0`
-- `advanced.projective_center.max_correction_shift_px = 2.0 * nominal_outer_radius_px` -> `40.0`
+- `advanced.projective_center.max_correction_shift_px` — stays `None` ("auto"): the gate falls back to the nominal marker diameter (`40.0` px here) at use time
 
 Deeper theory and Rust-side derivation details:
 - [Book: DetectConfig](https://vitalyvorobyev.github.io/ringgrid/book/configuration/detect-config.html)
@@ -257,8 +257,8 @@ Deeper theory and Rust-side derivation details:
 
 This is the highest-leverage tuning section. Replacing `cfg.marker_scale`
 recomputes the scale-coupled defaults in `proposal`, `edge_sample`,
-`outer_estimation.search_halfwidth_px`, `completion.roi_radius_px`, and
-`projective_center.max_correction_shift_px`.
+`outer_estimation.search_halfwidth_px`, and `completion.roi_radius_px`; the
+`projective_center.max_correction_shift_px` "auto" fallback also tracks it.
 
 | Field | Default | Practical notes |
 |---|---|---|
@@ -412,7 +412,7 @@ Controls the center-refinement stage used when
 |---|---|---|
 | `use_expected_ratio` | `True` | Uses the board-driven inner/outer ratio as a prior in the selector. Usually leave this on. |
 | `ratio_penalty_weight` | `1.0` | Strength of that ratio prior. Lower it if you need the selector to trust raw conic evidence more. |
-| `max_correction_shift_px` | derived -> `40.0` | Maximum accepted correction jump (pre-0.8 name: `max_center_shift_px`). Re-derived from `cfg.marker_scale`. |
+| `max_correction_shift_px` | `None` (auto) | Maximum accepted correction jump (pre-0.8 name: `max_center_shift_px`). `None` falls back to the nominal marker diameter; explicit values are honored as-is. |
 | `max_selected_residual` | `0.25` | Rejects unstable projective-center candidates. Raise only if valid markers are failing this gate. |
 | `min_eig_separation` | `1e-06` | Guards against unstable conic-pencil eigenpairs. Lower only if you have evidence the default is too strict. |
 

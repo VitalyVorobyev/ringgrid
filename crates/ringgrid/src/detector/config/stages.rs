@@ -105,9 +105,12 @@ pub struct ProjectiveCenterConfig {
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
     pub ratio_penalty_weight: f64,
-    /// Optional maximum allowed shift (pixels) from the pre-correction center.
+    /// Maximum allowed shift (pixels) from the pre-correction center.
     ///
-    /// When set, large jumps are rejected and the original center is kept.
+    /// Corrections jumping further than this are rejected and the original
+    /// center is kept. `None` means "auto": the gate uses the nominal marker
+    /// diameter derived from the active [`MarkerScalePrior`](super::MarkerScalePrior).
+    /// Explicit values are honored as-is and survive target re-derivation.
     /// (Renamed from `max_center_shift_px` in 0.8.0 to disambiguate from the
     /// unrelated inner-fit field of the same name; the old JSON key is still
     /// accepted as an alias.)

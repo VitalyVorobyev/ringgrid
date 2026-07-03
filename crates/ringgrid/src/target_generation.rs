@@ -1,8 +1,8 @@
+//! Printable target rendering (SVG and PNG) for any [`TargetLayout`].
+
 use crate::BoardLayout;
-use crate::board_layout::{
-    marker_code_band_bounds_mm, marker_outer_draw_radius_mm, marker_ring_half_thickness_mm,
-};
 use crate::marker::codebook::CODEBOOK;
+use crate::target::{MarkerCoding, TargetLayout};
 use image::{GrayImage, Luma};
 #[cfg(feature = "std")]
 use png::{BitDepth, ColorType, Encoder as PngEncoder, EncodingError, PixelDimensions, Unit};
@@ -41,9 +41,9 @@ impl Default for SvgTargetOptions {
 pub struct PngTargetOptions {
     /// Raster density used to convert millimeters into output pixels.
     ///
-    /// When written via [`BoardLayout::write_target_png`], this is also embedded
-    /// as PNG physical pixel dimensions (`pHYs`) so the file retains the
-    /// intended print scale.
+    /// When written via [`TargetLayout::write_target_png`], this is also
+    /// embedded as PNG physical pixel dimensions (`pHYs`) so the file retains
+    /// the intended print scale.
     pub dpi: f32,
     /// Extra white border around the generated square page, in millimeters.
     pub margin_mm: f32,
@@ -139,8 +139,9 @@ impl From<EncodingError> for TargetGenerationError {
 struct RenderGeometry {
     outer_radius_mm: f64,
     inner_radius_mm: f64,
-    code_band_outer_mm: f64,
-    code_band_inner_mm: f64,
+    /// Code band bounds; `None` for plain (uncoded) markers.
+    code_band_mm: Option<(f64, f64)>,
+    /// Half of the ring stroke width; 0 for plain markers.
     ring_half_thickness_mm: f64,
     outer_draw_extent_mm: f64,
 }
@@ -170,13 +171,13 @@ impl ScaleBarParams {
     }
 }
 
-impl BoardLayout {
+impl TargetLayout {
     /// Render a printable SVG target.
     ///
-    /// Input marker centers stay in normalized board millimeters with marker
-    /// `id=0` anchored at `[0, 0]`. The returned SVG translates those markers
-    /// into a square page in millimeters with top-left origin and `+y`
-    /// increasing downward.
+    /// Input marker centers stay in normalized board millimeters with the
+    /// first cell anchored at `[0, 0]`. The returned SVG translates those
+    /// markers into a square page in millimeters with top-left origin and
+    /// `+y` increasing downward.
     pub fn render_target_svg(
         &self,
         options: &SvgTargetOptions,
@@ -198,58 +199,42 @@ impl BoardLayout {
             "<rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\"/>".to_string(),
         );
 
-        let dtheta = 2.0 * PI / CODE_SECTORS as f64;
-        for (idx, marker) in self.markers().iter().enumerate() {
-            let code_id = idx % CODEBOOK.len();
-            let codeword = u32::from(CODEBOOK[code_id]);
-            let cx = f64::from(marker.xy_mm[0]) + canvas.offset_x_mm;
-            let cy = f64::from(marker.xy_mm[1]) + canvas.offset_y_mm;
+        for (idx, cell) in self.cells().iter().enumerate() {
+            let cx = f64::from(cell.xy_mm[0]) + canvas.offset_x_mm;
+            let cy = f64::from(cell.xy_mm[1]) + canvas.offset_y_mm;
 
-            lines.push(format!("<g id=\"m{idx}\" data-id=\"{code_id}\">"));
-            lines.push(format!(
-                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\" stroke=\"black\" stroke-width=\"{}\"/>",
-                svg_fmt(cx),
-                svg_fmt(cy),
-                svg_fmt(geometry.outer_radius_mm),
-                svg_fmt(2.0 * geometry.ring_half_thickness_mm)
-            ));
-            lines.push(format!(
-                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\" stroke=\"black\" stroke-width=\"{}\"/>",
-                svg_fmt(cx),
-                svg_fmt(cy),
-                svg_fmt(geometry.inner_radius_mm),
-                svg_fmt(2.0 * geometry.ring_half_thickness_mm)
-            ));
-
-            lines.push(format!(
-                "<path d=\"{}\" fill=\"white\" fill-rule=\"evenodd\"/>",
-                svg_annulus_path(
-                    cx,
-                    cy,
-                    geometry.code_band_outer_mm,
-                    geometry.code_band_inner_mm
-                )
-            ));
-
-            for sector in 0..CODE_SECTORS {
-                if ((codeword >> sector) & 1) == 1 {
-                    continue;
+            match cell.id {
+                Some(id) => {
+                    lines.push(format!("<g id=\"m{idx}\" data-id=\"{id}\">"));
+                    append_coded_marker_svg(&mut lines, cx, cy, geometry, CODEBOOK[id].into());
+                    lines.push("</g>".to_string());
                 }
-                let angle0 = -PI + sector as f64 * dtheta;
-                let angle1 = angle0 + dtheta;
+                None => {
+                    lines.push(format!("<g id=\"m{idx}\">"));
+                    lines.push(format!(
+                        "<path d=\"{}\" fill=\"black\" fill-rule=\"evenodd\"/>",
+                        svg_annulus_path(
+                            cx,
+                            cy,
+                            geometry.outer_radius_mm,
+                            geometry.inner_radius_mm
+                        )
+                    ));
+                    lines.push("</g>".to_string());
+                }
+            }
+        }
+
+        if let Some(fiducials) = self.fiducials() {
+            lines.push("<g id=\"fiducials\">".to_string());
+            for dot in &fiducials.dots_mm {
                 lines.push(format!(
-                    "<path d=\"{}\" fill=\"black\"/>",
-                    svg_annular_sector_path(
-                        cx,
-                        cy,
-                        geometry.code_band_outer_mm,
-                        geometry.code_band_inner_mm,
-                        angle0,
-                        angle1,
-                    )
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"black\"/>",
+                    svg_fmt(f64::from(dot[0]) + canvas.offset_x_mm),
+                    svg_fmt(f64::from(dot[1]) + canvas.offset_y_mm),
+                    svg_fmt(f64::from(fiducials.dot_radius_mm))
                 ));
             }
-
             lines.push("</g>".to_string());
         }
 
@@ -296,27 +281,28 @@ impl BoardLayout {
         let height_px = width_px;
         let mut image = GrayImage::from_pixel(width_px, height_px, Luma([255]));
 
+        let ring_half_thickness_px = geometry.ring_half_thickness_mm * pixels_per_mm;
         let outer_radius_px = geometry.outer_radius_mm * pixels_per_mm;
         let inner_radius_px = geometry.inner_radius_mm * pixels_per_mm;
-        let code_band_outer_px = geometry.code_band_outer_mm * pixels_per_mm;
-        let code_band_inner_px = geometry.code_band_inner_mm * pixels_per_mm;
-        let ring_half_thickness_px = geometry.ring_half_thickness_mm * pixels_per_mm;
         let outer_draw_extent_px = geometry.outer_draw_extent_mm * pixels_per_mm;
 
         let outer_min_sq = square(outer_radius_px - ring_half_thickness_px);
         let outer_max_sq = square(outer_radius_px + ring_half_thickness_px);
         let inner_min_sq = square(inner_radius_px - ring_half_thickness_px);
         let inner_max_sq = square(inner_radius_px + ring_half_thickness_px);
-        let code_min_sq = square(code_band_inner_px);
-        let code_max_sq = square(code_band_outer_px);
+        let code_band_sq = geometry.code_band_mm.map(|(inner_mm, outer_mm)| {
+            (
+                square(inner_mm * pixels_per_mm),
+                square(outer_mm * pixels_per_mm),
+            )
+        });
         let two_pi = 2.0 * PI;
         let bound = outer_draw_extent_px + 2.0;
 
-        for (idx, marker) in self.markers().iter().enumerate() {
-            let code_id = idx % CODEBOOK.len();
-            let codeword = u32::from(CODEBOOK[code_id]);
-            let cx = (f64::from(marker.xy_mm[0]) + canvas.offset_x_mm) * pixels_per_mm;
-            let cy = (f64::from(marker.xy_mm[1]) + canvas.offset_y_mm) * pixels_per_mm;
+        for cell in self.cells() {
+            let codeword = cell.id.map(|id| u32::from(CODEBOOK[id]));
+            let cx = (f64::from(cell.xy_mm[0]) + canvas.offset_x_mm) * pixels_per_mm;
+            let cy = (f64::from(cell.xy_mm[1]) + canvas.offset_y_mm) * pixels_per_mm;
 
             let x0 = (cx - bound).floor().max(0.0) as u32;
             let x1 = ((cx + bound).ceil() + 1.0).min(f64::from(width_px)) as u32;
@@ -333,24 +319,45 @@ impl BoardLayout {
                     let dist_sq = dx * dx + dy * dy;
                     let pixel = image.get_pixel_mut(x, y);
 
-                    if (outer_min_sq..=outer_max_sq).contains(&dist_sq) {
-                        pixel.0[0] = 0;
-                    }
-                    if (inner_min_sq..=inner_max_sq).contains(&dist_sq) {
-                        pixel.0[0] = 0;
-                    }
-                    if (code_min_sq..=code_max_sq).contains(&dist_sq) {
-                        let angle = dy.atan2(dx);
-                        let sector =
-                            (((angle / two_pi) + 0.5) * CODE_SECTORS as f64).floor() as i32;
-                        let sector = sector.rem_euclid(CODE_SECTORS as i32) as u32;
-                        pixel.0[0] = if ((codeword >> sector) & 1) == 1 {
-                            255
-                        } else {
-                            0
-                        };
+                    match codeword {
+                        Some(codeword) => {
+                            if (outer_min_sq..=outer_max_sq).contains(&dist_sq) {
+                                pixel.0[0] = 0;
+                            }
+                            if (inner_min_sq..=inner_max_sq).contains(&dist_sq) {
+                                pixel.0[0] = 0;
+                            }
+                            if let Some((code_min_sq, code_max_sq)) = code_band_sq
+                                && (code_min_sq..=code_max_sq).contains(&dist_sq)
+                            {
+                                let angle = dy.atan2(dx);
+                                let sector =
+                                    (((angle / two_pi) + 0.5) * CODE_SECTORS as f64).floor() as i32;
+                                let sector = sector.rem_euclid(CODE_SECTORS as i32) as u32;
+                                pixel.0[0] = if ((codeword >> sector) & 1) == 1 {
+                                    255
+                                } else {
+                                    0
+                                };
+                            }
+                        }
+                        None => {
+                            // Plain marker: filled annulus between the radii.
+                            if (inner_min_sq..=outer_max_sq).contains(&dist_sq) {
+                                pixel.0[0] = 0;
+                            }
+                        }
                     }
                 }
+            }
+        }
+
+        if let Some(fiducials) = self.fiducials() {
+            let dot_radius_px = f64::from(fiducials.dot_radius_mm) * pixels_per_mm;
+            for dot in &fiducials.dots_mm {
+                let cx = (f64::from(dot[0]) + canvas.offset_x_mm) * pixels_per_mm;
+                let cy = (f64::from(dot[1]) + canvas.offset_y_mm) * pixels_per_mm;
+                draw_disk(&mut image, cx, cy, dot_radius_px, 0);
             }
         }
 
@@ -390,6 +397,114 @@ impl BoardLayout {
     }
 }
 
+impl BoardLayout {
+    /// Render a printable SVG target (delegates to [`TargetLayout`]).
+    pub fn render_target_svg(
+        &self,
+        options: &SvgTargetOptions,
+    ) -> Result<String, TargetGenerationError> {
+        TargetLayout::from(self).render_target_svg(options)
+    }
+
+    /// Write a printable SVG target to disk (delegates to [`TargetLayout`]).
+    #[cfg(feature = "std")]
+    pub fn write_target_svg(
+        &self,
+        path: &Path,
+        options: &SvgTargetOptions,
+    ) -> Result<(), TargetGenerationError> {
+        TargetLayout::from(self).write_target_svg(path, options)
+    }
+
+    /// Render a printable PNG target (delegates to [`TargetLayout`]).
+    pub fn render_target_png(
+        &self,
+        options: &PngTargetOptions,
+    ) -> Result<GrayImage, TargetGenerationError> {
+        TargetLayout::from(self).render_target_png(options)
+    }
+
+    /// Write a printable PNG target to disk (delegates to [`TargetLayout`]).
+    #[cfg(feature = "std")]
+    pub fn write_target_png(
+        &self,
+        path: &Path,
+        options: &PngTargetOptions,
+    ) -> Result<(), TargetGenerationError> {
+        TargetLayout::from(self).write_target_png(path, options)
+    }
+}
+
+fn append_coded_marker_svg(
+    lines: &mut Vec<String>,
+    cx: f64,
+    cy: f64,
+    geometry: RenderGeometry,
+    codeword: u32,
+) {
+    lines.push(format!(
+        "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\" stroke=\"black\" stroke-width=\"{}\"/>",
+        svg_fmt(cx),
+        svg_fmt(cy),
+        svg_fmt(geometry.outer_radius_mm),
+        svg_fmt(2.0 * geometry.ring_half_thickness_mm)
+    ));
+    lines.push(format!(
+        "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\" stroke=\"black\" stroke-width=\"{}\"/>",
+        svg_fmt(cx),
+        svg_fmt(cy),
+        svg_fmt(geometry.inner_radius_mm),
+        svg_fmt(2.0 * geometry.ring_half_thickness_mm)
+    ));
+
+    let (code_band_inner_mm, code_band_outer_mm) = geometry
+        .code_band_mm
+        .expect("coded markers always have a code band");
+    lines.push(format!(
+        "<path d=\"{}\" fill=\"white\" fill-rule=\"evenodd\"/>",
+        svg_annulus_path(cx, cy, code_band_outer_mm, code_band_inner_mm)
+    ));
+
+    let dtheta = 2.0 * PI / CODE_SECTORS as f64;
+    for sector in 0..CODE_SECTORS {
+        if ((codeword >> sector) & 1) == 1 {
+            continue;
+        }
+        let angle0 = -PI + sector as f64 * dtheta;
+        let angle1 = angle0 + dtheta;
+        lines.push(format!(
+            "<path d=\"{}\" fill=\"black\"/>",
+            svg_annular_sector_path(
+                cx,
+                cy,
+                code_band_outer_mm,
+                code_band_inner_mm,
+                angle0,
+                angle1,
+            )
+        ));
+    }
+}
+
+fn draw_disk(image: &mut GrayImage, cx: f64, cy: f64, radius: f64, value: u8) {
+    let width = f64::from(image.width());
+    let height = f64::from(image.height());
+    let x0 = (cx - radius - 1.0).floor().max(0.0) as u32;
+    let x1 = ((cx + radius).ceil() + 1.0).min(width) as u32;
+    let y0 = (cy - radius - 1.0).floor().max(0.0) as u32;
+    let y1 = ((cy + radius).ceil() + 1.0).min(height) as u32;
+    let radius_sq = radius * radius;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let dx = f64::from(x) - cx;
+            let dy = f64::from(y) - cy;
+            if dx * dx + dy * dy <= radius_sq {
+                image.put_pixel(x, y, Luma([value]));
+            }
+        }
+    }
+}
+
 fn validated_margin(margin_mm: f32) -> Result<f64, TargetGenerationError> {
     if margin_mm.is_finite() && margin_mm >= 0.0 {
         Ok(f64::from(margin_mm))
@@ -426,35 +541,30 @@ fn encode_png<W: std::io::Write>(
     Ok(())
 }
 
-fn render_geometry(board: &BoardLayout) -> RenderGeometry {
-    let outer_radius_mm = f64::from(board.marker_outer_radius_mm);
-    let inner_radius_mm = f64::from(board.marker_inner_radius_mm);
-    let (code_band_inner_mm, code_band_outer_mm) = marker_code_band_bounds_mm(
-        board.marker_outer_radius_mm,
-        board.marker_inner_radius_mm,
-        board.marker_ring_width_mm,
-    );
-    let ring_half_thickness_mm =
-        f64::from(marker_ring_half_thickness_mm(board.marker_ring_width_mm));
-    let outer_draw_extent_mm = f64::from(marker_outer_draw_radius_mm(
-        board.marker_outer_radius_mm,
-        board.marker_ring_width_mm,
-    ));
+fn render_geometry(target: &TargetLayout) -> RenderGeometry {
+    let ring = target.ring();
+    let is_coded = matches!(target.coding(), MarkerCoding::Coded16(_));
+    let ring_half_thickness_mm = if is_coded {
+        f64::from(target.outer_draw_radius_mm() - ring.outer_radius_mm)
+    } else {
+        0.0
+    };
 
     RenderGeometry {
-        outer_radius_mm,
-        inner_radius_mm,
-        code_band_outer_mm: f64::from(code_band_outer_mm),
-        code_band_inner_mm: f64::from(code_band_inner_mm),
+        outer_radius_mm: f64::from(ring.outer_radius_mm),
+        inner_radius_mm: f64::from(ring.inner_radius_mm),
+        code_band_mm: target
+            .code_band_bounds_mm()
+            .map(|(inner, outer)| (f64::from(inner), f64::from(outer))),
         ring_half_thickness_mm,
-        outer_draw_extent_mm,
+        outer_draw_extent_mm: f64::from(target.outer_draw_radius_mm()),
     }
 }
 
-fn canvas_layout(board: &BoardLayout, outer_draw_extent_mm: f64, margin_mm: f64) -> CanvasLayout {
-    let (min_xy, max_xy) = board
+fn canvas_layout(target: &TargetLayout, outer_draw_extent_mm: f64, margin_mm: f64) -> CanvasLayout {
+    let (min_xy, max_xy) = target
         .marker_bounds_mm()
-        .expect("board layouts are never empty");
+        .expect("target layouts are never empty");
     let span_x = f64::from(max_xy[0] - min_xy[0]);
     let span_y = f64::from(max_xy[1] - min_xy[1]);
     let max_span_mm = span_x.max(span_y);
@@ -473,21 +583,21 @@ fn canvas_layout(board: &BoardLayout, outer_draw_extent_mm: f64, margin_mm: f64)
 }
 
 fn scale_bar_params(
-    board: &BoardLayout,
+    target: &TargetLayout,
     canvas: CanvasLayout,
     outer_draw_extent_mm: f64,
 ) -> ScaleBarParams {
-    let inset_x_mm = (0.5 * f64::from(board.pitch_mm)).max(2.0);
-    let inset_y_mm = (0.25 * f64::from(board.pitch_mm)).max(1.0);
+    let inset_x_mm = (0.5 * f64::from(target.pitch_mm())).max(2.0);
+    let inset_y_mm = (0.25 * f64::from(target.pitch_mm())).max(1.0);
 
-    let marker_bottom_mm = board
-        .markers()
+    let marker_bottom_mm = target
+        .cells()
         .iter()
-        .map(|marker| f64::from(marker.xy_mm[1]) + canvas.offset_y_mm)
+        .map(|cell| f64::from(cell.xy_mm[1]) + canvas.offset_y_mm)
         .fold(f64::NEG_INFINITY, f64::max)
         + outer_draw_extent_mm;
 
-    let mut bar_h_mm = (0.4 * f64::from(board.pitch_mm)).clamp(2.0, 4.0);
+    let mut bar_h_mm = (0.4 * f64::from(target.pitch_mm())).clamp(2.0, 4.0);
     let clearance_mm = (0.2 * bar_h_mm).max(0.5);
     let available_mm =
         canvas.canvas_side_mm - inset_y_mm - bar_h_mm - (marker_bottom_mm + clearance_mm);
@@ -526,11 +636,11 @@ fn scale_bar_params(
 
 fn append_scale_bar_svg(
     lines: &mut Vec<String>,
-    board: &BoardLayout,
+    target: &TargetLayout,
     canvas: CanvasLayout,
     geometry: RenderGeometry,
 ) {
-    let params = scale_bar_params(board, canvas, geometry.outer_draw_extent_mm);
+    let params = scale_bar_params(target, canvas, geometry.outer_draw_extent_mm);
     let label = params.label();
 
     lines.push("<g id=\"scale_bar\">".to_string());
@@ -567,12 +677,12 @@ fn append_scale_bar_svg(
 
 fn draw_scale_bar_raster(
     image: &mut GrayImage,
-    board: &BoardLayout,
+    target: &TargetLayout,
     canvas: CanvasLayout,
     outer_draw_extent_mm: f64,
     pixels_per_mm: f64,
 ) {
-    let params = scale_bar_params(board, canvas, outer_draw_extent_mm);
+    let params = scale_bar_params(target, canvas, outer_draw_extent_mm);
     let x0 = (params.x0_mm * pixels_per_mm).round() as i32;
     let y0 = (params.y0_mm * pixels_per_mm).round() as i32;
     let bar_w = (f64::from(params.bar_len_mm) * pixels_per_mm).round() as i32;
@@ -804,8 +914,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_svg_margin() {
-        let board = BoardLayout::default();
-        let err = board
+        let target = TargetLayout::default_hex();
+        let err = target
             .render_target_svg(&SvgTargetOptions {
                 margin_mm: -1.0,
                 ..SvgTargetOptions::default()
@@ -816,8 +926,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_png_dpi() {
-        let board = BoardLayout::default();
-        let err = board
+        let target = TargetLayout::default_hex();
+        let err = target
             .render_target_png(&PngTargetOptions {
                 dpi: 0.0,
                 ..PngTargetOptions::default()
@@ -830,17 +940,79 @@ mod tests {
     fn render_geometry_uses_ring_edges_for_code_band() {
         let board = BoardLayout::with_name("fixture_gap_free", 7.0, 3, 4, 4.8, 2.8, 1.152)
             .expect("valid geometry");
-        let geometry = render_geometry(&board);
-        let (expected_inner, expected_outer) = marker_code_band_bounds_mm(
-            board.marker_outer_radius_mm,
-            board.marker_inner_radius_mm,
-            board.marker_ring_width_mm,
-        );
-        let expected_draw_extent =
-            marker_outer_draw_radius_mm(board.marker_outer_radius_mm, board.marker_ring_width_mm);
+        let target = TargetLayout::from(&board);
+        let geometry = render_geometry(&target);
 
-        assert!((geometry.code_band_inner_mm - f64::from(expected_inner)).abs() < 1e-6);
-        assert!((geometry.code_band_outer_mm - f64::from(expected_outer)).abs() < 1e-6);
-        assert!((geometry.outer_draw_extent_mm - f64::from(expected_draw_extent)).abs() < 1e-6);
+        let half = 0.5 * f64::from(board.marker_ring_width_mm());
+        let (code_inner, code_outer) = geometry.code_band_mm.expect("coded band");
+        assert!((code_inner - (f64::from(board.marker_inner_radius_mm()) + half)).abs() < 1e-6);
+        assert!((code_outer - (f64::from(board.marker_outer_radius_mm()) - half)).abs() < 1e-6);
+        assert!(
+            (geometry.outer_draw_extent_mm - (f64::from(board.marker_outer_radius_mm()) + half))
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn svg_codewords_follow_id_assignment() {
+        // A board whose first marker carries a non-sequential ID must render
+        // that ID's codeword (regression: rendering used the cell index).
+        let board = BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2, 1.152)
+            .expect("valid geometry");
+        let mut val: serde_json::Value =
+            serde_json::from_str(&board.to_json_string()).expect("json");
+        let n = board.n_markers();
+        // Reverse assignment: cell i gets ID n-1-i.
+        let ids: Vec<usize> = (0..n).rev().collect();
+        val["id_assignment"] = serde_json::json!(ids);
+        let board = BoardLayout::from_json_str(&serde_json::to_string(&val).expect("json"))
+            .expect("valid board");
+
+        let svg = board
+            .render_target_svg(&SvgTargetOptions::default())
+            .expect("render");
+        assert!(
+            svg.contains(&format!("<g id=\"m0\" data-id=\"{}\">", n - 1)),
+            "first cell must carry the assigned (reversed) ID"
+        );
+    }
+
+    #[test]
+    fn plain_target_renders_annuli_and_dots() {
+        let target = TargetLayout::isra_rect_24x24();
+
+        let svg = target
+            .render_target_svg(&SvgTargetOptions::default())
+            .expect("render svg");
+        assert!(svg.contains("<g id=\"fiducials\">"));
+        assert!(!svg.contains("data-id"), "plain markers carry no IDs");
+        assert!(
+            !svg.contains("stroke=\"black\""),
+            "plain rings are filled, not stroked"
+        );
+
+        // Low-DPI raster for speed: check center-line intensity profile.
+        let png = target
+            .render_target_png(&PngTargetOptions {
+                dpi: 25.4, // 1 px per mm
+                margin_mm: 0.0,
+                include_scale_bar: false,
+            })
+            .expect("render png");
+
+        // First ring center is at (5.6, 5.6) mm from the page edge.
+        let cx = 5.6f64;
+        let probe = |dx: f64, dy: f64| {
+            png.get_pixel((cx + dx).round() as u32, (cx + dy).round() as u32)
+                .0[0]
+        };
+        assert_eq!(probe(0.0, 0.0), 255, "ring center is white");
+        assert_eq!(probe(4.0, 0.0), 0, "annulus interior is black");
+        assert_eq!(probe(6.5, 0.0), 255, "outside the ring is white");
+
+        // Fiducial dot at (161, 161) board mm -> page (166.6, 166.6).
+        let dot = png.get_pixel(167, 167).0[0];
+        assert_eq!(dot, 0, "fiducial dot is black");
     }
 }

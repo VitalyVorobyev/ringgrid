@@ -1,271 +1,35 @@
-//! Runtime target layout specification.
+//! Legacy flat hex board layout — a facade over the compositional target
+//! model in [`crate::target`].
 //!
-//! Target JSON follows a parametric schema (`ringgrid.target.v4`): marker
-//! locations are generated at runtime from `(rows, long_row_cols, pitch_mm)`.
-//! Per-marker coordinate lists are intentionally not part of the runtime schema.
+//! `BoardLayout` describes the classic hex-lattice coded target through the
+//! flat `ringgrid.target.v4` schema. New code should use
+//! [`TargetLayout`](crate::TargetLayout), which additionally models
+//! rectangular lattices, plain (uncoded) rings, and origin fiducials, and
+//! reads/writes the compositional `ringgrid.target.v5` schema. This facade
+//! remains for one release; all validation and cell generation delegate to
+//! the target module, so both types produce bit-identical hex geometry.
 
 use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::path::Path;
 
-const TARGET_SCHEMA_V4: &str = "ringgrid.target.v4";
-
-const DEFAULT_NAME: &str = "ringgrid_200mm_hex";
-const DEFAULT_PITCH_MM: f32 = 8.0;
-const DEFAULT_ROWS: usize = 15;
-const DEFAULT_LONG_ROW_COLS: usize = 14;
-const DEFAULT_OUTER_RADIUS_MM: f32 = 4.8;
-const DEFAULT_INNER_RADIUS_MM: f32 = 3.2;
-const DEFAULT_RING_WIDTH_MM: f32 = 1.152;
+use crate::target::{
+    BoardSpecV4, CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, RingGeometry,
+    TARGET_SCHEMA_V4, TargetLayout,
+};
 
 /// Validation failures for a board layout specification.
-#[derive(Debug, Clone)]
-pub enum BoardLayoutValidationError {
-    /// Validation failed: unsupported target schema version.
-    UnsupportedSchema {
-        /// Schema string found in the file.
-        found: String,
-        /// Schema string the loader expected.
-        expected: &'static str,
-    },
-    /// Validation failed: target name is empty.
-    EmptyName,
-    /// Validation failed: pitch is non-positive or non-finite.
-    InvalidPitch {
-        /// The invalid pitch value.
-        pitch_mm: f32,
-    },
-    /// Validation failed: row count is zero.
-    InvalidRows {
-        /// The invalid row count.
-        rows: usize,
-    },
-    /// Validation failed: long-row column count is zero.
-    InvalidLongRowCols {
-        /// The invalid column count.
-        long_row_cols: usize,
-    },
-    /// Validation failed: long-row columns must exceed short-row columns derived from row count.
-    InvalidLongRowColsForRows {
-        /// Total number of rows.
-        rows: usize,
-        /// Column count for the longest row.
-        long_row_cols: usize,
-    },
-    /// Validation failed: outer radius is non-positive or non-finite.
-    InvalidOuterRadius {
-        /// The invalid outer radius value.
-        marker_outer_radius_mm: f32,
-    },
-    /// Validation failed: inner radius is non-positive or non-finite.
-    InvalidInnerRadius {
-        /// The invalid inner radius value.
-        marker_inner_radius_mm: f32,
-    },
-    /// Validation failed: ring width is non-positive or non-finite.
-    InvalidRingWidth {
-        /// The invalid ring width value.
-        marker_ring_width_mm: f32,
-    },
-    /// Validation failed: inner radius must be strictly less than outer radius.
-    InnerRadiusNotSmallerThanOuter {
-        /// The inner radius value.
-        marker_inner_radius_mm: f32,
-        /// The outer radius value.
-        marker_outer_radius_mm: f32,
-    },
-    /// Validation failed: code band gap between inner and outer rings is non-positive.
-    NonPositiveCodeBandGap {
-        /// Outer edge of the inner ring in mm.
-        inner_ring_outer_edge_mm: f32,
-        /// Inner edge of the outer ring in mm.
-        outer_ring_inner_edge_mm: f32,
-    },
-    /// Validation failed: outer diameter exceeds minimum center-to-center spacing.
-    OuterDiameterExceedsMinCenterSpacing {
-        /// Outer diameter in mm.
-        marker_outer_diameter_mm: f32,
-        /// Minimum center spacing in mm.
-        min_center_spacing_mm: f32,
-    },
-    /// Validation failed: marker draw diameter exceeds minimum center-to-center spacing.
-    MarkerDrawDiameterExceedsMinCenterSpacing {
-        /// Marker draw diameter in mm.
-        marker_draw_diameter_mm: f32,
-        /// Minimum center spacing in mm.
-        min_center_spacing_mm: f32,
-    },
-    /// Validation failed: a row has zero columns after applying hex-lattice offset.
-    DerivedZeroColumns {
-        /// Index of the problematic row.
-        row_index: usize,
-        /// Total number of rows.
-        rows: usize,
-        /// Column count for the longest row.
-        long_row_cols: usize,
-    },
-    /// Validation failed: `id_assignment` length does not match marker count.
-    IdAssignmentLength {
-        /// Expected length (marker count).
-        expected: usize,
-        /// Actual length.
-        got: usize,
-    },
-    /// Validation failed: `id_assignment` contains duplicate IDs.
-    IdAssignmentDuplicate {
-        /// The duplicated codebook ID.
-        id: usize,
-        /// Position index where the duplicate was found.
-        position: usize,
-    },
-}
-
-impl std::fmt::Display for BoardLayoutValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedSchema { found, expected } => write!(
-                f,
-                "unsupported target schema '{}' (expected '{}')",
-                found, expected
-            ),
-            Self::EmptyName => f.write_str("target name must not be empty"),
-            Self::InvalidPitch { pitch_mm } => {
-                write!(f, "pitch_mm must be finite and > 0 (got {pitch_mm})")
-            }
-            Self::InvalidRows { rows } => write!(f, "rows must be >= 1 (got {rows})"),
-            Self::InvalidLongRowCols { long_row_cols } => {
-                write!(f, "long_row_cols must be >= 1 (got {long_row_cols})")
-            }
-            Self::InvalidLongRowColsForRows {
-                rows,
-                long_row_cols,
-            } => write!(
-                f,
-                "long_row_cols must be >= 2 when rows > 1 (got rows={}, long_row_cols={})",
-                rows, long_row_cols
-            ),
-            Self::InvalidOuterRadius {
-                marker_outer_radius_mm,
-            } => write!(
-                f,
-                "marker_outer_radius_mm must be finite and > 0 (got {marker_outer_radius_mm})"
-            ),
-            Self::InvalidInnerRadius {
-                marker_inner_radius_mm,
-            } => write!(
-                f,
-                "marker_inner_radius_mm must be finite and > 0 (got {marker_inner_radius_mm})"
-            ),
-            Self::InvalidRingWidth {
-                marker_ring_width_mm,
-            } => write!(
-                f,
-                "marker_ring_width_mm must be finite and > 0 (got {marker_ring_width_mm})"
-            ),
-            Self::InnerRadiusNotSmallerThanOuter {
-                marker_inner_radius_mm,
-                marker_outer_radius_mm,
-            } => write!(
-                f,
-                "marker_inner_radius_mm must be < marker_outer_radius_mm (inner={}, outer={})",
-                marker_inner_radius_mm, marker_outer_radius_mm
-            ),
-            Self::NonPositiveCodeBandGap {
-                inner_ring_outer_edge_mm,
-                outer_ring_inner_edge_mm,
-            } => write!(
-                f,
-                "marker geometry leaves no code band between rings (inner ring outer edge={inner_ring_outer_edge_mm:.4}mm, outer ring inner edge={outer_ring_inner_edge_mm:.4}mm)"
-            ),
-            Self::OuterDiameterExceedsMinCenterSpacing {
-                marker_outer_diameter_mm,
-                min_center_spacing_mm,
-            } => write!(
-                f,
-                "marker outer diameter ({marker_outer_diameter_mm:.4}mm) must be smaller than minimum center spacing ({min_center_spacing_mm:.4}mm)"
-            ),
-            Self::MarkerDrawDiameterExceedsMinCenterSpacing {
-                marker_draw_diameter_mm,
-                min_center_spacing_mm,
-            } => write!(
-                f,
-                "printed marker diameter including ring stroke ({marker_draw_diameter_mm:.4}mm) must be smaller than minimum center spacing ({min_center_spacing_mm:.4}mm)"
-            ),
-            Self::DerivedZeroColumns {
-                row_index,
-                rows,
-                long_row_cols,
-            } => write!(
-                f,
-                "derived row has zero columns at row {} (rows={}, long_row_cols={})",
-                row_index, rows, long_row_cols
-            ),
-            Self::IdAssignmentLength { expected, got } => write!(
-                f,
-                "id_assignment length ({got}) does not match marker count ({expected})"
-            ),
-            Self::IdAssignmentDuplicate { id, position } => write!(
-                f,
-                "id_assignment contains duplicate ID {id} at position {position}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for BoardLayoutValidationError {}
+///
+/// Alias of [`TargetValidationError`](crate::TargetValidationError); kept for
+/// source compatibility with pre-0.8 code.
+pub type BoardLayoutValidationError = crate::target::TargetValidationError;
 
 /// Load-time failures for board layout JSON.
-#[derive(Debug)]
-pub enum BoardLayoutLoadError {
-    /// File I/O error while reading the layout JSON.
-    #[cfg(feature = "std")]
-    Io(std::io::Error),
-    /// JSON deserialization failed.
-    JsonParse(serde_json::Error),
-    /// Deserialized values failed validation.
-    Validation(BoardLayoutValidationError),
-}
+///
+/// Alias of [`TargetLoadError`](crate::TargetLoadError); kept for source
+/// compatibility with pre-0.8 code.
+pub type BoardLayoutLoadError = crate::target::TargetLoadError;
 
-impl std::fmt::Display for BoardLayoutLoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            #[cfg(feature = "std")]
-            Self::Io(err) => write!(f, "failed to read target JSON: {err}"),
-            Self::JsonParse(err) => write!(f, "failed to parse target JSON: {err}"),
-            Self::Validation(err) => write!(f, "invalid target spec: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for BoardLayoutLoadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            #[cfg(feature = "std")]
-            Self::Io(err) => Some(err),
-            Self::JsonParse(err) => Some(err),
-            Self::Validation(err) => Some(err),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<std::io::Error> for BoardLayoutLoadError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl From<serde_json::Error> for BoardLayoutLoadError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::JsonParse(value)
-    }
-}
-
-impl From<BoardLayoutValidationError> for BoardLayoutLoadError {
-    fn from(value: BoardLayoutValidationError) -> Self {
-        Self::Validation(value)
-    }
-}
 /// A single marker's position on the calibration board.
 ///
 /// Each marker has a unique `id` (codebook index in the active profile), a
@@ -285,12 +49,12 @@ pub struct BoardMarker {
     pub r: Option<i16>,
 }
 
-/// Runtime board layout used by the detector.
+/// Runtime hex board layout (legacy facade).
 ///
-/// Describes the physical hex-lattice arrangement of ring markers: their
-/// positions in millimeters, ring radii, ring width, and lattice parameters.
-/// Load from a JSON file conforming to `ringgrid.target.v4` schema, or use the
-/// built-in default via [`BoardLayout::default()`].
+/// Describes the physical hex-lattice arrangement of coded ring markers:
+/// their positions in millimeters, ring radii, ring width, and lattice
+/// parameters. Load from a JSON file conforming to the `ringgrid.target.v4`
+/// schema, or use the built-in default via [`BoardLayout::default()`].
 ///
 /// # Example
 ///
@@ -310,42 +74,17 @@ pub struct BoardMarker {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BoardLayout {
-    /// Human-readable name of the target layout.
     pub(crate) name: String,
-    /// Center-to-center spacing between adjacent markers in millimeters.
     pub(crate) pitch_mm: f32,
-    /// Number of marker rows on the board.
     pub(crate) rows: usize,
-    /// Number of columns in the longest (even-indexed) row.
     pub(crate) long_row_cols: usize,
-    /// Outer ring radius in millimeters.
     pub(crate) marker_outer_radius_mm: f32,
-    /// Inner ring radius in millimeters.
     pub(crate) marker_inner_radius_mm: f32,
-    /// Width of each ring band in millimeters.
     pub(crate) marker_ring_width_mm: f32,
     markers: Vec<BoardMarker>,
 
     /// Fast lookup: marker ID -> index into `markers`.
     id_to_idx: HashMap<usize, usize>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BoardLayoutSpecV4 {
-    schema: String,
-    name: String,
-    pitch_mm: f32,
-    rows: usize,
-    long_row_cols: usize,
-    marker_outer_radius_mm: f32,
-    marker_inner_radius_mm: f32,
-    marker_ring_width_mm: f32,
-    /// Optional optimized ID assignment. When present, `id_assignment[i]` is the
-    /// codebook ID for the i-th marker (in generation order). When absent, IDs
-    /// are assigned sequentially (0, 1, 2, ...).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    id_assignment: Option<Vec<usize>>,
 }
 
 impl BoardLayout {
@@ -390,7 +129,7 @@ impl BoardLayout {
         marker_inner_radius_mm: f32,
         marker_ring_width_mm: f32,
     ) -> Result<Self, BoardLayoutValidationError> {
-        Self::from_layout_spec(BoardLayoutSpecV4 {
+        Self::from_layout_spec(BoardSpecV4 {
             schema: TARGET_SCHEMA_V4.to_string(),
             name: name.into(),
             pitch_mm,
@@ -455,7 +194,7 @@ impl BoardLayout {
 
     /// Minimum center-to-center spacing between adjacent markers (mm).
     pub(crate) fn min_center_spacing_mm(&self) -> f32 {
-        hex_row_spacing_mm(self.pitch_mm)
+        self.pitch_mm * f32::sqrt(3.0)
     }
 
     /// Marker inner radius in board units (mm).
@@ -504,16 +243,16 @@ impl BoardLayout {
             .map(|(min_xy, max_xy)| [max_xy[0] - min_xy[0], max_xy[1] - min_xy[1]])
     }
 
-    /// Load a board layout from a JSON file.
+    /// Load a board layout from a JSON file (`ringgrid.target.v4`).
     #[cfg(feature = "std")]
     pub fn from_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
         let data = std::fs::read_to_string(path)?;
         Self::from_json_str(&data)
     }
 
-    /// Load a board layout from a JSON string.
+    /// Load a board layout from a JSON string (`ringgrid.target.v4`).
     pub fn from_json_str(data: &str) -> Result<Self, BoardLayoutLoadError> {
-        let spec: BoardLayoutSpecV4 = serde_json::from_str(data)?;
+        let spec: BoardSpecV4 = serde_json::from_str(data)?;
         Self::from_layout_spec(spec).map_err(Into::into)
     }
 
@@ -535,59 +274,54 @@ impl BoardLayout {
         std::fs::write(path, format!("{}\n", self.to_json_string()))
     }
 
-    fn from_layout_spec(spec: BoardLayoutSpecV4) -> Result<Self, BoardLayoutValidationError> {
-        if spec.schema != TARGET_SCHEMA_V4 {
-            return Err(BoardLayoutValidationError::UnsupportedSchema {
-                found: spec.schema,
-                expected: TARGET_SCHEMA_V4,
-            });
-        }
-
-        validate_layout_spec(&spec)?;
-        let mut markers = generate_markers(spec.rows, spec.long_row_cols, spec.pitch_mm)?;
-
-        if let Some(ref assignment) = spec.id_assignment {
-            if assignment.len() != markers.len() {
-                return Err(BoardLayoutValidationError::IdAssignmentLength {
-                    expected: markers.len(),
-                    got: assignment.len(),
-                });
-            }
-            let mut seen = std::collections::HashSet::new();
-            for (i, &id) in assignment.iter().enumerate() {
-                if !seen.insert(id) {
-                    return Err(BoardLayoutValidationError::IdAssignmentDuplicate {
-                        id,
-                        position: i,
-                    });
-                }
-                markers[i].id = id;
-            }
-        }
-
-        let id_to_idx = markers.iter().enumerate().map(|(i, m)| (m.id, i)).collect();
-
-        Ok(Self {
-            name: spec.name,
-            pitch_mm: spec.pitch_mm,
-            rows: spec.rows,
-            long_row_cols: spec.long_row_cols,
-            marker_outer_radius_mm: spec.marker_outer_radius_mm,
-            marker_inner_radius_mm: spec.marker_inner_radius_mm,
-            marker_ring_width_mm: spec.marker_ring_width_mm,
-            markers,
-            id_to_idx,
-        })
+    /// Validation and marker generation delegate to the target module so the
+    /// hex geometry has exactly one source of truth.
+    pub(crate) fn from_layout_spec(spec: BoardSpecV4) -> Result<Self, BoardLayoutValidationError> {
+        let target = spec.into_layout()?;
+        Ok(Self::from_hex_target(&target))
     }
 
-    fn to_layout_spec(&self) -> BoardLayoutSpecV4 {
+    /// Extract the flat facade fields from a validated hex coded target.
+    fn from_hex_target(target: &TargetLayout) -> Self {
+        let LatticeGeometry::Hex(hex) = *target.lattice() else {
+            unreachable!("BoardLayout only wraps hex targets")
+        };
+        let MarkerCoding::Coded16(spec) = target.coding() else {
+            unreachable!("BoardLayout only wraps coded targets")
+        };
+        let markers: Vec<BoardMarker> = target
+            .cells()
+            .iter()
+            .map(|cell| BoardMarker {
+                id: cell.id.expect("coded target cells always carry IDs"),
+                xy_mm: cell.xy_mm,
+                q: i16::try_from(cell.coord.u).ok(),
+                r: i16::try_from(cell.coord.v).ok(),
+            })
+            .collect();
+        let id_to_idx = markers.iter().enumerate().map(|(i, m)| (m.id, i)).collect();
+
+        Self {
+            name: target.name().to_string(),
+            pitch_mm: hex.pitch_mm,
+            rows: hex.rows,
+            long_row_cols: hex.long_row_cols,
+            marker_outer_radius_mm: target.ring().outer_radius_mm,
+            marker_inner_radius_mm: target.ring().inner_radius_mm,
+            marker_ring_width_mm: spec.ring_width_mm,
+            markers,
+            id_to_idx,
+        }
+    }
+
+    fn to_layout_spec(&self) -> BoardSpecV4 {
         let is_sequential = self.markers.iter().enumerate().all(|(i, m)| m.id == i);
         let id_assignment = if is_sequential {
             None
         } else {
             Some(self.markers.iter().map(|m| m.id).collect())
         };
-        BoardLayoutSpecV4 {
+        BoardSpecV4 {
             schema: TARGET_SCHEMA_V4.to_string(),
             name: self.name.clone(),
             pitch_mm: self.pitch_mm,
@@ -603,192 +337,43 @@ impl BoardLayout {
 
 impl Default for BoardLayout {
     fn default() -> Self {
-        let spec = BoardLayoutSpecV4 {
-            schema: TARGET_SCHEMA_V4.to_string(),
-            name: DEFAULT_NAME.to_string(),
-            pitch_mm: DEFAULT_PITCH_MM,
-            rows: DEFAULT_ROWS,
-            long_row_cols: DEFAULT_LONG_ROW_COLS,
-            marker_outer_radius_mm: DEFAULT_OUTER_RADIUS_MM,
-            marker_inner_radius_mm: DEFAULT_INNER_RADIUS_MM,
-            marker_ring_width_mm: DEFAULT_RING_WIDTH_MM,
-            id_assignment: None,
-        };
-
-        Self::from_layout_spec(spec).expect("default board spec must be valid")
+        Self::from_hex_target(&TargetLayout::default_hex())
     }
 }
 
-fn validate_layout_spec(spec: &BoardLayoutSpecV4) -> Result<(), BoardLayoutValidationError> {
-    if spec.name.trim().is_empty() {
-        return Err(BoardLayoutValidationError::EmptyName);
-    }
-
-    if !spec.pitch_mm.is_finite() || spec.pitch_mm <= 0.0 {
-        return Err(BoardLayoutValidationError::InvalidPitch {
-            pitch_mm: spec.pitch_mm,
-        });
-    }
-
-    if spec.rows == 0 {
-        return Err(BoardLayoutValidationError::InvalidRows { rows: spec.rows });
-    }
-
-    if spec.long_row_cols == 0 {
-        return Err(BoardLayoutValidationError::InvalidLongRowCols {
-            long_row_cols: spec.long_row_cols,
-        });
-    }
-
-    if spec.rows > 1 && spec.long_row_cols < 2 {
-        return Err(BoardLayoutValidationError::InvalidLongRowColsForRows {
-            rows: spec.rows,
-            long_row_cols: spec.long_row_cols,
-        });
-    }
-
-    if !spec.marker_outer_radius_mm.is_finite() || spec.marker_outer_radius_mm <= 0.0 {
-        return Err(BoardLayoutValidationError::InvalidOuterRadius {
-            marker_outer_radius_mm: spec.marker_outer_radius_mm,
-        });
-    }
-
-    if !spec.marker_inner_radius_mm.is_finite() || spec.marker_inner_radius_mm <= 0.0 {
-        return Err(BoardLayoutValidationError::InvalidInnerRadius {
-            marker_inner_radius_mm: spec.marker_inner_radius_mm,
-        });
-    }
-
-    if !spec.marker_ring_width_mm.is_finite() || spec.marker_ring_width_mm <= 0.0 {
-        return Err(BoardLayoutValidationError::InvalidRingWidth {
-            marker_ring_width_mm: spec.marker_ring_width_mm,
-        });
-    }
-
-    if spec.marker_inner_radius_mm >= spec.marker_outer_radius_mm {
-        return Err(BoardLayoutValidationError::InnerRadiusNotSmallerThanOuter {
-            marker_inner_radius_mm: spec.marker_inner_radius_mm,
-            marker_outer_radius_mm: spec.marker_outer_radius_mm,
-        });
-    }
-
-    let ring_half_thickness_mm = marker_ring_half_thickness_mm(spec.marker_ring_width_mm);
-    let inner_ring_outer_edge_mm = spec.marker_inner_radius_mm + ring_half_thickness_mm;
-    let outer_ring_inner_edge_mm = spec.marker_outer_radius_mm - ring_half_thickness_mm;
-    if inner_ring_outer_edge_mm >= outer_ring_inner_edge_mm {
-        return Err(BoardLayoutValidationError::NonPositiveCodeBandGap {
-            inner_ring_outer_edge_mm,
-            outer_ring_inner_edge_mm,
-        });
-    }
-
-    let min_center_spacing = hex_row_spacing_mm(spec.pitch_mm);
-    if spec.marker_outer_radius_mm * 2.0 >= min_center_spacing {
-        return Err(
-            BoardLayoutValidationError::OuterDiameterExceedsMinCenterSpacing {
-                marker_outer_diameter_mm: spec.marker_outer_radius_mm * 2.0,
-                min_center_spacing_mm: min_center_spacing,
-            },
-        );
-    }
-    let marker_draw_diameter_mm =
-        2.0 * marker_outer_draw_radius_mm(spec.marker_outer_radius_mm, spec.marker_ring_width_mm);
-    if marker_draw_diameter_mm >= min_center_spacing {
-        return Err(
-            BoardLayoutValidationError::MarkerDrawDiameterExceedsMinCenterSpacing {
-                marker_draw_diameter_mm,
-                min_center_spacing_mm: min_center_spacing,
-            },
-        );
-    }
-
-    Ok(())
-}
-
-fn generate_markers(
-    rows: usize,
-    long_row_cols: usize,
-    pitch_mm: f32,
-) -> Result<Vec<BoardMarker>, BoardLayoutValidationError> {
-    let short_row_cols = long_row_cols.saturating_sub(1);
-    let mut markers = Vec::new();
-    let row_mid = (rows as i32) / 2;
-
-    for row_idx in 0..rows {
-        let r = row_idx as i32 - row_mid;
-        let n_cols = if rows == 1 || ((r + long_row_cols as i32 - 1) & 1) == 0 {
-            long_row_cols
+impl From<BoardLayout> for TargetLayout {
+    fn from(board: BoardLayout) -> Self {
+        let is_sequential = board.markers.iter().enumerate().all(|(i, m)| m.id == i);
+        let id_assignment = if is_sequential {
+            None
         } else {
-            short_row_cols
+            Some(board.markers.iter().map(|m| m.id).collect())
         };
-
-        if n_cols == 0 {
-            return Err(BoardLayoutValidationError::DerivedZeroColumns {
-                row_index: row_idx,
-                rows,
-                long_row_cols,
-            });
-        }
-
-        let q_start = -((r + n_cols as i32 - 1) / 2);
-        for col_idx in 0..n_cols {
-            let q = q_start + col_idx as i32;
-            let xy = hex_axial_to_xy_mm(q, r, pitch_mm);
-            markers.push(BoardMarker {
-                id: markers.len(),
-                xy_mm: xy,
-                q: i16::try_from(q).ok(),
-                r: i16::try_from(r).ok(),
-            });
-        }
-    }
-
-    normalize_marker_origin(&mut markers);
-    Ok(markers)
-}
-
-fn hex_axial_to_xy_mm(q: i32, r: i32, pitch_mm: f32) -> [f32; 2] {
-    let qf = q as f64;
-    let rf = r as f64;
-    let pitch = pitch_mm as f64;
-    let x = pitch * (f64::sqrt(3.0) * qf + 0.5 * f64::sqrt(3.0) * rf);
-    let y = pitch * (1.5 * rf);
-    [x as f32, y as f32]
-}
-
-fn normalize_marker_origin(markers: &mut [BoardMarker]) {
-    let Some(anchor) = markers.first().map(|m| m.xy_mm) else {
-        return;
-    };
-    for marker in markers {
-        marker.xy_mm[0] -= anchor[0];
-        marker.xy_mm[1] -= anchor[1];
+        TargetLayout::new(
+            board.name,
+            LatticeGeometry::Hex(HexGeometry {
+                rows: board.rows,
+                long_row_cols: board.long_row_cols,
+                pitch_mm: board.pitch_mm,
+            }),
+            RingGeometry {
+                outer_radius_mm: board.marker_outer_radius_mm,
+                inner_radius_mm: board.marker_inner_radius_mm,
+            },
+            MarkerCoding::Coded16(CodedRingSpec {
+                ring_width_mm: board.marker_ring_width_mm,
+                id_assignment,
+            }),
+            None,
+        )
+        .expect("a validated BoardLayout is always a valid hex coded target")
     }
 }
 
-fn hex_row_spacing_mm(pitch_mm: f32) -> f32 {
-    // Hex nearest-neighbor distance in this axial layout.
-    pitch_mm * f32::sqrt(3.0)
-}
-
-pub(crate) fn marker_ring_half_thickness_mm(marker_ring_width_mm: f32) -> f32 {
-    0.5 * marker_ring_width_mm
-}
-
-pub(crate) fn marker_outer_draw_radius_mm(outer_radius_mm: f32, marker_ring_width_mm: f32) -> f32 {
-    outer_radius_mm + marker_ring_half_thickness_mm(marker_ring_width_mm)
-}
-
-pub(crate) fn marker_code_band_bounds_mm(
-    outer_radius_mm: f32,
-    inner_radius_mm: f32,
-    marker_ring_width_mm: f32,
-) -> (f32, f32) {
-    let ring_half_thickness_mm = marker_ring_half_thickness_mm(marker_ring_width_mm);
-    (
-        inner_radius_mm + ring_half_thickness_mm,
-        outer_radius_mm - ring_half_thickness_mm,
-    )
+impl From<&BoardLayout> for TargetLayout {
+    fn from(board: &BoardLayout) -> Self {
+        board.clone().into()
+    }
 }
 
 fn generated_name(
@@ -882,11 +467,10 @@ mod tests {
             "marker_inner_radius_mm":3.2,
             "marker_ring_width_mm":1.152
         }"#;
-        let spec: BoardLayoutSpecV4 = serde_json::from_str(raw).expect("valid json");
-        let err = BoardLayout::from_layout_spec(spec).expect_err("expected error");
+        let err = BoardLayout::from_json_str(raw).expect_err("expected error");
         assert!(matches!(
             err,
-            BoardLayoutValidationError::UnsupportedSchema { .. }
+            BoardLayoutLoadError::Validation(BoardLayoutValidationError::UnsupportedSchema { .. })
         ));
     }
 
@@ -903,8 +487,7 @@ mod tests {
             "marker_ring_width_mm":1.152,
             "markers":[{"id":0,"xy_mm":[0.0,0.0]}]
         }"#;
-        let parsed: Result<BoardLayoutSpecV4, _> = serde_json::from_str(raw);
-        assert!(parsed.is_err());
+        assert!(BoardLayout::from_json_str(raw).is_err());
     }
 
     #[test]
@@ -923,8 +506,7 @@ mod tests {
             "marker_inner_radius_mm":3.2,
             "marker_ring_width_mm":1.152
         }"#;
-        let parsed: Result<BoardLayoutSpecV4, _> = serde_json::from_str(raw);
-        assert!(parsed.is_err());
+        assert!(BoardLayout::from_json_str(raw).is_err());
     }
 
     #[test]
@@ -1080,6 +662,17 @@ mod tests {
             BoardLayout::new(8.0, 3, 4, 4.8, 3.2, 0.0),
             Err(BoardLayoutValidationError::InvalidRingWidth { .. })
         ));
+    }
+
+    #[test]
+    fn conversion_to_target_layout_round_trips() {
+        let board = BoardLayout::default();
+        let target: TargetLayout = (&board).into();
+        assert_eq!(target.n_cells(), board.n_markers());
+        for (cell, marker) in target.cells().iter().zip(board.markers()) {
+            assert_eq!(cell.id, Some(marker.id));
+            assert_eq!(cell.xy_mm, marker.xy_mm);
+        }
     }
 
     // ── id_assignment tests ───────────────────────────────────────

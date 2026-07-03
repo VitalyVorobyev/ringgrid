@@ -63,6 +63,7 @@ mod pipeline;
 mod pixelmap;
 mod proposal;
 mod ring;
+mod target;
 mod target_generation;
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -104,7 +105,12 @@ pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 // Codebook diagnostics (inspection helpers for the embedded codebook profiles)
 pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 
-// Geometry
+// Geometry — compositional target model (primary) and the legacy hex facade.
+pub use target::{
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
+    RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
+};
+
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };

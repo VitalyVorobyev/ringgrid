@@ -561,18 +561,36 @@ fn render_geometry(target: &TargetLayout) -> RenderGeometry {
     }
 }
 
-fn canvas_layout(target: &TargetLayout, outer_draw_extent_mm: f64, margin_mm: f64) -> CanvasLayout {
+/// Drawn-content bounds in board mm: marker centers padded by the marker draw
+/// extent, unioned with fiducial dot disks (dots may lie outside the marker
+/// bounding box and must not be clipped from the canvas).
+fn content_bounds_mm(target: &TargetLayout, outer_draw_extent_mm: f64) -> (f64, f64, f64, f64) {
     let (min_xy, max_xy) = target
         .marker_bounds_mm()
         .expect("target layouts are never empty");
-    let span_x = f64::from(max_xy[0] - min_xy[0]);
-    let span_y = f64::from(max_xy[1] - min_xy[1]);
-    let max_span_mm = span_x.max(span_y);
-    let side_mm = max_span_mm + 2.0 * outer_draw_extent_mm;
-    let offset_x_mm =
-        margin_mm + outer_draw_extent_mm + 0.5 * (max_span_mm - span_x) - f64::from(min_xy[0]);
-    let offset_y_mm =
-        margin_mm + outer_draw_extent_mm + 0.5 * (max_span_mm - span_y) - f64::from(min_xy[1]);
+    let mut min_x = f64::from(min_xy[0]) - outer_draw_extent_mm;
+    let mut min_y = f64::from(min_xy[1]) - outer_draw_extent_mm;
+    let mut max_x = f64::from(max_xy[0]) + outer_draw_extent_mm;
+    let mut max_y = f64::from(max_xy[1]) + outer_draw_extent_mm;
+    if let Some(fiducials) = target.fiducials() {
+        let r = f64::from(fiducials.dot_radius_mm);
+        for dot in &fiducials.dots_mm {
+            min_x = min_x.min(f64::from(dot[0]) - r);
+            min_y = min_y.min(f64::from(dot[1]) - r);
+            max_x = max_x.max(f64::from(dot[0]) + r);
+            max_y = max_y.max(f64::from(dot[1]) + r);
+        }
+    }
+    (min_x, min_y, max_x, max_y)
+}
+
+fn canvas_layout(target: &TargetLayout, outer_draw_extent_mm: f64, margin_mm: f64) -> CanvasLayout {
+    let (min_x, min_y, max_x, max_y) = content_bounds_mm(target, outer_draw_extent_mm);
+    let span_x = max_x - min_x;
+    let span_y = max_y - min_y;
+    let side_mm = span_x.max(span_y);
+    let offset_x_mm = margin_mm + 0.5 * (side_mm - span_x) - min_x;
+    let offset_y_mm = margin_mm + 0.5 * (side_mm - span_y) - min_y;
 
     CanvasLayout {
         side_mm,
@@ -1014,5 +1032,47 @@ mod tests {
         // Fiducial dot at (161, 161) board mm -> page (166.6, 166.6).
         let dot = png.get_pixel(167, 167).0[0];
         assert_eq!(dot, 0, "fiducial dot is black");
+    }
+
+    #[test]
+    fn fiducials_outside_marker_bounds_stay_on_canvas() {
+        use crate::target::{LatticeGeometry, OriginFiducials, RectGeometry, RingGeometry};
+
+        // Dots left of the ring array: canvas bounds must grow to include
+        // them (regression: layout derived from marker bounds only, so
+        // out-of-bbox dots were drawn off-canvas and clipped).
+        let target = TargetLayout::new(
+            "rect_side_dots",
+            LatticeGeometry::Rect(RectGeometry {
+                rows: 3,
+                cols: 3,
+                pitch_mm: 14.0,
+            }),
+            RingGeometry {
+                outer_radius_mm: 5.6,
+                inner_radius_mm: 2.8,
+            },
+            MarkerCoding::Plain,
+            Some(OriginFiducials {
+                dot_radius_mm: 1.4,
+                dots_mm: vec![[-14.0, 0.0], [-28.0, 0.0], [-14.0, 14.0]],
+            }),
+        )
+        .expect("side-dot target is valid");
+
+        let png = target
+            .render_target_png(&PngTargetOptions {
+                dpi: 25.4, // 1 px per mm
+                margin_mm: 0.0,
+                include_scale_bar: false,
+            })
+            .expect("render png");
+
+        // Content x-span: dots reach -29.4 mm, markers reach 33.6 mm -> 63 mm
+        // wide; y-span 39.2 mm is centered. Leftmost dot (-28, 0) lands at
+        // page (1.4, 17.5) mm; first ring center (0, 0) at (29.4, 17.5).
+        assert!(png.width() >= 63, "canvas must cover the dots");
+        assert_eq!(png.get_pixel(1, 17).0[0], 0, "out-of-bbox dot is drawn");
+        assert_eq!(png.get_pixel(29, 17).0[0], 255, "ring center is white");
     }
 }

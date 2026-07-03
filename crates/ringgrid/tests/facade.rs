@@ -25,7 +25,7 @@ use ringgrid::{Proposal, ProposalConfig, ProposalResult};
 use ringgrid::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
 // ── Slim primary result types ───────────────────────────────────────────────
-use ringgrid::{DetectedMarker, DetectionFrame, DetectionResult};
+use ringgrid::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 
 // ── Diagnostics channel ─────────────────────────────────────────────────────
 use ringgrid::{DecodeMetrics, DetectionDiagnostics, MarkerDiagnostics, RansacStats};
@@ -71,6 +71,7 @@ fn facade_names_resolve() {
     _assert_named::<Proposal>();
     _assert_named::<ProposalConfig>();
     _assert_named::<ProposalResult>();
+    _assert_named::<BoardFrame>();
     _assert_named::<DetectedMarker>();
     _assert_named::<DetectionFrame>();
     _assert_named::<DetectionResult>();

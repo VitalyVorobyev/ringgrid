@@ -13,6 +13,8 @@
 //!
 //! See `docs/pipeline_analysis.md` for a detailed architecture write-up.
 
+mod anchor;
+mod assign;
 mod axis_ratio_filter;
 mod finalize;
 mod fit_decode;
@@ -25,11 +27,12 @@ mod stats;
 mod time_compat;
 
 pub use result::{
-    DetectedMarker, DetectionDiagnostics, DetectionFrame, DetectionResult, MarkerDiagnostics,
-    StageTimings,
+    BoardFrame, DetectedMarker, DetectionDiagnostics, DetectionFrame, DetectionResult,
+    MarkerDiagnostics, StageTimings,
 };
 
-pub(crate) use geometric_verify::build_hex_grid_map;
+pub(crate) use assign::frame_xy_mm;
+pub(crate) use geometric_verify::build_grid_map;
 pub(crate) use prelude::*;
 pub(crate) use result::{PipelineResult, seed_proposals};
 

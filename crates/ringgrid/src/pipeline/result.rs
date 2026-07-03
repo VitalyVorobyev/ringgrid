@@ -36,8 +36,20 @@ pub enum DetectionFrame {
 #[non_exhaustive]
 pub struct DetectedMarker {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
+    ///
+    /// Plain (uncoded) targets carry no IDs; consumers key on
+    /// [`grid_coord`](Self::grid_coord) instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<usize>,
+    /// Lattice cell coordinate `[u, v]` assigned to this marker, when grid
+    /// assignment succeeded.
+    ///
+    /// For coded targets this is the board-frame cell coordinate of the decoded
+    /// ID (hex targets use axial coordinates). For plain targets the frame is
+    /// given by [`DetectionResult::board_frame`]: board-frame when `Absolute`,
+    /// canonical relative frame when `RelativeCanonical`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid_coord: Option<[i32; 2]>,
     /// Combined detection + decode confidence in [0, 1].
     pub confidence: f32,
     /// Marker center in raw image pixel coordinates.
@@ -88,6 +100,32 @@ pub struct MarkerDiagnostics {
     pub edge_points_inner: Option<Vec<[f64; 2]>>,
 }
 
+/// Reference frame of grid-labeled outputs (`grid_coord`, `board_xy_mm`, and
+/// the homography's source plane).
+///
+/// Coded targets are always `Absolute`: decoded IDs anchor markers to physical
+/// board cells. Plain targets are `Absolute` only when the origin fiducials
+/// resolved the board origin and orientation; otherwise labeling is only known
+/// up to the board's rotational symmetry and a lattice translation, and outputs
+/// stay in a canonical relative frame (`board_xy_mm` is omitted — a wrong
+/// millimeter position is worse than none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardFrame {
+    /// Outputs are absolute board-frame values.
+    Absolute,
+    /// Origin unresolved: `grid_coord` is in a canonical relative frame
+    /// (non-negative, `+u` ≈ image `+x`); `board_xy_mm` is absent.
+    RelativeCanonical,
+}
+
+impl BoardFrame {
+    /// `true` when outputs are anchored to the physical board origin.
+    pub fn origin_resolved(self) -> bool {
+        matches!(self, Self::Absolute)
+    }
+}
+
 /// Detection result for a single image.
 ///
 /// Returned by [`Detector::detect`](crate::Detector::detect) and
@@ -112,6 +150,11 @@ pub struct DetectionResult {
     /// Fitted board-to-output-frame homography (3x3, row-major), if available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homography: Option<[[f64; 3]; 3]>,
+    /// Reference frame of `grid_coord` / `board_xy_mm` / `homography` outputs.
+    ///
+    /// `None` when no grid assignment took place (no markers labeled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_frame: Option<BoardFrame>,
     /// Estimated self-undistort division model, if self-undistort was run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
@@ -177,6 +220,7 @@ impl DetectionResult {
             homography_frame: DetectionFrame::Image,
             image_size: [width, height],
             homography: None,
+            board_frame: None,
             self_undistort: None,
         }
     }
@@ -200,6 +244,8 @@ pub(crate) struct PipelineResult {
     pub image_size: [u32; 2],
     /// Fitted board-to-output-frame homography (3x3, row-major), if available.
     pub homography: Option<[[f64; 3]; 3]>,
+    /// Reference frame of grid-labeled outputs; `None` when nothing was labeled.
+    pub board_frame: Option<BoardFrame>,
     /// Homography RANSAC statistics, if a homography was fitted.
     pub ransac: Option<crate::homography::RansacStats>,
     /// Estimated self-undistort division model, if self-undistort was run.
@@ -228,6 +274,7 @@ impl PipelineResult {
             homography_frame: self.homography_frame,
             image_size: self.image_size,
             homography: self.homography,
+            board_frame: self.board_frame,
             self_undistort: self.self_undistort,
         };
         let diag = DetectionDiagnostics {
@@ -245,6 +292,7 @@ impl PipelineResult {
 fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnostics) {
     let MarkerRecord {
         id,
+        grid_coord,
         confidence,
         center,
         center_mapped,
@@ -260,6 +308,7 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
 
     let marker = DetectedMarker {
         id,
+        grid_coord,
         confidence,
         center,
         center_mapped,

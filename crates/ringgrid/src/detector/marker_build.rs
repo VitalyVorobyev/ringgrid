@@ -114,6 +114,15 @@ pub(crate) struct MarkerRecord {
     /// Decoded marker ID (codebook index), or None if decoding was rejected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<usize>,
+    /// Lattice cell coordinate `[u, v]` assigned to this marker.
+    ///
+    /// For coded targets this is the board-frame cell coordinate of the decoded
+    /// ID. For plain targets it is assigned by grid labeling and is
+    /// board-frame only when the origin was resolved (see
+    /// [`BoardFrame`](crate::BoardFrame)); otherwise it lives in the canonical
+    /// relative frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid_coord: Option<[i32; 2]>,
     /// Combined detection + decode confidence in [0, 1].
     pub confidence: f32,
     /// Marker center in raw image pixel coordinates.
@@ -126,6 +135,9 @@ pub(crate) struct MarkerRecord {
     /// Marker center on the physical board in millimeters `[x_mm, y_mm]`.
     ///
     /// Populated when `id` is present and valid for the active board layout.
+    /// For plain targets, the plain pipeline uses this field internally for the
+    /// assignment-frame position and clears it before output when the origin is
+    /// unresolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board_xy_mm: Option<[f64; 2]>,
     /// Outer ellipse parameters.

@@ -13,21 +13,23 @@ use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
+use crate::target::TargetLayout;
 #[cfg(feature = "std")]
 use crate::target::TargetLoadError;
-use crate::target::{LatticeGeometry, MarkerCoding, TargetLayout};
 use crate::{DetectionDiagnostics, DetectionResult, Proposal, ProposalResult};
 
 /// Detection-time failures reported by [`Detector`] methods.
+///
+/// All built-in lattice × coding combinations currently detect end-to-end, so
+/// no `Detector` method returns an error today; the fallible signatures and
+/// this `#[non_exhaustive]` enum reserve room for future failure modes (and
+/// for target combinations a future release may add before its pipeline
+/// support lands).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DetectError {
     /// The configured target layout is not supported by the detection
     /// pipeline in this release.
-    ///
-    /// Transitional: 0.8.0 detects hex-lattice coded16 targets only; rect
-    /// lattices and plain (uncoded) rings are modeled, generated, and
-    /// serialized but not yet detected.
     #[non_exhaustive]
     UnsupportedTarget {
         /// Name of the configured target layout.
@@ -49,7 +51,7 @@ impl std::fmt::Display for DetectError {
             } => write!(
                 f,
                 "target '{target_name}' ({lattice} lattice, {coding} coding) is not supported by \
-                 the detection pipeline yet; only hex-lattice coded16 targets detect in this release"
+                 the detection pipeline in this release"
             ),
         }
     }
@@ -156,26 +158,6 @@ impl Detector {
         &mut self.config
     }
 
-    /// Gate detection on target support: 0.8.0 detects hex coded16 targets
-    /// only. Lifted stage by stage as the pipeline back half generalizes.
-    fn ensure_supported(&self) -> Result<(), DetectError> {
-        let target = &self.config.target;
-        match (target.lattice(), target.coding()) {
-            (LatticeGeometry::Hex(_), MarkerCoding::Coded16(_)) => Ok(()),
-            (lattice, coding) => Err(DetectError::UnsupportedTarget {
-                target_name: target.name().to_string(),
-                lattice: match lattice {
-                    LatticeGeometry::Hex(_) => "hex",
-                    LatticeGeometry::Rect(_) => "rect",
-                },
-                coding: match coding {
-                    MarkerCoding::Coded16(_) => "coded16",
-                    MarkerCoding::Plain => "plain",
-                },
-            }),
-        }
-    }
-
     /// Run the single-pass / self-undistort pipeline and return the internal
     /// rich result.
     fn run_detect(&self, image: &GrayImage) -> pipeline::PipelineResult {
@@ -201,10 +183,9 @@ impl Detector {
     ///
     /// # Errors
     ///
-    /// Returns [`DetectError::UnsupportedTarget`] when the configured target
-    /// layout is not detectable in this release (see [`DetectError`]).
+    /// Currently infallible for all built-in targets; the `Result` signature
+    /// reserves room for future failure modes (see [`DetectError`]).
     pub fn detect(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        self.ensure_supported()?;
         Ok(self.run_detect(image).split().0)
     }
 
@@ -221,7 +202,6 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.ensure_supported()?;
         Ok(self.run_detect(image).split())
     }
 
@@ -263,7 +243,6 @@ impl Detector {
     ///
     /// [`detect_multiscale`]: Self::detect_multiscale
     pub fn detect_adaptive(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        self.ensure_supported()?;
         Ok(pipeline::detect_adaptive(image, &self.config).split().0)
     }
 
@@ -295,7 +274,6 @@ impl Detector {
         image: &GrayImage,
         nominal_diameter_px: Option<f32>,
     ) -> Result<DetectionResult, DetectError> {
-        self.ensure_supported()?;
         Ok(
             pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
                 .split()
@@ -318,7 +296,6 @@ impl Detector {
         image: &GrayImage,
         tiers: &ScaleTiers,
     ) -> Result<DetectionResult, DetectError> {
-        self.ensure_supported()?;
         Ok(pipeline::detect_multiscale(image, &self.config, tiers)
             .split()
             .0)
@@ -341,7 +318,6 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<DetectionResult, DetectError> {
-        self.ensure_supported()?;
         Ok(pipeline::detect_with_mapper(image, &self.config, mapper)
             .split()
             .0)
@@ -362,7 +338,6 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.ensure_supported()?;
         Ok(pipeline::detect_with_mapper(image, &self.config, mapper).split())
     }
 }
@@ -598,22 +573,18 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_target_yields_typed_error() {
+    fn plain_rect_target_detects_without_error() {
+        // The transitional UnsupportedTarget gate is gone: every built-in
+        // lattice × coding combination runs the pipeline end-to-end. An empty
+        // image simply yields an empty result.
         let det = Detector::new(TargetLayout::isra_rect_24x24());
         let img = GrayImage::new(64, 64);
-        let err = det.detect(&img).expect_err("rect plain target is gated");
-        assert!(matches!(
-            err,
-            DetectError::UnsupportedTarget {
-                lattice: "rect",
-                coding: "plain",
-                ..
-            }
-        ));
-        assert!(det.detect_adaptive(&img).is_err());
+        let result = det.detect(&img).expect("plain rect target must detect");
+        assert!(result.detected_markers.is_empty());
+        assert!(result.board_frame.is_none(), "nothing labeled ⇒ no frame");
         assert!(
             det.detect_multiscale(&img, &ScaleTiers::single(MarkerScalePrior::default()))
-                .is_err()
+                .is_ok()
         );
     }
 

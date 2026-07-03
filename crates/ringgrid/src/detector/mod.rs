@@ -18,7 +18,7 @@ pub(crate) mod config;
 pub(crate) use center_correction::{
     apply_projective_centers, warn_center_correction_without_intrinsics,
 };
-pub(crate) use completion::{CompletionStats, complete_with_h};
+pub(crate) use completion::{CompletionStats, complete_plain_with_h, complete_with_h};
 pub use config::{
     AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,

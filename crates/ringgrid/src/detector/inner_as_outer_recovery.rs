@@ -243,6 +243,9 @@ fn recover_marker_at_index(
 
     Some(MarkerRecord {
         id: marker_id,
+        // Recovery re-fits geometry in place (center proximity gated), so the
+        // lattice cell is unchanged; coded-path sync re-derives it from the id.
+        grid_coord: markers[idx].grid_coord,
         confidence,
         center: new_center_image,
         center_mapped: mapper.map(|_| new_center_wf),

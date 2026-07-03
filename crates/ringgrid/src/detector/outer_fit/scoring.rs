@@ -1,7 +1,70 @@
 use crate::conic::{Ellipse, rms_sampson_distance};
-use crate::ring::edge_sample::EdgeSampleResult;
+use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
 
 use super::super::marker_build::fit_support_score;
+
+/// Number of sampling directions for [`plain_ring_evidence`].
+const EVIDENCE_RAYS: usize = 32;
+/// Normalized radial half-width of the inner-edge contrast pair.
+const EVIDENCE_EDGE_DELTA: f32 = 0.15;
+
+/// Photometric evidence that a fitted outer ellipse encloses a plain (uncoded)
+/// ring: a filled dark annulus from `r_inner_expected × R` out to `R` around a
+/// bright hole.
+///
+/// Plain markers carry no code band, so this fills the decode-confidence slot
+/// of [`score_outer_candidate`] with two intensity contrasts sampled along the
+/// fitted ellipse, both normalized to `[0, 1]`:
+///
+/// 1. **Annulus contrast** — bright hole (`0.5 × ratio × R`) minus dark
+///    mid-annulus (`(1 + ratio)/2 × R`).
+/// 2. **Inner-edge agreement** — brightness drop across the *expected* inner
+///    edge (`(ratio ∓ δ) × R`), which collapses when the true inner edge sits
+///    at a different ratio than the target specifies.
+///
+/// Returns the mean of the two terms; `0.0` when too few samples land inside
+/// the image.
+pub(super) fn plain_ring_evidence(
+    sampler: DistortionAwareSampler<'_>,
+    outer: &Ellipse,
+    r_inner_expected: f32,
+) -> f32 {
+    let ratio = r_inner_expected.clamp(0.05, 0.95);
+    let stations = [
+        0.5 * ratio,                             // bright hole
+        0.5 * (1.0 + ratio),                     // dark mid-annulus
+        (ratio - EVIDENCE_EDGE_DELTA).max(0.02), // bright side of inner edge
+        (ratio + EVIDENCE_EDGE_DELTA).min(0.98), // dark side of inner edge
+    ];
+
+    let (sin_phi, cos_phi) = (outer.angle.sin(), outer.angle.cos());
+    let mut sums = [0.0f32; 4];
+    let mut counts = [0usize; 4];
+    for i in 0..EVIDENCE_RAYS {
+        let t = (i as f64) * std::f64::consts::TAU / (EVIDENCE_RAYS as f64);
+        let (sin_t, cos_t) = (t.sin(), t.cos());
+        for (station, fraction) in stations.iter().enumerate() {
+            let f = f64::from(*fraction);
+            let dx = f * (outer.a * cos_t * cos_phi - outer.b * sin_t * sin_phi);
+            let dy = f * (outer.a * cos_t * sin_phi + outer.b * sin_t * cos_phi);
+            if let Some(v) = sampler.sample_checked((outer.cx + dx) as f32, (outer.cy + dy) as f32)
+            {
+                sums[station] += v;
+                counts[station] += 1;
+            }
+        }
+    }
+
+    let min_samples = EVIDENCE_RAYS / 2;
+    if counts.iter().any(|&c| c < min_samples) {
+        return 0.0;
+    }
+    // `sample_checked` yields intensities already normalized to [0, 1].
+    let mean = |i: usize| sums[i] / counts[i] as f32;
+    let annulus_contrast = (mean(0) - mean(1)).clamp(0.0, 1.0);
+    let edge_contrast = (mean(2) - mean(3)).clamp(0.0, 1.0);
+    0.5 * (annulus_contrast + edge_contrast)
+}
 
 pub(super) fn score_outer_candidate(
     edge: &EdgeSampleResult,

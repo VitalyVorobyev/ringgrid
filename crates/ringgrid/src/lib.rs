@@ -80,7 +80,7 @@ pub use proposal::{Proposal, ProposalConfig, ProposalResult};
 pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
 // Result types — slim, stable primary output of `Detector::detect`.
-pub use pipeline::{DetectedMarker, DetectionFrame, DetectionResult};
+pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 
 // Diagnostics — opt-in debugging/tuning channel returned by
 // `Detector::detect_with_diagnostics`. `FitMetrics`, `DecodeMetrics`,

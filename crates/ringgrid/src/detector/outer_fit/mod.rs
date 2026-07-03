@@ -179,18 +179,31 @@ fn evaluate_hypothesis(
         return None;
     }
 
-    let (decode_result, diagnostics) = decode_marker_with_diagnostics_and_mapper(
-        ctx.gray,
-        &outer,
-        &ctx.config.advanced.decode,
-        ctx.mapper,
-    );
+    // Evidence for the decode-confidence scoring slot: the sampled code band
+    // for coded targets, photometric ring evidence for plain ones (which have
+    // no code band to sample).
+    let (decode_result, evidence_confidence) = if ctx.config.target.is_coded() {
+        let (decode_result, diagnostics) = decode_marker_with_diagnostics_and_mapper(
+            ctx.gray,
+            &outer,
+            &ctx.config.advanced.decode,
+            ctx.mapper,
+        );
+        (decode_result, diagnostics.decode_confidence)
+    } else {
+        let evidence = scoring::plain_ring_evidence(
+            ctx.sampler,
+            &outer,
+            ctx.config.advanced.marker_spec.r_inner_expected,
+        );
+        (None, evidence)
+    };
 
     let score = scoring::score_outer_candidate(
         &edge,
         &outer,
         outer_ransac.as_ref(),
-        diagnostics.decode_confidence,
+        evidence_confidence,
         ctx.r_expected,
         ctx.config.advanced.outer_fit.size_score_weight,
     );

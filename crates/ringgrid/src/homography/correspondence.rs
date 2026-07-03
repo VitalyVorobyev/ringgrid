@@ -90,18 +90,38 @@ fn marker_candidate<F>(
 where
     F: FnMut(&MarkerRecord) -> Option<[f64; 2]>,
 {
-    let id = marker.id?;
-    let board_xy = target.xy_mm_of_id(id)?;
+    // Correspondence source: the decoded board ID, or — for plain targets —
+    // the grid label plus its stored (board or assignment-frame) position.
+    let (key, src_board_mm) = match marker.id {
+        Some(id) => {
+            let board_xy = target.xy_mm_of_id(id)?;
+            (id, [board_xy[0] as f64, board_xy[1] as f64])
+        }
+        None => {
+            let coord = marker.grid_coord?;
+            (grid_coord_key(coord), marker.board_xy_mm?)
+        }
+    };
     let dst_point = map_dst_point(marker)?;
     Some((
-        id,
+        key,
         CandidateEntry {
             marker_index,
             confidence: marker.confidence,
-            src_board_mm: [board_xy[0] as f64, board_xy[1] as f64],
+            src_board_mm,
             dst_point,
         },
     ))
+}
+
+/// Synthetic per-cell key for markers labeled by grid coordinate instead of a
+/// decoded ID, so the per-ID dedup policy still dedups per cell. Coordinates
+/// are offset into u16 range and packed — well clear of real codebook IDs and
+/// 32-bit-safe (wasm).
+fn grid_coord_key(coord: [i32; 2]) -> usize {
+    let u = (coord[0].clamp(-0x8000, 0x7FFF) + 0x8000) as usize;
+    let v = (coord[1].clamp(-0x8000, 0x7FFF) + 0x8000) as usize;
+    (u << 16) | v
 }
 
 /// Collect homography correspondences from detected markers.

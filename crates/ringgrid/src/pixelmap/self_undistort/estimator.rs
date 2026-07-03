@@ -1,5 +1,5 @@
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
+use crate::target::TargetLayout;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;
@@ -13,7 +13,7 @@ use super::result::SelfUndistortResult;
 #[derive(Debug)]
 enum ObjectiveStrategy<'a> {
     Homography {
-        board: &'a BoardLayout,
+        board: &'a TargetLayout,
         baseline_error_px: f64,
         n_markers_used: usize,
     },
@@ -42,7 +42,7 @@ pub fn estimate_self_undistort(
     markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
-    board: Option<&BoardLayout>,
+    board: Option<&TargetLayout>,
 ) -> Option<SelfUndistortResult> {
     let strategy = select_objective_strategy(markers, image_size, config, board)?;
     let outcome = optimize_strategy(markers, image_size, config, strategy)?;
@@ -68,7 +68,7 @@ fn select_objective_strategy<'a>(
     markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
-    board: Option<&'a BoardLayout>,
+    board: Option<&'a TargetLayout>,
 ) -> Option<ObjectiveStrategy<'a>> {
     if let Some(board) = board {
         let zero_model = DivisionModel::centered(0.0, image_size[0], image_size[1]);

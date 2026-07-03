@@ -12,11 +12,11 @@ use super::{
     refit_homography, try_recover_inner_as_outer, verify_and_correct_ids,
     warn_center_correction_without_intrinsics,
 };
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{DetectionFrame, PipelineResult};
 use crate::pixelmap::PixelMapper;
+use crate::target::TargetLayout;
 
 #[inline]
 fn duration_ms(duration: std::time::Duration) -> f64 {
@@ -41,7 +41,7 @@ fn filter_with_h(fit_markers: Vec<MarkerRecord>, config: &DetectConfig) -> Filte
     let (filtered, h_result, stats) = global_filter(
         &fit_markers,
         &config.advanced.ransac_homography,
-        &config.board,
+        &config.target,
     );
     let h_current = h_result.as_ref().map(|r| r.h);
 
@@ -67,7 +67,7 @@ fn phase_completion(
         return CompletionStats::default();
     };
 
-    complete_with_h(gray, h, final_markers, config, &config.board, mapper)
+    complete_with_h(gray, h, final_markers, config, &config.target, mapper)
 }
 
 fn phase_final_h(
@@ -80,13 +80,13 @@ fn phase_final_h(
         let h_refit = refit_homography(
             final_markers,
             &config.advanced.ransac_homography,
-            &config.board,
+            &config.target,
         )
         .map(|(h, _)| h);
         match (h_current, h_refit) {
             (Some(h_cur), Some(h_new)) => {
-                let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.board);
-                let new_err = mean_reproj_error_px(&h_new, final_markers, &config.board);
+                let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.target);
+                let new_err = mean_reproj_error_px(&h_new, final_markers, &config.target);
                 if new_err.is_finite() && (new_err < cur_err || !cur_err.is_finite()) {
                     Some(h_new)
                 } else {
@@ -108,7 +108,7 @@ fn phase_final_h(
                 h,
                 final_markers,
                 config.advanced.ransac_homography.inlier_threshold,
-                &config.board,
+                &config.target,
             )
         })
         .or_else(|| ransac_stats.take());
@@ -128,7 +128,7 @@ fn phase_geometric_verify(
         geometric_verify_filter(
             markers,
             final_h,
-            &config.board,
+            &config.target,
             config.advanced.ransac_homography.inlier_threshold,
         )
     } else {
@@ -174,12 +174,12 @@ fn map_centers_to_image(markers: &mut [MarkerRecord], mapper: &dyn PixelMapper) 
     }
 }
 
-fn sync_marker_board_correspondence(markers: &mut [MarkerRecord], board: &BoardLayout) -> usize {
+fn sync_marker_board_correspondence(markers: &mut [MarkerRecord], target: &TargetLayout) -> usize {
     let mut cleared_invalid_ids = 0usize;
     for marker in markers.iter_mut() {
         match marker.id {
             Some(id) => {
-                if let Some(board_xy) = board.xy_mm(id) {
+                if let Some(board_xy) = target.xy_mm_of_id(id) {
                     marker.board_xy_mm = Some([board_xy[0] as f64, board_xy[1] as f64]);
                 } else {
                     marker.id = None;
@@ -197,9 +197,9 @@ fn sync_marker_board_correspondence(markers: &mut [MarkerRecord], board: &BoardL
 
 fn sync_marker_board_correspondence_with_logging(
     markers: &mut [MarkerRecord],
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) {
-    let cleared_invalid_ids = sync_marker_board_correspondence(markers, board);
+    let cleared_invalid_ids = sync_marker_board_correspondence(markers, target);
     tracing::debug!(
         cleared_invalid_ids,
         n_markers = markers.len(),
@@ -220,7 +220,7 @@ fn apply_post_filter_fixup(
     annotate_neighbor_radius_ratios(markers, k);
     if config.advanced.inner_as_outer_recovery.enable {
         try_recover_inner_as_outer(gray, markers, config, mapper);
-        sync_marker_board_correspondence(markers, &config.board);
+        sync_marker_board_correspondence(markers, &config.target);
         annotate_neighbor_radius_ratios(markers, k);
     }
     let removed = remove_axis_ratio_outliers(markers);
@@ -271,7 +271,7 @@ fn finalize_no_global_filter_result(
     let map_to_image_elapsed = map_to_image_start.elapsed();
 
     let sync_start = Instant::now();
-    sync_marker_board_correspondence_with_logging(&mut corrected_markers, &config.board);
+    sync_marker_board_correspondence_with_logging(&mut corrected_markers, &config.target);
     let sync_elapsed = sync_start.elapsed();
 
     let post_fixup_start = Instant::now();
@@ -345,7 +345,7 @@ fn finalize_global_filter_result(
     // dependency), so it is safe ahead of the image remap and gives the global
     // reprojection test the board positions it needs.
     let sync_start = Instant::now();
-    sync_marker_board_correspondence_with_logging(&mut final_markers, &config.board);
+    sync_marker_board_correspondence_with_logging(&mut final_markers, &config.target);
     let sync_elapsed = sync_start.elapsed();
 
     // Final precision-first geometric verification, in the working frame (where
@@ -430,7 +430,7 @@ pub(super) fn finalize_premerge(
     if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
-            &config.board,
+            &config.target,
             &config.advanced.id_correction,
             config.advanced.decode.codebook_profile,
         );
@@ -510,7 +510,7 @@ pub(super) fn run(
     if config.advanced.id_correction.enable {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
-            &config.board,
+            &config.target,
             &config.advanced.id_correction,
             config.advanced.decode.codebook_profile,
         );
@@ -635,7 +635,7 @@ mod tests {
     fn no_mapper_populates_board_xy_for_valid_id() {
         let img = GrayImage::new(100, 80);
         let config = no_global_filter_config();
-        let expected = config.board.xy_mm(0).expect("board marker 0");
+        let expected = config.target.xy_mm_of_id(0).expect("board marker 0");
         let markers = vec![marker_with_id(0, [12.0, 22.0])];
         let (result, _) = run(&img, markers, &config, None).split();
 
@@ -651,7 +651,7 @@ mod tests {
     fn mapper_outputs_image_center_and_preserves_mapped_center() {
         let img = GrayImage::new(100, 80);
         let config = no_global_filter_config();
-        let expected = config.board.xy_mm(1).expect("board marker 1");
+        let expected = config.target.xy_mm_of_id(1).expect("board marker 1");
         let markers = vec![marker_with_id(1, [20.0, 30.0])];
         let mapper = OffsetMapper;
         let (result, _) = run(&img, markers, &config, Some(&mapper)).split();
@@ -685,7 +685,7 @@ mod tests {
     fn invalid_id_is_cleared_and_board_xy_is_none() {
         let img = GrayImage::new(100, 80);
         let config = no_global_filter_config();
-        let invalid_id = config.board.max_marker_id() + 1;
+        let invalid_id = config.target.max_marker_id() + 1;
         let markers = vec![marker_with_id(invalid_id, [12.0, 22.0])];
         let (result, _) = run(&img, markers, &config, None).split();
 

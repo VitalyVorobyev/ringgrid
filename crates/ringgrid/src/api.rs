@@ -8,33 +8,72 @@ use image::GrayImage;
 #[cfg(feature = "std")]
 use std::path::Path;
 
-use crate::board_layout::BoardLayout;
-#[cfg(feature = "std")]
-use crate::board_layout::BoardLayoutLoadError;
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
+#[cfg(feature = "std")]
+use crate::target::TargetLoadError;
+use crate::target::{LatticeGeometry, MarkerCoding, TargetLayout};
 use crate::{DetectionDiagnostics, DetectionResult, Proposal, ProposalResult};
+
+/// Detection-time failures reported by [`Detector`] methods.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum DetectError {
+    /// The configured target layout is not supported by the detection
+    /// pipeline in this release.
+    ///
+    /// Transitional: 0.8.0 detects hex-lattice coded16 targets only; rect
+    /// lattices and plain (uncoded) rings are modeled, generated, and
+    /// serialized but not yet detected.
+    #[non_exhaustive]
+    UnsupportedTarget {
+        /// Name of the configured target layout.
+        target_name: String,
+        /// Lattice kind of the unsupported combination (`"hex"` or `"rect"`).
+        lattice: &'static str,
+        /// Coding kind of the unsupported combination (`"coded16"` or `"plain"`).
+        coding: &'static str,
+    },
+}
+
+impl std::fmt::Display for DetectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedTarget {
+                target_name,
+                lattice,
+                coding,
+            } => write!(
+                f,
+                "target '{target_name}' ({lattice} lattice, {coding} coding) is not supported by \
+                 the detection pipeline yet; only hex-lattice coded16 targets detect in this release"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DetectError {}
 
 /// Primary detection interface.
 ///
-/// Encapsulates board layout and detection configuration.
+/// Encapsulates target layout and detection configuration.
 /// Create once, detect on many images.
-/// Board ownership is single-source: it is stored inside `DetectConfig`.
+/// Target ownership is single-source: it is stored inside `DetectConfig`.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// use ringgrid::{BoardLayout, Detector};
+/// use ringgrid::{Detector, TargetLayout};
 /// use image::GrayImage;
 /// use std::path::Path;
 ///
-/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-/// let detector = Detector::new(board);
+/// let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
+/// let detector = Detector::new(target);
 /// let image = GrayImage::new(640, 480);
-/// let result = detector.detect(&image);
+/// let result = detector.detect(&image).unwrap();
 /// println!("Found {} markers", result.detected_markers.len());
 /// ```
 pub struct Detector {
@@ -42,34 +81,40 @@ pub struct Detector {
 }
 
 impl Detector {
-    /// Create a detector with a board layout and default
+    /// Create a detector with a target layout and default
     /// marker-scale search prior.
-    pub fn new(board: BoardLayout) -> Self {
+    pub fn new(target: impl Into<TargetLayout>) -> Self {
         Self {
-            config: DetectConfig::from_target(board),
+            config: DetectConfig::from_target(target),
         }
     }
 
     /// Create a detector with an explicit marker-scale prior.
-    pub fn with_marker_scale(board: BoardLayout, marker_scale: MarkerScalePrior) -> Self {
+    pub fn with_marker_scale(
+        target: impl Into<TargetLayout>,
+        marker_scale: MarkerScalePrior,
+    ) -> Self {
         Self {
-            config: DetectConfig::from_target_and_scale_prior(board, marker_scale),
+            config: DetectConfig::from_target_and_scale_prior(target, marker_scale),
         }
     }
 
     /// Create a detector with a fixed marker-diameter hint.
-    pub fn with_marker_diameter_hint(board: BoardLayout, marker_diameter_px: f32) -> Self {
+    pub fn with_marker_diameter_hint(
+        target: impl Into<TargetLayout>,
+        marker_diameter_px: f32,
+    ) -> Self {
         Self::with_marker_scale(
-            board,
+            target,
             MarkerScalePrior::from_nominal_diameter_px(marker_diameter_px),
         )
     }
 
-    /// Load target JSON and create a detector in one step using default
-    /// marker-scale search prior.
+    /// Load target JSON (`v5` or legacy `v4`) and create a detector in one
+    /// step using default marker-scale search prior.
     #[cfg(feature = "std")]
-    pub fn from_target_json_file(path: &Path) -> Result<Self, BoardLayoutLoadError> {
-        Ok(Self::new(BoardLayout::from_json_file(path)?))
+    pub fn from_target_json_file(path: &Path) -> Result<Self, TargetLoadError> {
+        Ok(Self::new(TargetLayout::from_json_file(path)?))
     }
 
     /// Load target JSON and create a detector with explicit marker-scale prior.
@@ -77,9 +122,9 @@ impl Detector {
     pub fn from_target_json_file_with_scale(
         path: &Path,
         marker_scale: MarkerScalePrior,
-    ) -> Result<Self, BoardLayoutLoadError> {
+    ) -> Result<Self, TargetLoadError> {
         Ok(Self::with_marker_scale(
-            BoardLayout::from_json_file(path)?,
+            TargetLayout::from_json_file(path)?,
             marker_scale,
         ))
     }
@@ -89,9 +134,9 @@ impl Detector {
     pub fn from_target_json_file_with_marker_diameter(
         path: &Path,
         marker_diameter_px: f32,
-    ) -> Result<Self, BoardLayoutLoadError> {
+    ) -> Result<Self, TargetLoadError> {
         Ok(Self::with_marker_diameter_hint(
-            BoardLayout::from_json_file(path)?,
+            TargetLayout::from_json_file(path)?,
             marker_diameter_px,
         ))
     }
@@ -109,6 +154,26 @@ impl Detector {
     /// Mutable access to configuration for post-construction tuning.
     pub fn config_mut(&mut self) -> &mut DetectConfig {
         &mut self.config
+    }
+
+    /// Gate detection on target support: 0.8.0 detects hex coded16 targets
+    /// only. Lifted stage by stage as the pipeline back half generalizes.
+    fn ensure_supported(&self) -> Result<(), DetectError> {
+        let target = &self.config.target;
+        match (target.lattice(), target.coding()) {
+            (LatticeGeometry::Hex(_), MarkerCoding::Coded16(_)) => Ok(()),
+            (lattice, coding) => Err(DetectError::UnsupportedTarget {
+                target_name: target.name().to_string(),
+                lattice: match lattice {
+                    LatticeGeometry::Hex(_) => "hex",
+                    LatticeGeometry::Rect(_) => "rect",
+                },
+                coding: match coding {
+                    MarkerCoding::Coded16(_) => "coded16",
+                    MarkerCoding::Plain => "plain",
+                },
+            }),
+        }
     }
 
     /// Run the single-pass / self-undistort pipeline and return the internal
@@ -133,8 +198,14 @@ impl Detector {
     /// Returns the slim [`DetectionResult`]. Use
     /// [`detect_with_diagnostics`](Self::detect_with_diagnostics) to also obtain
     /// per-marker algorithm internals and RANSAC statistics.
-    pub fn detect(&self, image: &GrayImage) -> DetectionResult {
-        self.run_detect(image).split().0
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DetectError::UnsupportedTarget`] when the configured target
+    /// layout is not detectable in this release (see [`DetectError`]).
+    pub fn detect(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
+        self.ensure_supported()?;
+        Ok(self.run_detect(image).split().0)
     }
 
     /// Detect markers and also return opt-in detection diagnostics.
@@ -149,8 +220,9 @@ impl Detector {
     pub fn detect_with_diagnostics(
         &self,
         image: &GrayImage,
-    ) -> (DetectionResult, DetectionDiagnostics) {
-        self.run_detect(image).split()
+    ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
+        self.ensure_supported()?;
+        Ok(self.run_detect(image).split())
     }
 
     /// Generate pass-1 center proposals in image coordinates.
@@ -190,8 +262,9 @@ impl Detector {
     /// approximate marker diameter is known.
     ///
     /// [`detect_multiscale`]: Self::detect_multiscale
-    pub fn detect_adaptive(&self, image: &GrayImage) -> DetectionResult {
-        pipeline::detect_adaptive(image, &self.config).split().0
+    pub fn detect_adaptive(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
+        self.ensure_supported()?;
+        Ok(pipeline::detect_adaptive(image, &self.config).split().0)
     }
 
     /// Return the scale tiers that adaptive detection would use for this image.
@@ -221,10 +294,13 @@ impl Detector {
         &self,
         image: &GrayImage,
         nominal_diameter_px: Option<f32>,
-    ) -> DetectionResult {
-        pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
-            .split()
-            .0
+    ) -> Result<DetectionResult, DetectError> {
+        self.ensure_supported()?;
+        Ok(
+            pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
+                .split()
+                .0,
+        )
     }
 
     /// Detect markers using an explicit set of scale tiers.
@@ -237,10 +313,15 @@ impl Detector {
     /// - [`ScaleTiers::four_tier_wide`] — 8–220 px
     /// - [`ScaleTiers::two_tier_standard`] — 14–100 px
     /// - [`ScaleTiers::single`] — single-pass, no merge overhead
-    pub fn detect_multiscale(&self, image: &GrayImage, tiers: &ScaleTiers) -> DetectionResult {
-        pipeline::detect_multiscale(image, &self.config, tiers)
+    pub fn detect_multiscale(
+        &self,
+        image: &GrayImage,
+        tiers: &ScaleTiers,
+    ) -> Result<DetectionResult, DetectError> {
+        self.ensure_supported()?;
+        Ok(pipeline::detect_multiscale(image, &self.config, tiers)
             .split()
-            .0
+            .0)
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
@@ -259,10 +340,11 @@ impl Detector {
         &self,
         image: &GrayImage,
         mapper: &dyn PixelMapper,
-    ) -> DetectionResult {
-        pipeline::detect_with_mapper(image, &self.config, mapper)
+    ) -> Result<DetectionResult, DetectError> {
+        self.ensure_supported()?;
+        Ok(pipeline::detect_with_mapper(image, &self.config, mapper)
             .split()
-            .0
+            .0)
     }
 
     /// Detect with a custom pixel mapper and also return detection diagnostics.
@@ -279,30 +361,31 @@ impl Detector {
         &self,
         image: &GrayImage,
         mapper: &dyn PixelMapper,
-    ) -> (DetectionResult, DetectionDiagnostics) {
-        pipeline::detect_with_mapper(image, &self.config, mapper).split()
+    ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
+        self.ensure_supported()?;
+        Ok(pipeline::detect_with_mapper(image, &self.config, mapper).split())
     }
 }
 
-/// Generate pass-1 center proposals using board geometry and an explicit
+/// Generate pass-1 center proposals using target geometry and an explicit
 /// marker-scale prior.
 pub fn propose_with_marker_scale(
     image: &GrayImage,
-    board: &BoardLayout,
+    target: &TargetLayout,
     marker_scale: MarkerScalePrior,
 ) -> Vec<Proposal> {
-    let config = derive_proposal_config(board, marker_scale, &crate::ProposalConfig::default());
+    let config = derive_proposal_config(target, marker_scale, &crate::ProposalConfig::default());
     find_ellipse_centers(image, &config)
 }
 
-/// Generate pass-1 proposals with heatmap using board geometry and an explicit
-/// marker-scale prior.
+/// Generate pass-1 proposals with heatmap using target geometry and an
+/// explicit marker-scale prior.
 pub fn propose_with_heatmap_and_marker_scale(
     image: &GrayImage,
-    board: &BoardLayout,
+    target: &TargetLayout,
     marker_scale: MarkerScalePrior,
 ) -> ProposalResult {
-    let config = derive_proposal_config(board, marker_scale, &crate::ProposalConfig::default());
+    let config = derive_proposal_config(target, marker_scale, &crate::ProposalConfig::default());
     find_ellipse_centers_with_heatmap(image, &config)
 }
 
@@ -325,9 +408,9 @@ mod tests {
 
     #[test]
     fn detector_basic_detect() {
-        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let det = Detector::with_config(DetectConfig::from_target(TargetLayout::default_hex()));
         let img = GrayImage::new(200, 200);
-        let result = det.detect(&img);
+        let result = det.detect(&img).expect("hex coded target is supported");
         assert!(result.detected_markers.is_empty());
         assert_eq!(result.center_frame, crate::DetectionFrame::Image);
         assert_eq!(result.homography_frame, crate::DetectionFrame::Image);
@@ -336,24 +419,24 @@ mod tests {
 
     #[test]
     fn detector_detect_honors_self_undistort_enable() {
-        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        let mut cfg = DetectConfig::from_target(TargetLayout::default_hex());
         cfg.self_undistort.enable = true;
         cfg.self_undistort.min_markers = 0;
         let det = Detector::with_config(cfg);
         let img = GrayImage::new(200, 200);
-        let result = det.detect(&img);
+        let result = det.detect(&img).expect("hex coded target is supported");
         assert!(result.self_undistort.is_some());
     }
 
     #[test]
     fn detector_mapper_ignores_self_undistort_config() {
-        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        let mut cfg = DetectConfig::from_target(TargetLayout::default_hex());
         cfg.self_undistort.enable = true;
         cfg.self_undistort.min_markers = 0;
         let det = Detector::with_config(cfg);
         let img = GrayImage::new(200, 200);
         let mapper = IdentityMapper;
-        let result = det.detect_with_mapper(&img, &mapper);
+        let result = det.detect_with_mapper(&img, &mapper).expect("supported");
         assert_eq!(result.center_frame, crate::DetectionFrame::Image);
         assert_eq!(result.homography_frame, crate::DetectionFrame::Working);
         assert!(result.self_undistort.is_none());
@@ -361,14 +444,14 @@ mod tests {
 
     #[test]
     fn detector_config_mut() {
-        let mut det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let mut det = Detector::with_config(DetectConfig::from_target(TargetLayout::default_hex()));
         det.config_mut().advanced.completion.enable = false;
         assert!(!det.config().advanced.completion.enable);
     }
 
     #[test]
     fn detector_adaptive_tiers_fallback_matches_four_tier_wide_on_blank_image() {
-        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let det = Detector::with_config(DetectConfig::from_target(TargetLayout::default_hex()));
         let img = GrayImage::new(200, 200);
         let tiers = det.adaptive_tiers(&img, None);
         let expected = ScaleTiers::four_tier_wide();
@@ -387,7 +470,7 @@ mod tests {
 
     #[test]
     fn detector_adaptive_tiers_with_hint_builds_two_tier_bracket() {
-        let det = Detector::with_config(DetectConfig::from_target(BoardLayout::default()));
+        let det = Detector::with_config(DetectConfig::from_target(TargetLayout::default_hex()));
         let img = GrayImage::new(200, 200);
         let tiers = det.adaptive_tiers(&img, Some(32.0));
         assert_eq!(tiers.tiers().len(), 2);
@@ -409,7 +492,7 @@ mod tests {
 
     #[test]
     fn detector_propose_is_deterministic() {
-        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let cfg = DetectConfig::from_target(TargetLayout::default_hex());
         let det = Detector::with_config(cfg);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
@@ -427,12 +510,12 @@ mod tests {
 
     #[test]
     fn detect_with_diagnostics_result_matches_detect_and_is_aligned() {
-        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let cfg = DetectConfig::from_target(TargetLayout::default_hex());
         let detector = Detector::with_config(cfg);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
-        let plain = detector.detect(&img);
-        let (rich, diagnostics) = detector.detect_with_diagnostics(&img);
+        let plain = detector.detect(&img).expect("supported");
+        let (rich, diagnostics) = detector.detect_with_diagnostics(&img).expect("supported");
 
         // detect() must return the exact same slim result as detect_with_diagnostics().
         assert_eq!(plain.detected_markers.len(), rich.detected_markers.len());
@@ -455,11 +538,11 @@ mod tests {
 
     #[test]
     fn detect_with_diagnostics_populates_single_pass_timings() {
-        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let cfg = DetectConfig::from_target(TargetLayout::default_hex());
         let detector = Detector::with_config(cfg);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
-        let (_result, diagnostics) = detector.detect_with_diagnostics(&img);
+        let (_result, diagnostics) = detector.detect_with_diagnostics(&img).expect("supported");
         let timings = diagnostics
             .timings
             .expect("single-pass detection surfaces stage timings");
@@ -476,7 +559,7 @@ mod tests {
 
     #[test]
     fn detector_proposal_methods_consistent() {
-        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let cfg = DetectConfig::from_target(TargetLayout::default_hex());
         let detector = Detector::with_config(cfg);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
@@ -492,7 +575,7 @@ mod tests {
 
     #[test]
     fn size_aware_free_proposal_apis_match_detector_with_marker_hint() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let detector = Detector::with_marker_diameter_hint(board.clone(), 32.0);
         let img = draw_ring_image(128, 128, [64.0, 64.0], 24.0, 12.0);
 
@@ -515,8 +598,28 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_target_yields_typed_error() {
+        let det = Detector::new(TargetLayout::isra_rect_24x24());
+        let img = GrayImage::new(64, 64);
+        let err = det.detect(&img).expect_err("rect plain target is gated");
+        assert!(matches!(
+            err,
+            DetectError::UnsupportedTarget {
+                lattice: "rect",
+                coding: "plain",
+                ..
+            }
+        ));
+        assert!(det.detect_adaptive(&img).is_err());
+        assert!(
+            det.detect_multiscale(&img, &ScaleTiers::single(MarkerScalePrior::default()))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn detector_proposal_apis_honor_proposal_downscale() {
-        let mut cfg = DetectConfig::from_target(BoardLayout::default());
+        let mut cfg = DetectConfig::from_target(TargetLayout::default_hex());
         cfg.advanced.proposal_downscale = crate::ProposalDownscale::Factor(4);
         let detector = Detector::with_config(cfg.clone());
         let img = draw_ring_image(101, 98, [50.0, 49.0], 20.0, 10.0);

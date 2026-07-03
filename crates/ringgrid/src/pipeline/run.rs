@@ -634,7 +634,7 @@ pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> Pi
         &result.markers,
         result.image_size,
         su_cfg,
-        Some(&config.board),
+        Some(&config.target),
     ) {
         Some(r) => r,
         None => return result,

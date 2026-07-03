@@ -16,7 +16,9 @@
 //! to match.
 
 // ── Detector facade and proposal-only convenience helpers ───────────────────
-use ringgrid::{Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale};
+use ringgrid::{
+    DetectError, Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale,
+};
 
 // ── Proposal types (standalone ellipse center detection) ────────────────────
 use ringgrid::{Proposal, ProposalConfig, ProposalResult};
@@ -47,6 +49,10 @@ use ringgrid::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 // ── Geometry ────────────────────────────────────────────────────────────────
 use ringgrid::Ellipse;
 use ringgrid::{BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker};
+use ringgrid::{
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
+    RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
+};
 use ringgrid::{MarkerSpecConfig, PngTargetOptions, SvgTargetOptions, TargetGenerationError};
 
 // ── Camera / distortion ─────────────────────────────────────────────────────
@@ -102,6 +108,18 @@ fn facade_names_resolve() {
     _assert_named::<BoardLayoutLoadError>();
     _assert_named::<BoardLayoutValidationError>();
     _assert_named::<BoardMarker>();
+    _assert_named::<DetectError>();
+    _assert_named::<TargetLayout>();
+    _assert_named::<TargetCell>();
+    _assert_named::<TargetLoadError>();
+    _assert_named::<TargetValidationError>();
+    _assert_named::<LatticeGeometry>();
+    _assert_named::<HexGeometry>();
+    _assert_named::<RectGeometry>();
+    _assert_named::<RingGeometry>();
+    _assert_named::<MarkerCoding>();
+    _assert_named::<CodedRingSpec>();
+    _assert_named::<OriginFiducials>();
     _assert_named::<Ellipse>();
     _assert_named::<RansacConfig>();
     _assert_named::<MarkerSpecConfig>();
@@ -119,9 +137,9 @@ fn facade_names_resolve() {
     // Free functions referenced as values — proves the fn paths still resolve.
     // Each is bound to an explicitly typed `fn` item so the path is checked
     // without relying on type inference.
-    let _: fn(&image::GrayImage, &BoardLayout, MarkerScalePrior) -> ProposalResult =
+    let _: fn(&image::GrayImage, &TargetLayout, MarkerScalePrior) -> ProposalResult =
         propose_with_heatmap_and_marker_scale;
-    let _: fn(&image::GrayImage, &BoardLayout, MarkerScalePrior) -> Vec<Proposal> =
+    let _: fn(&image::GrayImage, &TargetLayout, MarkerScalePrior) -> Vec<Proposal> =
         propose_with_marker_scale;
     let _: fn(&image::GrayImage, &ProposalConfig) -> Vec<Proposal> = find_ellipse_centers;
     let _: fn(&image::GrayImage, &ProposalConfig) -> ProposalResult =

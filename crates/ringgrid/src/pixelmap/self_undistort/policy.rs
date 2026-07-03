@@ -1,5 +1,5 @@
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
+use crate::target::TargetLayout;
 
 use super::super::DivisionModel;
 use super::config::SelfUndistortConfig;
@@ -17,7 +17,7 @@ pub(super) fn should_apply_model(
     markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
-    board: Option<&BoardLayout>,
+    board: Option<&TargetLayout>,
 ) -> bool {
     passes_primary_gates(candidate, config)
         && passes_range_edge_gate(candidate.lambda_opt, config)
@@ -60,7 +60,7 @@ fn passes_homography_validation(
     markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,
-    board: Option<&BoardLayout>,
+    board: Option<&TargetLayout>,
 ) -> bool {
     let Some(board) = board else {
         return true;

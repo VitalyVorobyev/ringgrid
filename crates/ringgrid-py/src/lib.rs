@@ -116,6 +116,12 @@ fn board_from_spec_json(spec_json: &str) -> PyResult<ringgrid::BoardLayout> {
     ringgrid::BoardLayout::from_json_str(spec_json).map_err(py_value_error)
 }
 
+/// Parse a target spec (compositional `ringgrid.target.v5`, or legacy
+/// `ringgrid.target.v4` auto-migrated).
+fn target_from_spec_json(spec_json: &str) -> PyResult<ringgrid::TargetLayout> {
+    ringgrid::TargetLayout::from_json_str(spec_json).map_err(py_value_error)
+}
+
 fn board_from_geometry(
     pitch_mm: f32,
     rows: usize,
@@ -156,14 +162,14 @@ fn config_to_json(config: &ringgrid::DetectConfig) -> PyResult<serde_json::Value
 }
 
 /// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
-/// attaching `board` and re-deriving the board-coupled / scale-coupled fields.
+/// attaching `target` and re-deriving the target-coupled / scale-coupled fields.
 fn config_from_json(
-    board: ringgrid::BoardLayout,
+    target: ringgrid::TargetLayout,
     config_json: &serde_json::Value,
 ) -> PyResult<ringgrid::DetectConfig> {
     let config: ringgrid::DetectConfig =
         serde_json::from_value(config_json.clone()).map_err(py_value_error)?;
-    Ok(config.with_board(board))
+    Ok(config.with_target(target))
 }
 
 fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
@@ -183,10 +189,13 @@ fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
 }
 
 fn parse_overlay_object(overlay_json: &str) -> PyResult<serde_json::Value> {
-    let overlay = serde_json::from_str::<serde_json::Value>(overlay_json).map_err(py_value_error)?;
+    let overlay =
+        serde_json::from_str::<serde_json::Value>(overlay_json).map_err(py_value_error)?;
     match overlay {
         obj @ serde_json::Value::Object(_) => Ok(obj),
-        _ => Err(PyValueError::new_err("config overlay must be a JSON object")),
+        _ => Err(PyValueError::new_err(
+            "config overlay must be a JSON object",
+        )),
     }
 }
 
@@ -196,22 +205,22 @@ fn parse_overlay_object(overlay_json: &str) -> PyResult<serde_json::Value> {
 /// stage tuning nests under `"advanced"`. It is recursively merged onto the
 /// current config's JSON form so that a deeply nested partial section (e.g.
 /// `{"advanced": {"completion": {"enable": false}}}`) overrides only the named
-/// leaves. After the merge the config is deserialized and the board is
-/// re-attached, which re-derives all board- and scale-coupled fields.
+/// leaves. After the merge the config is deserialized and the target is
+/// re-attached, which re-derives all target- and scale-coupled fields.
 fn apply_overlay_json(config: &mut ringgrid::DetectConfig, overlay_json: &str) -> PyResult<()> {
     let overlay = parse_overlay_object(overlay_json)?;
-    let board = config.board.clone();
+    let target = config.target.clone();
     let mut merged = config_to_json(config)?;
     merge_json_value(&mut merged, overlay);
-    *config = config_from_json(board, &merged)?;
+    *config = config_from_json(target, &merged)?;
     Ok(())
 }
 
 fn detector_from_json(board_spec_json: &str, config_json: &str) -> PyResult<ringgrid::Detector> {
-    let board = board_from_spec_json(board_spec_json)?;
-    let config_value = serde_json::from_str::<serde_json::Value>(config_json)
-        .map_err(py_value_error)?;
-    let config = config_from_json(board, &config_value)?;
+    let target = target_from_spec_json(board_spec_json)?;
+    let config_value =
+        serde_json::from_str::<serde_json::Value>(config_json).map_err(py_value_error)?;
+    let config = config_from_json(target, &config_value)?;
     Ok(ringgrid::Detector::with_config(config))
 }
 
@@ -219,7 +228,7 @@ fn detect_with_core_mapper(
     detector: &ringgrid::Detector,
     gray: &GrayImage,
     mapper_spec: &MapperSpec,
-) -> ringgrid::DetectionResult {
+) -> PyResult<ringgrid::DetectionResult> {
     match mapper_spec {
         MapperSpec::Camera {
             intrinsics,
@@ -236,13 +245,14 @@ fn detect_with_core_mapper(
             detector.detect_with_mapper(gray, &mapper)
         }
     }
+    .map_err(py_value_error)
 }
 
 fn detect_with_core_mapper_diagnostics(
     detector: &ringgrid::Detector,
     gray: &GrayImage,
     mapper_spec: &MapperSpec,
-) -> (ringgrid::DetectionResult, ringgrid::DetectionDiagnostics) {
+) -> PyResult<(ringgrid::DetectionResult, ringgrid::DetectionDiagnostics)> {
     match mapper_spec {
         MapperSpec::Camera {
             intrinsics,
@@ -259,6 +269,7 @@ fn detect_with_core_mapper_diagnostics(
             detector.detect_with_mapper_diagnostics(gray, &mapper)
         }
     }
+    .map_err(py_value_error)
 }
 
 fn validate_nominal_diameter_hint(nominal_diameter_px: Option<f32>) -> PyResult<Option<f32>> {
@@ -411,8 +422,8 @@ struct DetectConfigCore {
 impl DetectConfigCore {
     #[new]
     fn new(board_spec_json: String) -> PyResult<Self> {
-        let board = board_from_spec_json(&board_spec_json)?;
-        let config = ringgrid::DetectConfig::from_target(board);
+        let target = target_from_spec_json(&board_spec_json)?;
+        let config = ringgrid::DetectConfig::from_target(target);
         Ok(Self { config })
     }
 
@@ -445,31 +456,32 @@ impl DetectorCore {
     fn detect_path(&self, image_path: &str) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
-        let result = detector.detect(&gray);
+        let result = detector.detect(&gray).map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
     fn detect_array(&self, image: PyReadonlyArrayDyn<'_, u8>) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
-        let result = detector.detect(&gray);
+        let result = detector.detect(&gray).map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
     fn detect_with_diagnostics_path(&self, image_path: &str) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
-        let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+        let (result, diagnostics) = detector
+            .detect_with_diagnostics(&gray)
+            .map_err(py_value_error)?;
         detection_with_diagnostics_json(result, diagnostics)
     }
 
-    fn detect_with_diagnostics_array(
-        &self,
-        image: PyReadonlyArrayDyn<'_, u8>,
-    ) -> PyResult<String> {
+    fn detect_with_diagnostics_array(&self, image: PyReadonlyArrayDyn<'_, u8>) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
-        let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+        let (result, diagnostics) = detector
+            .detect_with_diagnostics(&gray)
+            .map_err(py_value_error)?;
         detection_with_diagnostics_json(result, diagnostics)
     }
 
@@ -481,8 +493,7 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
         let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
-        let (result, diagnostics) =
-            detect_with_core_mapper_diagnostics(&detector, &gray, &mapper);
+        let (result, diagnostics) = detect_with_core_mapper_diagnostics(&detector, &gray, &mapper)?;
         detection_with_diagnostics_json(result, diagnostics)
     }
 
@@ -494,8 +505,7 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
         let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
-        let (result, diagnostics) =
-            detect_with_core_mapper_diagnostics(&detector, &gray, &mapper);
+        let (result, diagnostics) = detect_with_core_mapper_diagnostics(&detector, &gray, &mapper)?;
         detection_with_diagnostics_json(result, diagnostics)
     }
 
@@ -537,7 +547,7 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
         let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
-        let result = detect_with_core_mapper(&detector, &gray, &mapper);
+        let result = detect_with_core_mapper(&detector, &gray, &mapper)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -549,21 +559,21 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
         let mapper = serde_json::from_str::<MapperSpec>(mapper_json).map_err(py_value_error)?;
-        let result = detect_with_core_mapper(&detector, &gray, &mapper);
+        let result = detect_with_core_mapper(&detector, &gray, &mapper)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
     fn detect_adaptive_path(&self, image_path: &str) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
-        let result = detector.detect_adaptive(&gray);
+        let result = detector.detect_adaptive(&gray).map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
     fn detect_adaptive_array(&self, image: PyReadonlyArrayDyn<'_, u8>) -> PyResult<String> {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
-        let result = detector.detect_adaptive(&gray);
+        let result = detector.detect_adaptive(&gray).map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -576,7 +586,9 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
         let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
-        let result = detector.detect_adaptive_with_hint(&gray, nominal_diameter_px);
+        let result = detector
+            .detect_adaptive_with_hint(&gray, nominal_diameter_px)
+            .map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -589,7 +601,9 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
         let nominal_diameter_px = validate_nominal_diameter_hint(nominal_diameter_px)?;
-        let result = detector.detect_adaptive_with_hint(&gray, nominal_diameter_px);
+        let result = detector
+            .detect_adaptive_with_hint(&gray, nominal_diameter_px)
+            .map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -597,7 +611,9 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = load_gray_image(image_path)?;
         let tiers = parse_scale_tiers(tiers_json)?;
-        let result = detector.detect_multiscale(&gray, &tiers);
+        let result = detector
+            .detect_multiscale(&gray, &tiers)
+            .map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -609,7 +625,9 @@ impl DetectorCore {
         let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
         let gray = gray_image_from_array(image)?;
         let tiers = parse_scale_tiers(tiers_json)?;
-        let result = detector.detect_multiscale(&gray, &tiers);
+        let result = detector
+            .detect_multiscale(&gray, &tiers)
+            .map_err(py_value_error)?;
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
@@ -709,8 +727,8 @@ fn write_target_svg(
     margin_mm: f32,
     include_scale_bar: bool,
 ) -> PyResult<()> {
-    let board = board_from_spec_json(spec_json)?;
-    board
+    let target = target_from_spec_json(spec_json)?;
+    target
         .write_target_svg(
             std::path::Path::new(path),
             &ringgrid::SvgTargetOptions {
@@ -730,8 +748,8 @@ fn write_target_png(
     margin_mm: f32,
     include_scale_bar: bool,
 ) -> PyResult<()> {
-    let board = board_from_spec_json(spec_json)?;
-    board
+    let target = target_from_spec_json(spec_json)?;
+    target
         .write_target_png(
             std::path::Path::new(path),
             &ringgrid::PngTargetOptions {
@@ -801,9 +819,9 @@ fn proposal_with_scale_json_path(
     marker_scale_json: &str,
 ) -> PyResult<String> {
     let gray = load_gray_image(image_path)?;
-    let board = board_from_spec_json(board_spec_json)?;
+    let target = target_from_spec_json(board_spec_json)?;
     let marker_scale = parse_marker_scale(marker_scale_json)?;
-    let proposals = ringgrid::propose_with_marker_scale(&gray, &board, marker_scale);
+    let proposals = ringgrid::propose_with_marker_scale(&gray, &target, marker_scale);
     proposal_json(&proposals)
 }
 
@@ -814,9 +832,9 @@ fn proposal_with_scale_json_array(
     marker_scale_json: &str,
 ) -> PyResult<String> {
     let gray = gray_image_from_array(image)?;
-    let board = board_from_spec_json(board_spec_json)?;
+    let target = target_from_spec_json(board_spec_json)?;
     let marker_scale = parse_marker_scale(marker_scale_json)?;
-    let proposals = ringgrid::propose_with_marker_scale(&gray, &board, marker_scale);
+    let proposals = ringgrid::propose_with_marker_scale(&gray, &target, marker_scale);
     proposal_json(&proposals)
 }
 
@@ -828,11 +846,11 @@ fn proposal_result_with_scale_payload_path<'py>(
     marker_scale_json: &str,
 ) -> PyResult<(String, Py<PyArray2<f32>>)> {
     let gray = load_gray_image(image_path)?;
-    let board = board_from_spec_json(board_spec_json)?;
+    let target = target_from_spec_json(board_spec_json)?;
     let marker_scale = parse_marker_scale(marker_scale_json)?;
     proposal_result_payload(
         py,
-        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &board, marker_scale),
+        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &target, marker_scale),
     )
 }
 
@@ -844,19 +862,19 @@ fn proposal_result_with_scale_payload_array<'py>(
     marker_scale_json: &str,
 ) -> PyResult<(String, Py<PyArray2<f32>>)> {
     let gray = gray_image_from_array(image)?;
-    let board = board_from_spec_json(board_spec_json)?;
+    let target = target_from_spec_json(board_spec_json)?;
     let marker_scale = parse_marker_scale(marker_scale_json)?;
     proposal_result_payload(
         py,
-        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &board, marker_scale),
+        ringgrid::propose_with_heatmap_and_marker_scale(&gray, &target, marker_scale),
     )
 }
 
 #[pyfunction]
 #[pyo3(signature = (board_spec_json, overlay_json=None))]
 fn resolve_config_json(board_spec_json: &str, overlay_json: Option<&str>) -> PyResult<String> {
-    let board = board_from_spec_json(board_spec_json)?;
-    let mut config = ringgrid::DetectConfig::from_target(board);
+    let target = target_from_spec_json(board_spec_json)?;
+    let mut config = ringgrid::DetectConfig::from_target(target);
     apply_overlay_json(&mut config, overlay_json.unwrap_or("{}"))?;
     serde_json::to_string(&config).map_err(py_value_error)
 }
@@ -867,10 +885,10 @@ fn update_config_json(
     base_config_json: &str,
     overlay_json: &str,
 ) -> PyResult<String> {
-    let board = board_from_spec_json(board_spec_json)?;
+    let target = target_from_spec_json(board_spec_json)?;
     let base_value =
         serde_json::from_str::<serde_json::Value>(base_config_json).map_err(py_value_error)?;
-    let mut config = config_from_json(board, &base_value)?;
+    let mut config = config_from_json(target, &base_value)?;
     apply_overlay_json(&mut config, overlay_json)?;
     serde_json::to_string(&config).map_err(py_value_error)
 }

@@ -728,14 +728,14 @@ impl CliDetectArgs {
 /// Apply a JSON config-file overlay onto a scale-derived base config.
 ///
 /// The base config is serialized, the overlay is recursively merged in, and the
-/// result is deserialized. `board` is `#[serde(skip)]`, so it is re-attached
-/// afterwards via [`ringgrid::DetectConfig::with_board`], which also re-runs the
-/// geometry/scale derivation for any fields the overlay left untouched.
+/// result is deserialized. `target` is `#[serde(skip)]`, so it is re-attached
+/// afterwards via [`ringgrid::DetectConfig::with_target`], which also re-runs
+/// the geometry/scale derivation for any fields the overlay left untouched.
 fn apply_config_file_overlay(
     config: ringgrid::DetectConfig,
     config_file: &DetectConfigFile,
 ) -> CliResult<ringgrid::DetectConfig> {
-    let board = config.board.clone();
+    let target = config.target.clone();
     let mut merged = serde_json::to_value(&config)
         .map_err(|e| -> CliError { format!("failed to serialize base config: {e}").into() })?;
     merge_json_value(
@@ -744,7 +744,7 @@ fn apply_config_file_overlay(
     );
     let overlaid: ringgrid::DetectConfig = serde_json::from_value(merged)
         .map_err(|e| -> CliError { format!("invalid config overlay: {e}").into() })?;
-    Ok(overlaid.with_board(board))
+    Ok(overlaid.with_target(target))
 }
 
 fn build_detect_config(
@@ -1178,7 +1178,8 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let (result, diagnostics) = match overrides.camera.as_ref() {
         Some(camera) => detector.detect_with_mapper_diagnostics(&gray, camera),
         None => detector.detect_with_diagnostics(&gray),
-    };
+    }
+    .map_err(|e| -> CliError { e.to_string().into() })?;
 
     let n_with_id = result
         .detected_markers
@@ -1335,7 +1336,9 @@ fn run_bench(args: &CliBenchArgs) -> CliResult<()> {
         let mut labelled = 0usize;
         let mut markers = 0usize;
         for _ in 0..repeats {
-            let (result, diagnostics) = detector.detect_with_diagnostics(&gray);
+            let (result, diagnostics) = detector
+                .detect_with_diagnostics(&gray)
+                .map_err(|e| -> CliError { e.to_string().into() })?;
             let timings = diagnostics.timings.ok_or_else(|| -> CliError {
                 "single-pass detection produced no timings".into()
             })?;
@@ -1652,8 +1655,8 @@ mod tests {
         assert!((cfg.advanced.dedup_radius - 9.5).abs() < 1e-9);
         // Untouched advanced fields keep their scale-derived/default values.
         assert_eq!(cfg.advanced.inner_fit.min_points, 20);
-        // The board is re-attached and re-derives geometry.
-        assert!(cfg.board.n_markers() > 0);
+        // The target is re-attached and re-derives geometry.
+        assert!(cfg.target.n_cells() > 0);
     }
 
     #[test]

@@ -1,18 +1,18 @@
-use crate::board_layout::BoardLayout;
 use crate::conic::RansacConfig;
 use crate::marker::{DecodeConfig, MarkerSpecConfig};
 use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
+use crate::target::{MarkerCoding, TargetLayout};
 
 use crate::proposal::ProposalConfig;
 
-fn proposal_spacing_ratio_for_board(board: &BoardLayout) -> f32 {
-    let outer_diameter_mm = 2.0 * board.marker_outer_radius_mm();
+fn proposal_spacing_ratio_for_target(target: &TargetLayout) -> f32 {
+    let outer_diameter_mm = 2.0 * target.ring().outer_radius_mm;
     if !(outer_diameter_mm.is_finite() && outer_diameter_mm > 0.0) {
         return 1.0;
     }
 
-    let spacing_mm = board.min_center_spacing_mm();
+    let spacing_mm = target.min_center_spacing_mm();
     if !(spacing_mm.is_finite() && spacing_mm > 0.0) {
         return 1.0;
     }
@@ -21,13 +21,13 @@ fn proposal_spacing_ratio_for_board(board: &BoardLayout) -> f32 {
 }
 
 pub(crate) fn derive_proposal_config(
-    board: &BoardLayout,
+    target: &TargetLayout,
     marker_scale: MarkerScalePrior,
     base: &ProposalConfig,
 ) -> ProposalConfig {
     let [d_min, d_max] = marker_scale.diameter_range_px();
     let outer_radius_max_px = d_max * 0.5;
-    let spacing_ratio = proposal_spacing_ratio_for_board(board);
+    let spacing_ratio = proposal_spacing_ratio_for_target(target);
     let spacing_min_px = spacing_ratio * d_min;
     let spacing_max_px = spacing_ratio * d_max;
 
@@ -892,7 +892,7 @@ impl Default for AdvancedDetectConfig {
 
 /// Top-level detection configuration.
 ///
-/// Holds the durable user choices that shape detection: board geometry, marker
+/// Holds the durable user choices that shape detection: target layout, marker
 /// scale prior, center-refinement method, and self-undistort policy. All
 /// per-stage tuning lives under [`AdvancedDetectConfig`] in the `advanced`
 /// field.
@@ -904,22 +904,22 @@ impl Default for AdvancedDetectConfig {
 /// - [`DetectConfig::from_target_and_marker_diameter`] — fixed diameter hint
 ///
 /// These constructors auto-derive scale-dependent parameters (proposal radii,
-/// edge search windows, validation bounds) from the board geometry and marker
+/// edge search windows, validation bounds) from the target geometry and marker
 /// scale prior. Individual fields can be tuned after construction.
 ///
-/// A `DetectConfig` deserialized from JSON has a default `board` (board layout
-/// is not serialized) and zeroed derived bounds. Call
-/// [`DetectConfig::with_board`] to attach the real board and re-derive all
-/// scale- and geometry-coupled parameters.
+/// A `DetectConfig` deserialized from JSON has a default `target` (the target
+/// layout is not serialized) and zeroed derived bounds. Call
+/// [`DetectConfig::with_target`] to attach the real target layout and
+/// re-derive all scale- and geometry-coupled parameters.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct DetectConfig {
-    /// Board layout: marker positions and geometry.
+    /// Target layout: marker cell positions and geometry.
     ///
-    /// Not serialized — supply it via a constructor or [`DetectConfig::with_board`].
+    /// Not serialized — supply it via a constructor or [`DetectConfig::with_target`].
     #[serde(skip)]
-    pub board: BoardLayout,
+    pub target: TargetLayout,
     /// Marker diameter prior (range) in working-frame pixels.
     pub marker_scale: MarkerScalePrior,
     /// Post-fit circle refinement method selector.
@@ -936,9 +936,12 @@ impl DetectConfig {
     ///
     /// This is the recommended constructor for library users. After calling it,
     /// individual fields can be overridden as needed.
-    pub fn from_target_and_scale_prior(board: BoardLayout, marker_scale: MarkerScalePrior) -> Self {
+    pub fn from_target_and_scale_prior(
+        target: impl Into<TargetLayout>,
+        marker_scale: MarkerScalePrior,
+    ) -> Self {
         let mut cfg = Self {
-            board,
+            target: target.into(),
             marker_scale: marker_scale.normalized(),
             ..Default::default()
         };
@@ -948,29 +951,32 @@ impl DetectConfig {
     }
 
     /// Build a configuration from target layout and default marker scale prior.
-    pub fn from_target(board: BoardLayout) -> Self {
-        Self::from_target_and_scale_prior(board, MarkerScalePrior::default())
+    pub fn from_target(target: impl Into<TargetLayout>) -> Self {
+        Self::from_target_and_scale_prior(target, MarkerScalePrior::default())
     }
 
     /// Build a configuration from target layout and a fixed marker diameter hint.
-    pub fn from_target_and_marker_diameter(board: BoardLayout, diameter_px: f32) -> Self {
+    pub fn from_target_and_marker_diameter(
+        target: impl Into<TargetLayout>,
+        diameter_px: f32,
+    ) -> Self {
         Self::from_target_and_scale_prior(
-            board,
+            target,
             MarkerScalePrior::from_nominal_diameter_px(diameter_px),
         )
     }
 
-    /// Attach a board layout and re-derive all scale- and geometry-coupled
+    /// Attach a target layout and re-derive all scale- and geometry-coupled
     /// parameters.
     ///
-    /// `board` is `#[serde(skip)]`, so a `DetectConfig` deserialized from JSON
-    /// carries a default board and zeroed derived ellipse bounds. This is the
-    /// single entry point for consumers that load a config from JSON: it sets
-    /// the real board, then re-runs the geometry- and scale-prior derivation
-    /// (proposal radii, edge search windows, validation bounds) so callers do
-    /// not duplicate that logic.
-    pub fn with_board(mut self, board: BoardLayout) -> Self {
-        self.board = board;
+    /// `target` is `#[serde(skip)]`, so a `DetectConfig` deserialized from
+    /// JSON carries a default target layout and zeroed derived ellipse bounds.
+    /// This is the single entry point for consumers that load a config from
+    /// JSON: it sets the real target, then re-runs the geometry- and
+    /// scale-prior derivation (proposal radii, edge search windows, validation
+    /// bounds) so callers do not duplicate that logic.
+    pub fn with_target(mut self, target: impl Into<TargetLayout>) -> Self {
+        self.target = target.into();
         apply_target_geometry_priors(&mut self);
         apply_marker_scale_prior(&mut self);
         self
@@ -989,7 +995,7 @@ impl DetectConfig {
 
     #[cfg(test)]
     fn proposal_spacing_ratio(&self) -> f32 {
-        proposal_spacing_ratio_for_board(&self.board)
+        proposal_spacing_ratio_for_target(&self.target)
     }
 
     #[cfg(test)]
@@ -1008,7 +1014,7 @@ impl DetectConfig {
 impl Default for DetectConfig {
     fn default() -> Self {
         let mut cfg = Self {
-            board: BoardLayout::default(),
+            target: TargetLayout::default_hex(),
             marker_scale: MarkerScalePrior::default(),
             circle_refinement: CircleRefinementMethod::default(),
             self_undistort: SelfUndistortConfig::default(),
@@ -1028,7 +1034,7 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     let outer_radius_max_px = d_max * 0.5;
     let r_nom = d_nom * 0.5;
     let adv = &mut config.advanced;
-    adv.proposal = derive_proposal_config(&config.board, config.marker_scale, &adv.proposal);
+    adv.proposal = derive_proposal_config(&config.target, config.marker_scale, &adv.proposal);
 
     // Edge sampling range
     adv.edge_sample.r_max = outer_radius_max_px * 2.0;
@@ -1049,19 +1055,23 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
-    let outer = config.board.marker_outer_radius_mm();
-    let inner = config.board.marker_inner_radius_mm();
-    let ring_width = config.board.marker_ring_width_mm();
-    if !(outer.is_finite() && inner.is_finite() && ring_width.is_finite())
-        || outer <= 0.0
-        || inner <= 0.0
-        || ring_width <= 0.0
-        || inner >= outer
-    {
+    let ring = config.target.ring();
+    let outer = ring.outer_radius_mm;
+    let inner = ring.inner_radius_mm;
+    // Stroked (coded) rings put the detected edges half a stroke width past
+    // the centerline radii; plain annuli expose the radii directly.
+    let edge_pad = match config.target.coding() {
+        MarkerCoding::Coded16(spec) => {
+            if !(spec.ring_width_mm.is_finite() && spec.ring_width_mm > 0.0) {
+                return;
+            }
+            0.5 * spec.ring_width_mm
+        }
+        MarkerCoding::Plain => 0.0,
+    };
+    if !(outer.is_finite() && inner.is_finite()) || outer <= 0.0 || inner <= 0.0 || inner >= outer {
         return;
     }
-
-    let edge_pad = 0.5 * ring_width;
     let inner_edge = (inner - edge_pad).max(outer * 0.05);
     let outer_edge = outer + edge_pad;
     if inner_edge > 0.0 && inner_edge < outer_edge {
@@ -1139,9 +1149,9 @@ mod tests {
 
     #[test]
     fn marker_scale_prior_derives_spacing_aware_proposal_geometry() {
-        let cfg = DetectConfig::from_target(BoardLayout::default());
+        let cfg = DetectConfig::from_target(TargetLayout::default_hex());
         let spacing_ratio =
-            cfg.board.min_center_spacing_mm() / (2.0 * cfg.board.marker_outer_radius_mm());
+            cfg.target.min_center_spacing_mm() / (2.0 * cfg.target.ring().outer_radius_mm);
         let [d_min, d_max] = cfg.marker_scale.diameter_range_px();
         let spacing_min_px = spacing_ratio * d_min;
         let spacing_max_px = spacing_ratio * d_max;
@@ -1163,7 +1173,7 @@ mod tests {
 
     #[test]
     fn fixed_marker_hint_keeps_spacing_aware_seed_distance() {
-        let cfg = DetectConfig::from_target_and_marker_diameter(BoardLayout::default(), 32.0);
+        let cfg = DetectConfig::from_target_and_marker_diameter(TargetLayout::default_hex(), 32.0);
         assert!((cfg.advanced.proposal.r_min - 6.928203).abs() < 1.0e-5);
         assert!((cfg.advanced.proposal.r_max - 20.784609).abs() < 1.0e-5);
         assert!((cfg.advanced.proposal.min_distance - 39.259_815).abs() < 1.0e-5);
@@ -1171,8 +1181,8 @@ mod tests {
 
     #[test]
     fn detect_config_json_roundtrip_preserves_effective_config() {
-        let board = BoardLayout::default();
-        let mut original = DetectConfig::from_target_and_marker_diameter(board.clone(), 32.0);
+        let target = TargetLayout::default_hex();
+        let mut original = DetectConfig::from_target_and_marker_diameter(target.clone(), 32.0);
         original.circle_refinement = CircleRefinementMethod::None;
         original.advanced.completion.enable = false;
         original.advanced.id_correction.max_iters = 9;
@@ -1181,8 +1191,8 @@ mod tests {
         let json = serde_json::to_string(&original).expect("serialize DetectConfig");
         let deserialized: DetectConfig =
             serde_json::from_str(&json).expect("deserialize DetectConfig");
-        // board is #[serde(skip)] — reattach it to re-derive geometry/scale fields.
-        let restored = deserialized.with_board(board);
+        // target is #[serde(skip)] — reattach it to re-derive geometry/scale fields.
+        let restored = deserialized.with_target(target);
 
         assert_eq!(restored.circle_refinement, original.circle_refinement);
         assert_eq!(
@@ -1197,13 +1207,13 @@ mod tests {
             restored.self_undistort.enable,
             original.self_undistort.enable
         );
-        // Scale-derived fields match because with_board re-runs derivation.
+        // Scale-derived fields match because with_target re-runs derivation.
         assert!(
             (restored.advanced.proposal.r_min - original.advanced.proposal.r_min).abs() < 1.0e-6
         );
         assert!((restored.advanced.min_semi_axis - original.advanced.min_semi_axis).abs() < 1.0e-9);
         assert!((restored.advanced.max_semi_axis - original.advanced.max_semi_axis).abs() < 1.0e-9);
-        assert_eq!(restored.board.n_markers(), original.board.n_markers());
+        assert_eq!(restored.target.n_cells(), original.target.n_cells());
     }
 
     #[test]

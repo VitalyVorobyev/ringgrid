@@ -1,4 +1,5 @@
 /target
+crates/*/target/
 book/book/
 .venv/
 tools/out/

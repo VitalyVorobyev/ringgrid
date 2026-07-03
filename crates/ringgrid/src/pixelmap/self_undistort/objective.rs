@@ -1,7 +1,7 @@
-use crate::board_layout::BoardLayout;
 use crate::conic::{fit_ellipse_direct, rms_sampson_distance};
 use crate::detector::MarkerRecord;
 use crate::homography;
+use crate::target::TargetLayout;
 
 use super::super::{DivisionModel, PixelMapper};
 
@@ -99,7 +99,7 @@ pub(super) fn conic_consistency_objective(
 
 pub(super) fn homography_self_error_px(
     markers: &[MarkerRecord],
-    board: &BoardLayout,
+    board: &TargetLayout,
     mapper: &dyn PixelMapper,
 ) -> Option<HomographySelfError> {
     let correspondences = homography::collect_marker_correspondences(

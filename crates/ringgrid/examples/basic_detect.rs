@@ -1,5 +1,5 @@
 use image::ImageReader;
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{Detector, TargetLayout};
 use std::error::Error;
 use std::path::Path;
 
@@ -10,11 +10,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(2);
     }
 
-    let board = BoardLayout::from_json_file(Path::new(&args[1]))?;
+    let target = TargetLayout::from_json_file(Path::new(&args[1]))?;
     let image = ImageReader::open(&args[2])?.decode()?.to_luma8();
 
-    let detector = Detector::new(board);
-    let result = detector.detect(&image);
+    let detector = Detector::new(target);
+    let result = detector.detect(&image)?;
 
     let n_with_id = result
         .detected_markers

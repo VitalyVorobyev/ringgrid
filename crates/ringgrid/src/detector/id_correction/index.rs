@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::board_layout::BoardLayout;
+use crate::target::TargetLayout;
 
 /// Six axial neighbor direction offsets for a hex lattice.
-pub(super) const HEX_NEIGHBORS: [(i16, i16); 6] =
+pub(super) const HEX_NEIGHBORS: [(i32, i32); 6] =
     [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
 
 pub(super) struct BoardIndex {
@@ -16,17 +16,16 @@ pub(super) struct BoardIndex {
 }
 
 impl BoardIndex {
-    pub(super) fn build(board: &BoardLayout) -> Self {
-        let mut qr_to_id: HashMap<(i16, i16), usize> = HashMap::new();
-        let mut id_to_qr: HashMap<usize, (i16, i16)> = HashMap::new();
+    pub(super) fn build(target: &TargetLayout) -> Self {
+        let mut qr_to_id: HashMap<(i32, i32), usize> = HashMap::new();
+        let mut id_to_qr: HashMap<usize, (i32, i32)> = HashMap::new();
         let mut id_to_xy: HashMap<usize, [f32; 2]> = HashMap::new();
 
-        for m in board.markers() {
-            if let (Some(q), Some(r)) = (m.q, m.r) {
-                qr_to_id.insert((q, r), m.id);
-                id_to_qr.insert(m.id, (q, r));
-            }
-            id_to_xy.insert(m.id, m.xy_mm);
+        for cell in target.cells() {
+            let Some(id) = cell.id else { continue };
+            qr_to_id.insert((cell.coord.u, cell.coord.v), id);
+            id_to_qr.insert(id, (cell.coord.u, cell.coord.v));
+            id_to_xy.insert(id, cell.xy_mm);
         }
 
         let mut board_neighbors: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -41,7 +40,7 @@ impl BoardIndex {
         Self {
             id_to_xy,
             board_neighbors,
-            pitch_mm: board.pitch_mm as f64,
+            pitch_mm: target.pitch_mm() as f64,
         }
     }
 

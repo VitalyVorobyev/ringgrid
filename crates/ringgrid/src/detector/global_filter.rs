@@ -1,8 +1,8 @@
 use crate::RansacStats;
-use crate::board_layout::BoardLayout;
 use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
 use crate::homography;
+use crate::target::TargetLayout;
 
 /// Apply global homography RANSAC filter.
 ///
@@ -10,7 +10,7 @@ use crate::homography;
 pub fn global_filter(
     markers: &[MarkerRecord],
     config: &RansacConfig,
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) -> (
     Vec<MarkerRecord>,
     Option<homography::RansacHomographyResult>,
@@ -18,7 +18,7 @@ pub fn global_filter(
 ) {
     let correspondences = homography::collect_marker_correspondences(
         markers,
-        board,
+        target,
         homography::CorrespondenceDestinationFrame::Image,
         homography::DuplicateIdPolicy::KeepAll,
         |m| Some(m.center),

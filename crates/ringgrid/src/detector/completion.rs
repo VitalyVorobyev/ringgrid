@@ -719,15 +719,8 @@ pub(crate) fn complete_plain_with_h(
     let mut capped = false;
 
     for _round in 0..MAX_GROWTH_ROUNDS {
-        let candidates: Vec<Coord> = if anchored {
-            target.cells().iter().map(|cell| cell.coord).collect()
-        } else {
-            let Some((min, max)) = coord_bbox(present.iter().copied()) else {
-                break;
-            };
-            ((min.v - 1)..=(max.v + 1))
-                .flat_map(|v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v)))
-                .collect()
+        let Some(candidates) = plain_candidate_coords(anchored, target, &present) else {
+            break;
         };
 
         // Predictions improve as the patch grows; rebuild the map per round.
@@ -799,6 +792,25 @@ pub(crate) fn complete_plain_with_h(
     );
 
     stats
+}
+
+/// Candidate cells for one plain-completion round: the full board when
+/// anchored, else the labeled patch's bounding box expanded by one lattice
+/// ring. `None` when there is nothing to grow from.
+fn plain_candidate_coords(
+    anchored: bool,
+    target: &crate::target::TargetLayout,
+    present: &std::collections::HashSet<Coord>,
+) -> Option<Vec<Coord>> {
+    if anchored {
+        return Some(target.cells().iter().map(|cell| cell.coord).collect());
+    }
+    let (min, max) = coord_bbox(present.iter().copied())?;
+    Some(
+        ((min.v - 1)..=(max.v + 1))
+            .flat_map(|v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v)))
+            .collect(),
+    )
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.

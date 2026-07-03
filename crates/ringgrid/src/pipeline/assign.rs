@@ -139,24 +139,7 @@ pub(crate) fn assign_plain_grid(
         p95_err_px: p95_err,
     };
 
-    // Keep labeled homography inliers only; label them in place.
-    let keep: HashMap<usize, Coord> = labeled
-        .iter()
-        .enumerate()
-        .filter(|(j, _)| result.inlier_mask.get(*j).copied().unwrap_or(false))
-        .map(|(_, (i, c))| (*i, *c))
-        .collect();
-    let old = std::mem::take(markers);
-    *markers = old
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, mut m)| {
-            let coord = keep.get(&i)?;
-            m.grid_coord = Some([coord.u, coord.v]);
-            m.board_xy_mm = Some(frame_xy_mm(target, *coord));
-            Some(m)
-        })
-        .collect();
+    apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
 
     tracing::info!(
         n_input,
@@ -171,6 +154,34 @@ pub(crate) fn assign_plain_grid(
         h: result.h,
         ransac,
     })
+}
+
+/// Keep labeled homography inliers only, writing each survivor's `grid_coord`
+/// and assignment-frame `board_xy_mm` in place; all other markers are removed
+/// (the coded global filter drops its outliers the same way).
+fn apply_inlier_labels(
+    markers: &mut Vec<MarkerRecord>,
+    labeled: &[(usize, Coord)],
+    inlier_mask: &[bool],
+    target: &TargetLayout,
+) {
+    let keep: HashMap<usize, Coord> = labeled
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| inlier_mask.get(*j).copied().unwrap_or(false))
+        .map(|(_, (i, c))| (*i, *c))
+        .collect();
+    let old = std::mem::take(markers);
+    *markers = old
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, mut m)| {
+            let coord = keep.get(&i)?;
+            m.grid_coord = Some([coord.u, coord.v]);
+            m.board_xy_mm = Some(frame_xy_mm(target, *coord));
+            Some(m)
+        })
+        .collect();
 }
 
 /// Canonicalize hex axial labels: apply the rotation from the hex symmetry

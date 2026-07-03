@@ -51,6 +51,29 @@
       "max_center_error": 0.472
     }
   },
+  "rect_benchmark": {
+    "script": "tools/run_rect_benchmark.sh",
+    "output": "tools/out/rect_benchmark/summary.json",
+    "description": "Rect-lattice plain-ring (ISRA-style 24x24) synthetic benchmark. The recall floor absorbs rare upstream detect_grid labeling variance (completion recovers all cells in the common case); coord/origin metrics must be exact.",
+    "modes": {
+      "dots": {
+        "min_precision": 1.0,
+        "min_recall": 0.95,
+        "max_center_mean_px": 0.089,
+        "min_coord_accuracy": 1.0,
+        "min_origin_resolution_rate": 1.0,
+        "min_origin_correct_rate": 1.0,
+        "max_h_vs_gt_mean_px": 0.05
+      },
+      "no_dots": {
+        "min_precision": 1.0,
+        "min_recall": 0.95,
+        "max_center_mean_px": 0.087,
+        "min_coord_accuracy": 1.0,
+        "max_origin_resolution_rate": 0.0
+      }
+    }
+  },
   "rtv3d_benchmark": {
     "script": ".venv/bin/python tools/run_rtv3d_eval.py",
     "output": "tools/out/rtv3d_eval/report.json",

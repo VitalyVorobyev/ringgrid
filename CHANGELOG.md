@@ -33,10 +33,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `from-spec` (render any target JSON). Output spec file is
   `target_spec.json` (v5).
 - `DetectError` — `Detector::detect*` now return
-  `Result<DetectionResult, DetectError>`. The transitional
-  `DetectError::UnsupportedTarget` gates target combinations the pipeline
-  cannot detect yet (everything except hex + coded16); rect/plain detection
-  lands next release milestone.
+  `Result<DetectionResult, DetectError>`, reserving room for future failure
+  modes (currently infallible for all built-in targets).
+- **Plain-target detection**: every built-in lattice × coding combination now
+  detects end-to-end. Plain (uncoded) rings skip decoding entirely — a
+  photometric ring-evidence score (annulus + inner-edge contrast) fills the
+  decode slot in outer-fit candidate ranking — and are labeled with lattice
+  coordinates by `projective_grid::detect_grid` (labeling only; the frame
+  homography is refit in `f64` by ringgrid's RANSAC). Completion and
+  geometric verification are coordinate-keyed and lattice-generic; plain
+  completion grows the labeled patch iteratively, recovering cells the
+  labeler drops.
+- **Origin resolution** (`pipeline/anchor`): when a plain target carries
+  origin fiducials, every (rotation × translation) labeling candidate is
+  scored by verifying dot darkness at its predicted image positions through
+  the candidate homography; the winner must clear an absolute contrast
+  threshold plus a runner-up margin. Orientation-reversing candidates are
+  rejected outright (physically impossible for an opaque planar target).
+  Without fiducials — or when verification is ambiguous — outputs stay in a
+  canonical relative frame and no millimeter positions are emitted.
+- **Result surface**: `DetectedMarker.grid_coord: Option<[i32; 2]>` (lattice
+  cell coordinate; the only key for plain targets, which have no IDs) and
+  `DetectionResult.board_frame: Option<BoardFrame>`
+  (`absolute` | `relative_canonical`). Exposed in the Python typed API and in
+  the WASM/CLI JSON output.
+- **Rect synthetic eval**: `tools/gen_synth_rect.py` (ISRA-style rect-plain
+  renderer with in-plane rotation), `tools/score_detect_rect.py`
+  (coordinate-keyed scoring with best-over-symmetry matching for unresolved
+  frames, origin-resolution metrics), `tools/run_rect_benchmark.sh`
+  (dots + no-dots modes), with baselines appended to
+  `tools/ci/regression_baseline.json`.
 
 ### Changed
 
@@ -51,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aliases of `TargetValidationError` / `TargetLoadError`.
 - Free proposal helpers (`propose_with_marker_scale`,
   `propose_with_heatmap_and_marker_scale`) take `&TargetLayout`.
+- ID correction (hex-neighbor BFS consensus) now runs only for hex coded
+  targets — its algorithmic domain; rect coded targets rely on the global
+  filter + geometric verification instead.
 
 ### Fixed
 

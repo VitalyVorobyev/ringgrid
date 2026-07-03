@@ -200,6 +200,7 @@ class FitMetrics:
 
 class DetectedMarker:
     id: int | None
+    grid_coord: list[int] | None
     confidence: float
     center: list[float]
     center_mapped: list[float] | None
@@ -211,6 +212,7 @@ class DetectedMarker:
         confidence: float,
         center: list[float],
         id: int | None = ...,
+        grid_coord: list[int] | None = ...,
         center_mapped: list[float] | None = ...,
         board_xy_mm: list[float] | None = ...,
         ellipse_outer: Ellipse | None = ...,
@@ -301,6 +303,7 @@ class DetectionResult:
     homography_frame: DetectionFrame
     image_size: list[int]
     homography: list[list[float]] | None
+    board_frame: str | None
     self_undistort: SelfUndistortResult | None
     def __init__(
         self,
@@ -309,6 +312,7 @@ class DetectionResult:
         homography_frame: DetectionFrame,
         image_size: list[int],
         homography: list[list[float]] | None = ...,
+        board_frame: str | None = ...,
         self_undistort: SelfUndistortResult | None = ...,
     ) -> None: ...
     @classmethod

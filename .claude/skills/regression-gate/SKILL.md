@@ -36,6 +36,7 @@ Run all 3 synthetic benchmark scripts in sequence using `.venv`:
 bash tools/run_reference_benchmark.sh
 bash tools/run_distortion_benchmark.sh
 bash tools/run_blur3_benchmark.sh
+bash tools/run_rect_benchmark.sh
 ```
 
 Each script writes results to `tools/out/`. If any script fails, report the error and continue with the remaining benchmarks.
@@ -67,6 +68,17 @@ For each mode in the baseline, read the corresponding mode from the benchmark ou
 - `avg_precision >= baseline.criteria.min_precision`
 - `avg_recall >= baseline.criteria.min_recall`
 - `avg_center_error <= baseline.criteria.max_center_error`
+
+**For rect benchmark** (summary.json, `modes.dots` / `modes.no_dots`):
+
+- `avg_precision >= min_precision`, `avg_recall >= min_recall`
+- `avg_center_mean_px <= max_center_mean_px`
+- `avg_coord_accuracy >= min_coord_accuracy`
+- dots: `origin_resolution_rate >= min_origin_resolution_rate`,
+  `origin_correct_rate >= min_origin_correct_rate`,
+  `avg_h_vs_gt_mean_px <= max_h_vs_gt_mean_px`
+- no_dots: `origin_resolution_rate <= max_origin_resolution_rate` (must stay 0 —
+  resolving an origin without fiducials would mean fabricated anchoring)
 
 **For rtv3d benchmark** (report.json format):
 
@@ -117,6 +129,7 @@ REGRESSION GATE: ALL PASSED
   Reference benchmark: OK (2 modes)
   Distortion benchmark: OK (3 modes)
   Blur3 benchmark: OK
+  Rect benchmark: OK (2 modes)
   RTv3D benchmark: OK (2 strategies)  — or SKIPPED (no data)
   Maintainability: OK
 ```
@@ -137,5 +150,5 @@ To regenerate baselines after intentional improvements:
 
 - Baselines: `tools/ci/regression_baseline.json`
 - Maintainability: `tools/ci/maintainability_baseline.json`, `tools/ci/maintainability_guardrails.py`
-- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_rtv3d_eval.py`
-- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/rtv3d_eval/`
+- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_rect_benchmark.sh`, `tools/run_rtv3d_eval.py`
+- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/rect_benchmark/`, `tools/out/rtv3d_eval/`

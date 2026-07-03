@@ -440,6 +440,75 @@ fn finalize_global_filter_result(
     result
 }
 
+/// Resolve the plain-target board origin and, on success, remap every labeled
+/// marker to absolute board coordinates and replace the frame homography with
+/// the anchored board homography. Returns whether the origin was resolved.
+fn phase_plain_anchor(
+    gray: &GrayImage,
+    markers: &mut [MarkerRecord],
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    h_current: &mut nalgebra::Matrix3<f64>,
+) -> bool {
+    let Some(res) = super::anchor::resolve_origin(gray, markers, &config.target, mapper) else {
+        return false;
+    };
+    for m in markers.iter_mut() {
+        if let Some(c) = m.grid_coord {
+            let board = res.coord_map.apply(projective_grid::Coord::new(c[0], c[1]));
+            m.grid_coord = Some([board.u, board.v]);
+            m.board_xy_mm = config
+                .target
+                .cell_xy_mm(board)
+                .map(|xy| [f64::from(xy[0]), f64::from(xy[1])]);
+        }
+    }
+    *h_current = res.h;
+    true
+}
+
+/// Coordinate-keyed completion plus projective-center correction for the newly
+/// completed markers only — the plain counterpart of `phase_completion`.
+fn phase_plain_completion(
+    gray: &GrayImage,
+    h_current: &nalgebra::Matrix3<f64>,
+    markers: &mut Vec<MarkerRecord>,
+    config: &DetectConfig,
+    anchored: bool,
+    mapper: Option<&dyn PixelMapper>,
+) -> CompletionStats {
+    let n_before = markers.len();
+    let stats = complete_plain_with_h(
+        gray,
+        h_current,
+        markers,
+        config,
+        &config.target,
+        anchored,
+        mapper,
+    );
+    if config.circle_refinement.uses_projective_center() && markers.len() > n_before {
+        apply_projective_centers(&mut markers[n_before..], config);
+    }
+    stats
+}
+
+/// Public plain-frame contract: millimeter positions only in the absolute
+/// board frame — a wrong millimeter position is worse than none. Returns the
+/// frame of the labeled outputs.
+fn enforce_plain_frame_contract(
+    markers: &mut [MarkerRecord],
+    anchored: bool,
+) -> crate::pipeline::BoardFrame {
+    if anchored {
+        return crate::pipeline::BoardFrame::Absolute;
+    }
+    for m in markers.iter_mut() {
+        m.board_xy_mm = None;
+    }
+    crate::pipeline::BoardFrame::RelativeCanonical
+}
+
 /// Plain-target finalize: grid assignment → origin anchor → completion →
 /// final H refit → geometric verify.
 ///
@@ -487,42 +556,21 @@ fn finalize_plain_result(
     // Origin resolution: remap relative labels to absolute board cells when
     // the fiducial dots verify at their predicted positions.
     let anchor_start = Instant::now();
-    let resolution = super::anchor::resolve_origin(gray, &final_markers, &config.target, mapper);
-    let anchored = resolution.is_some();
-    if let Some(res) = resolution {
-        for m in final_markers.iter_mut() {
-            if let Some(c) = m.grid_coord {
-                let board = res.coord_map.apply(projective_grid::Coord::new(c[0], c[1]));
-                m.grid_coord = Some([board.u, board.v]);
-                m.board_xy_mm = config
-                    .target
-                    .cell_xy_mm(board)
-                    .map(|xy| [f64::from(xy[0]), f64::from(xy[1])]);
-            }
-        }
-        h_current = res.h;
-    }
+    let anchored = phase_plain_anchor(gray, &mut final_markers, config, mapper, &mut h_current);
     let anchor_elapsed = anchor_start.elapsed();
 
     // Completion at missing cells (full board when anchored, patch bbox when
     // not), then projective centers for the newly added markers only.
-    let n_before_completion = final_markers.len();
     let completion_start = Instant::now();
-    let completion_stats = complete_plain_with_h(
+    let completion_stats = phase_plain_completion(
         gray,
         &h_current,
         &mut final_markers,
         config,
-        &config.target,
         anchored,
         mapper,
     );
     let completion_elapsed = completion_start.elapsed();
-    if config.circle_refinement.uses_projective_center()
-        && final_markers.len() > n_before_completion
-    {
-        apply_projective_centers(&mut final_markers[n_before_completion..], config);
-    }
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
 
     // Final H refit over all labeled markers (frame correspondences).
@@ -549,19 +597,7 @@ fn finalize_plain_result(
     apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
     let post_fixup_elapsed = post_fixup_start.elapsed();
 
-    // Public contract: millimeter positions only in the absolute board frame —
-    // a wrong millimeter position is worse than none.
-    if !anchored {
-        for m in final_markers.iter_mut() {
-            m.board_xy_mm = None;
-        }
-    }
-
-    let board_frame = Some(if anchored {
-        crate::pipeline::BoardFrame::Absolute
-    } else {
-        crate::pipeline::BoardFrame::RelativeCanonical
-    });
+    let board_frame = Some(enforce_plain_frame_contract(&mut final_markers, anchored));
 
     let result = PipelineResult {
         markers: final_markers,

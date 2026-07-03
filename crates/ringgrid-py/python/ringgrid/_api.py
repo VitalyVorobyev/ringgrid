@@ -730,6 +730,7 @@ class DetectedMarker:
     confidence: float
     center: list[float]
     id: int | None = None
+    grid_coord: list[int] | None = None
     center_mapped: list[float] | None = None
     board_xy_mm: list[float] | None = None
     ellipse_outer: Ellipse | None = None
@@ -737,8 +738,12 @@ class DetectedMarker:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectedMarker":
+        grid_coord = data.get("grid_coord")
         return cls(
             id=None if data.get("id") is None else int(data["id"]),
+            grid_coord=None
+            if grid_coord is None
+            else [int(grid_coord[0]), int(grid_coord[1])],
             confidence=float(data["confidence"]),
             center=[float(data["center"][0]), float(data["center"][1])],
             center_mapped=_optional_vec2(data.get("center_mapped")),
@@ -757,6 +762,7 @@ class DetectedMarker:
             "center": [float(self.center[0]), float(self.center[1])],
         }
         _set_optional(out, "id", self.id)
+        _set_optional(out, "grid_coord", self.grid_coord)
         _set_optional(out, "center_mapped", self.center_mapped)
         _set_optional(out, "board_xy_mm", self.board_xy_mm)
         _set_optional(out, "ellipse_outer", None if self.ellipse_outer is None else self.ellipse_outer.to_dict())
@@ -969,6 +975,7 @@ class DetectionResult:
     homography_frame: DetectionFrame
     image_size: list[int]
     homography: list[list[float]] | None = None
+    board_frame: str | None = None
     self_undistort: SelfUndistortResult | None = None
 
     @classmethod
@@ -980,6 +987,9 @@ class DetectionResult:
             homography_frame=DetectionFrame(str(data["homography_frame"])),
             image_size=[int(data["image_size"][0]), int(data["image_size"][1])],
             homography=_optional_h(data.get("homography")),
+            board_frame=None
+            if data.get("board_frame") is None
+            else str(data["board_frame"]),
             self_undistort=None
             if data.get("self_undistort") is None
             else SelfUndistortResult.from_dict(data["self_undistort"]),
@@ -998,6 +1008,7 @@ class DetectionResult:
             "image_size": [int(self.image_size[0]), int(self.image_size[1])],
         }
         _set_optional(out, "homography", self.homography)
+        _set_optional(out, "board_frame", self.board_frame)
         _set_optional(
             out,
             "self_undistort",

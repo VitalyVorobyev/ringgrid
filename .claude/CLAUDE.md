@@ -60,16 +60,27 @@ better than it found them.
 
 ```
 crates/ringgrid/src/
-├── lib.rs              # Re-exports only (public API surface)
+├── lib.rs              # Re-exports only (public API: root + diagnostics/codebook tiers)
 ├── api.rs              # Detector facade + propose_with_* free functions
-├── board_layout.rs     # Board geometry (hex lattice layout, JSON loader)
-├── target_generation.rs # SVG/PNG target rendering
+├── board_layout.rs     # DEPRECATED v4 hex facade over target/ (removal after 0.8)
+├── target/             # Compositional target model (lattice × ring × coding × fiducials)
+│   ├── layout.rs       # TargetLayout + presets (default_hex, coded_hex, isra_rect_24x24)
+│   ├── lattice.rs      # LatticeGeometry (Hex | Rect) + cell generation
+│   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain)
+│   ├── fiducials.rs    # OriginFiducials (validation: rotation-asymmetry, clearance)
+│   ├── schema.rs       # JSON v5 (canonical) + v4 auto-migration
+│   └── error.rs        # TargetValidationError, TargetLoadError
+├── target_generation.rs # SVG/PNG target rendering (coded + plain + fiducial dots)
 ├── proposal/           # Center proposal generation (delegates to radsym)
 │   ├── mod.rs          # Adapter: radsym fused RSD → ringgrid Proposal types
 │   ├── config.rs       # ProposalConfig (translated to radsym RsdConfig)
 │   └── tests.rs        # Behavioral tests
 ├── detector/           # Per-marker detection primitives
-│   ├── config.rs       # DetectConfig and all sub-configs
+│   ├── config/         # DetectConfig + sub-configs
+│   │   ├── mod.rs      # DetectConfig, AdvancedDetectConfig, prior derivation
+│   │   ├── fit.rs      # InnerFitConfig, OuterFitConfig
+│   │   ├── scale.rs    # MarkerScalePrior, ScaleTier(s), ProposalDownscale
+│   │   └── stages.rs   # Completion/ProjectiveCenter/IdCorrection/Recovery configs
 │   ├── outer_fit/      # RANSAC ellipse fitting (Fitzgibbon direct LS)
 │   │   ├── mod.rs, sampling.rs, scoring.rs, solver.rs
 │   ├── inner_fit.rs    # Inner ring ellipse fit
@@ -77,7 +88,7 @@ crates/ringgrid/src/
 │   ├── marker_build.rs # DetectedMarker, FitMetrics structs + builder
 │   ├── dedup.rs        # Spatial + ID-based deduplication
 │   ├── global_filter.rs# RANSAC homography filter
-│   ├── completion.rs   # Conservative fits at missing H-projected IDs
+│   ├── completion.rs   # Conservative fits at missing cells (Id- or Coord-keyed)
 │   ├── center_correction.rs # Projective center application
 │   └── id_correction/  # BFS hex-neighbor ID consensus
 │       ├── mod.rs, engine.rs, workspace.rs, types.rs, index.rs
@@ -96,13 +107,20 @@ crates/ringgrid/src/
 │   ├── codebook.rs     # Generated 893-codeword table (don't hand-edit)
 │   └── marker_spec.rs  # MarkerSpec type
 ├── pipeline/           # Detection pipeline orchestration
-│   ├── mod.rs          # DetectionResult struct, module glue, re-exports
+│   ├── mod.rs          # Module glue, re-exports
 │   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort/multiscale
 │   ├── fit_decode.rs   # Proposals → fit → decode → dedup
-│   ├── finalize.rs     # Center correction → global filter → completion → final H
+│   ├── finalize/       # Pipeline back half
+│   │   ├── mod.rs      # run/premerge/postmerge entry points + dispatch
+│   │   ├── coded.rs    # Global filter → completion → final H (coded path)
+│   │   ├── plain.rs    # Grid assign → anchor → completion (plain path)
+│   │   └── common.rs   # Frame mapping, correspondence sync, geometric verify
+│   ├── assign.rs       # Plain-path grid labeling (projective_grid::detect_grid) + f64 H
+│   ├── anchor.rs       # Origin-dot resolution (verify dots at predicted positions)
+│   ├── geometric_verify.rs # Local/global geometric consistency checks
 │   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
 │   ├── prelude.rs      # Common imports for pipeline modules
-│   └── result.rs       # DetectionResult type
+│   └── result.rs       # DetectionResult, DetectedMarker, BoardFrame, diagnostics
 ├── homography/         # Homography estimation & utilities
 │   ├── core.rs         # DLT + RANSAC, RansacStats
 │   ├── utils.rs        # Refit, reprojection error, matrix conversion
@@ -136,7 +154,7 @@ crates/ringgrid/src/
 10. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs + projective center for new markers
 11. **Final H Refit** — refit homography from all corrected centers
 
-Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–11 in `pipeline/finalize.rs`, top-level sequencing in `pipeline/run.rs`.
+Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–11 in `pipeline/finalize/` (coded path in `coded.rs`; plain targets replace decode-anchored stages with `assign.rs` grid labeling + `anchor.rs` origin resolution, dispatched from `finalize/plain.rs`), top-level sequencing in `pipeline/run.rs`.
 
 ### Multi-scale / adaptive pipeline
 
@@ -156,15 +174,19 @@ All detection goes through the `Detector` struct (`api.rs`). Standalone proposal
 - `find_ellipse_centers`, `find_ellipse_centers_with_heatmap` — low-level proposal generation
 - `propose_with_marker_scale`, `propose_with_marker_diameter` (+ heatmap variants) — board-aware proposal helpers
 
-Key public types:
-- `Detector` — entry point
+Key public types (root tier):
+- `Detector`, `DetectError` — entry point
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
-- `DetectionResult`, `DetectedMarker`, `FitMetrics`, `DecodeMetrics`, `RansacStats` — results
-- `BoardLayout`, `BoardMarker`, `MarkerSpec` — geometry
+- `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
+- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (`BoardLayout`/`BoardMarker` are the deprecated v4 facade)
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
 - `Ellipse` — conic geometry
 - `Proposal`, `ProposalConfig`, `ProposalResult` — proposal types
+
+Tiered modules (deliberately not at the root):
+- `ringgrid::diagnostics` — opt-in channel from `detect_with_diagnostics`: `DetectionDiagnostics`, `MarkerDiagnostics`, `FitMetrics`, `DecodeMetrics`, `DetectionSource`, `InnerFitReason`, `InnerFitStatus`, `RansacStats`, `StageTimings`
+- `ringgrid::codebook` — codebook inspection: `CodebookInfo`, `CodewordMatch`, `codebook_info`, `decode_word`
 
 ## Build & Development Commands
 

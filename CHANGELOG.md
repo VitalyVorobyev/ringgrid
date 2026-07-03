@@ -80,6 +80,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ID correction (hex-neighbor BFS consensus) now runs only for hex coded
   targets — its algorithmic domain; rect coded targets rely on the global
   filter + geometric verification instead.
+- **Public surface tiered** (breaking): the opt-in diagnostics types
+  (`DetectionDiagnostics`, `MarkerDiagnostics`, `FitMetrics`, `DecodeMetrics`,
+  `DetectionSource`, `InnerFitReason`, `InnerFitStatus`, `RansacStats`,
+  `StageTimings`) moved from the crate root to `ringgrid::diagnostics`;
+  codebook inspection helpers (`CodebookInfo`, `CodewordMatch`,
+  `codebook_info`, `decode_word`) moved to `ringgrid::codebook`. The stable
+  primary output (`DetectionResult` and its field types) stays at the root.
+- `ProjectiveCenterConfig.max_center_shift_px` →
+  `max_correction_shift_px` — the old name collided with the unrelated
+  inner-fit gate `InnerFitConfig.max_center_shift_px`. A serde alias keeps
+  0.7.x JSON configs loading; the Python `ProjectiveCenterConfig` dataclass
+  mirrors the rename with the same back-compat.
+- New `TargetLayout::coded_hex(pitch_mm, rows, long_row_cols, outer_r,
+  inner_r, ring_width)` constructor with the deterministic geometry-derived
+  name previously exclusive to `BoardLayout::new`; the name generator now has
+  a single implementation shared by both.
+- WASM `default_board_json()` now emits the v5 schema (consumers already
+  accept v4 and v5 on input).
+- New `DetectConfig::with_json_overlay(overlay)` — the canonical way to
+  apply a partial config overlay (recursive merge + legacy-key
+  normalization + target re-attachment). The CLI `--config`, Python, and
+  WASM overlay paths now share this one implementation instead of three
+  copies; it also keeps pre-0.8 overlays loading (a legacy
+  `max_center_shift_px` key merged onto a serialized base would otherwise
+  be rejected as a duplicate of the renamed field).
+- Internal float orderings use `total_cmp` instead of
+  `partial_cmp().unwrap()` — identical order for finite values, no panic
+  path on NaN.
+- `detector/config.rs` and `pipeline/finalize.rs` split into focused
+  submodules (`config/{fit,scale,stages}`, `finalize/{coded,plain,common}`);
+  pure moves, no behavior change.
+
+### Deprecated
+
+- `BoardLayout`, `BoardMarker`, `BoardLayoutValidationError`,
+  `BoardLayoutLoadError` (the flat v4 hex facade) — use `TargetLayout` and
+  the target error types. The facade stays fully functional for the 0.8
+  release cycle and will be removed after it.
 
 ### Fixed
 
@@ -90,6 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coded-target validation now rejects boards with more cells than the
   embedded codebook (893) and `id_assignment` entries beyond it — both
   previously wrapped or decoded to unreachable IDs silently.
+- Origin fiducial dots placed outside the marker bounding box were clipped
+  from rendered SVG/PNG targets; canvas bounds now include fiducial extents.
+- The inner-as-outer recovery warn threshold now follows the configured
+  `ratio_threshold` instead of a separately hardcoded 0.75.
 
 - **Dependency migration: `projective-grid` 0.9 → 0.10.1.** The 0.10 release
   rewrote projective-grid's public API; ringgrid's three call sites migrate

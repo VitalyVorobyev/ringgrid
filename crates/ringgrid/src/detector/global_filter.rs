@@ -1,7 +1,7 @@
-use crate::RansacStats;
 use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
 use crate::homography;
+use crate::homography::RansacStats;
 use crate::target::TargetLayout;
 
 /// Apply global homography RANSAC filter.

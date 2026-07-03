@@ -147,20 +147,27 @@ struct CliGenHexArgs {
 
 impl CliGenHexArgs {
     fn to_target(&self) -> CliResult<ringgrid::TargetLayout> {
-        // BoardLayout owns the deterministic hex name generator; delegate so
-        // the CLI and library agree on generated names.
-        let board = if let Some(name) = &self.name {
-            ringgrid::BoardLayout::with_name(
+        let target = if let Some(name) = &self.name {
+            ringgrid::TargetLayout::new(
                 name.clone(),
-                self.pitch_mm,
-                self.rows,
-                self.long_row_cols,
-                self.marker_outer_radius_mm,
-                self.marker_inner_radius_mm,
-                self.marker_ring_width_mm,
+                ringgrid::LatticeGeometry::Hex(ringgrid::HexGeometry {
+                    rows: self.rows,
+                    long_row_cols: self.long_row_cols,
+                    pitch_mm: self.pitch_mm,
+                }),
+                ringgrid::RingGeometry {
+                    outer_radius_mm: self.marker_outer_radius_mm,
+                    inner_radius_mm: self.marker_inner_radius_mm,
+                },
+                ringgrid::MarkerCoding::Coded16(ringgrid::CodedRingSpec {
+                    ring_width_mm: self.marker_ring_width_mm,
+                    id_assignment: None,
+                }),
+                None,
             )
         } else {
-            ringgrid::BoardLayout::new(
+            // coded_hex generates the deterministic geometry-derived name.
+            ringgrid::TargetLayout::coded_hex(
                 self.pitch_mm,
                 self.rows,
                 self.long_row_cols,
@@ -169,9 +176,7 @@ impl CliGenHexArgs {
                 self.marker_ring_width_mm,
             )
         };
-        board
-            .map(Into::into)
-            .map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
+        target.map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
     }
 }
 
@@ -773,24 +778,6 @@ impl DetectConfigFile {
     }
 }
 
-/// Recursively merge `overlay` into `base` (objects merge key-by-key; other
-/// values replace).
-fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
-    match (base, overlay) {
-        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
-            for (key, overlay_value) in overlay_obj {
-                match base_obj.get_mut(&key) {
-                    Some(base_value) => merge_json_value(base_value, overlay_value),
-                    None => {
-                        base_obj.insert(key, overlay_value);
-                    }
-                }
-            }
-        }
-        (base_slot, overlay_value) => *base_slot = overlay_value,
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct DetectPreset {
     marker_scale: ringgrid::MarkerScalePrior,
@@ -898,24 +885,16 @@ impl CliDetectArgs {
 
 /// Apply a JSON config-file overlay onto a scale-derived base config.
 ///
-/// The base config is serialized, the overlay is recursively merged in, and the
-/// result is deserialized. `target` is `#[serde(skip)]`, so it is re-attached
-/// afterwards via [`ringgrid::DetectConfig::with_target`], which also re-runs
-/// the geometry/scale derivation for any fields the overlay left untouched.
+/// Delegates to [`ringgrid::DetectConfig::with_json_overlay`]: recursive merge
+/// onto the serialized base, legacy pre-0.8 key normalization, and target
+/// re-attachment with geometry/scale re-derivation.
 fn apply_config_file_overlay(
     config: ringgrid::DetectConfig,
     config_file: &DetectConfigFile,
 ) -> CliResult<ringgrid::DetectConfig> {
-    let target = config.target.clone();
-    let mut merged = serde_json::to_value(&config)
-        .map_err(|e| -> CliError { format!("failed to serialize base config: {e}").into() })?;
-    merge_json_value(
-        &mut merged,
-        serde_json::Value::Object(config_file.overlay.clone()),
-    );
-    let overlaid: ringgrid::DetectConfig = serde_json::from_value(merged)
-        .map_err(|e| -> CliError { format!("invalid config overlay: {e}").into() })?;
-    Ok(overlaid.with_target(target))
+    config
+        .with_json_overlay(serde_json::Value::Object(config_file.overlay.clone()))
+        .map_err(|e| -> CliError { format!("invalid config overlay: {e}").into() })
 }
 
 fn build_detect_config(
@@ -949,7 +928,7 @@ fn build_detect_config(
     }
     adv.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     if let Some(shift) = overrides.projective_center_max_shift_px {
-        adv.projective_center.max_center_shift_px = Some(shift);
+        adv.projective_center.max_correction_shift_px = Some(shift);
     }
     adv.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     adv.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
@@ -1040,7 +1019,7 @@ fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
 struct DetectionJsonOutput<'a> {
     #[serde(flatten)]
     result: &'a ringgrid::DetectionResult,
-    diagnostics: &'a ringgrid::DetectionDiagnostics,
+    diagnostics: &'a ringgrid::diagnostics::DetectionDiagnostics,
     #[serde(skip_serializing_if = "Option::is_none")]
     camera: Option<ringgrid::CameraModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1053,7 +1032,7 @@ struct DetectionJsonOutput<'a> {
 
 fn serialize_detection_output(
     result: &ringgrid::DetectionResult,
-    diagnostics: &ringgrid::DetectionDiagnostics,
+    diagnostics: &ringgrid::diagnostics::DetectionDiagnostics,
     camera: Option<ringgrid::CameraModel>,
     proposals: Option<&[ringgrid::Proposal]>,
 ) -> Result<String, serde_json::Error> {
@@ -1092,7 +1071,8 @@ fn main() -> CliResult<()> {
 // ── codebook-info ──────────────────────────────────────────────────────
 
 fn run_codebook_info() -> CliResult<()> {
-    use ringgrid::{CodebookInfo, CodebookProfile, codebook_info};
+    use ringgrid::CodebookProfile;
+    use ringgrid::codebook::{CodebookInfo, codebook_info};
 
     println!("ringgrid embedded codebook profiles");
     println!("  default profile:      {}", CodebookProfile::Base.as_str());
@@ -1259,7 +1239,7 @@ fn write_target_outputs(
 // ── decode-test ────────────────────────────────────────────────────────
 
 fn run_decode_test(word_str: &str, profile: CodebookProfileArg) -> CliResult<()> {
-    use ringgrid::{CodewordMatch, decode_word};
+    use ringgrid::codebook::{CodewordMatch, decode_word};
 
     let word_str = word_str
         .trim()
@@ -1768,7 +1748,7 @@ mod tests {
     #[test]
     fn serialize_detection_output_includes_camera_when_present() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let diagnostics = ringgrid::DetectionDiagnostics::default();
+        let diagnostics = ringgrid::diagnostics::DetectionDiagnostics::default();
         let json = serialize_detection_output(&result, &diagnostics, Some(sample_camera()), None)
             .expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
@@ -1779,7 +1759,7 @@ mod tests {
     #[test]
     fn serialize_detection_output_omits_camera_when_absent() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let diagnostics = ringgrid::DetectionDiagnostics::default();
+        let diagnostics = ringgrid::diagnostics::DetectionDiagnostics::default();
         let json =
             serialize_detection_output(&result, &diagnostics, None, None).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
@@ -1789,7 +1769,7 @@ mod tests {
     #[test]
     fn serialize_detection_output_includes_proposals_when_present() {
         let result = ringgrid::DetectionResult::empty(1280, 960);
-        let diagnostics = ringgrid::DetectionDiagnostics::default();
+        let diagnostics = ringgrid::diagnostics::DetectionDiagnostics::default();
         let proposals = vec![ringgrid::Proposal {
             x: 10.0,
             y: 20.0,

@@ -13,6 +13,11 @@ use super::workspace::{
 
 const HOMOGRAPHY_FALLBACK_SEED: u64 = 0x1DC0_11D0;
 
+/// RANSAC iteration budget for the trusted-marker homography fits (anchor
+/// bootstrap and fallback). Higher than per-marker ellipse RANSAC because the
+/// correspondence pool is small and iterations are cheap.
+const HOMOGRAPHY_FALLBACK_MAX_ITERS: usize = 1200;
+
 #[inline]
 fn seed_allowed_for_homography(trust: Trust) -> bool {
     trust.is_anchor()
@@ -142,7 +147,7 @@ pub(super) fn fit_anchor_homography_for_local_stage(
         &ws.board_index,
         ws.config.h_reproj_gate_px,
         ws.config.homography_min_inliers,
-        1200,
+        HOMOGRAPHY_FALLBACK_MAX_ITERS,
         "id_correction anchor homography",
     )
     .map(|m| m.h)
@@ -292,7 +297,7 @@ pub(super) fn run_homography_fallback(ws: &mut IdCorrectionWorkspace<'_>) {
         &ws.board_index,
         ws.config.h_reproj_gate_px,
         ws.config.homography_min_inliers,
-        1200,
+        HOMOGRAPHY_FALLBACK_MAX_ITERS,
         "id_correction homography fallback",
     ) else {
         return;

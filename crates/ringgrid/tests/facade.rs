@@ -28,8 +28,10 @@ use ringgrid::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 use ringgrid::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 
 // ── Diagnostics channel ─────────────────────────────────────────────────────
-use ringgrid::{DecodeMetrics, DetectionDiagnostics, MarkerDiagnostics, RansacStats};
-use ringgrid::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
+use ringgrid::diagnostics::{
+    DecodeMetrics, DetectionDiagnostics, DetectionSource, FitMetrics, InnerFitReason,
+    InnerFitStatus, MarkerDiagnostics, RansacStats, StageTimings,
+};
 
 // ── Configuration ───────────────────────────────────────────────────────────
 use ringgrid::{
@@ -44,10 +46,11 @@ use ringgrid::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
 use ringgrid::{EdgeSampleConfig, OuterEstimationConfig};
 
 // ── Codebook diagnostics ────────────────────────────────────────────────────
-use ringgrid::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
+use ringgrid::codebook::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 use ringgrid::Ellipse;
+#[allow(deprecated)] // the guard pins the deprecated v4 facade until removal
 use ringgrid::{BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker};
 use ringgrid::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
@@ -83,6 +86,7 @@ fn facade_names_resolve() {
     _assert_named::<DetectionDiagnostics>();
     _assert_named::<MarkerDiagnostics>();
     _assert_named::<RansacStats>();
+    _assert_named::<StageTimings>();
     _assert_named::<AdvancedDetectConfig>();
     _assert_named::<CircleRefinementMethod>();
     _assert_named::<CompletionConfig>();
@@ -105,10 +109,13 @@ fn facade_names_resolve() {
     _assert_named::<OuterEstimationConfig>();
     _assert_named::<CodebookInfo>();
     _assert_named::<CodewordMatch>();
-    _assert_named::<BoardLayout>();
-    _assert_named::<BoardLayoutLoadError>();
-    _assert_named::<BoardLayoutValidationError>();
-    _assert_named::<BoardMarker>();
+    #[allow(deprecated)]
+    {
+        _assert_named::<BoardLayout>();
+        _assert_named::<BoardLayoutLoadError>();
+        _assert_named::<BoardLayoutValidationError>();
+        _assert_named::<BoardMarker>();
+    }
     _assert_named::<DetectError>();
     _assert_named::<TargetLayout>();
     _assert_named::<TargetCell>();

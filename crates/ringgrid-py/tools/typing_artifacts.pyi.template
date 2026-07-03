@@ -432,14 +432,14 @@ class CompletionConfig:
 class ProjectiveCenterConfig:
     use_expected_ratio: bool
     ratio_penalty_weight: float
-    max_center_shift_px: float | None
+    max_correction_shift_px: float | None
     max_selected_residual: float
     min_eig_separation: float
     def __init__(
         self,
         use_expected_ratio: bool = ...,
         ratio_penalty_weight: float = ...,
-        max_center_shift_px: float | None = ...,
+        max_correction_shift_px: float | None = ...,
         max_selected_residual: float = ...,
         min_eig_separation: float = ...,
     ) -> None: ...

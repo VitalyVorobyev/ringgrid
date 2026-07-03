@@ -1,3 +1,5 @@
+#![allow(deprecated)] // pins the legacy BoardLayout facade until removal
+
 use image::load_from_memory;
 use png::{Decoder as PngDecoder, Unit};
 use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};

@@ -17,6 +17,7 @@ struct BoardSnapshot {
     marker_outer_radius_mm: f32,
     marker_inner_radius_mm: f32,
     marker_ring_width_mm: f32,
+    #[allow(deprecated)]
     markers: Vec<ringgrid::BoardMarker>,
 }
 
@@ -56,18 +57,18 @@ struct ProposalResultPayload {
 /// Combined payload for the diagnostics-returning detection entry points.
 ///
 /// The slim [`ringgrid::DetectionResult`] and the opt-in
-/// [`ringgrid::DetectionDiagnostics`] are nested under `result` and
+/// [`ringgrid::diagnostics::DetectionDiagnostics`] are nested under `result` and
 /// `diagnostics`; `diagnostics.markers` aligns 1:1 with
 /// `result.detected_markers`.
 #[derive(Serialize)]
 struct DetectionWithDiagnostics {
     result: ringgrid::DetectionResult,
-    diagnostics: ringgrid::DetectionDiagnostics,
+    diagnostics: ringgrid::diagnostics::DetectionDiagnostics,
 }
 
 fn detection_with_diagnostics_json(
     result: ringgrid::DetectionResult,
-    diagnostics: ringgrid::DetectionDiagnostics,
+    diagnostics: ringgrid::diagnostics::DetectionDiagnostics,
 ) -> PyResult<String> {
     serde_json::to_string(&DetectionWithDiagnostics {
         result,
@@ -98,6 +99,7 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
     }
 }
 
+#[allow(deprecated)] // py BoardLayout class stays v4-shaped until the typed TargetLayout python API
 fn board_snapshot(board: &ringgrid::BoardLayout) -> BoardSnapshot {
     BoardSnapshot {
         schema: TARGET_SCHEMA_V4.to_string(),
@@ -112,6 +114,7 @@ fn board_snapshot(board: &ringgrid::BoardLayout) -> BoardSnapshot {
     }
 }
 
+#[allow(deprecated)]
 fn board_from_spec_json(spec_json: &str) -> PyResult<ringgrid::BoardLayout> {
     ringgrid::BoardLayout::from_json_str(spec_json).map_err(py_value_error)
 }
@@ -122,6 +125,7 @@ fn target_from_spec_json(spec_json: &str) -> PyResult<ringgrid::TargetLayout> {
     ringgrid::TargetLayout::from_json_str(spec_json).map_err(py_value_error)
 }
 
+#[allow(deprecated)]
 fn board_from_geometry(
     pitch_mm: f32,
     rows: usize,
@@ -153,14 +157,6 @@ fn board_from_geometry(
     .map_err(py_value_error)
 }
 
-/// Serialize a [`ringgrid::DetectConfig`] to its JSON representation.
-///
-/// Stage-tuning parameters nest under the `"advanced"` object. The board layout
-/// is `#[serde(skip)]`; it is supplied separately when reconstituting a config.
-fn config_to_json(config: &ringgrid::DetectConfig) -> PyResult<serde_json::Value> {
-    serde_json::to_value(config).map_err(py_value_error)
-}
-
 /// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
 /// attaching `target` and re-deriving the target-coupled / scale-coupled fields.
 fn config_from_json(
@@ -170,22 +166,6 @@ fn config_from_json(
     let config: ringgrid::DetectConfig =
         serde_json::from_value(config_json.clone()).map_err(py_value_error)?;
     Ok(config.with_target(target))
-}
-
-fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
-    match (base, overlay) {
-        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
-            for (key, overlay_value) in overlay_obj {
-                match base_obj.get_mut(&key) {
-                    Some(base_value) => merge_json_value(base_value, overlay_value),
-                    None => {
-                        base_obj.insert(key, overlay_value);
-                    }
-                }
-            }
-        }
-        (base_slot, overlay_value) => *base_slot = overlay_value,
-    }
 }
 
 fn parse_overlay_object(overlay_json: &str) -> PyResult<serde_json::Value> {
@@ -209,10 +189,7 @@ fn parse_overlay_object(overlay_json: &str) -> PyResult<serde_json::Value> {
 /// re-attached, which re-derives all target- and scale-coupled fields.
 fn apply_overlay_json(config: &mut ringgrid::DetectConfig, overlay_json: &str) -> PyResult<()> {
     let overlay = parse_overlay_object(overlay_json)?;
-    let target = config.target.clone();
-    let mut merged = config_to_json(config)?;
-    merge_json_value(&mut merged, overlay);
-    *config = config_from_json(target, &merged)?;
+    *config = config.with_json_overlay(overlay).map_err(py_value_error)?;
     Ok(())
 }
 
@@ -252,7 +229,7 @@ fn detect_with_core_mapper_diagnostics(
     detector: &ringgrid::Detector,
     gray: &GrayImage,
     mapper_spec: &MapperSpec,
-) -> PyResult<(ringgrid::DetectionResult, ringgrid::DetectionDiagnostics)> {
+) -> PyResult<(ringgrid::DetectionResult, ringgrid::diagnostics::DetectionDiagnostics)> {
     match mapper_spec {
         MapperSpec::Camera {
             intrinsics,
@@ -664,12 +641,14 @@ fn package_version() -> &'static str {
 }
 
 #[pyfunction]
+#[allow(deprecated)]
 fn default_board_spec_json() -> PyResult<String> {
     let board = ringgrid::BoardLayout::default();
     Ok(board.to_json_string())
 }
 
 #[pyfunction]
+#[allow(deprecated)]
 fn load_board_spec_json(path: &str) -> PyResult<String> {
     let board = ringgrid::BoardLayout::from_json_file(std::path::Path::new(path))
         .map_err(py_value_error)?;

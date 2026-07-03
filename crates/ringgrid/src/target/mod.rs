@@ -14,7 +14,7 @@
 mod error;
 mod fiducials;
 mod lattice;
-mod layout;
+pub(crate) mod layout;
 mod ring;
 mod schema;
 

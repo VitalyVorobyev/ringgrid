@@ -25,7 +25,7 @@ pub(crate) fn median_outer_radius_from_neighbors_px(
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
     let radii: Vec<f32> = candidates
         .iter()
         .take(k.max(1).min(candidates.len()))
@@ -187,7 +187,7 @@ pub(crate) fn max_angular_gap(center: [f64; 2], points: &[[f64; 2]]) -> f64 {
         .iter()
         .map(|p| (p[1] - center[1]).atan2(p[0] - center[0]))
         .collect();
-    angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    angles.sort_by(|a, b| a.total_cmp(b));
     let mut gap = 0.0f64;
     for i in 1..angles.len() {
         gap = gap.max(angles[i] - angles[i - 1]);
@@ -202,7 +202,7 @@ fn median_f32(values: &[f32]) -> f32 {
         return 0.0;
     }
     let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     sorted[sorted.len() / 2]
 }
 

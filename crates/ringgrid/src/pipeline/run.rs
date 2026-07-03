@@ -3,7 +3,7 @@
 use super::time_compat::Instant;
 use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
-use crate::detector::dedup::merge_multiscale_markers;
+use crate::detector::dedup::{MERGE_SIZE_K_NEIGHBORS, merge_multiscale_markers};
 use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
@@ -354,7 +354,7 @@ pub fn detect_multiscale(
         .fold(f64::INFINITY, f64::min);
     let dedup_radius = (min_tier_d * 0.6).max(config.advanced.dedup_radius);
 
-    let merged = merge_multiscale_markers(all_markers, dedup_radius, 6);
+    let merged = merge_multiscale_markers(all_markers, dedup_radius, MERGE_SIZE_K_NEIGHBORS);
 
     tracing::info!(
         n_merged = merged.len(),

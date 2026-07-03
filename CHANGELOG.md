@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a single implementation shared by both.
 - WASM `default_board_json()` now emits the v5 schema (consumers already
   accept v4 and v5 on input).
+- New `DetectConfig::with_json_overlay(overlay)` — the canonical way to
+  apply a partial config overlay (recursive merge + legacy-key
+  normalization + target re-attachment). The CLI `--config`, Python, and
+  WASM overlay paths now share this one implementation instead of three
+  copies; it also keeps pre-0.8 overlays loading (a legacy
+  `max_center_shift_px` key merged onto a serialized base would otherwise
+  be rejected as a duplicate of the renamed field).
 - Internal float orderings use `total_cmp` instead of
   `partial_cmp().unwrap()` — identical order for finite values, no panic
   path on NaN.

@@ -11,14 +11,6 @@ pub fn init_panic_hook() {
 
 // ── Config dump / overlay helpers ──────────────────────────────────
 
-/// Serialize a [`ringgrid::DetectConfig`] to its JSON representation.
-///
-/// Stage-tuning parameters nest under the `"advanced"` object. The board layout
-/// is `#[serde(skip)]`; it is supplied separately when reconstituting a config.
-fn config_to_json(config: &ringgrid::DetectConfig) -> Result<serde_json::Value, JsValue> {
-    serde_json::to_value(config).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-
 /// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
 /// attaching `target` and re-deriving the target-coupled / scale-coupled fields.
 fn config_from_json(
@@ -28,22 +20,6 @@ fn config_from_json(
     let config: ringgrid::DetectConfig = serde_json::from_value(config_json.clone())
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
     Ok(config.with_target(target))
-}
-
-fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
-    match (base, overlay) {
-        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
-            for (key, overlay_value) in overlay_obj {
-                match base_obj.get_mut(&key) {
-                    Some(base_value) => merge_json_value(base_value, overlay_value),
-                    None => {
-                        base_obj.insert(key, overlay_value);
-                    }
-                }
-            }
-        }
-        (base_slot, overlay_value) => *base_slot = overlay_value,
-    }
 }
 
 fn parse_overlay_object(overlay_json: &str) -> Result<serde_json::Value, JsValue> {
@@ -68,10 +44,9 @@ fn apply_config_overlay(
     overlay_json: &str,
 ) -> Result<(), JsValue> {
     let overlay = parse_overlay_object(overlay_json)?;
-    let target = config.target.clone();
-    let mut merged = config_to_json(config)?;
-    merge_json_value(&mut merged, overlay);
-    *config = config_from_json(target, &merged)?;
+    *config = config
+        .with_json_overlay(overlay)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
     Ok(())
 }
 

@@ -778,24 +778,6 @@ impl DetectConfigFile {
     }
 }
 
-/// Recursively merge `overlay` into `base` (objects merge key-by-key; other
-/// values replace).
-fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
-    match (base, overlay) {
-        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
-            for (key, overlay_value) in overlay_obj {
-                match base_obj.get_mut(&key) {
-                    Some(base_value) => merge_json_value(base_value, overlay_value),
-                    None => {
-                        base_obj.insert(key, overlay_value);
-                    }
-                }
-            }
-        }
-        (base_slot, overlay_value) => *base_slot = overlay_value,
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct DetectPreset {
     marker_scale: ringgrid::MarkerScalePrior,
@@ -903,24 +885,16 @@ impl CliDetectArgs {
 
 /// Apply a JSON config-file overlay onto a scale-derived base config.
 ///
-/// The base config is serialized, the overlay is recursively merged in, and the
-/// result is deserialized. `target` is `#[serde(skip)]`, so it is re-attached
-/// afterwards via [`ringgrid::DetectConfig::with_target`], which also re-runs
-/// the geometry/scale derivation for any fields the overlay left untouched.
+/// Delegates to [`ringgrid::DetectConfig::with_json_overlay`]: recursive merge
+/// onto the serialized base, legacy pre-0.8 key normalization, and target
+/// re-attachment with geometry/scale re-derivation.
 fn apply_config_file_overlay(
     config: ringgrid::DetectConfig,
     config_file: &DetectConfigFile,
 ) -> CliResult<ringgrid::DetectConfig> {
-    let target = config.target.clone();
-    let mut merged = serde_json::to_value(&config)
-        .map_err(|e| -> CliError { format!("failed to serialize base config: {e}").into() })?;
-    merge_json_value(
-        &mut merged,
-        serde_json::Value::Object(config_file.overlay.clone()),
-    );
-    let overlaid: ringgrid::DetectConfig = serde_json::from_value(merged)
-        .map_err(|e| -> CliError { format!("invalid config overlay: {e}").into() })?;
-    Ok(overlaid.with_target(target))
+    config
+        .with_json_overlay(serde_json::Value::Object(config_file.overlay.clone()))
+        .map_err(|e| -> CliError { format!("invalid config overlay: {e}").into() })
 }
 
 fn build_detect_config(

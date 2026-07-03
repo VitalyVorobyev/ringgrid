@@ -254,6 +254,33 @@ impl DetectConfig {
         self
     }
 
+    /// Apply a partial JSON overlay and return the resulting config.
+    ///
+    /// The overlay is a (possibly partial) `DetectConfig` JSON object; stage
+    /// tuning nests under `"advanced"`. It is merged recursively onto this
+    /// config's JSON view (objects merge key-by-key, other values replace),
+    /// so a deeply nested section like
+    /// `{"advanced": {"completion": {"enable": false}}}` overrides only the
+    /// named leaves. The result is deserialized and the target re-attached
+    /// via [`Self::with_target`], re-deriving all target- and scale-coupled
+    /// fields.
+    ///
+    /// Legacy pre-0.8 key names in the overlay are accepted and normalized
+    /// (serde aliases only cover whole-document deserialization; an overlay
+    /// merged onto a serialized base would otherwise put both the old and
+    /// new spelling in one object, which serde rejects as a duplicate
+    /// field).
+    pub fn with_json_overlay(
+        &self,
+        mut overlay: serde_json::Value,
+    ) -> Result<Self, serde_json::Error> {
+        normalize_legacy_overlay_keys(&mut overlay);
+        let mut merged = serde_json::to_value(self)?;
+        merge_json_value(&mut merged, overlay);
+        let config: Self = serde_json::from_value(merged)?;
+        Ok(config.with_target(self.target.clone()))
+    }
+
     /// Update marker scale prior and re-derive all scale-coupled parameters.
     pub fn set_marker_scale_prior(&mut self, marker_scale: MarkerScalePrior) {
         self.marker_scale = marker_scale.normalized();
@@ -280,6 +307,44 @@ impl DetectConfig {
     fn proposal_spacing_max_px(&self) -> f32 {
         let [_, d_max] = self.marker_scale.diameter_range_px();
         self.proposal_spacing_ratio() * d_max
+    }
+}
+
+/// Recursively merge `overlay` into `base`: objects merge key-by-key, all
+/// other values replace.
+fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base_obj), serde_json::Value::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                match base_obj.get_mut(&key) {
+                    Some(base_value) => merge_json_value(base_value, overlay_value),
+                    None => {
+                        base_obj.insert(key, overlay_value);
+                    }
+                }
+            }
+        }
+        (base_slot, overlay_value) => *base_slot = overlay_value,
+    }
+}
+
+/// Rename pre-0.8 config keys in an overlay to their current spellings.
+///
+/// Currently: `advanced.projective_center.max_center_shift_px` →
+/// `max_correction_shift_px` (renamed in 0.8.0). The current spelling wins
+/// when an overlay carries both.
+fn normalize_legacy_overlay_keys(overlay: &mut serde_json::Value) {
+    let Some(projective_center) = overlay
+        .get_mut("advanced")
+        .and_then(|advanced| advanced.get_mut("projective_center"))
+        .and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+    if let Some(value) = projective_center.remove("max_center_shift_px")
+        && !projective_center.contains_key("max_correction_shift_px")
+    {
+        projective_center.insert("max_correction_shift_px".to_string(), value);
     }
 }
 
@@ -433,5 +498,55 @@ mod tests {
         assert!((restored.advanced.min_semi_axis - original.advanced.min_semi_axis).abs() < 1.0e-9);
         assert!((restored.advanced.max_semi_axis - original.advanced.max_semi_axis).abs() < 1.0e-9);
         assert_eq!(restored.target.n_cells(), original.target.n_cells());
+    }
+
+    #[test]
+    fn json_overlay_merges_partial_sections() {
+        let base = DetectConfig::default();
+        let overlay = serde_json::json!({
+            "advanced": { "completion": { "enable": false } }
+        });
+        let merged = base.with_json_overlay(overlay).expect("overlay applies");
+        assert!(!merged.advanced.completion.enable);
+        // Sibling fields keep their base values.
+        assert_eq!(
+            merged.advanced.completion.reproj_gate_px,
+            base.advanced.completion.reproj_gate_px
+        );
+        assert_eq!(merged.target.n_cells(), base.target.n_cells());
+    }
+
+    #[test]
+    fn json_overlay_accepts_pre_0_8_shift_key() {
+        // The serialized base already carries `max_correction_shift_px`; a
+        // 0.7.x overlay uses the old name. Without normalization the merged
+        // object holds both spellings and serde rejects the whole config as
+        // a duplicate field (regression: codex review on PR #54). Note the
+        // final value of this specific field is re-derived by `with_target`
+        // (pre-existing behavior, unchanged from 0.7.x) — the contract under
+        // test is that a legacy overlay keeps LOADING and its other keys
+        // still apply.
+        let overlay = serde_json::json!({
+            "advanced": { "projective_center": {
+                "max_center_shift_px": 7.5,
+                "use_expected_ratio": false,
+            } }
+        });
+        let merged = DetectConfig::default()
+            .with_json_overlay(overlay)
+            .expect("legacy overlay key must keep loading");
+        assert!(!merged.advanced.projective_center.use_expected_ratio);
+
+        // Mixed spellings in one overlay must also load (current name wins
+        // pre-merge; the merged document never carries both keys).
+        let overlay = serde_json::json!({
+            "advanced": { "projective_center": {
+                "max_center_shift_px": 7.5,
+                "max_correction_shift_px": 3.0,
+            } }
+        });
+        DetectConfig::default()
+            .with_json_overlay(overlay)
+            .expect("mixed-spelling overlay must load");
     }
 }

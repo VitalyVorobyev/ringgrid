@@ -108,7 +108,11 @@ pub struct ProjectiveCenterConfig {
     /// Optional maximum allowed shift (pixels) from the pre-correction center.
     ///
     /// When set, large jumps are rejected and the original center is kept.
-    pub max_center_shift_px: Option<f64>,
+    /// (Renamed from `max_center_shift_px` in 0.8.0 to disambiguate from the
+    /// unrelated inner-fit field of the same name; the old JSON key is still
+    /// accepted as an alias.)
+    #[serde(alias = "max_center_shift_px")]
+    pub max_correction_shift_px: Option<f64>,
     /// Optional maximum accepted projective-selection residual.
     ///
     /// Higher values are less strict; `None` disables this gate.
@@ -124,7 +128,7 @@ impl Default for ProjectiveCenterConfig {
         Self {
             use_expected_ratio: true,
             ratio_penalty_weight: 1.0,
-            max_center_shift_px: None,
+            max_correction_shift_px: None,
             max_selected_residual: Some(0.25),
             min_eig_separation: Some(1e-6),
         }
@@ -378,5 +382,18 @@ mod tests {
         assert!(cfg.homography_fallback_enable);
         assert_eq!(cfg.homography_min_trusted, 24);
         assert_eq!(cfg.homography_min_inliers, 12);
+    }
+
+    #[test]
+    fn projective_center_accepts_pre_0_8_shift_key() {
+        // 0.7.x configs used `max_center_shift_px`; the alias must keep them
+        // loading into the renamed field.
+        let cfg: ProjectiveCenterConfig =
+            serde_json::from_str(r#"{"max_center_shift_px": 7.5}"#).expect("deserialize");
+        assert_eq!(cfg.max_correction_shift_px, Some(7.5));
+
+        let cfg: ProjectiveCenterConfig =
+            serde_json::from_str(r#"{"max_correction_shift_px": 3.0}"#).expect("deserialize");
+        assert_eq!(cfg.max_correction_shift_px, Some(3.0));
     }
 }

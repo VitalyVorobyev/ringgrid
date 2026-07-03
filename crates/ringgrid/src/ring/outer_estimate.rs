@@ -280,14 +280,14 @@ fn build_hypotheses_for_polarity(
         if let Some((idx, _)) = score_vec
             .iter()
             .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
         {
             peaks.push(idx);
         }
     }
 
     // Sort peaks by score desc.
-    peaks.sort_by(|&a, &b| score_vec[b].partial_cmp(&score_vec[a]).unwrap());
+    peaks.sort_by(|&a, &b| score_vec[b].total_cmp(&score_vec[a]));
 
     let per_theta = scan.per_theta_peaks(pol);
 

@@ -1236,17 +1236,19 @@ class CompletionConfig:
 class ProjectiveCenterConfig:
     use_expected_ratio: bool = True
     ratio_penalty_weight: float = 1.0
-    max_center_shift_px: float | None = 40.0
+    max_correction_shift_px: float | None = 40.0
     max_selected_residual: float = 0.25
     min_eig_separation: float = 1e-6
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ProjectiveCenterConfig":
         data = _require_mapping(data, name="data")
+        # `max_center_shift_px` is the pre-0.8 name of `max_correction_shift_px`.
+        shift = data.get("max_correction_shift_px", data.get("max_center_shift_px"))
         return cls(
             use_expected_ratio=bool(data["use_expected_ratio"]),
             ratio_penalty_weight=float(data["ratio_penalty_weight"]),
-            max_center_shift_px=_optional_float(data.get("max_center_shift_px")),
+            max_correction_shift_px=_optional_float(shift),
             max_selected_residual=float(data["max_selected_residual"]),
             min_eig_separation=float(data["min_eig_separation"]),
         )
@@ -1258,7 +1260,7 @@ class ProjectiveCenterConfig:
             "max_selected_residual": float(self.max_selected_residual),
             "min_eig_separation": float(self.min_eig_separation),
         }
-        _set_optional(out, "max_center_shift_px", self.max_center_shift_px)
+        _set_optional(out, "max_correction_shift_px", self.max_correction_shift_px)
         return out
 
 

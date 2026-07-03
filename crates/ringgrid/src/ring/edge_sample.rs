@@ -125,7 +125,7 @@ pub fn bilinear_sample_u8_checked(img: &GrayImage, x: f32, y: f32) -> Option<f32
     let (w, h) = img.dimensions();
     // Reject non-finite coordinates up front: NaN comparisons are all false, so
     // without this guard a NaN `x`/`y` slips past the bounds check and produces
-    // `Some(NaN)`, which later panics at `partial_cmp(...).unwrap()` reductions.
+    // `Some(NaN)`, poisoning downstream reductions and gates.
     if w < 2 || h < 2 || !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
         return None;
     }

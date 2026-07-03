@@ -949,7 +949,7 @@ fn build_detect_config(
     }
     adv.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
     if let Some(shift) = overrides.projective_center_max_shift_px {
-        adv.projective_center.max_center_shift_px = Some(shift);
+        adv.projective_center.max_correction_shift_px = Some(shift);
     }
     adv.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
     adv.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);

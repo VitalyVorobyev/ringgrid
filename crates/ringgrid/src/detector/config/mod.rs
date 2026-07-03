@@ -323,7 +323,7 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     adv.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
 
     // Projective center max shift
-    adv.projective_center.max_center_shift_px = Some((2.0 * r_nom) as f64);
+    adv.projective_center.max_correction_shift_px = Some((2.0 * r_nom) as f64);
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {

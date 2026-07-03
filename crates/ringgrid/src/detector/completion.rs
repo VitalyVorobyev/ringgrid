@@ -1,5 +1,10 @@
 use std::collections::HashMap;
 
+/// Neighbor count for the completion-seed expected radius: wider than the
+/// hex valence (6) so the median stays robust when the immediate ring around
+/// a missing cell is itself sparse or mis-fitted.
+const EXPECTED_RADIUS_K_NEIGHBORS: usize = 12;
+
 use image::GrayImage;
 use nalgebra::Point2;
 use projective_grid::{Coord, predict_grid_position};
@@ -518,8 +523,12 @@ fn try_complete_marker(
 ) -> Option<MarkerRecord> {
     let active_codebook_min_cyclic_dist =
         Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
-    let r_expected = median_outer_radius_from_neighbors_px(projected_center, markers, 12)
-        .unwrap_or(config.marker_scale.nominal_outer_radius_px());
+    let r_expected = median_outer_radius_from_neighbors_px(
+        projected_center,
+        markers,
+        EXPECTED_RADIUS_K_NEIGHBORS,
+    )
+    .unwrap_or(config.marker_scale.nominal_outer_radius_px());
 
     let cand = match fit_outer_candidate_from_prior_for_completion(
         gray,

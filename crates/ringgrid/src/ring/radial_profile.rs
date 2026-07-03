@@ -39,21 +39,16 @@ pub fn aggregate(values: &mut [f32], agg: &AngularAggregator) -> f32 {
 }
 
 /// Return index of the strongest peak for the requested polarity.
+///
+/// `values` must be non-empty (radial-scan curves always carry samples);
+/// an empty slice yields index 0 in release builds.
 pub fn peak_idx(values: &[f32], pol: Polarity) -> usize {
-    match pol {
-        Polarity::Pos => values
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(i, _)| i)
-            .unwrap(),
-        Polarity::Neg => values
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(i, _)| i)
-            .unwrap(),
-    }
+    debug_assert!(!values.is_empty(), "peak_idx requires a non-empty curve");
+    let best = match pol {
+        Polarity::Pos => values.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)),
+        Polarity::Neg => values.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1)),
+    };
+    best.map_or(0, |(i, _)| i)
 }
 
 /// Compute per-theta peak radii from derivative curves.

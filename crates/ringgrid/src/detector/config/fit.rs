@@ -1,5 +1,12 @@
 //! Inner and outer ellipse fitting configuration.
 
+/// Shared default for the maximum angular gap (radians) between consecutive
+/// edge points in both inner and outer fits: π/2, i.e. up to a quarter of the
+/// ring may be unobserved.
+fn default_max_angular_gap_rad() -> f64 {
+    std::f64::consts::FRAC_PI_2
+}
+
 /// Configuration for robust inner ellipse fitting from outer-fit hints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -33,7 +40,7 @@ pub struct InnerFitConfig {
     /// points. Fits where the largest gap exceeds this are rejected.
     ///
     /// Default: π/2 (90 degrees).
-    #[serde(default = "InnerFitConfig::default_max_angular_gap_rad")]
+    #[serde(default = "default_max_angular_gap_rad")]
     pub max_angular_gap_rad: f64,
     /// When true, markers are hard-rejected (not just penalized) if the inner
     /// ellipse cannot be fitted. Requires two good ellipses per marker.
@@ -46,9 +53,6 @@ pub struct InnerFitConfig {
 impl InnerFitConfig {
     fn default_miss_confidence_factor() -> f32 {
         0.7
-    }
-    fn default_max_angular_gap_rad() -> f64 {
-        std::f64::consts::FRAC_PI_2
     }
     fn default_require_inner_fit() -> bool {
         false
@@ -71,7 +75,7 @@ impl Default for InnerFitConfig {
                 seed: 43,
             },
             miss_confidence_factor: 0.7,
-            max_angular_gap_rad: Self::default_max_angular_gap_rad(),
+            max_angular_gap_rad: default_max_angular_gap_rad(),
             require_inner_fit: false,
         }
     }
@@ -101,17 +105,13 @@ pub struct OuterFitConfig {
     /// points. Fits where the largest gap exceeds this are rejected.
     ///
     /// Default: π/2 (90 degrees).
-    #[serde(default = "OuterFitConfig::default_max_angular_gap_rad")]
+    #[serde(default = "default_max_angular_gap_rad")]
     pub max_angular_gap_rad: f64,
 }
 
 impl OuterFitConfig {
     fn default_size_score_weight() -> f32 {
         0.15
-    }
-
-    fn default_max_angular_gap_rad() -> f64 {
-        std::f64::consts::FRAC_PI_2
     }
 }
 
@@ -127,7 +127,7 @@ impl Default for OuterFitConfig {
                 seed: 42,
             },
             size_score_weight: Self::default_size_score_weight(),
-            max_angular_gap_rad: Self::default_max_angular_gap_rad(),
+            max_angular_gap_rad: default_max_angular_gap_rad(),
         }
     }
 }

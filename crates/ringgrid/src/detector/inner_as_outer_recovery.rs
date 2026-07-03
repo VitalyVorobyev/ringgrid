@@ -25,11 +25,14 @@ use super::{
 };
 
 /// Annotates each marker with the ratio of its outer radius to the median
-/// outer radius of its k nearest neighbors. Values well below 1.0 (< 0.75)
-/// indicate a potential inner-as-outer substitution.
-pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [MarkerRecord], k: usize) {
-    const WARN_THRESHOLD: f32 = 0.75;
-
+/// outer radius of its k nearest neighbors. Values below `warn_threshold`
+/// (the recovery `ratio_threshold`) indicate a potential inner-as-outer
+/// substitution and are logged.
+pub(crate) fn annotate_neighbor_radius_ratios(
+    markers: &mut [MarkerRecord],
+    k: usize,
+    warn_threshold: f32,
+) {
     // Compute ratios in a separate immutable pass to satisfy the borrow checker.
     let ratios: Vec<Option<f32>> = {
         let m_ref: &[MarkerRecord] = markers;
@@ -50,7 +53,7 @@ pub(crate) fn annotate_neighbor_radius_ratios(markers: &mut [MarkerRecord], k: u
     for (marker, ratio) in markers.iter_mut().zip(ratios) {
         marker.fit.neighbor_radius_ratio = ratio;
         if let Some(r) = ratio
-            && r < WARN_THRESHOLD
+            && r < warn_threshold
         {
             tracing::warn!(
                 ratio = r,

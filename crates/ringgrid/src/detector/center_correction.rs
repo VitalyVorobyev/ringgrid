@@ -77,7 +77,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [MarkerRecord], config: &De
         let dx = center_projective[0] - center_before[0];
         let dy = center_projective[1] - center_before[1];
         let center_shift = (dx * dx + dy * dy).sqrt();
-        if let Some(max_shift_px) = config.advanced.projective_center.max_center_shift_px
+        if let Some(max_shift_px) = config.advanced.projective_center.max_correction_shift_px
             && (!center_shift.is_finite() || center_shift > max_shift_px)
         {
             n_rejected_shift += 1;

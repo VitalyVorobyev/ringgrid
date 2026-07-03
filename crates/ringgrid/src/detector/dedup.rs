@@ -4,7 +4,7 @@ use crate::detector::MarkerRecord;
 
 fn sort_by_confidence(markers: Vec<MarkerRecord>) -> Vec<MarkerRecord> {
     let mut markers = markers;
-    markers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+    markers.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
     markers
 }
 
@@ -85,6 +85,11 @@ fn outer_radius(m: &MarkerRecord) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Neighbor count for the multiscale-merge size-consistency score: the
+/// hex-lattice valence, so the neighborhood median reflects the immediate
+/// ring of surrounding markers.
+pub(crate) const MERGE_SIZE_K_NEIGHBORS: usize = 6;
+
 /// Compute a size-consistency score in `[0, 1]` for each marker.
 ///
 /// The score measures how well the marker's outer radius matches the median
@@ -114,7 +119,7 @@ fn size_consistency_scores(markers: &[MarkerRecord], k_neighbors: usize) -> Vec<
                 (dx * dx + dy * dy, j)
             })
             .collect();
-        dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        dists.sort_by(|a, b| a.0.total_cmp(&b.0));
 
         let neighbor_radii: Vec<f64> = dists[..k.min(dists.len())]
             .iter()
@@ -127,7 +132,7 @@ fn size_consistency_scores(markers: &[MarkerRecord], k_neighbors: usize) -> Vec<
         }
 
         let mut sorted_nr = neighbor_radii.clone();
-        sorted_nr.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_nr.sort_by(|a, b| a.total_cmp(b));
         let mid = sorted_nr.len() / 2;
         let median_r = if sorted_nr.len().is_multiple_of(2) {
             (sorted_nr[mid - 1] + sorted_nr[mid]) * 0.5

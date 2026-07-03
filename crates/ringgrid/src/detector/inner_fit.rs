@@ -270,10 +270,10 @@ fn sample_inner_points_from_hint(
             let hi = (hint_idx + cfg.local_peak_halfwidth_idx).min(n_r - 1);
             let local_i = match pol {
                 Polarity::Pos => (lo..=hi)
-                    .max_by(|&i, &j| d[i].partial_cmp(&d[j]).unwrap())
+                    .max_by(|&i, &j| d[i].total_cmp(&d[j]))
                     .unwrap_or(hint_idx),
                 Polarity::Neg => (lo..=hi)
-                    .min_by(|&i, &j| d[i].partial_cmp(&d[j]).unwrap())
+                    .min_by(|&i, &j| d[i].total_cmp(&d[j]))
                     .unwrap_or(hint_idx),
             };
             let idx_f = refine_peak_idx_subpixel(&d, local_i, pol);

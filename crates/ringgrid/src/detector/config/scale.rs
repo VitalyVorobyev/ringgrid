@@ -221,7 +221,7 @@ impl ScaleTiers {
             return Self::single(MarkerScalePrior::default());
         }
 
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(|a, b| a.total_cmp(b));
 
         // Code-band midpoint sits at ~0.8× the outer ring radius for the default
         // inner/outer ratio of 0.6: midpoint = 0.5*(0.6+1.0) = 0.8.

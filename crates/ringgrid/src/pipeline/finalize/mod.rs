@@ -31,16 +31,17 @@ fn apply_post_filter_fixup(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
-    let k = config.advanced.inner_as_outer_recovery.k_neighbors;
-    annotate_neighbor_radius_ratios(markers, k);
-    if config.advanced.inner_as_outer_recovery.enable {
+    let recovery = &config.advanced.inner_as_outer_recovery;
+    let (k, warn_ratio) = (recovery.k_neighbors, recovery.ratio_threshold);
+    annotate_neighbor_radius_ratios(markers, k, warn_ratio);
+    if recovery.enable {
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.target);
-        annotate_neighbor_radius_ratios(markers, k);
+        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
     }
     let removed = remove_axis_ratio_outliers(markers);
     if removed > 0 {
-        annotate_neighbor_radius_ratios(markers, k);
+        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
         tracing::info!(removed, "axis-ratio consistency filter removed markers");
     }
 }

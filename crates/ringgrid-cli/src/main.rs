@@ -7,7 +7,7 @@ type CliError = Box<dyn std::error::Error>;
 type CliResult<T> = Result<T, CliError>;
 const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
 const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
-const TARGET_SPEC_SCHEMA_V4: &str = "ringgrid.target.v4";
+const TARGET_SPEC_SCHEMA_V5: &str = "ringgrid.target.v5";
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
@@ -33,8 +33,12 @@ enum Commands {
     /// `tools/gen_pages_perf.py` to build the documentation performance page.
     Bench(CliBenchArgs),
 
-    /// Generate canonical board_spec.json plus printable SVG/PNG target files.
-    GenTarget(CliGenTargetArgs),
+    /// Generate a canonical target_spec.json plus printable SVG/PNG target files.
+    GenTarget {
+        /// Target family to generate.
+        #[command(subcommand)]
+        command: GenTargetCommands,
+    },
 
     /// Print embedded codebook statistics.
     CodebookInfo,
@@ -53,8 +57,56 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum GenTargetCommands {
+    /// Hex lattice of 16-sector coded rings (the classic ringgrid target).
+    Hex(CliGenHexArgs),
+    /// Rectangular lattice of plain (uncoded) rings, optionally with origin dots.
+    Rect(CliGenRectArgs),
+    /// A built-in target preset.
+    Preset(CliGenPresetArgs),
+    /// Render from an existing target spec JSON (v5, or legacy v4).
+    FromSpec(CliGenFromSpecArgs),
+}
+
 #[derive(Debug, Clone, Args)]
-struct CliGenTargetArgs {
+struct CliGenOutputArgs {
+    /// Output directory for target_spec.json, SVG, and PNG.
+    #[arg(
+        long = "out_dir",
+        visible_alias = "out-dir",
+        default_value = DEFAULT_GEN_TARGET_OUT_DIR
+    )]
+    out_dir: PathBuf,
+
+    /// Base filename for SVG/PNG outputs.
+    #[arg(long, default_value = DEFAULT_GEN_TARGET_BASENAME)]
+    basename: String,
+
+    /// PNG raster DPI (also embedded in PNG metadata).
+    #[arg(long, default_value_t = 300.0)]
+    dpi: f32,
+
+    /// Extra white margin around the board in millimeters.
+    #[arg(long = "margin_mm", visible_alias = "margin-mm", default_value_t = 0.0)]
+    margin_mm: f32,
+
+    /// Omit the default scale bar from SVG/PNG outputs.
+    #[arg(long)]
+    no_scale_bar: bool,
+}
+
+impl CliGenOutputArgs {
+    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf) {
+        let json_path = self.out_dir.join("target_spec.json");
+        let svg_path = self.out_dir.join(format!("{}.svg", self.basename));
+        let png_path = self.out_dir.join(format!("{}.png", self.basename));
+        (json_path, svg_path, png_path)
+    }
+}
+
+#[derive(Debug, Clone, Args)]
+struct CliGenHexArgs {
     /// Marker center spacing in millimeters.
     #[arg(long = "pitch_mm", visible_alias = "pitch-mm")]
     pitch_mm: f32,
@@ -85,37 +137,18 @@ struct CliGenTargetArgs {
     #[arg(long = "marker_ring_width_mm", visible_alias = "marker-ring-width-mm")]
     marker_ring_width_mm: f32,
 
-    /// Optional explicit board name. Omitted uses a deterministic geometry-derived name.
+    /// Optional explicit target name. Omitted uses a deterministic geometry-derived name.
     #[arg(long)]
     name: Option<String>,
 
-    /// Output directory for board_spec.json, SVG, and PNG.
-    #[arg(
-        long = "out_dir",
-        visible_alias = "out-dir",
-        default_value = DEFAULT_GEN_TARGET_OUT_DIR
-    )]
-    out_dir: PathBuf,
-
-    /// Base filename for SVG/PNG outputs.
-    #[arg(long, default_value = DEFAULT_GEN_TARGET_BASENAME)]
-    basename: String,
-
-    /// PNG raster DPI (also embedded in PNG metadata).
-    #[arg(long, default_value_t = 300.0)]
-    dpi: f32,
-
-    /// Extra white margin around the board in millimeters.
-    #[arg(long = "margin_mm", visible_alias = "margin-mm", default_value_t = 0.0)]
-    margin_mm: f32,
-
-    /// Omit the default scale bar from SVG/PNG outputs.
-    #[arg(long)]
-    no_scale_bar: bool,
+    #[command(flatten)]
+    output: CliGenOutputArgs,
 }
 
-impl CliGenTargetArgs {
-    fn to_board(&self) -> CliResult<ringgrid::BoardLayout> {
+impl CliGenHexArgs {
+    fn to_target(&self) -> CliResult<ringgrid::TargetLayout> {
+        // BoardLayout owns the deterministic hex name generator; delegate so
+        // the CLI and library agree on generated names.
         let board = if let Some(name) = &self.name {
             ringgrid::BoardLayout::with_name(
                 name.clone(),
@@ -136,15 +169,153 @@ impl CliGenTargetArgs {
                 self.marker_ring_width_mm,
             )
         };
-        board.map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
+        board
+            .map(Into::into)
+            .map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
     }
+}
 
-    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf) {
-        let json_path = self.out_dir.join("board_spec.json");
-        let svg_path = self.out_dir.join(format!("{}.svg", self.basename));
-        let png_path = self.out_dir.join(format!("{}.png", self.basename));
-        (json_path, svg_path, png_path)
+/// Origin fiducial dot center in board millimeters.
+#[derive(Debug, Clone, Copy)]
+struct DotMmArg([f32; 2]);
+
+fn parse_dot_mm(raw: &str) -> Result<DotMmArg, String> {
+    let (x, y) = raw
+        .split_once(',')
+        .ok_or_else(|| format!("expected \"x,y\" millimeters, got '{raw}'"))?;
+    let x: f32 = x
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid x '{x}': {e}"))?;
+    let y: f32 = y
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid y '{y}': {e}"))?;
+    Ok(DotMmArg([x, y]))
+}
+
+#[derive(Debug, Clone, Args)]
+struct CliGenRectArgs {
+    /// Marker center spacing in millimeters.
+    #[arg(long = "pitch_mm", visible_alias = "pitch-mm")]
+    pitch_mm: f32,
+
+    /// Number of rows in the rectangular lattice.
+    #[arg(long = "rows")]
+    rows: usize,
+
+    /// Number of columns in the rectangular lattice.
+    #[arg(long = "cols")]
+    cols: usize,
+
+    /// Outer ring radius in millimeters.
+    #[arg(
+        long = "marker_outer_radius_mm",
+        visible_alias = "marker-outer-radius-mm"
+    )]
+    marker_outer_radius_mm: f32,
+
+    /// Inner ring radius in millimeters.
+    #[arg(
+        long = "marker_inner_radius_mm",
+        visible_alias = "marker-inner-radius-mm"
+    )]
+    marker_inner_radius_mm: f32,
+
+    /// Origin fiducial dot center in board millimeters, as "x,y".
+    /// Repeat for each dot; requires --dot_radius_mm. The dot pattern must
+    /// break every rotational symmetry of the lattice.
+    #[arg(long = "dot_mm", visible_alias = "dot-mm", value_parser = parse_dot_mm, requires = "dot_radius_mm")]
+    dot_mm: Vec<DotMmArg>,
+
+    /// Origin fiducial dot radius in millimeters.
+    #[arg(
+        long = "dot_radius_mm",
+        visible_alias = "dot-radius-mm",
+        requires = "dot_mm"
+    )]
+    dot_radius_mm: Option<f32>,
+
+    /// Optional explicit target name. Omitted uses a deterministic geometry-derived name.
+    #[arg(long)]
+    name: Option<String>,
+
+    #[command(flatten)]
+    output: CliGenOutputArgs,
+}
+
+impl CliGenRectArgs {
+    fn to_target(&self) -> CliResult<ringgrid::TargetLayout> {
+        let name = self.name.clone().unwrap_or_else(|| {
+            format!(
+                "ringgrid_rect_r{}_c{}_p{:.3}_o{:.3}_i{:.3}",
+                self.rows,
+                self.cols,
+                self.pitch_mm,
+                self.marker_outer_radius_mm,
+                self.marker_inner_radius_mm
+            )
+        });
+        let fiducials = self
+            .dot_radius_mm
+            .map(|dot_radius_mm| ringgrid::OriginFiducials {
+                dot_radius_mm,
+                dots_mm: self.dot_mm.iter().map(|d| d.0).collect(),
+            });
+        ringgrid::TargetLayout::new(
+            name,
+            ringgrid::LatticeGeometry::Rect(ringgrid::RectGeometry {
+                rows: self.rows,
+                cols: self.cols,
+                pitch_mm: self.pitch_mm,
+            }),
+            ringgrid::RingGeometry {
+                outer_radius_mm: self.marker_outer_radius_mm,
+                inner_radius_mm: self.marker_inner_radius_mm,
+            },
+            ringgrid::MarkerCoding::Plain,
+            fiducials,
+        )
+        .map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
     }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum GenTargetPresetArg {
+    /// ISRA XG3D-style 24x24 rect target: plain rings at 14 mm pitch with
+    /// three origin dots (drawing 5256-57-102).
+    Isra24x24,
+    /// The classic 15-row hex coded ringgrid target (200 mm board).
+    DefaultHex,
+}
+
+#[derive(Debug, Clone, Args)]
+struct CliGenPresetArgs {
+    /// Preset to generate.
+    #[arg(value_enum)]
+    preset: GenTargetPresetArg,
+
+    #[command(flatten)]
+    output: CliGenOutputArgs,
+}
+
+impl CliGenPresetArgs {
+    fn to_target(&self) -> ringgrid::TargetLayout {
+        match self.preset {
+            GenTargetPresetArg::Isra24x24 => ringgrid::TargetLayout::isra_rect_24x24(),
+            GenTargetPresetArg::DefaultHex => ringgrid::TargetLayout::default_hex(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Args)]
+struct CliGenFromSpecArgs {
+    /// Path to a target spec JSON file (v5, or legacy v4).
+    #[arg(long)]
+    spec: PathBuf,
+
+    #[command(flatten)]
+    output: CliGenOutputArgs,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -748,13 +919,13 @@ fn apply_config_file_overlay(
 }
 
 fn build_detect_config(
-    board: ringgrid::BoardLayout,
+    target: ringgrid::TargetLayout,
     preset: DetectPreset,
     config_file: Option<&DetectConfigFile>,
     overrides: &DetectOverrides,
 ) -> CliResult<ringgrid::DetectConfig> {
     let mut config =
-        ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
+        ringgrid::DetectConfig::from_target_and_scale_prior(target, preset.marker_scale);
 
     // Apply the JSON config file as a recursive overlay onto the scale-derived
     // base config. CLI flags applied below always take precedence.
@@ -909,7 +1080,7 @@ fn main() -> CliResult<()> {
     match cli.command {
         Commands::Detect(args) => run_detect(&args),
         Commands::Bench(args) => run_bench(&args),
-        Commands::GenTarget(args) => run_gen_target(&args),
+        Commands::GenTarget { command } => run_gen_target(&command),
         Commands::CodebookInfo => run_codebook_info(),
 
         Commands::BoardInfo => run_board_info(),
@@ -947,37 +1118,49 @@ fn run_codebook_info() -> CliResult<()> {
 // ── board-info ────────────────────────────────────────────────────────
 
 fn run_board_info() -> CliResult<()> {
-    let board = ringgrid::BoardLayout::default();
+    let target = ringgrid::TargetLayout::default_hex();
 
-    println!("ringgrid default board specification");
-    println!("  name:           {}", board.name());
-    println!("  markers:        {}", board.n_markers());
-    println!("  pitch:          {} mm", board.pitch_mm());
-    println!("  rows:           {}", board.rows());
-    println!("  long row cols:  {}", board.long_row_cols());
-    if let Some(span) = board.marker_span_mm() {
+    println!("ringgrid default target specification");
+    println!("  name:           {}", target.name());
+    println!("  schema:         {}", TARGET_SPEC_SCHEMA_V5);
+    match target.lattice() {
+        ringgrid::LatticeGeometry::Hex(h) => {
+            println!("  lattice:        hex");
+            println!("  rows:           {}", h.rows);
+            println!("  long row cols:  {}", h.long_row_cols);
+        }
+        ringgrid::LatticeGeometry::Rect(r) => {
+            println!("  lattice:        rect");
+            println!("  rows:           {}", r.rows);
+            println!("  cols:           {}", r.cols);
+        }
+    }
+    println!(
+        "  coding:         {}",
+        if target.is_coded() {
+            "coded16"
+        } else {
+            "plain"
+        }
+    );
+    println!("  cells:          {}", target.n_cells());
+    println!("  pitch:          {} mm", target.pitch_mm());
+    if let Some(span) = target.marker_span_mm() {
         println!("  marker span:    {:.3}x{:.3} mm", span[0], span[1]);
     }
 
-    if board.n_markers() > 0 {
-        let first = board.marker_by_index(0).expect("marker 0 must exist");
-        let last = board
-            .marker_by_index(board.n_markers() - 1)
-            .expect("last marker must exist");
+    if let (Some(first), Some(last)) = (target.cells().first(), target.cells().last()) {
         println!(
-            "  marker 0:       ({:.1}, {:.1}) mm  [q={}, r={}]",
-            first.xy_mm[0],
-            first.xy_mm[1],
-            first.q.unwrap_or_default(),
-            first.r.unwrap_or_default()
+            "  cell 0:         ({:.1}, {:.1}) mm  [u={}, v={}]",
+            first.xy_mm[0], first.xy_mm[1], first.coord.u, first.coord.v
         );
         println!(
-            "  marker {}:    ({:.1}, {:.1}) mm  [q={}, r={}]",
-            board.n_markers() - 1,
+            "  cell {}:       ({:.1}, {:.1}) mm  [u={}, v={}]",
+            target.n_cells() - 1,
             last.xy_mm[0],
             last.xy_mm[1],
-            last.q.unwrap_or_default(),
-            last.r.unwrap_or_default()
+            last.coord.u,
+            last.coord.v
         );
     }
 
@@ -986,36 +1169,55 @@ fn run_board_info() -> CliResult<()> {
 
 // ── gen-target ────────────────────────────────────────────────────────
 
-fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
-    let board = args.to_board()?;
-    let include_scale_bar = !args.no_scale_bar;
-    let (json_path, svg_path, png_path) = args.output_paths();
+fn run_gen_target(command: &GenTargetCommands) -> CliResult<()> {
+    let (target, output) = match command {
+        GenTargetCommands::Hex(args) => (args.to_target()?, &args.output),
+        GenTargetCommands::Rect(args) => (args.to_target()?, &args.output),
+        GenTargetCommands::Preset(args) => (args.to_target(), &args.output),
+        GenTargetCommands::FromSpec(args) => (
+            ringgrid::TargetLayout::from_json_file(&args.spec).map_err(|e| -> CliError {
+                format!("Failed to load target spec {}: {}", args.spec.display(), e).into()
+            })?,
+            &args.output,
+        ),
+    };
+    write_target_outputs(&target, output)
+}
 
-    board.write_json_file(&json_path).map_err(|e| -> CliError {
-        format!(
-            "Failed to write board spec JSON {}: {}",
-            json_path.display(),
-            e
-        )
-        .into()
-    })?;
-    board
+fn write_target_outputs(
+    target: &ringgrid::TargetLayout,
+    output: &CliGenOutputArgs,
+) -> CliResult<()> {
+    let include_scale_bar = !output.no_scale_bar;
+    let (json_path, svg_path, png_path) = output.output_paths();
+
+    target
+        .write_json_file(&json_path)
+        .map_err(|e| -> CliError {
+            format!(
+                "Failed to write target spec JSON {}: {}",
+                json_path.display(),
+                e
+            )
+            .into()
+        })?;
+    target
         .write_target_svg(
             &svg_path,
             &ringgrid::SvgTargetOptions {
-                margin_mm: args.margin_mm,
+                margin_mm: output.margin_mm,
                 include_scale_bar,
             },
         )
         .map_err(|e| -> CliError {
             format!("Failed to write target SVG {}: {}", svg_path.display(), e).into()
         })?;
-    board
+    target
         .write_target_png(
             &png_path,
             &ringgrid::PngTargetOptions {
-                dpi: args.dpi,
-                margin_mm: args.margin_mm,
+                dpi: output.dpi,
+                margin_mm: output.margin_mm,
                 include_scale_bar,
             },
         )
@@ -1023,21 +1225,33 @@ fn run_gen_target(args: &CliGenTargetArgs) -> CliResult<()> {
             format!("Failed to write target PNG {}: {}", png_path.display(), e).into()
         })?;
 
-    println!("Board spec JSON written to {}", json_path.display());
+    println!("Target spec JSON written to {}", json_path.display());
     println!("Print SVG written to {}", svg_path.display());
     println!(
         "Print PNG written to {} ({:.1} dpi)",
         png_path.display(),
-        args.dpi
+        output.dpi
     );
+    let lattice = match target.lattice() {
+        ringgrid::LatticeGeometry::Hex(h) => {
+            format!("hex rows={} long_row_cols={}", h.rows, h.long_row_cols)
+        }
+        ringgrid::LatticeGeometry::Rect(r) => format!("rect rows={} cols={}", r.rows, r.cols),
+    };
+    let coding = if target.is_coded() {
+        "coded16"
+    } else {
+        "plain"
+    };
     println!(
-        "Board: {}, schema={}, rows={}, long_row_cols={}, markers={}, pitch={}mm",
-        board.name(),
-        TARGET_SPEC_SCHEMA_V4,
-        board.rows(),
-        board.long_row_cols(),
-        board.n_markers(),
-        board.pitch_mm()
+        "Target: {}, schema={}, {}, coding={}, cells={}, pitch={}mm, fiducial dots={}",
+        target.name(),
+        TARGET_SPEC_SCHEMA_V5,
+        lattice,
+        coding,
+        target.n_cells(),
+        target.pitch_mm(),
+        target.fiducials().map_or(0, |f| f.dots_mm.len())
     );
     Ok(())
 }
@@ -1102,11 +1316,11 @@ fn load_config_file(args: &CliDetectArgs) -> CliResult<Option<DetectConfigFile>>
 fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
     let config_file = load_config_file(args)?;
     let preset = args.to_preset(config_file.as_ref());
-    let board = ringgrid::BoardLayout::default();
-    let config = ringgrid::DetectConfig::from_target_and_scale_prior(board, preset.marker_scale);
+    let target = ringgrid::TargetLayout::default_hex();
+    let config = ringgrid::DetectConfig::from_target_and_scale_prior(target, preset.marker_scale);
     // `DetectConfig` serializes directly; stage tuning nests under `advanced`.
-    // The board layout is `#[serde(skip)]`; loading the dump back through
-    // `--config` re-attaches the active board automatically.
+    // The target layout is `#[serde(skip)]`; loading the dump back through
+    // `--config` re-attaches the active target automatically.
     println!("{}", serde_json::to_string_pretty(&config)?);
     Ok(())
 }
@@ -1140,9 +1354,9 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     tracing::info!("Image size: {}x{}", w, h);
 
-    let board = if let Some(target_path) = &args.target {
-        let board =
-            ringgrid::BoardLayout::from_json_file(target_path).map_err(|e| -> CliError {
+    let target = if let Some(target_path) = &args.target {
+        let target =
+            ringgrid::TargetLayout::from_json_file(target_path).map_err(|e| -> CliError {
                 format!(
                     "Failed to load target spec {}: {}",
                     target_path.display(),
@@ -1151,16 +1365,16 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
                 .into()
             })?;
         tracing::info!(
-            "Loaded board layout '{}' with {} markers",
-            board.name(),
-            board.n_markers()
+            "Loaded target layout '{}' with {} cells",
+            target.name(),
+            target.n_cells()
         );
-        board
+        target
     } else {
-        ringgrid::BoardLayout::default()
+        ringgrid::TargetLayout::default_hex()
     };
 
-    let config = build_detect_config(board, preset, config_file.as_ref(), &overrides)?;
+    let config = build_detect_config(target, preset, config_file.as_ref(), &overrides)?;
 
     let detector = ringgrid::Detector::with_config(config);
     let proposals = if args.include_proposals {
@@ -1298,18 +1512,18 @@ fn median(samples: &mut [f64]) -> f64 {
 }
 
 fn run_bench(args: &CliBenchArgs) -> CliResult<()> {
-    let board = match &args.target {
-        Some(path) => ringgrid::BoardLayout::from_json_file(path).map_err(|e| -> CliError {
+    let target = match &args.target {
+        Some(path) => ringgrid::TargetLayout::from_json_file(path).map_err(|e| -> CliError {
             format!("Failed to load target spec {}: {}", path.display(), e).into()
         })?,
-        None => ringgrid::BoardLayout::default(),
+        None => ringgrid::TargetLayout::default_hex(),
     };
     let config = match args.marker_diameter {
         Some(d) => ringgrid::DetectConfig::from_target_and_scale_prior(
-            board,
+            target,
             ringgrid::MarkerScalePrior::from_nominal_diameter_px(d as f32),
         ),
-        None => ringgrid::DetectConfig::from_target(board),
+        None => ringgrid::DetectConfig::from_target(target),
     };
     let detector = ringgrid::Detector::with_config(config);
     let repeats = args.repeats.max(1);
@@ -1401,7 +1615,7 @@ mod tests {
     use image::load_from_memory;
 
     const EXPECTED_TARGET_JSON: &str =
-        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.json");
+        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex_v5.json");
     const EXPECTED_TARGET_SVG: &str =
         include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.svg");
     const EXPECTED_TARGET_PNG: &[u8] =
@@ -1447,8 +1661,8 @@ mod tests {
         panic!("missing pHYs chunk");
     }
 
-    fn fixture_gen_target_args(out_dir: std::path::PathBuf) -> CliGenTargetArgs {
-        CliGenTargetArgs {
+    fn fixture_gen_target_args(out_dir: std::path::PathBuf) -> CliGenHexArgs {
+        CliGenHexArgs {
             pitch_mm: 8.0,
             rows: 3,
             long_row_cols: 4,
@@ -1456,11 +1670,13 @@ mod tests {
             marker_inner_radius_mm: 3.2,
             marker_ring_width_mm: 1.152,
             name: Some("fixture_compact_hex".to_string()),
-            out_dir,
-            basename: "fixture_compact_hex".to_string(),
-            dpi: 96.0,
-            margin_mm: 0.0,
-            no_scale_bar: false,
+            output: CliGenOutputArgs {
+                out_dir,
+                basename: "fixture_compact_hex".to_string(),
+                dpi: 96.0,
+                margin_mm: 0.0,
+                no_scale_bar: false,
+            },
         }
     }
 
@@ -1612,8 +1828,13 @@ mod tests {
         let preset = DetectPreset {
             marker_scale: ringgrid::MarkerScalePrior::new(20.0, 56.0),
         };
-        let cfg = build_detect_config(ringgrid::BoardLayout::default(), preset, None, &overrides)
-            .expect("build config");
+        let cfg = build_detect_config(
+            ringgrid::TargetLayout::default_hex(),
+            preset,
+            None,
+            &overrides,
+        )
+        .expect("build config");
 
         assert!((cfg.advanced.outer_estimation.min_theta_consistency - 0.61).abs() < 1e-6);
         assert!((cfg.advanced.outer_estimation.second_peak_min_rel - 0.77).abs() < 1e-6);
@@ -1641,7 +1862,7 @@ mod tests {
             marker_scale: ringgrid::MarkerScalePrior::new(20.0, 56.0),
         };
         let cfg = build_detect_config(
-            ringgrid::BoardLayout::default(),
+            ringgrid::TargetLayout::default_hex(),
             preset,
             Some(&config_file),
             &base_overrides(),
@@ -1662,7 +1883,7 @@ mod tests {
     #[test]
     fn dump_config_json_nests_stage_tuning_under_advanced() {
         let config = ringgrid::DetectConfig::from_target_and_scale_prior(
-            ringgrid::BoardLayout::default(),
+            ringgrid::TargetLayout::default_hex(),
             ringgrid::MarkerScalePrior::new(20.0, 56.0),
         );
         let json = serde_json::to_string(&config).expect("serialize");
@@ -1758,6 +1979,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "ringgrid",
             "gen-target",
+            "hex",
             "--pitch_mm",
             "8.0",
             "--rows",
@@ -1775,23 +1997,105 @@ mod tests {
         ])
         .expect("parse gen-target cli");
         match cli.command {
-            Commands::GenTarget(args) => {
+            Commands::GenTarget {
+                command: GenTargetCommands::Hex(args),
+            } => {
                 assert_eq!(args.pitch_mm, 8.0);
                 assert_eq!(args.rows, 3);
                 assert_eq!(args.long_row_cols, 4);
-                assert_eq!(args.out_dir, std::path::PathBuf::from("tools/out/fixture"));
+                assert_eq!(
+                    args.output.out_dir,
+                    std::path::PathBuf::from("tools/out/fixture")
+                );
             }
             _ => panic!("unexpected command variant"),
         }
     }
 
     #[test]
+    fn gen_target_rect_parses_dots_and_builds_plain_target() {
+        let cli = Cli::try_parse_from([
+            "ringgrid",
+            "gen-target",
+            "rect",
+            "--pitch_mm",
+            "14.0",
+            "--rows",
+            "4",
+            "--cols",
+            "4",
+            "--marker_outer_radius_mm",
+            "5.6",
+            "--marker_inner_radius_mm",
+            "2.8",
+            "--dot_mm",
+            "21,21",
+            "--dot_mm",
+            "7,21",
+            "--dot_radius_mm",
+            "1.4",
+        ])
+        .expect("parse gen-target rect cli");
+        let Commands::GenTarget {
+            command: GenTargetCommands::Rect(args),
+        } = cli.command
+        else {
+            panic!("unexpected command variant");
+        };
+        let target = args.to_target().expect("valid rect target");
+        assert!(!target.is_coded());
+        assert_eq!(target.n_cells(), 16);
+        assert_eq!(
+            target.fiducials().map(|f| f.dots_mm.len()),
+            Some(2),
+            "both dots parsed"
+        );
+    }
+
+    #[test]
+    fn gen_target_rect_rejects_dots_without_radius() {
+        let result = Cli::try_parse_from([
+            "ringgrid",
+            "gen-target",
+            "rect",
+            "--pitch_mm",
+            "14.0",
+            "--rows",
+            "4",
+            "--cols",
+            "4",
+            "--marker_outer_radius_mm",
+            "5.6",
+            "--marker_inner_radius_mm",
+            "2.8",
+            "--dot_mm",
+            "21,21",
+        ]);
+        assert!(result.is_err(), "--dot_mm requires --dot_radius_mm");
+    }
+
+    #[test]
+    fn gen_target_preset_isra_builds_rect_target() {
+        let cli = Cli::try_parse_from(["ringgrid", "gen-target", "preset", "isra24x24"])
+            .expect("parse gen-target preset cli");
+        let Commands::GenTarget {
+            command: GenTargetCommands::Preset(args),
+        } = cli.command
+        else {
+            panic!("unexpected command variant");
+        };
+        let target = args.to_target();
+        assert_eq!(target.name(), "isra_rect_24x24");
+        assert_eq!(target.n_cells(), 576);
+    }
+
+    #[test]
     fn gen_target_writes_committed_fixture_outputs() {
         let out_dir = temp_output_dir("fixture_outputs").join("nested/fixture");
         let args = fixture_gen_target_args(out_dir.clone());
-        run_gen_target(&args).expect("generate fixture outputs");
+        run_gen_target(&GenTargetCommands::Hex(args)).expect("generate fixture outputs");
 
-        let json_path = out_dir.join("board_spec.json");
+        let json_path = out_dir.join("target_spec.json");
         let svg_path = out_dir.join("fixture_compact_hex.svg");
         let png_path = out_dir.join("fixture_compact_hex.png");
 
@@ -1825,7 +2129,8 @@ mod tests {
         let mut args = fixture_gen_target_args(out_dir);
         args.marker_inner_radius_mm = 4.1;
 
-        let err = run_gen_target(&args).expect_err("invalid geometry must fail");
+        let err =
+            run_gen_target(&GenTargetCommands::Hex(args)).expect_err("invalid geometry must fail");
         assert!(
             err.to_string().contains("no code band between rings"),
             "unexpected error: {err}"
@@ -1837,11 +2142,11 @@ mod tests {
         let out_dir = temp_output_dir("generated_name");
         let mut args = fixture_gen_target_args(out_dir.clone());
         args.name = None;
-        args.basename = DEFAULT_GEN_TARGET_BASENAME.to_string();
-        run_gen_target(&args).expect("generate target with auto name");
+        args.output.basename = DEFAULT_GEN_TARGET_BASENAME.to_string();
+        run_gen_target(&GenTargetCommands::Hex(args)).expect("generate target with auto name");
 
         let spec: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(out_dir.join("board_spec.json")).expect("read spec"),
+            &std::fs::read_to_string(out_dir.join("target_spec.json")).expect("read spec"),
         )
         .expect("parse spec");
         assert_eq!(
@@ -1854,31 +2159,24 @@ mod tests {
 
     #[test]
     fn gen_target_rejects_invalid_geometry_and_options() {
-        let err = run_gen_target(&CliGenTargetArgs {
-            rows: 0,
-            out_dir: temp_output_dir("bad_rows"),
-            ..fixture_gen_target_args(temp_output_dir("bad_rows_unused"))
-        })
-        .expect_err("rows=0 must fail");
+        let mut args = fixture_gen_target_args(temp_output_dir("bad_rows"));
+        args.rows = 0;
+        let err = run_gen_target(&GenTargetCommands::Hex(args)).expect_err("rows=0 must fail");
         assert!(err.to_string().contains("rows"), "unexpected error: {err}");
 
-        let err = run_gen_target(&CliGenTargetArgs {
-            margin_mm: -1.0,
-            out_dir: temp_output_dir("bad_margin"),
-            ..fixture_gen_target_args(temp_output_dir("bad_margin_unused"))
-        })
-        .expect_err("negative margin must fail");
+        let mut args = fixture_gen_target_args(temp_output_dir("bad_margin"));
+        args.output.margin_mm = -1.0;
+        let err =
+            run_gen_target(&GenTargetCommands::Hex(args)).expect_err("negative margin must fail");
         assert!(
             err.to_string().contains("margin"),
             "unexpected error: {err}"
         );
 
-        let err = run_gen_target(&CliGenTargetArgs {
-            dpi: 0.0,
-            out_dir: temp_output_dir("bad_dpi"),
-            ..fixture_gen_target_args(temp_output_dir("bad_dpi_unused"))
-        })
-        .expect_err("non-positive dpi must fail");
+        let mut args = fixture_gen_target_args(temp_output_dir("bad_dpi"));
+        args.output.dpi = 0.0;
+        let err =
+            run_gen_target(&GenTargetCommands::Hex(args)).expect_err("non-positive dpi must fail");
         assert!(err.to_string().contains("dpi"), "unexpected error: {err}");
     }
 }

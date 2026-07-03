@@ -95,7 +95,7 @@ fn adaptive_threshold(values: &[f64], floor: f64, k: f64) -> f64 {
     floor.max(median + k * MAD_TO_SIGMA * mad)
 }
 
-/// Populate [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) for every labeled
+/// Populate [`FitMetrics::h_reproj_err_px`](crate::diagnostics::FitMetrics) for every labeled
 /// marker as the working-frame distance between its center and its board/frame
 /// position projected through `final_h`. The **sole writer** of that diagnostic.
 ///
@@ -149,7 +149,7 @@ pub(super) fn annotate_h_reproj_err_px(
 ///    markers that lack a complete neighbor pair for the local test.
 ///
 /// Delegates to [`annotate_h_reproj_err_px`] to populate
-/// [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) before reading it for the
+/// [`FitMetrics::h_reproj_err_px`](crate::diagnostics::FitMetrics) before reading it for the
 /// global test, so the diagnostic is identical whether or not the gate runs.
 pub(super) fn geometric_verify_filter(
     markers: &mut Vec<MarkerRecord>,

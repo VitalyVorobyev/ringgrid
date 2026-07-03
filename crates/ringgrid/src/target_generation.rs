@@ -1,5 +1,6 @@
 //! Printable target rendering (SVG and PNG) for any [`TargetLayout`].
 
+#[allow(deprecated)]
 use crate::BoardLayout;
 use crate::marker::codebook::CODEBOOK;
 use crate::target::{MarkerCoding, TargetLayout};
@@ -397,6 +398,8 @@ impl TargetLayout {
     }
 }
 
+// Rendering facade for the deprecated v4 board type, kept until removal.
+#[allow(deprecated)]
 impl BoardLayout {
     /// Render a printable SVG target (delegates to [`TargetLayout`]).
     pub fn render_target_svg(
@@ -927,6 +930,7 @@ fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // also exercises the deprecated BoardLayout render facade
 mod tests {
     use super::*;
 

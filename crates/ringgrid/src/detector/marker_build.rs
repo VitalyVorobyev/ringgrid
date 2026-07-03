@@ -8,7 +8,7 @@ use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
 
 /// Indicates which pipeline stage produced a marker.
 ///
-/// Exposed via [`MarkerDiagnostics::source`](crate::MarkerDiagnostics).
+/// Exposed via [`MarkerDiagnostics::source`](crate::diagnostics::MarkerDiagnostics).
 /// Used to separate false-positive sources in post-processing and analysis.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
@@ -101,7 +101,7 @@ pub struct FitMetrics {
 /// It is **not** part of the public API. At the [`Detector::detect`](crate::Detector::detect)
 /// boundary each `MarkerRecord` is split into the public slim
 /// [`DetectedMarker`](crate::DetectedMarker) plus its
-/// [`MarkerDiagnostics`](crate::MarkerDiagnostics) counterpart.
+/// [`MarkerDiagnostics`](crate::diagnostics::MarkerDiagnostics) counterpart.
 ///
 /// The `center` field is always in image-pixel coordinates, regardless of
 /// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is

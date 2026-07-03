@@ -1,3 +1,5 @@
+#![allow(deprecated)] // pins the legacy BoardLayout facade until removal
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use image::ImageReader;
 use ringgrid::{BoardLayout, Detector};

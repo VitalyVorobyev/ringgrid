@@ -219,7 +219,7 @@ pub struct RinggridDetector {
 impl Default for RinggridDetector {
     fn default() -> Self {
         Self {
-            detector: ringgrid::Detector::new(ringgrid::BoardLayout::default()),
+            detector: ringgrid::Detector::new(ringgrid::TargetLayout::default_hex()),
             last_heatmap: None,
             last_heatmap_size: [0, 0],
         }
@@ -540,10 +540,10 @@ impl RinggridDetector {
 
 // ── Free functions ──────────────────────────────────────────────────
 
-/// Default board layout as a JSON string.
+/// Default target layout as a JSON string (`ringgrid.target.v5` schema).
 #[wasm_bindgen]
 pub fn default_board_json() -> String {
-    ringgrid::BoardLayout::default().to_json_string()
+    ringgrid::TargetLayout::default_hex().to_json_string()
 }
 
 /// Default detection config for a given target layout, as a JSON string.
@@ -589,13 +589,13 @@ struct ProposalPayload<'a> {
 /// Combined payload for the diagnostics-returning detection entry points.
 ///
 /// The slim [`ringgrid::DetectionResult`] and the opt-in
-/// [`ringgrid::DetectionDiagnostics`] are nested under `result` and
+/// [`ringgrid::diagnostics::DetectionDiagnostics`] are nested under `result` and
 /// `diagnostics`; `diagnostics.markers` aligns 1:1 with
 /// `result.detected_markers`.
 #[derive(serde::Serialize)]
 struct DetectionWithDiagnostics {
     result: ringgrid::DetectionResult,
-    diagnostics: ringgrid::DetectionDiagnostics,
+    diagnostics: ringgrid::diagnostics::DetectionDiagnostics,
 }
 
 #[cfg(test)]
@@ -716,11 +716,11 @@ mod tests {
     #[test]
     fn default_board_json_roundtrip() {
         let json = default_board_json();
-        let board = ringgrid::BoardLayout::from_json_str(&json).unwrap();
-        let default = ringgrid::BoardLayout::default();
-        assert_eq!(board.rows(), default.rows());
-        assert_eq!(board.long_row_cols(), default.long_row_cols());
-        assert!((board.pitch_mm() - default.pitch_mm()).abs() < 1e-6);
+        let target = ringgrid::TargetLayout::from_json_str(&json).unwrap();
+        let default = ringgrid::TargetLayout::default_hex();
+        assert_eq!(target.name(), default.name());
+        assert_eq!(target.n_cells(), default.n_cells());
+        assert!((target.pitch_mm() - default.pitch_mm()).abs() < 1e-6);
     }
 
     // ── Group 4: Detection parity (grayscale) ──────────────────────
@@ -1160,7 +1160,7 @@ mod tests {
 
         let result: ringgrid::DetectionResult =
             serde_json::from_value(combined["result"].clone()).unwrap();
-        let diagnostics: ringgrid::DetectionDiagnostics =
+        let diagnostics: ringgrid::diagnostics::DetectionDiagnostics =
             serde_json::from_value(combined["diagnostics"].clone()).unwrap();
 
         // detect() and detect_with_diagnostics() agree on the slim result.

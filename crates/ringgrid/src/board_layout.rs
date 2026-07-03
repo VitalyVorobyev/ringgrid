@@ -9,6 +9,10 @@
 //! remains for one release; all validation and cell generation delegate to
 //! the target module, so both types produce bit-identical hex geometry.
 
+// The deprecated facade's own impls, helpers, and tests necessarily use the
+// deprecated types.
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::path::Path;
@@ -22,12 +26,14 @@ use crate::target::{
 ///
 /// Alias of [`TargetValidationError`](crate::TargetValidationError); kept for
 /// source compatibility with pre-0.8 code.
+#[deprecated(since = "0.8.0", note = "use `TargetValidationError` instead")]
 pub type BoardLayoutValidationError = crate::target::TargetValidationError;
 
 /// Load-time failures for board layout JSON.
 ///
 /// Alias of [`TargetLoadError`](crate::TargetLoadError); kept for source
 /// compatibility with pre-0.8 code.
+#[deprecated(since = "0.8.0", note = "use `TargetLoadError` instead")]
 pub type BoardLayoutLoadError = crate::target::TargetLoadError;
 
 /// A single marker's position on the calibration board.
@@ -35,6 +41,10 @@ pub type BoardLayoutLoadError = crate::target::TargetLoadError;
 /// Each marker has a unique `id` (codebook index in the active profile), a
 /// physical position `xy_mm` on the board, and optional hex-lattice axial
 /// coordinates `(q, r)`.
+#[deprecated(
+    since = "0.8.0",
+    note = "use `TargetLayout` (compositional target model, `ringgrid.target.v5` schema) instead; this v4 facade will be removed after 0.8"
+)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BoardMarker {
     /// Unique marker ID (codebook index in the active profile).
@@ -71,6 +81,10 @@ pub struct BoardMarker {
 /// Construct via [`BoardLayout::default`], [`BoardLayout::new`],
 /// [`BoardLayout::with_name`], or [`BoardLayout::from_json_file`]; read the
 /// geometry through the accessor methods.
+#[deprecated(
+    since = "0.8.0",
+    note = "use `TargetLayout` (compositional target model, `ringgrid.target.v5` schema) instead; this v4 facade will be removed after 0.8"
+)]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BoardLayout {
@@ -102,7 +116,7 @@ impl BoardLayout {
         marker_ring_width_mm: f32,
     ) -> Result<Self, BoardLayoutValidationError> {
         Self::with_name(
-            generated_name(
+            crate::target::layout::hex_generated_name(
                 pitch_mm,
                 rows,
                 long_row_cols,
@@ -369,19 +383,6 @@ impl From<&BoardLayout> for TargetLayout {
     fn from(board: &BoardLayout) -> Self {
         board.clone().into()
     }
-}
-
-fn generated_name(
-    pitch_mm: f32,
-    rows: usize,
-    long_row_cols: usize,
-    marker_outer_radius_mm: f32,
-    marker_inner_radius_mm: f32,
-    marker_ring_width_mm: f32,
-) -> String {
-    format!(
-        "ringgrid_hex_r{rows}_c{long_row_cols}_p{pitch_mm:.3}_o{marker_outer_radius_mm:.3}_i{marker_inner_radius_mm:.3}_w{marker_ring_width_mm:.3}"
-    )
 }
 
 #[cfg(test)]

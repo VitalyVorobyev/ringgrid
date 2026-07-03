@@ -57,8 +57,8 @@ impl CameraIntrinsics {
 /// # Example
 ///
 /// ```no_run
-/// use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel,
-///                Detector, RadialTangentialDistortion};
+/// use ringgrid::{CameraIntrinsics, CameraModel, Detector,
+///                RadialTangentialDistortion, TargetLayout};
 /// use std::path::Path;
 ///
 /// let camera = CameraModel {
@@ -70,8 +70,8 @@ impl CameraIntrinsics {
 ///     },
 /// };
 ///
-/// let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-/// let detector = Detector::new(board);
+/// let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
+/// let detector = Detector::new(target);
 /// let image = image::open("photo.png").unwrap().to_luma8();
 /// let result = detector.detect_with_mapper(&image, &camera);
 /// ```

@@ -148,6 +148,45 @@ impl TargetLayout {
         })
     }
 
+    /// Construct a 16-sector coded hex target from direct geometry arguments.
+    ///
+    /// Uses a deterministic geometry-derived name (the same scheme legacy v4
+    /// boards used) so the layout round-trips through JSON without the caller
+    /// supplying a name up front.
+    pub fn coded_hex(
+        pitch_mm: f32,
+        rows: usize,
+        long_row_cols: usize,
+        outer_radius_mm: f32,
+        inner_radius_mm: f32,
+        ring_width_mm: f32,
+    ) -> Result<Self, TargetValidationError> {
+        Self::new(
+            hex_generated_name(
+                pitch_mm,
+                rows,
+                long_row_cols,
+                outer_radius_mm,
+                inner_radius_mm,
+                ring_width_mm,
+            ),
+            LatticeGeometry::Hex(HexGeometry {
+                rows,
+                long_row_cols,
+                pitch_mm,
+            }),
+            RingGeometry {
+                outer_radius_mm,
+                inner_radius_mm,
+            },
+            MarkerCoding::Coded16(CodedRingSpec {
+                ring_width_mm,
+                id_assignment: None,
+            }),
+            None,
+        )
+    }
+
     /// The classic ringgrid target: 15-row hex lattice of 16-sector coded
     /// rings at 8 mm pitch (203 markers on a 200 mm board).
     pub fn default_hex() -> Self {
@@ -327,6 +366,22 @@ impl Default for TargetLayout {
     }
 }
 
+/// Deterministic geometry-derived name for coded hex targets, shared with the
+/// legacy `BoardLayout` constructors so v4 and v5 flows produce identical
+/// names for identical geometry.
+pub(crate) fn hex_generated_name(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    ring_width_mm: f32,
+) -> String {
+    format!(
+        "ringgrid_hex_r{rows}_c{long_row_cols}_p{pitch_mm:.3}_o{outer_radius_mm:.3}_i{inner_radius_mm:.3}_w{ring_width_mm:.3}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // parity check against the legacy v4 facade
     fn default_hex_matches_board_layout_exactly() {
         let target = TargetLayout::default_hex();
         let board = crate::BoardLayout::default();

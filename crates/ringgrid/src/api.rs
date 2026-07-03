@@ -11,12 +11,13 @@ use std::path::Path;
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
+use crate::pipeline::DetectionDiagnostics;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 use crate::target::TargetLayout;
 #[cfg(feature = "std")]
 use crate::target::TargetLoadError;
-use crate::{DetectionDiagnostics, DetectionResult, Proposal, ProposalResult};
+use crate::{DetectionResult, Proposal, ProposalResult};
 
 /// Detection-time failures reported by [`Detector`] methods.
 ///

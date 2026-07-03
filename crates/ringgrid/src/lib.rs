@@ -82,14 +82,19 @@ pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 // Result types — slim, stable primary output of `Detector::detect`.
 pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 
-// Diagnostics — opt-in debugging/tuning channel returned by
-// `Detector::detect_with_diagnostics`. `FitMetrics`, `DecodeMetrics`,
-// `RansacStats`, `DetectionSource`, `InnerFitReason`, and `InnerFitStatus` are
-// the field types of these diagnostics structs.
-pub use detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
-pub use homography::RansacStats;
-pub use marker::DecodeMetrics;
-pub use pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
+/// Opt-in diagnostics channel returned by
+/// [`Detector::detect_with_diagnostics`]: per-marker fit and decode metrics,
+/// homography RANSAC statistics, and pipeline stage timings.
+///
+/// These types are deliberately not at the crate root: the stable primary
+/// output is [`DetectionResult`]; the diagnostics surface may evolve faster
+/// between releases.
+pub mod diagnostics {
+    pub use crate::detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
+    pub use crate::homography::RansacStats;
+    pub use crate::marker::DecodeMetrics;
+    pub use crate::pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
+}
 
 // Configuration
 pub use conic::RansacConfig;
@@ -104,8 +109,10 @@ pub use detector::{
 pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity};
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
-// Codebook diagnostics (inspection helpers for the embedded codebook profiles)
-pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
+/// Inspection helpers for the embedded 16-sector codebook profiles.
+pub mod codebook {
+    pub use crate::marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
+}
 
 // Geometry — compositional target model (primary) and the legacy hex facade.
 pub use target::{
@@ -113,6 +120,8 @@ pub use target::{
     RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
 };
 
+// Deprecated v4 facade, re-exported until removal after 0.8.
+#[allow(deprecated)]
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };

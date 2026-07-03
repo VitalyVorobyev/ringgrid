@@ -28,6 +28,12 @@ approx = "0.5"
 rand = "0.10"
 tiny-solver = "0.18"
 png = "0.18"
-projective-grid = "0.9"
-radsym = "0.2"
+projective-grid = "0.10.1"
+radsym = "0.4"
 web-time = "1"
+
+# TEMPORARY (remove before merge): develop against the local projective-grid
+# 0.10.1 until https://github.com/VitalyVorobyev/calib-targets-rs/pull/76 is
+# published to crates.io.
+[patch.crates-io]
+projective-grid = { path = "../calib-targets-rs/crates/projective-grid" }

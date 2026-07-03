@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency migration: `projective-grid` 0.9 → 0.10.1.** The 0.10 release
+  rewrote projective-grid's public API; ringgrid's three call sites migrate
+  with no intended behavior change:
+  - `GridCoords { i, j }` → `Coord { u, v }` (hex axial `q, r` map to `u, v`).
+    Grid coordinates are in-memory only — no serialized output changes.
+  - The deleted `hex::hex_predict_grid_position` → the lattice-generic
+    `predict_grid_position(&grid, coord, LatticeKind::Hex)` introduced in
+    projective-grid 0.10.1 (same opposite-pair midpoint math, so the
+    geometric-verify local test and completion seeding keep their numerics).
+  - Root `estimate_homography` → `geometry::estimate_homography` (move only;
+    identical signature and math).
+- `radsym` 0.4: no source changes required — ringgrid's proposal adapter uses
+  only the RSD path, which the 0.4 API revision left intact.
+
 ## [0.7.0] — 2026-06-30
 
 Production-grade precision for sensor calibration. Detection now provably rejects

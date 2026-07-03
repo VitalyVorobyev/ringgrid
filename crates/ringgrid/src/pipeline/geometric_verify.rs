@@ -9,8 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use nalgebra::{Matrix3, Point2};
-use projective_grid::GridCoords;
-use projective_grid::hex::hex_predict_grid_position;
+use projective_grid::{Coord, LatticeKind, predict_grid_position};
 
 use super::stats::median_f64;
 use crate::board_layout::BoardLayout;
@@ -20,7 +19,7 @@ use crate::detector::MarkerRecord;
 pub(crate) fn build_hex_grid_map(
     markers: &[MarkerRecord],
     board: &BoardLayout,
-) -> HashMap<GridCoords, Point2<f32>> {
+) -> HashMap<Coord, Point2<f32>> {
     markers
         .iter()
         .filter_map(|m| {
@@ -29,7 +28,7 @@ pub(crate) fn build_hex_grid_map(
             let q = bm.q? as i32;
             let r = bm.r? as i32;
             Some((
-                GridCoords { i: q, j: r },
+                Coord::new(q, r),
                 Point2::new(m.center[0] as f32, m.center[1] as f32),
             ))
         })
@@ -156,10 +155,10 @@ pub(super) fn geometric_verify_filter(
 
     // --- Local hex-midpoint test (H-free) ---
     let grid = build_hex_grid_map(markers, board);
-    let local_by_coord: Vec<(GridCoords, f64)> = grid
+    let local_by_coord: Vec<(Coord, f64)> = grid
         .iter()
         .filter_map(|(&idx, &pos)| {
-            let pred = hex_predict_grid_position(&grid, idx)?;
+            let pred = predict_grid_position(&grid, idx, LatticeKind::Hex)?.position;
             let dx = (pos.x - pred.x) as f64;
             let dy = (pos.y - pred.y) as f64;
             Some((idx, (dx * dx + dy * dy).sqrt()))
@@ -167,7 +166,7 @@ pub(super) fn geometric_verify_filter(
         .collect();
     let local_residuals: Vec<f64> = local_by_coord.iter().map(|(_, r)| *r).collect();
     let t_local = adaptive_threshold(&local_residuals, FLOOR_LOCAL_PX, K_LOCAL);
-    let flagged_coords: HashSet<GridCoords> = local_by_coord
+    let flagged_coords: HashSet<Coord> = local_by_coord
         .iter()
         .filter(|(_, r)| *r > t_local)
         .map(|(c, _)| *c)
@@ -210,7 +209,7 @@ pub(super) fn geometric_verify_filter(
         let local_bad = matches!(
             (bm.q, bm.r),
             (Some(q), Some(r))
-                if flagged_coords.contains(&GridCoords { i: q as i32, j: r as i32 })
+                if flagged_coords.contains(&Coord::new(q as i32, r as i32))
         );
         let global_bad = flagged_global_ids.contains(&id);
         if local_bad {

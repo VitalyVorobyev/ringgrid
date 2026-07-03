@@ -6,7 +6,7 @@
 //! - Reprojection error computation.
 
 use nalgebra::{Matrix3, Point2, Vector3};
-use projective_grid::estimate_homography as pg_estimate_homography;
+use projective_grid::geometry::estimate_homography as pg_estimate_homography;
 
 use crate::conic::RansacConfig;
 

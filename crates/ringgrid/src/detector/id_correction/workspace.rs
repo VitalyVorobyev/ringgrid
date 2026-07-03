@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 
-use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
 use crate::detector::marker_build::MarkerRecord;
+use crate::target::TargetLayout;
 
 use super::index::BoardIndex;
 use super::types::{IdCorrectionStats, RecoverySource, ScrubStage, Trust};
@@ -22,11 +22,11 @@ pub(super) struct IdCorrectionWorkspace<'a> {
 impl<'a> IdCorrectionWorkspace<'a> {
     pub(super) fn new(
         markers: &'a mut Vec<MarkerRecord>,
-        board: &BoardLayout,
+        target: &TargetLayout,
         config: &'a IdCorrectionConfig,
         codebook_min_cyclic_dist: usize,
     ) -> Self {
-        let board_index = BoardIndex::build(board);
+        let board_index = BoardIndex::build(target);
         let outer_radii_px = compute_outer_radii_px(markers);
         let outer_muls = build_outer_mul_schedule(config);
         let trust = vec![Trust::Untrusted; markers.len()];

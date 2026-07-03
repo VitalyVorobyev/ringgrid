@@ -20,14 +20,14 @@ fn config_to_json(config: &ringgrid::DetectConfig) -> Result<serde_json::Value, 
 }
 
 /// Reconstitute a [`ringgrid::DetectConfig`] from its JSON representation,
-/// attaching `board` and re-deriving the board-coupled / scale-coupled fields.
+/// attaching `target` and re-deriving the target-coupled / scale-coupled fields.
 fn config_from_json(
-    board: ringgrid::BoardLayout,
+    target: ringgrid::TargetLayout,
     config_json: &serde_json::Value,
 ) -> Result<ringgrid::DetectConfig, JsValue> {
     let config: ringgrid::DetectConfig = serde_json::from_value(config_json.clone())
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Ok(config.with_board(board))
+    Ok(config.with_target(target))
 }
 
 fn merge_json_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
@@ -61,17 +61,17 @@ fn parse_overlay_object(overlay_json: &str) -> Result<serde_json::Value, JsValue
 /// stage tuning nests under `"advanced"`. It is recursively merged onto the
 /// current config's JSON form so a deeply nested partial section (e.g.
 /// `{"advanced": {"completion": {"enable": false}}}`) overrides only the named
-/// leaves. After the merge the config is deserialized and the board re-attached,
-/// which re-derives all board- and scale-coupled fields.
+/// leaves. After the merge the config is deserialized and the target
+/// re-attached, which re-derives all target- and scale-coupled fields.
 fn apply_config_overlay(
     config: &mut ringgrid::DetectConfig,
     overlay_json: &str,
 ) -> Result<(), JsValue> {
     let overlay = parse_overlay_object(overlay_json)?;
-    let board = config.board.clone();
+    let target = config.target.clone();
     let mut merged = config_to_json(config)?;
     merge_json_value(&mut merged, overlay);
-    *config = config_from_json(board, &merged)?;
+    *config = config_from_json(target, &merged)?;
     Ok(())
 }
 
@@ -121,12 +121,14 @@ fn scale_tiers_to_wire(tiers: &ringgrid::ScaleTiers) -> ScaleTiersWire {
 
 /// Checked pixel count: returns `width * height` as `usize`, or `Err` on overflow.
 fn checked_pixel_count(width: u32, height: u32) -> Result<usize, JsValue> {
-    (width as usize).checked_mul(height as usize).ok_or_else(|| {
-        JsValue::from_str(&format!(
-            "image dimensions overflow: {}x{} exceeds addressable range",
-            width, height
-        ))
-    })
+    (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "image dimensions overflow: {}x{} exceeds addressable range",
+                width, height
+            ))
+        })
 }
 
 /// BT.601 luma: Y = (77R + 150G + 29B + 128) >> 8
@@ -148,7 +150,9 @@ fn validate_gray(pixels: &[u8], width: u32, height: u32) -> Result<GrayImage, Js
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} grayscale pixels ({}x{}), got {}",
-            expected, width, height,
+            expected,
+            width,
+            height,
             pixels.len()
         )));
     }
@@ -167,7 +171,9 @@ fn validate_rgba(pixels: &[u8], width: u32, height: u32) -> Result<(), JsValue> 
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "expected {} RGBA bytes ({}x{}x4), got {}",
-            expected, width, height,
+            expected,
+            width,
+            height,
             pixels.len()
         )));
     }
@@ -182,12 +188,19 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
     Ok(())
 }
 
-fn parse_board(board_json: &str) -> Result<ringgrid::BoardLayout, JsValue> {
-    ringgrid::BoardLayout::from_json_str(board_json).map_err(|e| JsValue::from_str(&e.to_string()))
+/// Parse a target spec (compositional `ringgrid.target.v5`, or legacy
+/// `ringgrid.target.v4` auto-migrated).
+fn parse_target(target_json: &str) -> Result<ringgrid::TargetLayout, JsValue> {
+    ringgrid::TargetLayout::from_json_str(target_json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, JsValue> {
     serde_json::to_string(value).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+fn detect_err(e: ringgrid::DetectError) -> JsValue {
+    JsValue::from_str(&e.to_string())
 }
 
 // ── Main class ──────────────────────────────────────────────────────
@@ -215,12 +228,12 @@ impl Default for RinggridDetector {
 
 #[wasm_bindgen]
 impl RinggridDetector {
-    /// Create a detector from a board layout JSON string.
+    /// Create a detector from a target layout JSON string (`v5` or legacy `v4`).
     #[wasm_bindgen(constructor)]
     pub fn new(board_json: &str) -> Result<RinggridDetector, JsValue> {
-        let board = parse_board(board_json)?;
+        let target = parse_target(board_json)?;
         Ok(Self {
-            detector: ringgrid::Detector::new(board),
+            detector: ringgrid::Detector::new(target),
             last_heatmap: None,
             last_heatmap_size: [0, 0],
         })
@@ -232,13 +245,13 @@ impl RinggridDetector {
         min_px: f32,
         max_px: f32,
     ) -> Result<RinggridDetector, JsValue> {
-        let board = parse_board(board_json)?;
+        let target = parse_target(board_json)?;
         let scale = ringgrid::MarkerScalePrior {
             diameter_min_px: min_px,
             diameter_max_px: max_px,
         };
         Ok(Self {
-            detector: ringgrid::Detector::with_marker_scale(board, scale),
+            detector: ringgrid::Detector::with_marker_scale(target, scale),
             last_heatmap: None,
             last_heatmap_size: [0, 0],
         })
@@ -249,9 +262,9 @@ impl RinggridDetector {
         board_json: &str,
         diameter_px: f32,
     ) -> Result<RinggridDetector, JsValue> {
-        let board = parse_board(board_json)?;
+        let target = parse_target(board_json)?;
         Ok(Self {
-            detector: ringgrid::Detector::with_marker_diameter_hint(board, diameter_px),
+            detector: ringgrid::Detector::with_marker_diameter_hint(target, diameter_px),
             last_heatmap: None,
             last_heatmap_size: [0, 0],
         })
@@ -259,14 +272,11 @@ impl RinggridDetector {
 
     /// Create a detector with full config control.
     /// `config_json` must be a complete config snapshot (as returned by `config_json()`).
-    pub fn with_config(
-        board_json: &str,
-        config_json: &str,
-    ) -> Result<RinggridDetector, JsValue> {
-        let board = parse_board(board_json)?;
+    pub fn with_config(board_json: &str, config_json: &str) -> Result<RinggridDetector, JsValue> {
+        let target = parse_target(board_json)?;
         let config_value: serde_json::Value =
             serde_json::from_str(config_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let config = config_from_json(board, &config_value)?;
+        let config = config_from_json(target, &config_value)?;
         Ok(Self {
             detector: ringgrid::Detector::with_config(config),
             last_heatmap: None,
@@ -293,7 +303,7 @@ impl RinggridDetector {
     pub fn detect(&self, pixels: &[u8], width: u32, height: u32) -> Result<String, JsValue> {
         validate_dimensions(width, height)?;
         let gray = validate_gray(pixels, width, height)?;
-        let result = self.detector.detect(&gray);
+        let result = self.detector.detect(&gray).map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -311,7 +321,10 @@ impl RinggridDetector {
     ) -> Result<String, JsValue> {
         validate_dimensions(width, height)?;
         let gray = validate_gray(pixels, width, height)?;
-        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        let (result, diagnostics) = self
+            .detector
+            .detect_with_diagnostics(&gray)
+            .map_err(detect_err)?;
         to_json(&DetectionWithDiagnostics {
             result,
             diagnostics,
@@ -329,7 +342,10 @@ impl RinggridDetector {
         validate_dimensions(width, height)?;
         validate_rgba(pixels, width, height)?;
         let gray = rgba_to_gray(pixels, width, height);
-        let (result, diagnostics) = self.detector.detect_with_diagnostics(&gray);
+        let (result, diagnostics) = self
+            .detector
+            .detect_with_diagnostics(&gray)
+            .map_err(detect_err)?;
         to_json(&DetectionWithDiagnostics {
             result,
             diagnostics,
@@ -345,7 +361,7 @@ impl RinggridDetector {
     ) -> Result<String, JsValue> {
         validate_dimensions(width, height)?;
         let gray = validate_gray(pixels, width, height)?;
-        let result = self.detector.detect_adaptive(&gray);
+        let result = self.detector.detect_adaptive(&gray).map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -362,7 +378,8 @@ impl RinggridDetector {
         let gray = validate_gray(pixels, width, height)?;
         let result = self
             .detector
-            .detect_adaptive_with_hint(&gray, Some(nominal_diameter_px));
+            .detect_adaptive_with_hint(&gray, Some(nominal_diameter_px))
+            .map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -379,7 +396,10 @@ impl RinggridDetector {
         validate_dimensions(width, height)?;
         let gray = validate_gray(pixels, width, height)?;
         let tiers = parse_scale_tiers(tiers_json)?;
-        let result = self.detector.detect_multiscale(&gray, &tiers);
+        let result = self
+            .detector
+            .detect_multiscale(&gray, &tiers)
+            .map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -391,7 +411,7 @@ impl RinggridDetector {
         validate_dimensions(width, height)?;
         validate_rgba(pixels, width, height)?;
         let gray = rgba_to_gray(pixels, width, height);
-        let result = self.detector.detect(&gray);
+        let result = self.detector.detect(&gray).map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -405,7 +425,7 @@ impl RinggridDetector {
         validate_dimensions(width, height)?;
         validate_rgba(pixels, width, height)?;
         let gray = rgba_to_gray(pixels, width, height);
-        let result = self.detector.detect_adaptive(&gray);
+        let result = self.detector.detect_adaptive(&gray).map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -423,7 +443,8 @@ impl RinggridDetector {
         let gray = rgba_to_gray(pixels, width, height);
         let result = self
             .detector
-            .detect_adaptive_with_hint(&gray, Some(nominal_diameter_px));
+            .detect_adaptive_with_hint(&gray, Some(nominal_diameter_px))
+            .map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -440,7 +461,10 @@ impl RinggridDetector {
         validate_rgba(pixels, width, height)?;
         let gray = rgba_to_gray(pixels, width, height);
         let tiers = parse_scale_tiers(tiers_json)?;
-        let result = self.detector.detect_multiscale(&gray, &tiers);
+        let result = self
+            .detector
+            .detect_multiscale(&gray, &tiers)
+            .map_err(detect_err)?;
         to_json(&result)
     }
 
@@ -522,11 +546,11 @@ pub fn default_board_json() -> String {
     ringgrid::BoardLayout::default().to_json_string()
 }
 
-/// Default detection config for a given board layout, as a JSON string.
+/// Default detection config for a given target layout, as a JSON string.
 #[wasm_bindgen]
 pub fn default_config_json(board_json: &str) -> Result<String, JsValue> {
-    let board = parse_board(board_json)?;
-    let config = ringgrid::DetectConfig::from_target(board);
+    let target = parse_target(board_json)?;
+    let config = ringgrid::DetectConfig::from_target(target);
     to_json(&config)
 }
 
@@ -671,16 +695,22 @@ mod tests {
     // ── Group 3: Board parsing ─────────────────────────────────────
 
     #[test]
-    fn parse_board_valid_json() {
+    fn parse_target_valid_json() {
         let json = default_board_json();
-        assert!(parse_board(&json).is_ok());
+        assert!(parse_target(&json).is_ok());
     }
 
     #[test]
-    fn parse_board_invalid_json() {
-        // parse_board returns JsValue on error, which aborts in native tests.
-        // Test the underlying BoardLayout parsing instead.
-        assert!(ringgrid::BoardLayout::from_json_str("not json").is_err());
+    fn parse_target_invalid_json() {
+        // parse_target returns JsValue on error, which aborts in native tests.
+        // Test the underlying TargetLayout parsing instead.
+        assert!(ringgrid::TargetLayout::from_json_str("not json").is_err());
+    }
+
+    #[test]
+    fn parse_target_accepts_v5_json() {
+        let v5 = ringgrid::TargetLayout::default_hex().to_json_string();
+        assert!(parse_target(&v5).is_ok());
     }
 
     #[test]
@@ -699,13 +729,13 @@ mod tests {
     fn detect_parity_grayscale() {
         let img = load_fixture_image();
         let board_json = load_fixture_board_json();
-        let board = parse_board(&board_json).unwrap();
+        let target = parse_target(&board_json).unwrap();
         let (w, h) = (img.width(), img.height());
         let pixels = img.as_raw();
 
         // Native detection
-        let native_detector = ringgrid::Detector::new(board);
-        let native_result = native_detector.detect(&img);
+        let native_detector = ringgrid::Detector::new(target);
+        let native_result = native_detector.detect(&img).unwrap();
 
         // WASM wrapper detection (returns JSON)
         let wasm_det = RinggridDetector::new(&board_json).unwrap();
@@ -755,12 +785,12 @@ mod tests {
     fn detect_adaptive_parity() {
         let img = load_fixture_image();
         let board_json = load_fixture_board_json();
-        let board = parse_board(&board_json).unwrap();
+        let target = parse_target(&board_json).unwrap();
         let (w, h) = (img.width(), img.height());
         let pixels = img.as_raw();
 
-        let native_detector = ringgrid::Detector::new(board);
-        let native_result = native_detector.detect_adaptive(&img);
+        let native_detector = ringgrid::Detector::new(target);
+        let native_result = native_detector.detect_adaptive(&img).unwrap();
 
         let wasm_det = RinggridDetector::new(&board_json).unwrap();
         let json_str = wasm_det.detect_adaptive(pixels, w, h).unwrap();
@@ -801,12 +831,12 @@ mod tests {
     fn propose_with_heatmap_parity() {
         let img = load_fixture_image();
         let board_json = load_fixture_board_json();
-        let board = parse_board(&board_json).unwrap();
+        let target = parse_target(&board_json).unwrap();
         let (w, h) = (img.width(), img.height());
         let pixels = img.as_raw();
 
         // Native
-        let native_detector = ringgrid::Detector::new(board);
+        let native_detector = ringgrid::Detector::new(target);
         let native_result = native_detector.propose_with_heatmap(&img);
 
         // WASM wrapper
@@ -990,7 +1020,10 @@ mod tests {
 
         let cfg: serde_json::Value = serde_json::from_str(&det.config_json().unwrap()).unwrap();
         assert_eq!(cfg["advanced"]["completion"]["enable"], false);
-        assert_eq!(cfg["advanced"]["completion"]["require_perfect_decode"], true);
+        assert_eq!(
+            cfg["advanced"]["completion"]["require_perfect_decode"],
+            true
+        );
         assert_eq!(
             cfg["advanced"]["completion"]["max_attempts"].as_u64(),
             Some(17)
@@ -1013,7 +1046,7 @@ mod tests {
     fn detect_multiscale_parity() {
         let img = load_fixture_image();
         let board_json = load_fixture_board_json();
-        let board = parse_board(&board_json).unwrap();
+        let target = parse_target(&board_json).unwrap();
         let (w, h) = (img.width(), img.height());
         let pixels = img.as_raw();
 
@@ -1021,12 +1054,14 @@ mod tests {
         let tiers_json = scale_tiers_two_tier_standard_json();
 
         // Native
-        let native_detector = ringgrid::Detector::new(board);
-        let native_result = native_detector.detect_multiscale(&img, &tiers);
+        let native_detector = ringgrid::Detector::new(target);
+        let native_result = native_detector.detect_multiscale(&img, &tiers).unwrap();
 
         // WASM wrapper
         let wasm_det = RinggridDetector::new(&board_json).unwrap();
-        let json_str = wasm_det.detect_multiscale(pixels, w, h, &tiers_json).unwrap();
+        let json_str = wasm_det
+            .detect_multiscale(pixels, w, h, &tiers_json)
+            .unwrap();
         let wasm_result: ringgrid::DetectionResult = serde_json::from_str(&json_str).unwrap();
 
         assert_eq!(
@@ -1056,12 +1091,14 @@ mod tests {
     fn detect_adaptive_with_hint_parity() {
         let img = load_fixture_image();
         let board_json = load_fixture_board_json();
-        let board = parse_board(&board_json).unwrap();
+        let target = parse_target(&board_json).unwrap();
         let (w, h) = (img.width(), img.height());
         let pixels = img.as_raw();
 
-        let native_detector = ringgrid::Detector::new(board);
-        let native_result = native_detector.detect_adaptive_with_hint(&img, Some(30.0));
+        let native_detector = ringgrid::Detector::new(target);
+        let native_result = native_detector
+            .detect_adaptive_with_hint(&img, Some(30.0))
+            .unwrap();
 
         let wasm_det = RinggridDetector::new(&board_json).unwrap();
         let json_str = wasm_det

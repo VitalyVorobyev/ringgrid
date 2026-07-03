@@ -81,7 +81,9 @@ fn bench_detect_fixture(c: &mut Criterion) {
 
     c.bench_function("detect_target_3_split_00", |b| {
         b.iter(|| {
-            let result = detector.detect(black_box(&image));
+            let result = detector
+                .detect(black_box(&image))
+                .expect("supported target");
             black_box(result.detected_markers.len())
         })
     });

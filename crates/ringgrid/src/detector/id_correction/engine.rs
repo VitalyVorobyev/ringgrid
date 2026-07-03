@@ -1,7 +1,7 @@
-use crate::board_layout::BoardLayout;
 use crate::detector::config::IdCorrectionConfig;
 use crate::detector::marker_build::MarkerRecord;
 use crate::marker::codec::{Codebook, CodebookProfile};
+use crate::target::TargetLayout;
 
 use super::bootstrap::bootstrap_trust_anchors;
 use super::cleanup::{cleanup_unverified_markers, finalize_correction_stats};
@@ -17,12 +17,12 @@ use super::workspace::IdCorrectionWorkspace;
 /// Mutates `markers` in-place. Returns statistics about the corrections made.
 pub(crate) fn verify_and_correct_ids(
     markers: &mut Vec<MarkerRecord>,
-    board: &BoardLayout,
+    target: &TargetLayout,
     config: &IdCorrectionConfig,
     codebook_profile: CodebookProfile,
 ) -> IdCorrectionStats {
     let codebook_min_cyclic_dist = Codebook::from_profile(codebook_profile).min_cyclic_dist();
-    let mut ws = IdCorrectionWorkspace::new(markers, board, config, codebook_min_cyclic_dist);
+    let mut ws = IdCorrectionWorkspace::new(markers, target, config, codebook_min_cyclic_dist);
     if !config.enable || ws.markers.is_empty() {
         return ws.stats;
     }
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn workspace_constructs_parallel_state_vectors() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let mut markers = vec![
             marker_no_id([10.0, 20.0], 0.3),
             marker_no_id([30.0, 40.0], 0.4),
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn verify_skips_when_no_seed_anchors() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let mut markers = vec![
             marker_no_id([10.0, 20.0], 0.2),
             marker_no_id([30.0, 40.0], 0.2),
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn pre_scrub_then_local_recovery_pipeline_path() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let (&center_id, neighbors) = board_index
             .board_neighbors
@@ -221,7 +221,7 @@ mod tests {
         // cannot promote it (1 neighbor ⇒ no affine, no adjacent pair ⇒ no
         // votes), so without confirm-by-consistency cleanup drops it despite the
         // ID being correct. With the promotion path it survives.
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let (&center_id, neighbors) = board_index
             .board_neighbors
@@ -316,7 +316,7 @@ mod tests {
         // other as a decoded board-neighbor, but neither is trusted, so
         // confirm-by-consistency must leave them unconfirmed (and cleanup clears
         // them) rather than locking in a possibly-false ID chain.
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let (&center_id, neighbors) = board_index
             .board_neighbors
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn deterministic_assignments_and_stats() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let (&center_id, neighbors) = board_index
             .board_neighbors

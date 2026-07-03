@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use nalgebra::Matrix3;
 
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
+use crate::target::TargetLayout;
 
 use super::core::homography_reprojection_error;
 
@@ -84,14 +84,14 @@ struct CandidateEntry {
 fn marker_candidate<F>(
     marker_index: usize,
     marker: &MarkerRecord,
-    board: &BoardLayout,
+    target: &TargetLayout,
     map_dst_point: &mut F,
 ) -> Option<(usize, CandidateEntry)>
 where
     F: FnMut(&MarkerRecord) -> Option<[f64; 2]>,
 {
     let id = marker.id?;
-    let board_xy = board.xy_mm(id)?;
+    let board_xy = target.xy_mm_of_id(id)?;
     let dst_point = map_dst_point(marker)?;
     Some((
         id,
@@ -110,7 +110,7 @@ where
 /// `dst_frame` and populated via `map_dst_point`.
 pub(crate) fn collect_marker_correspondences<F>(
     markers: &[MarkerRecord],
-    board: &BoardLayout,
+    target: &TargetLayout,
     dst_frame: CorrespondenceDestinationFrame,
     duplicate_policy: DuplicateIdPolicy,
     mut map_dst_point: F,
@@ -123,7 +123,7 @@ where
         DuplicateIdPolicy::KeepAll => {
             for (marker_index, marker) in markers.iter().enumerate() {
                 let Some((id, candidate)) =
-                    marker_candidate(marker_index, marker, board, &mut map_dst_point)
+                    marker_candidate(marker_index, marker, target, &mut map_dst_point)
                 else {
                     continue;
                 };
@@ -139,7 +139,7 @@ where
             let mut by_id: BTreeMap<usize, CandidateEntry> = BTreeMap::new();
             for (marker_index, marker) in markers.iter().enumerate() {
                 let Some((id, candidate)) =
-                    marker_candidate(marker_index, marker, board, &mut map_dst_point)
+                    marker_candidate(marker_index, marker, target, &mut map_dst_point)
                 else {
                     continue;
                 };
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn collect_keep_all_skips_missing_id_out_of_board_and_invalid_centers_when_mapper_drops_them() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let markers = vec![
             marker(None, 0.9, [1.0, 1.0]),
             marker(Some(0), 0.5, [10.0, 20.0]),
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn collect_keep_highest_confidence_per_id_is_deterministic_and_tie_stable() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let markers = vec![
             marker(Some(2), 0.40, [100.0, 200.0]),
             marker(Some(1), 0.80, [11.0, 21.0]),
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn collect_with_mapper_closure_can_drop_points() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let markers = vec![
             marker(Some(0), 0.2, [3.0, 4.0]),
             marker(Some(1), 0.2, [5.0, 6.0]),

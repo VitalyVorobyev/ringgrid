@@ -1,7 +1,7 @@
 //! Higher-level homography utilities: refitting, statistics, format conversion.
 
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
+use crate::target::TargetLayout;
 
 use crate::conic::RansacConfig;
 
@@ -14,11 +14,11 @@ use super::{
 pub(crate) fn refit_homography(
     markers: &[MarkerRecord],
     config: &RansacConfig,
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) -> Option<(nalgebra::Matrix3<f64>, RansacStats)> {
     let correspondences = collect_marker_correspondences(
         markers,
-        board,
+        target,
         CorrespondenceDestinationFrame::Image,
         DuplicateIdPolicy::KeepAll,
         |m| Some(m.center),
@@ -74,11 +74,11 @@ pub(crate) fn matrix3_to_array(m: &nalgebra::Matrix3<f64>) -> [[f64; 3]; 3] {
 pub(crate) fn mean_reproj_error_px(
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) -> f64 {
     let correspondences = collect_marker_correspondences(
         markers,
-        board,
+        target,
         CorrespondenceDestinationFrame::Image,
         DuplicateIdPolicy::KeepAll,
         |m| Some(m.center),
@@ -106,11 +106,11 @@ pub(crate) fn compute_h_stats(
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
     thresh_px: f64,
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) -> Option<RansacStats> {
     let correspondences = collect_marker_correspondences(
         markers,
-        board,
+        target,
         CorrespondenceDestinationFrame::Image,
         DuplicateIdPolicy::KeepAll,
         |m| Some(m.center),

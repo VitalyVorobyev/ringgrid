@@ -156,7 +156,7 @@ fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
 fn local_affine_completion_seed(
     target_board_xy: [f64; 2],
     markers: &[MarkerRecord],
-    board: &crate::board_layout::BoardLayout,
+    target: &crate::target::TargetLayout,
 ) -> Option<[f64; 2]> {
     const MAX_NEIGHBORS: usize = 4;
 
@@ -164,7 +164,7 @@ fn local_affine_completion_seed(
         .iter()
         .filter_map(|marker| {
             let id = marker.id?;
-            let board_xy = board.xy_mm(id)?;
+            let board_xy = target.xy_mm_of_id(id)?;
             let center = marker.center;
             if !(center[0].is_finite() && center[1].is_finite()) {
                 return None;
@@ -193,12 +193,10 @@ fn local_affine_completion_seed(
 fn hex_neighbor_seed(
     id: usize,
     hex_grid: &HashMap<Coord, Point2<f32>>,
-    board: &crate::board_layout::BoardLayout,
+    target: &crate::target::TargetLayout,
 ) -> Option<[f64; 2]> {
-    let bm = board.marker(id)?;
-    let q = bm.q? as i32;
-    let r = bm.r? as i32;
-    let predicted = predict_grid_position(hex_grid, Coord::new(q, r), LatticeKind::Hex)?.position;
+    let coord = target.coord_of_id(id)?;
+    let predicted = predict_grid_position(hex_grid, coord, LatticeKind::Hex)?.position;
     Some([f64::from(predicted.x), f64::from(predicted.y)])
 }
 
@@ -206,13 +204,13 @@ fn projected_completion_seed(
     id: usize,
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
-    board: &crate::board_layout::BoardLayout,
+    target: &crate::target::TargetLayout,
     hex_grid: &HashMap<Coord, Point2<f32>>,
 ) -> Option<[f64; 2]> {
-    let board_xy = board.xy_mm(id)?;
+    let board_xy = target.xy_mm_of_id(id)?;
     let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];
-    hex_neighbor_seed(id, hex_grid, board)
-        .or_else(|| local_affine_completion_seed(target_board_xy, markers, board))
+    hex_neighbor_seed(id, hex_grid, target)
+        .or_else(|| local_affine_completion_seed(target_board_xy, markers, target))
         .or_else(|| Some(project(h, target_board_xy[0], target_board_xy[1])))
 }
 
@@ -521,7 +519,7 @@ pub(crate) fn complete_with_h(
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
-    board: &crate::board_layout::BoardLayout,
+    target: &crate::target::TargetLayout,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
 ) -> CompletionStats {
     use std::collections::HashSet;
@@ -540,16 +538,16 @@ pub(crate) fn complete_with_h(
 
     let present_ids: HashSet<usize> = markers.iter().filter_map(|m| m.id).collect();
 
-    let hex_grid = crate::pipeline::build_hex_grid_map(markers, board);
+    let hex_grid = crate::pipeline::build_hex_grid_map(markers, target);
 
     let mut stats = CompletionStats {
-        n_candidates_total: board.n_markers(),
+        n_candidates_total: target.n_cells(),
         ..Default::default()
     };
     let mut attempted_fits = 0usize;
 
-    for id in board.marker_ids() {
-        let projected_center = match projected_completion_seed(id, h, markers, board, &hex_grid) {
+    for id in target.marker_ids() {
+        let projected_center = match projected_completion_seed(id, h, markers, target, &hex_grid) {
             Some(center) => center,
             None => continue,
         };
@@ -658,21 +656,21 @@ mod tests {
 
     #[test]
     fn local_affine_completion_seed_uses_nearest_decoded_neighbors() {
-        let board = crate::BoardLayout::default();
+        let board = crate::TargetLayout::default_hex();
         let target_id = 16usize;
         let neighbor_ids = [0usize, 1usize, 14usize, 15usize];
         let affine = [[2.0, 0.1, 5.0], [-0.2, 1.5, 7.0]];
         let markers: Vec<MarkerRecord> = neighbor_ids
             .iter()
             .map(|&id| {
-                let board_xy = board.xy_mm(id).expect("board xy");
+                let board_xy = board.xy_mm_of_id(id).expect("board xy");
                 let center =
                     affine_to_image(&affine, [f64::from(board_xy[0]), f64::from(board_xy[1])]);
                 marker_with_id(id, center)
             })
             .collect();
 
-        let target_board_xy = board.xy_mm(target_id).expect("target board xy");
+        let target_board_xy = board.xy_mm_of_id(target_id).expect("target board xy");
         let seed = local_affine_completion_seed(
             [f64::from(target_board_xy[0]), f64::from(target_board_xy[1])],
             &markers,
@@ -689,14 +687,14 @@ mod tests {
 
     #[test]
     fn projected_completion_seed_falls_back_to_h_with_fewer_than_three_neighbors() {
-        let board = crate::BoardLayout::default();
+        let board = crate::TargetLayout::default_hex();
         let target_id = 16usize;
         let markers = vec![
             marker_with_id(0, [11.0, 7.0]),
             marker_with_id(1, [19.0, 7.5]),
         ];
         let h = nalgebra::Matrix3::new(1.0, 0.0, 3.0, 0.0, 1.0, -4.0, 0.0, 0.0, 1.0);
-        let target_board_xy = board.xy_mm(target_id).expect("target board xy");
+        let target_board_xy = board.xy_mm_of_id(target_id).expect("target board xy");
         let hex_grid = crate::pipeline::build_hex_grid_map(&markers, &board);
         let seed =
             projected_completion_seed(target_id, &h, &markers, &board, &hex_grid).expect("seed");

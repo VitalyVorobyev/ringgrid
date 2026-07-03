@@ -270,13 +270,13 @@ pub(super) fn resolve_id_conflicts(markers: &mut [MarkerRecord]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board_layout::BoardLayout;
     use crate::conic::Ellipse;
     use crate::detector::id_correction::index::BoardIndex;
+    use crate::target::TargetLayout;
 
     #[test]
     fn vote_tie_break_is_deterministic() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let id0 = 0usize;
         let id1 = 1usize;
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn vote_reports_no_votes_without_affine_or_local_ratio() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let neighbors = vec![NeighborInfo {
             id: 0,
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn local_scale_neighbor_gate_uses_pairwise_radii() {
-        let board = BoardLayout::default();
+        let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let markers = vec![
             MarkerRecord {

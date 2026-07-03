@@ -22,14 +22,14 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use ringgrid::{BoardLayout, Detector};
+//! use ringgrid::{Detector, TargetLayout};
 //! use std::path::Path;
 //!
-//! let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+//! let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 //! let image = image::open("photo.png").unwrap().to_luma8();
 //!
-//! let detector = Detector::new(board);
-//! let result = detector.detect(&image);
+//! let detector = Detector::new(target);
+//! let result = detector.detect(&image).unwrap();
 //!
 //! for marker in &result.detected_markers {
 //!     if let Some(id) = marker.id {
@@ -63,6 +63,7 @@ mod pipeline;
 mod pixelmap;
 mod proposal;
 mod ring;
+mod target;
 mod target_generation;
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -70,7 +71,9 @@ pub(crate) mod test_utils;
 // ── Public API ──────────────────────────────────────────────────────────
 
 // High-level detector facade and proposal-only convenience helpers
-pub use api::{Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale};
+pub use api::{
+    DetectError, Detector, propose_with_heatmap_and_marker_scale, propose_with_marker_scale,
+};
 
 // Proposal module (standalone ellipse center detection)
 pub use proposal::{Proposal, ProposalConfig, ProposalResult};
@@ -104,7 +107,12 @@ pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 // Codebook diagnostics (inspection helpers for the embedded codebook profiles)
 pub use marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 
-// Geometry
+// Geometry — compositional target model (primary) and the legacy hex facade.
+pub use target::{
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
+    RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
+};
+
 pub use board_layout::{
     BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
 };

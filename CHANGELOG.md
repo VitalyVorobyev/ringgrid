@@ -9,7 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compositional target model** (`TargetLayout`, new `target` module): a
+  printed target is now lattice (`hex` | `rect`) × ring geometry × coding
+  (`coded16` | `plain`) × optional origin fiducials. Presets:
+  `TargetLayout::default_hex()` (the classic board) and
+  `TargetLayout::isra_rect_24x24()` (24×24 rect lattice of plain rings at
+  14 mm pitch with three Ø2.8 mm origin dots). Fiducial validation enforces
+  dot/ring clearance and requires the dot pattern to break every rotational
+  symmetry of the lattice (rotations only — an opaque planar target always
+  images through an orientation-preserving homography, so reflections cannot
+  cause ambiguity).
+- **Target JSON schema v5** (`ringgrid.target.v5`): compositional
+  lattice/marker/coding/fiducials shape. Loaders (`TargetLayout::from_json_*`,
+  CLI `--target`, Python/WASM detector construction) accept v5 and
+  auto-migrate legacy v4; writers emit v5.
+- **Rect target generation**: SVG/PNG rendering dispatches on coding
+  (stroked rings + 16-sector code band vs. filled annulus) and draws origin
+  fiducial dots. CLI `gen-target` becomes a subcommand family:
+  `hex` (classic flags), `rect` (`--rows --cols --pitch_mm ...` with optional
+  `--dot_mm x,y` / `--dot_radius_mm`), `preset` (`isra24x24`, `default-hex`),
+  and `from-spec` (render any target JSON). Output spec file is
+  `target_spec.json` (v5).
+- `DetectError` — `Detector::detect*` now return
+  `Result<DetectionResult, DetectError>`. The transitional
+  `DetectError::UnsupportedTarget` gates target combinations the pipeline
+  cannot detect yet (everything except hex + coded16); rect/plain detection
+  lands next release milestone.
+
 ### Changed
+
+- **`DetectConfig.board` → `DetectConfig.target: TargetLayout`** (breaking);
+  `with_board` → `with_target`. `DetectConfig::from_target*` and `Detector`
+  constructors now take `impl Into<TargetLayout>`, so existing `BoardLayout`
+  callers keep compiling via `From<BoardLayout> for TargetLayout`.
+- `BoardLayout` is now a thin facade over the target module: validation and
+  hex cell generation have exactly one implementation, and the facade's
+  geometry is bit-identical to `TargetLayout::default_hex()` (locked by a
+  parity test). `BoardLayoutValidationError` / `BoardLayoutLoadError` are
+  aliases of `TargetValidationError` / `TargetLoadError`.
+- Free proposal helpers (`propose_with_marker_scale`,
+  `propose_with_heatmap_and_marker_scale`) take `&TargetLayout`.
+
+### Fixed
+
+- Target rendering drew each marker's codeword from its **cell index** instead
+  of its assigned marker ID, so boards with a non-sequential `id_assignment`
+  printed wrong codes. SVG/PNG generation now uses the assigned ID
+  (regression-tested); sequential boards are unaffected.
+- Coded-target validation now rejects boards with more cells than the
+  embedded codebook (893) and `id_assignment` entries beyond it — both
+  previously wrapped or decoded to unreachable IDs silently.
 
 - **Dependency migration: `projective-grid` 0.9 → 0.10.1.** The 0.10 release
   rewrote projective-grid's public API; ringgrid's three call sites migrate

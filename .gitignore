@@ -1,4 +1,5 @@
 /target
+crates/*/target/
 book/book/
 .venv/
 tools/out/
@@ -14,6 +15,5 @@ py
 lib_ringgrid.dylib.dSYM
 uv.lock
 crates/ringgrid-wasm/pkg/
-target
 API_REVISION.md
 docs/rectring.pdf

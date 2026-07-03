@@ -12,25 +12,20 @@ use nalgebra::{Matrix3, Point2};
 use projective_grid::{Coord, LatticeKind, predict_grid_position};
 
 use super::stats::median_f64;
-use crate::board_layout::BoardLayout;
 use crate::detector::MarkerRecord;
+use crate::target::TargetLayout;
 
 /// Build a hex grid map from decoded markers, mapping `(q, r)` → center.
 pub(crate) fn build_hex_grid_map(
     markers: &[MarkerRecord],
-    board: &BoardLayout,
+    target: &TargetLayout,
 ) -> HashMap<Coord, Point2<f32>> {
     markers
         .iter()
         .filter_map(|m| {
             let id = m.id?;
-            let bm = board.marker(id)?;
-            let q = bm.q? as i32;
-            let r = bm.r? as i32;
-            Some((
-                Coord::new(q, r),
-                Point2::new(m.center[0] as f32, m.center[1] as f32),
-            ))
+            let coord = target.coord_of_id(id)?;
+            Some((coord, Point2::new(m.center[0] as f32, m.center[1] as f32)))
         })
         .collect()
 }
@@ -148,13 +143,13 @@ pub(super) fn annotate_h_reproj_err_px(
 pub(super) fn geometric_verify_filter(
     markers: &mut Vec<MarkerRecord>,
     final_h: Option<&Matrix3<f64>>,
-    board: &BoardLayout,
+    target: &TargetLayout,
     ransac_inlier_threshold_px: f64,
 ) -> GeometricVerifyStats {
     let n_decoded_checked = markers.iter().filter(|m| m.id.is_some()).count();
 
     // --- Local hex-midpoint test (H-free) ---
-    let grid = build_hex_grid_map(markers, board);
+    let grid = build_hex_grid_map(markers, target);
     let local_by_coord: Vec<(Coord, f64)> = grid
         .iter()
         .filter_map(|(&idx, &pos)| {
@@ -203,14 +198,10 @@ pub(super) fn geometric_verify_filter(
     let mut n_removed_global = 0usize;
     markers.retain(|m| {
         let Some(id) = m.id else { return true };
-        let Some(bm) = board.marker(id) else {
+        let Some(coord) = target.coord_of_id(id) else {
             return true;
         };
-        let local_bad = matches!(
-            (bm.q, bm.r),
-            (Some(q), Some(r))
-                if flagged_coords.contains(&Coord::new(q as i32, r as i32))
-        );
+        let local_bad = flagged_coords.contains(&coord);
         let global_bad = flagged_global_ids.contains(&id);
         if local_bad {
             n_removed_local += 1;
@@ -260,23 +251,18 @@ mod tests {
         [pw / pz, ph / pz]
     }
 
-    fn board() -> BoardLayout {
-        DetectConfig::default().board
+    fn board() -> TargetLayout {
+        DetectConfig::default().target
     }
 
-    fn lattice_ids(board: &BoardLayout) -> Vec<usize> {
+    fn lattice_ids(board: &TargetLayout) -> Vec<usize> {
         (0..=board.max_marker_id())
-            .filter(|&id| {
-                board
-                    .marker(id)
-                    .is_some_and(|bm| bm.q.is_some() && bm.r.is_some())
-                    && board.xy_mm(id).is_some()
-            })
+            .filter(|&id| board.coord_of_id(id).is_some() && board.xy_mm_of_id(id).is_some())
             .collect()
     }
 
-    fn marker_at(board: &BoardLayout, id: usize, center: [f64; 2]) -> MarkerRecord {
-        let xy = board.xy_mm(id).expect("board xy");
+    fn marker_at(board: &TargetLayout, id: usize, center: [f64; 2]) -> MarkerRecord {
+        let xy = board.xy_mm_of_id(id).expect("board xy");
         MarkerRecord {
             id: Some(id),
             confidence: 1.0,
@@ -287,11 +273,11 @@ mod tests {
     }
 
     /// Full clean lattice mapped through `h` (true markers, zero residual).
-    fn clean_lattice(board: &BoardLayout, h: &Matrix3<f64>) -> Vec<MarkerRecord> {
+    fn clean_lattice(board: &TargetLayout, h: &Matrix3<f64>) -> Vec<MarkerRecord> {
         lattice_ids(board)
             .into_iter()
             .map(|id| {
-                let xy = board.xy_mm(id).unwrap();
+                let xy = board.xy_mm_of_id(id).unwrap();
                 let center = project(h, [xy[0] as f64, xy[1] as f64]);
                 marker_at(board, id, center)
             })
@@ -308,7 +294,7 @@ mod tests {
 
     /// Board id whose center is nearest the lattice centroid — deep interior, so
     /// all six hex neighbors exist with complete opposite pairs.
-    fn most_interior_id(board: &BoardLayout, h: &Matrix3<f64>) -> usize {
+    fn most_interior_id(board: &TargetLayout, h: &Matrix3<f64>) -> usize {
         let markers = clean_lattice(board, h);
         let c = centroid(&markers);
         markers
@@ -386,9 +372,9 @@ mod tests {
         let far = *lattice_ids(&board)
             .iter()
             .max_by(|&&a, &&b| {
-                let bt = board.xy_mm(target).unwrap();
-                let ba = board.xy_mm(a).unwrap();
-                let bb = board.xy_mm(b).unwrap();
+                let bt = board.xy_mm_of_id(target).unwrap();
+                let ba = board.xy_mm_of_id(a).unwrap();
+                let bb = board.xy_mm_of_id(b).unwrap();
                 let da = (ba[0] - bt[0]).powi(2) + (ba[1] - bt[1]).powi(2);
                 let db = (bb[0] - bt[0]).powi(2) + (bb[1] - bt[1]).powi(2);
                 da.total_cmp(&db)
@@ -434,8 +420,8 @@ mod tests {
         let h = affine_h(5.0, 100.0, 100.0);
         let ids = lattice_ids(&board);
         let (a, b) = (ids[0], ids[1]);
-        let bxy_a = board.xy_mm(a).unwrap();
-        let bxy_b = board.xy_mm(b).unwrap();
+        let bxy_a = board.xy_mm_of_id(a).unwrap();
+        let bxy_b = board.xy_mm_of_id(b).unwrap();
         let bad = marker_at(&board, a, {
             let p = project(&h, [bxy_a[0] as f64, bxy_a[1] as f64]);
             [p[0] + 20.0, p[1]] // 20px ≫ 10px global floor

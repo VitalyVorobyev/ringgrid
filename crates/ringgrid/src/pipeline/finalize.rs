@@ -8,8 +8,8 @@ use super::geometric_verify::{
 };
 use super::{
     CompletionStats, DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
-    complete_with_h, compute_h_stats, global_filter, matrix3_to_array, mean_reproj_error_px,
-    refit_homography, try_recover_inner_as_outer, verify_and_correct_ids,
+    complete_plain_with_h, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
+    mean_reproj_error_px, refit_homography, try_recover_inner_as_outer, verify_and_correct_ids,
     warn_center_correction_without_intrinsics,
 };
 use crate::detector::MarkerRecord;
@@ -175,20 +175,29 @@ fn map_centers_to_image(markers: &mut [MarkerRecord], mapper: &dyn PixelMapper) 
 }
 
 fn sync_marker_board_correspondence(markers: &mut [MarkerRecord], target: &TargetLayout) -> usize {
+    // Plain targets are labeled by grid coordinate, not ID: their board/frame
+    // positions are owned by the assignment/anchor/completion stages and must
+    // not be cleared here.
+    if !target.is_coded() {
+        return 0;
+    }
     let mut cleared_invalid_ids = 0usize;
     for marker in markers.iter_mut() {
         match marker.id {
             Some(id) => {
                 if let Some(board_xy) = target.xy_mm_of_id(id) {
                     marker.board_xy_mm = Some([board_xy[0] as f64, board_xy[1] as f64]);
+                    marker.grid_coord = target.coord_of_id(id).map(|c| [c.u, c.v]);
                 } else {
                     marker.id = None;
                     marker.board_xy_mm = None;
+                    marker.grid_coord = None;
                     cleared_invalid_ids += 1;
                 }
             }
             None => {
                 marker.board_xy_mm = None;
+                marker.grid_coord = None;
             }
         }
     }
@@ -228,6 +237,18 @@ fn apply_post_filter_fixup(
         annotate_neighbor_radius_ratios(markers, k);
         tracing::info!(removed, "axis-ratio consistency filter removed markers");
     }
+}
+
+/// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies
+/// only to hex coded targets. Rect coded targets rely on the global filter +
+/// geometric verify instead, and plain targets carry no IDs at all.
+fn id_correction_applies(config: &DetectConfig) -> bool {
+    config.advanced.id_correction.enable
+        && config.target.is_coded()
+        && matches!(
+            config.target.lattice_kind(),
+            projective_grid::LatticeKind::Hex
+        )
 }
 
 fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
@@ -278,11 +299,16 @@ fn finalize_no_global_filter_result(
     apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
     let post_fixup_elapsed = post_fixup_start.elapsed();
 
+    let board_frame = corrected_markers
+        .iter()
+        .any(|m| m.id.is_some())
+        .then_some(crate::pipeline::BoardFrame::Absolute);
     let result = PipelineResult {
         markers: corrected_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
         image_size,
+        board_frame,
         ..PipelineResult::default()
     };
 
@@ -379,12 +405,17 @@ fn finalize_global_filter_result(
     apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
     let post_fixup_elapsed = post_fixup_start.elapsed();
 
+    let board_frame = final_markers
+        .iter()
+        .any(|m| m.id.is_some())
+        .then_some(crate::pipeline::BoardFrame::Absolute);
     let result = PipelineResult {
         markers: final_markers,
         center_frame: DetectionFrame::Image,
         homography_frame,
         image_size,
         homography: final_h,
+        board_frame,
         ransac: final_ransac,
         ..PipelineResult::default()
     };
@@ -409,6 +440,161 @@ fn finalize_global_filter_result(
     result
 }
 
+/// Plain-target finalize: grid assignment → origin anchor → completion →
+/// final H refit → geometric verify.
+///
+/// Mirrors [`finalize_global_filter_result`], with the decode-driven stages
+/// replaced by their coordinate-keyed counterparts: `assign_plain_grid` plays
+/// the global filter's role (label + keep homography inliers), and
+/// `resolve_origin` decides whether outputs are absolute board-frame or stay
+/// in the canonical relative frame (`board_xy_mm` cleared).
+fn finalize_plain_result(
+    gray: &GrayImage,
+    corrected_markers: Vec<MarkerRecord>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    homography_frame: DetectionFrame,
+    image_size: [u32; 2],
+) -> PipelineResult {
+    let total_start = Instant::now();
+    let markers_in = corrected_markers.len();
+    let mut final_markers = corrected_markers;
+
+    // Grid assignment: label centers with lattice coords, fit the frame H in
+    // f64, keep labeling/homography inliers only.
+    let assign_start = Instant::now();
+    let Some(assignment) = super::assign::assign_plain_grid(
+        &mut final_markers,
+        &config.target,
+        &config.advanced.ransac_homography,
+    ) else {
+        // No labeling ⇒ markers pass through unlabeled, like the coded path
+        // when too few markers decode for the global filter.
+        return finalize_no_global_filter_result(
+            gray,
+            final_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        );
+    };
+    let assign_elapsed = assign_start.elapsed();
+    let markers_after_assign = final_markers.len();
+    let mut h_current = assignment.h;
+    let mut ransac_stats = Some(assignment.ransac);
+
+    // Origin resolution: remap relative labels to absolute board cells when
+    // the fiducial dots verify at their predicted positions.
+    let anchor_start = Instant::now();
+    let resolution = super::anchor::resolve_origin(gray, &final_markers, &config.target, mapper);
+    let anchored = resolution.is_some();
+    if let Some(res) = resolution {
+        for m in final_markers.iter_mut() {
+            if let Some(c) = m.grid_coord {
+                let board = res.coord_map.apply(projective_grid::Coord::new(c[0], c[1]));
+                m.grid_coord = Some([board.u, board.v]);
+                m.board_xy_mm = config
+                    .target
+                    .cell_xy_mm(board)
+                    .map(|xy| [f64::from(xy[0]), f64::from(xy[1])]);
+            }
+        }
+        h_current = res.h;
+    }
+    let anchor_elapsed = anchor_start.elapsed();
+
+    // Completion at missing cells (full board when anchored, patch bbox when
+    // not), then projective centers for the newly added markers only.
+    let n_before_completion = final_markers.len();
+    let completion_start = Instant::now();
+    let completion_stats = complete_plain_with_h(
+        gray,
+        &h_current,
+        &mut final_markers,
+        config,
+        &config.target,
+        anchored,
+        mapper,
+    );
+    let completion_elapsed = completion_start.elapsed();
+    if config.circle_refinement.uses_projective_center()
+        && final_markers.len() > n_before_completion
+    {
+        apply_projective_centers(&mut final_markers[n_before_completion..], config);
+    }
+    drop_unmappable_markers_with_warning(&mut final_markers, mapper);
+
+    // Final H refit over all labeled markers (frame correspondences).
+    let final_h_start = Instant::now();
+    let (final_h_mat, final_ransac) =
+        phase_final_h(&final_markers, Some(h_current), ransac_stats.take(), config);
+    let final_h_elapsed = final_h_start.elapsed();
+
+    // Precision-first geometric verification in the working frame, over all
+    // labeled markers including completed ones.
+    let geom_start = Instant::now();
+    let geom_stats = phase_geometric_verify(&mut final_markers, final_h_mat.as_ref(), config);
+    let geom_elapsed = geom_start.elapsed();
+
+    let final_h = final_h_mat.as_ref().map(matrix3_to_array);
+
+    let map_to_image_start = Instant::now();
+    if let Some(mapper) = mapper {
+        map_centers_to_image(&mut final_markers, mapper);
+    }
+    let map_to_image_elapsed = map_to_image_start.elapsed();
+
+    let post_fixup_start = Instant::now();
+    apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
+    let post_fixup_elapsed = post_fixup_start.elapsed();
+
+    // Public contract: millimeter positions only in the absolute board frame —
+    // a wrong millimeter position is worse than none.
+    if !anchored {
+        for m in final_markers.iter_mut() {
+            m.board_xy_mm = None;
+        }
+    }
+
+    let board_frame = Some(if anchored {
+        crate::pipeline::BoardFrame::Absolute
+    } else {
+        crate::pipeline::BoardFrame::RelativeCanonical
+    });
+
+    let result = PipelineResult {
+        markers: final_markers,
+        center_frame: DetectionFrame::Image,
+        homography_frame,
+        image_size,
+        homography: final_h,
+        board_frame,
+        ransac: final_ransac,
+        ..PipelineResult::default()
+    };
+
+    tracing::info!(
+        markers_in,
+        markers_after_assign,
+        n_completed = completion_stats.n_added,
+        n_geom_removed = geom_stats.n_removed_total,
+        markers_out = result.markers.len(),
+        anchored,
+        assign_ms = duration_ms(assign_elapsed),
+        anchor_ms = duration_ms(anchor_elapsed),
+        completion_ms = duration_ms(completion_elapsed),
+        final_h_ms = duration_ms(final_h_elapsed),
+        geom_verify_ms = duration_ms(geom_elapsed),
+        map_to_image_ms = duration_ms(map_to_image_elapsed),
+        post_fixup_ms = duration_ms(post_fixup_elapsed),
+        total_ms = duration_ms(total_start.elapsed()),
+        "finalize(plain) timing summary"
+    );
+
+    result
+}
+
 /// Apply projective-center correction and ID correction to `fit_markers`.
 ///
 /// Returns the corrected marker list **without** running global filter,
@@ -427,7 +613,7 @@ pub(super) fn finalize_premerge(
         apply_projective_centers(&mut corrected_markers, config);
     }
 
-    if config.advanced.id_correction.enable {
+    if id_correction_applies(config) {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.target,
@@ -462,6 +648,17 @@ pub(super) fn finalize_postmerge(
 
     if !config.advanced.use_global_filter {
         return finalize_no_global_filter_result(
+            gray,
+            merged_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        );
+    }
+
+    if !config.target.is_coded() {
+        return finalize_plain_result(
             gray,
             merged_markers,
             config,
@@ -507,7 +704,7 @@ pub(super) fn run(
     let projective_center_elapsed = projective_center_start.elapsed();
 
     let id_correction_start = Instant::now();
-    if config.advanced.id_correction.enable {
+    if id_correction_applies(config) {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.target,
@@ -539,14 +736,25 @@ pub(super) fn run(
         );
         return result;
     }
-    let result = finalize_global_filter_result(
-        gray,
-        corrected_markers,
-        config,
-        mapper,
-        homography_frame,
-        image_size,
-    );
+    let result = if config.target.is_coded() {
+        finalize_global_filter_result(
+            gray,
+            corrected_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        )
+    } else {
+        finalize_plain_result(
+            gray,
+            corrected_markers,
+            config,
+            mapper,
+            homography_frame,
+            image_size,
+        )
+    };
     tracing::info!(
         markers_in,
         markers_out = result.markers.len(),

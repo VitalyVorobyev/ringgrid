@@ -6,6 +6,8 @@ pub(crate) mod utils;
 
 pub use core::{RansacHomographyResult, RansacStats, fit_homography_ransac, homography_project};
 
+pub(crate) use core::estimate_homography_dlt;
+
 pub(crate) use correspondence::{
     CorrespondenceDestinationFrame, DuplicateIdPolicy, collect_marker_correspondences,
     collect_masked_inlier_errors, mean_and_p95, mean_finite_masked_inlier_error,

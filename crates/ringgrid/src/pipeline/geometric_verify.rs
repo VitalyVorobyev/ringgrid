@@ -1,7 +1,7 @@
 //! Final precision-first geometric verification gate.
 //!
-//! After the final homography, each decoded marker is checked against the hex
-//! lattice — via its neighbor-midpoint prediction (locally affine, so
+//! After the final homography, each decoded marker is checked against the
+//! target lattice — via its neighbor-midpoint prediction (locally affine, so
 //! distortion-robust) and its final-H reprojection residual — and removed when
 //! geometrically inconsistent. Only trusted board correspondences reach the
 //! output, which is what sensor calibration needs. See [`geometric_verify_filter`].
@@ -9,22 +9,32 @@
 use std::collections::{HashMap, HashSet};
 
 use nalgebra::{Matrix3, Point2};
-use projective_grid::{Coord, LatticeKind, predict_grid_position};
+use projective_grid::{Coord, predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;
 use crate::target::TargetLayout;
 
-/// Build a hex grid map from decoded markers, mapping `(q, r)` → center.
-pub(crate) fn build_hex_grid_map(
+/// The lattice cell coordinate a marker is labeled with: the explicit grid
+/// label when present (plain targets; coded targets after board sync), else
+/// derived from the decoded ID. The single source of truth for cell-keyed
+/// stages (grid maps, completion seeds, geometric verify).
+pub(crate) fn marker_cell_coord(m: &MarkerRecord, target: &TargetLayout) -> Option<Coord> {
+    if let Some(c) = m.grid_coord {
+        return Some(Coord::new(c[0], c[1]));
+    }
+    m.id.and_then(|id| target.coord_of_id(id))
+}
+
+/// Build a lattice grid map from labeled markers, mapping cell coordinate → center.
+pub(crate) fn build_grid_map(
     markers: &[MarkerRecord],
     target: &TargetLayout,
 ) -> HashMap<Coord, Point2<f32>> {
     markers
         .iter()
         .filter_map(|m| {
-            let id = m.id?;
-            let coord = target.coord_of_id(id)?;
+            let coord = marker_cell_coord(m, target)?;
             Some((coord, Point2::new(m.center[0] as f32, m.center[1] as f32)))
         })
         .collect()
@@ -35,11 +45,11 @@ const MAD_TO_SIGMA: f64 = 1.4826;
 /// Minimum residual samples before the adaptive MAD term is trusted; below this
 /// the threshold falls back to its floor alone.
 const MIN_SAMPLES: usize = 8;
-/// Floor (px) for the local hex-midpoint residual threshold. An order of
+/// Floor (px) for the local lattice-midpoint residual threshold. An order of
 /// magnitude below the ~1-pitch residual of a mis-celled marker, several times
 /// the sub-pixel center-estimation noise of a true marker.
 const FLOOR_LOCAL_PX: f64 = 2.0;
-/// MAD multiplier (~4σ, one-sided) for the local hex-midpoint test.
+/// MAD multiplier (~4σ, one-sided) for the local lattice-midpoint test.
 const K_LOCAL: f64 = 4.0;
 /// Floor multiplier (× RANSAC inlier threshold) for the global final-H residual
 /// test. Default `2 × 5px = 10px` — a deliberately loose gross-blunder backstop.
@@ -53,7 +63,7 @@ const K_GLOBAL: f64 = 5.0;
 pub(super) struct GeometricVerifyStats {
     /// Number of decoded markers inspected by the gate.
     pub(super) n_decoded_checked: usize,
-    /// Markers flagged by the local hex-midpoint test (reason tally; may overlap
+    /// Markers flagged by the local lattice-midpoint test (reason tally; may overlap
     /// with `n_removed_global`).
     pub(super) n_removed_local: usize,
     /// Markers flagged by the global final-H residual test (reason tally).
@@ -85,14 +95,14 @@ fn adaptive_threshold(values: &[f64], floor: f64, k: f64) -> f64 {
     floor.max(median + k * MAD_TO_SIGMA * mad)
 }
 
-/// Populate [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) for every decoded
-/// marker as the working-frame distance between its center and its board position
-/// projected through `final_h`. The **sole writer** of that diagnostic.
+/// Populate [`FitMetrics::h_reproj_err_px`](crate::FitMetrics) for every labeled
+/// marker as the working-frame distance between its center and its board/frame
+/// position projected through `final_h`. The **sole writer** of that diagnostic.
 ///
 /// Runs whether or not the hard gate is enabled, so callers that opt out of
 /// rejection (`geometric_verify = false`) still receive the residual for their
-/// own filtering. The value is `None` for markers without a board id and for
-/// every marker when there is no `final_h`.
+/// own filtering. The value is `None` for markers without a cell label (decoded
+/// id or grid coordinate) and for every marker when there is no `final_h`.
 pub(super) fn annotate_h_reproj_err_px(
     markers: &mut [MarkerRecord],
     final_h: Option<&Matrix3<f64>>,
@@ -104,7 +114,8 @@ pub(super) fn annotate_h_reproj_err_px(
         return;
     };
     for m in markers.iter_mut() {
-        let (Some(_id), Some(board_xy)) = (m.id, m.board_xy_mm) else {
+        let has_label = m.id.is_some() || m.grid_coord.is_some();
+        let (true, Some(board_xy)) = (has_label, m.board_xy_mm) else {
             m.fit.h_reproj_err_px = None;
             continue;
         };
@@ -126,11 +137,11 @@ pub(super) fn annotate_h_reproj_err_px(
 ///
 /// Runs in the working frame (where `final_h` was fit), after completion and the
 /// final H refit, over **all** decoded markers including completed ones. Removes
-/// markers the hex lattice judges geometrically inconsistent via two
+/// markers the target lattice judges geometrically inconsistent via two
 /// complementary tests, rejecting on their union:
 ///
-/// 1. **Local hex-midpoint** (H-free, distortion-robust primary): each marker's
-///    center vs the midpoint predicted by its hex neighbors. Affine-exact, so it
+/// 1. **Local lattice-midpoint** (H-free, distortion-robust primary): each marker's
+///    center vs the midpoint predicted by its lattice neighbors. Affine-exact, so it
 ///    sees only second-difference curvature under smooth lens distortion while a
 ///    wrong-cell marker sits ~1 pitch away.
 /// 2. **Global final-H reprojection** (gross-blunder backstop): each marker's
@@ -146,14 +157,18 @@ pub(super) fn geometric_verify_filter(
     target: &TargetLayout,
     ransac_inlier_threshold_px: f64,
 ) -> GeometricVerifyStats {
-    let n_decoded_checked = markers.iter().filter(|m| m.id.is_some()).count();
+    let n_decoded_checked = markers
+        .iter()
+        .filter(|m| marker_cell_coord(m, target).is_some())
+        .count();
 
-    // --- Local hex-midpoint test (H-free) ---
-    let grid = build_hex_grid_map(markers, target);
+    // --- Local lattice-midpoint test (H-free) ---
+    let grid = build_grid_map(markers, target);
+    let lattice_kind = target.lattice_kind();
     let local_by_coord: Vec<(Coord, f64)> = grid
         .iter()
         .filter_map(|(&idx, &pos)| {
-            let pred = predict_grid_position(&grid, idx, LatticeKind::Hex)?.position;
+            let pred = predict_grid_position(&grid, idx, lattice_kind)?.position;
             let dx = (pos.x - pred.x) as f64;
             let dy = (pos.y - pred.y) as f64;
             Some((idx, (dx * dx + dy * dy).sqrt()))
@@ -172,22 +187,27 @@ pub(super) fn geometric_verify_filter(
     // gate is disabled; here the global backstop just consumes those residuals.
     annotate_h_reproj_err_px(markers, final_h);
     let mut t_global: Option<f64> = None;
-    let mut flagged_global_ids: HashSet<usize> = HashSet::new();
+    let mut flagged_global_coords: HashSet<Coord> = HashSet::new();
     if final_h.is_some() {
-        let global_by_id: Vec<(usize, f64)> = markers
+        let global_by_coord: Vec<(Coord, f64)> = markers
             .iter()
-            .filter_map(|m| Some((m.id?, f64::from(m.fit.h_reproj_err_px?))))
+            .filter_map(|m| {
+                Some((
+                    marker_cell_coord(m, target)?,
+                    f64::from(m.fit.h_reproj_err_px?),
+                ))
+            })
             .collect();
-        let global_residuals: Vec<f64> = global_by_id.iter().map(|(_, r)| *r).collect();
+        let global_residuals: Vec<f64> = global_by_coord.iter().map(|(_, r)| *r).collect();
         let tg = adaptive_threshold(
             &global_residuals,
             C1_GLOBAL * ransac_inlier_threshold_px,
             K_GLOBAL,
         );
-        flagged_global_ids = global_by_id
+        flagged_global_coords = global_by_coord
             .iter()
             .filter(|(_, r)| *r > tg)
-            .map(|(id, _)| *id)
+            .map(|(c, _)| *c)
             .collect();
         t_global = Some(tg);
     }
@@ -197,12 +217,11 @@ pub(super) fn geometric_verify_filter(
     let mut n_removed_local = 0usize;
     let mut n_removed_global = 0usize;
     markers.retain(|m| {
-        let Some(id) = m.id else { return true };
-        let Some(coord) = target.coord_of_id(id) else {
+        let Some(coord) = marker_cell_coord(m, target) else {
             return true;
         };
         let local_bad = flagged_coords.contains(&coord);
-        let global_bad = flagged_global_ids.contains(&id);
+        let global_bad = flagged_global_coords.contains(&coord);
         if local_bad {
             n_removed_local += 1;
         }

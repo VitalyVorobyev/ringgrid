@@ -1083,6 +1083,8 @@ dependencies = [
 [[package]]
 name = "projective-grid"
 version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "393db536d6155586a7432d508733475de7786b96b50cfe825268670f66f96916"
 dependencies = [
  "delaunator",
  "kiddo",

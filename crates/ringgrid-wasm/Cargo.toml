@@ -29,8 +29,3 @@ image = "0.25"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O3"]
-
-# TEMPORARY (remove before merge): develop against the local projective-grid
-# 0.10.1 until calib-targets-rs PR #76 is published to crates.io.
-[patch.crates-io]
-projective-grid = { path = "../../../calib-targets-rs/crates/projective-grid" }

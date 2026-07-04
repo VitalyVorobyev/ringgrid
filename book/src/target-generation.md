@@ -63,7 +63,7 @@ Each subcommand builds a `TargetLayout` and writes `target_spec.json`,
 |---|---|
 | `hex` | Hex lattice of 16-sector coded rings (the classic ringgrid target). |
 | `rect` | Rectangular lattice of plain (uncoded) rings, optionally with origin dots. |
-| `preset` | A built-in preset: `default-hex` or `isra24x24`. |
+| `preset` | A built-in preset: `default-hex` or `rect24x24`. |
 | `from-spec` | Render from an existing target spec JSON (v5, or legacy v4). |
 
 **Shared output flags** (accepted by every subcommand):
@@ -148,8 +148,8 @@ The dot pattern must break every rotational symmetry of the lattice; see
 # Classic 15-row coded hex board (200 mm)
 cargo run -p ringgrid-cli -- gen-target preset default-hex --out_dir tools/out/target
 
-# ISRA XG3D-style 24×24 plain rect with three origin dots
-cargo run -p ringgrid-cli -- gen-target preset isra24x24 --out_dir tools/out/target_isra
+# 24×24 plain rect target with three origin dots
+cargo run -p ringgrid-cli -- gen-target preset rect24x24 --out_dir tools/out/target_rect
 ```
 
 ### `from-spec` — render an existing spec
@@ -229,7 +229,7 @@ The presets are one call each:
 use ringgrid::TargetLayout;
 
 let hex = TargetLayout::default_hex();       // classic coded hex
-let isra = TargetLayout::isra_rect_24x24();  // ISRA-style plain rect with dots
+let rect = TargetLayout::rect_24x24();  // plain rect target with origin dots
 ```
 
 See the [Compositional Target Model](targets/target-model.md) for the full

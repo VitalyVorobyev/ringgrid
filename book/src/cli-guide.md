@@ -31,7 +31,7 @@ writes `target_spec.json` (schema `ringgrid.target.v5`), `<basename>.svg`, and
 |---|---|
 | `hex` | Hex lattice of 16-sector coded rings (the classic ringgrid target). |
 | `rect` | Rectangular lattice of plain (uncoded) rings, optionally with origin dots. |
-| `preset` | A built-in preset: `default-hex` or `isra24x24`. |
+| `preset` | A built-in preset: `default-hex` or `rect24x24`. |
 | `from-spec` | Render from an existing target spec JSON (v5, or legacy v4). |
 
 Common examples:
@@ -52,7 +52,7 @@ ringgrid gen-target rect \
     --out_dir tools/out/target_rect
 
 # A built-in preset
-ringgrid gen-target preset isra24x24 --out_dir tools/out/target
+ringgrid gen-target preset rect24x24 --out_dir tools/out/target
 
 # Re-render (and upgrade to v5) an existing spec
 ringgrid gen-target from-spec --spec tools/out/target/target_spec.json --out_dir tools/out/target2

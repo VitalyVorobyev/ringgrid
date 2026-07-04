@@ -103,7 +103,7 @@ Three presets cover the common cases:
 |---|---|---|---|---|
 | `TargetLayout::default_hex()` | 15-row hex, 8 mm pitch | Coded16 | 203 | the classic 200 mm ringgrid board |
 | `TargetLayout::coded_hex(...)` | hex (caller geometry) | Coded16 | — | coded hex from direct geometry arguments |
-| `TargetLayout::isra_rect_24x24()` | 24×24 rect, 14 mm pitch | Plain | 576 | ISRA XG3D-style plain target with three Ø2.8 mm origin dots |
+| `TargetLayout::rect_24x24()` | 24×24 rect, 14 mm pitch | Plain | 576 | 24×24 plain target with three Ø2.8 mm origin dots |
 
 `default_hex()` is geometry-identical to the legacy `BoardLayout::default()`
 (locked by a parity test), so existing hex-coded workflows are unchanged.
@@ -118,7 +118,7 @@ use ringgrid::{
 
 // A preset
 let hex = TargetLayout::default_hex();
-let isra = TargetLayout::isra_rect_24x24();
+let rect = TargetLayout::rect_24x24();
 
 // A custom plain rect target with origin dots
 let target = TargetLayout::new(

@@ -166,7 +166,7 @@ ringgrid gen-target hex --pitch_mm 8 --rows 15 --long_row_cols 14 \
 ```
 
 New subcommands: `rect` (plain rings, optional `--dot_mm`/`--dot_radius_mm`),
-`preset` (`default-hex`, `isra24x24`), and `from-spec` (render any target JSON).
+`preset` (`default-hex`, `rect24x24`), and `from-spec` (render any target JSON).
 
 ### `detect`
 

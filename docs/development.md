@@ -52,7 +52,7 @@ crates/
 tools/
   gen_target.py        # board_spec.json + SVG + PNG generation
   gen_synth.py         # synthetic dataset generator
-  gen_synth_rect.py    # ISRA-style rect-plain synthetic dataset generator
+  gen_synth_rect.py    # rect-plain synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
   viz_detect.py        # detection overlay renderer

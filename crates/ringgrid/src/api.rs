@@ -578,7 +578,7 @@ mod tests {
         // The transitional UnsupportedTarget gate is gone: every built-in
         // lattice × coding combination runs the pipeline end-to-end. An empty
         // image simply yields an empty result.
-        let det = Detector::new(TargetLayout::isra_rect_24x24());
+        let det = Detector::new(TargetLayout::rect_24x24());
         let img = GrayImage::new(64, 64);
         let result = det.detect(&img).expect("plain rect target must detect");
         assert!(result.detected_markers.is_empty());

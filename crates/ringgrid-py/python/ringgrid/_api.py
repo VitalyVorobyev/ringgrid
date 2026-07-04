@@ -554,7 +554,7 @@ class TargetLayout:
     - :class:`OriginFiducials` — optional dots anchoring origin and orientation.
 
     Build via a preset (:meth:`default_hex`, :meth:`coded_hex`,
-    :meth:`isra_rect_24x24`), :meth:`from_json`, or :meth:`from_dict`.
+    :meth:`rect_24x24`), :meth:`from_json`, or :meth:`from_dict`.
     :meth:`to_dict` / :meth:`from_dict` round-trip the v5 schema verbatim.
     Pass a `TargetLayout` straight to :class:`DetectConfig` or :class:`Detector`.
     """
@@ -572,9 +572,9 @@ class TargetLayout:
         return cls.from_dict(json.loads(_target_preset_json("default_hex")))
 
     @classmethod
-    def isra_rect_24x24(cls) -> "TargetLayout":
-        """The ISRA XG3D-style 24×24 rect target: plain rings with origin dots."""
-        return cls.from_dict(json.loads(_target_preset_json("isra_rect_24x24")))
+    def rect_24x24(cls) -> "TargetLayout":
+        """The 24×24 plain rect target: plain rings with origin dots."""
+        return cls.from_dict(json.loads(_target_preset_json("rect_24x24")))
 
     @classmethod
     def coded_hex(

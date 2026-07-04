@@ -27,7 +27,7 @@ the 0.8 documentation pass is complete.
   printed target is now lattice (`hex` | `rect`) × ring geometry × coding
   (`coded16` | `plain`) × optional origin fiducials. Presets:
   `TargetLayout::default_hex()` (the classic board) and
-  `TargetLayout::isra_rect_24x24()` (24×24 rect lattice of plain rings at
+  `TargetLayout::rect_24x24()` (24×24 rect lattice of plain rings at
   14 mm pitch with three Ø2.8 mm origin dots). Fiducial validation enforces
   dot/ring clearance and requires the dot pattern to break every rotational
   symmetry of the lattice (rotations only — an opaque planar target always
@@ -41,7 +41,7 @@ the 0.8 documentation pass is complete.
   (stroked rings + 16-sector code band vs. filled annulus) and draws origin
   fiducial dots. CLI `gen-target` becomes a subcommand family:
   `hex` (classic flags), `rect` (`--rows --cols --pitch_mm ...` with optional
-  `--dot_mm x,y` / `--dot_radius_mm`), `preset` (`isra24x24`, `default-hex`),
+  `--dot_mm x,y` / `--dot_radius_mm`), `preset` (`rect24x24`, `default-hex`),
   and `from-spec` (render any target JSON). Output spec file is
   `target_spec.json` (v5).
 - `DetectError` — `Detector::detect*` now return
@@ -69,7 +69,7 @@ the 0.8 documentation pass is complete.
   `DetectionResult.board_frame: Option<BoardFrame>`
   (`absolute` | `relative_canonical`). Exposed in the Python typed API and in
   the WASM/CLI JSON output.
-- **Rect synthetic eval**: `tools/gen_synth_rect.py` (ISRA-style rect-plain
+- **Rect synthetic eval**: `tools/gen_synth_rect.py` (rect-plain
   renderer with in-plane rotation), `tools/score_detect_rect.py`
   (coordinate-keyed scoring with best-over-symmetry matching for unresolved
   frames, origin-resolution metrics), `tools/run_rect_benchmark.sh`

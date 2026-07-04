@@ -287,9 +287,9 @@ impl CliGenRectArgs {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum GenTargetPresetArg {
-    /// ISRA XG3D-style 24x24 rect target: plain rings at 14 mm pitch with
+    /// 24x24 plain rect target: plain rings at 14 mm pitch with
     /// three origin dots (drawing 5256-57-102).
-    Isra24x24,
+    Rect24x24,
     /// The classic 15-row hex coded ringgrid target (200 mm board).
     DefaultHex,
 }
@@ -307,7 +307,7 @@ struct CliGenPresetArgs {
 impl CliGenPresetArgs {
     fn to_target(&self) -> ringgrid::TargetLayout {
         match self.preset {
-            GenTargetPresetArg::Isra24x24 => ringgrid::TargetLayout::isra_rect_24x24(),
+            GenTargetPresetArg::Rect24x24 => ringgrid::TargetLayout::rect_24x24(),
             GenTargetPresetArg::DefaultHex => ringgrid::TargetLayout::default_hex(),
         }
     }
@@ -2055,8 +2055,8 @@ mod tests {
     }
 
     #[test]
-    fn gen_target_preset_isra_builds_rect_target() {
-        let cli = Cli::try_parse_from(["ringgrid", "gen-target", "preset", "isra24x24"])
+    fn gen_target_preset_rect_builds_rect_target() {
+        let cli = Cli::try_parse_from(["ringgrid", "gen-target", "preset", "rect24x24"])
             .expect("parse gen-target preset cli");
         let Commands::GenTarget {
             command: GenTargetCommands::Preset(args),
@@ -2065,7 +2065,7 @@ mod tests {
             panic!("unexpected command variant");
         };
         let target = args.to_target();
-        assert_eq!(target.name(), "isra_rect_24x24");
+        assert_eq!(target.name(), "rect_24x24");
         assert_eq!(target.n_cells(), 576);
     }
 

@@ -54,7 +54,7 @@
   "rect_benchmark": {
     "script": "tools/run_rect_benchmark.sh",
     "output": "tools/out/rect_benchmark/summary.json",
-    "description": "Rect-lattice plain-ring (ISRA-style 24x24) synthetic benchmark. The recall floor absorbs rare upstream detect_grid labeling variance (completion recovers all cells in the common case); coord/origin metrics must be exact.",
+    "description": "Rect-lattice plain-ring (24x24) synthetic benchmark. The recall floor absorbs rare upstream detect_grid labeling variance (completion recovers all cells in the common case); coord/origin metrics must be exact.",
     "modes": {
       "dots": {
         "min_precision": 1.0,

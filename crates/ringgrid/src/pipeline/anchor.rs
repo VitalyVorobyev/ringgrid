@@ -338,7 +338,7 @@ mod tests {
     use super::*;
     use crate::target::TargetLayout;
 
-    /// Render the ISRA rect target through an affine map: filled annuli plus
+    /// Render the rect target through an affine map: filled annuli plus
     /// the three origin dots, on a white background.
     fn render_plain_target(
         target: &TargetLayout,
@@ -429,14 +429,14 @@ mod tests {
             .collect()
     }
 
-    fn small_isra_like() -> TargetLayout {
-        // A compact ISRA-style plain rect target with the L-shaped dot triple,
+    fn small_rect_like() -> TargetLayout {
+        // A compact plain rect target with the L-shaped dot triple,
         // small enough to render quickly.
         use crate::target::{
             LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry, RingGeometry,
         };
         TargetLayout::new(
-            "test_isra_small",
+            "test_rect_small",
             LatticeGeometry::Rect(RectGeometry {
                 rows: 8,
                 cols: 8,
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn identity_labeling_resolves_to_identity() {
-        let target = small_isra_like();
+        let target = small_rect_like();
         let (img, h_mat) = render_plain_target(&target, 6.0, 60.0, 60.0, 0.0, 780, 780);
         let markers = labeled_markers(&target, &h_mat, |c| c);
 
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn rotated_labeling_is_recovered() {
-        let target = small_isra_like();
+        let target = small_rect_like();
         // Physically rotate the board 90° in the image; the labeler would then
         // produce canonical (image-axis-aligned) labels that differ from board
         // coords by the inverse rotation.
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn missing_dots_in_image_yield_unresolved_not_wrong() {
-        let target = small_isra_like();
+        let target = small_rect_like();
         // Render WITHOUT dots (e.g. occluded); every candidate is then
         // unscorable or scores near zero — the resolver must decline.
         use crate::target::{LatticeGeometry, MarkerCoding, RectGeometry, RingGeometry};

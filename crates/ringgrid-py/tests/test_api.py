@@ -303,8 +303,8 @@ def test_target_layout_default_hex_geometry_matches_legacy_board() -> None:
     assert target.coding.ring_width_mm == pytest.approx(board.marker_ring_width_mm)
 
 
-def test_target_layout_isra_preset_roundtrips_and_has_expected_shape() -> None:
-    target = ringgrid.TargetLayout.isra_rect_24x24()
+def test_target_layout_rect_preset_roundtrips_and_has_expected_shape() -> None:
+    target = ringgrid.TargetLayout.rect_24x24()
 
     assert isinstance(target.lattice, ringgrid.RectGeometry)
     assert target.lattice.rows == 24
@@ -381,7 +381,7 @@ def test_detect_config_and_detector_accept_typed_target_layout() -> None:
 
 
 def test_detector_accepts_plain_rect_target_layout() -> None:
-    target = ringgrid.TargetLayout.isra_rect_24x24()
+    target = ringgrid.TargetLayout.rect_24x24()
     detector = ringgrid.Detector.from_target(target)
 
     result = detector.detect(np.zeros((80, 120), dtype=np.uint8))
@@ -410,7 +410,7 @@ def test_target_layout_validation_errors_surface_as_valueerror() -> None:
 
 
 def test_target_layout_from_dict_dispatches_and_rejects_unknown_kinds() -> None:
-    rect = ringgrid.TargetLayout.isra_rect_24x24().to_dict()
+    rect = ringgrid.TargetLayout.rect_24x24().to_dict()
     assert isinstance(
         ringgrid.TargetLayout.from_dict(rect).lattice, ringgrid.RectGeometry
     )

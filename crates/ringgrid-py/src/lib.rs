@@ -669,10 +669,10 @@ fn board_snapshot_json(spec_json: &str) -> PyResult<String> {
 fn target_preset_json(name: &str) -> PyResult<String> {
     let target = match name {
         "default_hex" => ringgrid::TargetLayout::default_hex(),
-        "isra_rect_24x24" => ringgrid::TargetLayout::isra_rect_24x24(),
+        "rect_24x24" => ringgrid::TargetLayout::rect_24x24(),
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown target preset '{other}' (expected 'default_hex' or 'isra_rect_24x24')"
+                "unknown target preset '{other}' (expected 'default_hex' or 'rect_24x24')"
             )));
         }
     };

@@ -103,7 +103,7 @@ import ringgrid
 
 # Presets (geometry comes from the native library — no duplicated constants):
 hex_target = ringgrid.TargetLayout.default_hex()        # 15-row coded hex, 203 markers
-isra_target = ringgrid.TargetLayout.isra_rect_24x24()   # 24x24 plain rect + origin dots
+rect_target = ringgrid.TargetLayout.rect_24x24()   # 24x24 plain rect + origin dots
 
 # Coded hex from direct geometry (deterministic, geometry-derived name):
 custom = ringgrid.TargetLayout.coded_hex(

@@ -1002,7 +1002,7 @@ mod tests {
 
     #[test]
     fn plain_target_renders_annuli_and_dots() {
-        let target = TargetLayout::isra_rect_24x24();
+        let target = TargetLayout::rect_24x24();
 
         let svg = target
             .render_target_svg(&SvgTargetOptions::default())

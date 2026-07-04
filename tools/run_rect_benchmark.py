@@ -2,7 +2,7 @@
 """Rect-plain synthetic benchmark: generate -> detect -> score -> summarize.
 
 Runs two modes over the same random draws:
-- dots:    ISRA-style board with origin dots — expects absolute board frame,
+- dots:    rect board with origin dots — expects absolute board frame,
            correct anchoring, and homography quality vs ground truth.
 - no_dots: same board without fiducials — expects the relative canonical
            frame with symmetry-consistent coordinates and no mm positions.

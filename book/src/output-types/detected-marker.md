@@ -19,11 +19,12 @@ fields, rather than with a struct literal.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | `Option<usize>` | Codebook index in the active profile. `None` if decoding was rejected due to insufficient confidence or Hamming distance. |
+| `id` | `Option<usize>` | Codebook index in the active profile. `None` if decoding was rejected due to insufficient confidence or Hamming distance, or (always) for plain (uncoded) targets. |
+| `grid_coord` | `Option<[i32; 2]>` | Lattice cell coordinate `[u, v]` assigned to this marker, when grid assignment succeeded (hex targets use axial coordinates). Coded targets: the board-frame cell of the decoded `id`. Plain targets: the frame is given by [`DetectionResult::board_frame`](detection-result.md) -- board-frame cell when `Absolute`, canonical relative-frame coordinate when `RelativeCanonical`. See [Origin Fiducials](../targets/origin-fiducials.md). |
 | `confidence` | `f32` | Combined detection and decode confidence in `[0, 1]`. |
 | `center` | `[f64; 2]` | Marker center in raw image pixel coordinates `[x, y]`. |
 | `center_mapped` | `Option<[f64; 2]>` | Marker center in working-frame coordinates. Present only when a `PixelMapper` is active. |
-| `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters (`BoardLayout::xy_mm` semantics). Present only when `id` is valid for the active board layout. |
+| `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters. Coded targets: present when `id` decodes to a valid `TargetLayout` cell. Plain targets: present only when [`DetectionResult::board_frame`](detection-result.md) is `Absolute` (origin resolved via fiducials); absent when `RelativeCanonical`. See [Origin Fiducials](../targets/origin-fiducials.md). |
 | `ellipse_outer` | `Option<Ellipse>` | Fitted outer ring ellipse parameters. |
 | `ellipse_inner` | `Option<Ellipse>` | Fitted inner ring ellipse parameters. Present when inner fitting succeeded. |
 
@@ -87,13 +88,34 @@ paired `MarkerDiagnostics` entry keeps the `fit` metrics. They can be useful for
 distortion estimation or as candidate positions, but they do not contribute to
 the homography fit.
 
-## ID/board consistency contract
+## ID / grid / board consistency contract
 
-Final emitted markers enforce strict ID/layout consistency:
+Final emitted markers enforce strict identity/coordinate consistency, but the
+rule differs by target coding (see
+[the compositional target model](../targets/target-model.md)):
 
-- if `id` is `Some(i)`, then `board_xy_mm` is present and equals the active board layout coordinate of `i`
-- if `id` is `None`, then `board_xy_mm` is omitted
-- if a decoded ID is not found in the active board layout, it is cleared before output (`id=None`, `board_xy_mm=None`)
+**Coded targets** -- `id`-anchored, decoded IDs map directly to a physical
+board cell:
+
+- if `id` is `Some(i)`, then `grid_coord` and `board_xy_mm` are both present
+  and equal the active `TargetLayout`'s cell coordinate and millimeter
+  position for `i`
+- if `id` is `None`, then `grid_coord` and `board_xy_mm` are both omitted
+- if a decoded ID is not found in the active target layout, it is cleared
+  before output (`id = None`, `grid_coord = None`, `board_xy_mm = None`)
+
+**Plain targets** -- markers carry no identity, so `id` is always `None`;
+`grid_coord` is the only per-marker key:
+
+- `grid_coord` is present whenever grid assignment succeeded
+- `board_xy_mm` presence tracks [`DetectionResult::board_frame`](detection-result.md):
+  present (absolute board millimeters) when the origin resolved
+  (`board_frame == Absolute`); **absent** when it did not
+  (`board_frame == RelativeCanonical`) -- a wrong millimeter position is worse
+  than none
+
+See [Origin Fiducials](../targets/origin-fiducials.md) for the full origin
+resolution algorithm and the `board_frame` truth table.
 
 ## Serialization
 
@@ -106,6 +128,7 @@ A fully decoded marker:
 ```json
 {
   "id": 127,
+  "grid_coord": [12, 5],
   "board_xy_mm": [40.0, 24.0],
   "confidence": 0.92,
   "center": [800.5, 600.2],

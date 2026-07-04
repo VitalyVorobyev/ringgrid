@@ -55,18 +55,18 @@ Self-undistort is disabled by default. Enable it through the config before
 creating the detector:
 
 ```rust
-use ringgrid::{BoardLayout, DetectConfig, Detector, MarkerScalePrior};
+use ringgrid::{TargetLayout, DetectConfig, Detector, MarkerScalePrior};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
 let image = image::open("photo.png")?.to_luma8();
 
-let mut cfg = DetectConfig::from_target(board);
+let mut cfg = DetectConfig::from_target(target);
 cfg.self_undistort.enable = true;
 cfg.self_undistort.min_markers = 12;
 
 let detector = Detector::with_config(cfg);
-let result = detector.detect(&image);
+let result = detector.detect(&image).unwrap(); // 0.8: detect* return Result<_, DetectError>
 
 if let Some(su) = &result.self_undistort {
     println!("Lambda: {:.3e}, applied: {}", su.model.lambda, su.applied);

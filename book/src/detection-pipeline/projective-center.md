@@ -31,7 +31,7 @@ Projective center is enabled by setting `CircleRefinementMethod::ProjectiveCente
 |---|---|---|
 | `use_expected_ratio` | `true` | Use `r_inner_expected` as eigenvalue prior |
 | `ratio_penalty_weight` | 1.0 | Weight for ratio-prior penalty |
-| `max_center_shift_px` | Derived from scale prior | Reject corrections that shift the center too far |
+| `max_correction_shift_px` | `None` (auto) | Reject corrections that shift the center too far. `None` means **"auto"**: the gate uses the nominal marker diameter (from `MarkerScalePrior`) at the point of use, so it is not baked into the config and explicit values survive target re-derivation. Renamed from `max_center_shift_px` in 0.8 (old JSON key still accepted as a serde alias). |
 | `max_selected_residual` | `Some(0.25)` | Reject candidates with high geometric residual |
 | `min_eig_separation` | `Some(1e-6)` | Reject when eigenvalues are too close (unstable) |
 
@@ -48,7 +48,7 @@ Once enough markers are decoded and center-corrected, the detector estimates a b
 
 The global filter requires:
 
-- At least 4 decoded markers with known board positions (from `BoardLayout`)
+- At least 4 decoded markers with known board positions (from `TargetLayout`)
 - `use_global_filter = true` in `DetectConfig`
 
 When fewer than 4 decoded markers are available, the global filter is skipped and homography-dependent finalize stages do not run.

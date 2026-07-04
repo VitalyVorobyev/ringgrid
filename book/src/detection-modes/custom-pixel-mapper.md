@@ -71,10 +71,10 @@ impl PixelMapper for SimpleRadialMapper {
 Pass your mapper to `detect_with_mapper` just like you would a `CameraModel`:
 
 ```rust
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{TargetLayout, Detector};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
 let image = image::open("photo.png")?.to_luma8();
 let (w, h) = image.dimensions();
 
@@ -84,8 +84,8 @@ let mapper = SimpleRadialMapper {
     k1: -1e-7,
 };
 
-let detector = Detector::new(board);
-let result = detector.detect_with_mapper(&image, &mapper);
+let detector = Detector::new(target);
+let result = detector.detect_with_mapper(&image, &mapper).unwrap(); // 0.8: detect* return Result<_, DetectError>
 
 for marker in &result.detected_markers {
     println!("Image: ({:.1}, {:.1})", marker.center[0], marker.center[1]);

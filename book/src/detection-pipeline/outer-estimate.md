@@ -54,6 +54,25 @@ For each polarity candidate, the per-theta derivative curves are aggregated at e
 
 Local maxima in the aggregated response (or its negation for `Neg` polarity) are identified. Peaks at the search window boundaries are excluded. Each peak is evaluated for **theta consistency**: the fraction of per-theta peaks that fall within a tolerance of the aggregated peak radius. Peaks with theta consistency below `min_theta_consistency` (default: 0.35) are rejected.
 
+### Eccentricity-Aware Radius Model
+
+A single aggregated radius describes a *circular* edge well but penalizes strongly tilted markers: on an eccentric ring the per-theta peaks spread over ±(a − b)/2, so many rays fall outside the constant-radius consistency tolerance near the major and minor axes. To handle this, the estimator fits a **second-harmonic radius model** to the per-theta peaks:
+
+```
+r(θ) = c0 + c1·cos 2θ + c2·sin 2θ
+```
+
+This is the first-order radial signature of an eccentric ring seen from its center — the edge radius oscillates at twice the ray angle (a circle has `c1 = c2 = 0`). The fit is a least-squares solve over the basis `[1, cos 2θ, sin 2θ]` with one outlier-rejection refit round (rays locked onto a wrong, closer edge would otherwise bias a plain fit).
+
+The model is attached to a hypothesis only when it clears every **attach gate** — otherwise the constant-radius path is kept:
+
+- **Same edge:** the model mean `c0` sits within half the (half-)search window of the aggregated peak radius, so it describes the same edge.
+- **Plausible amplitude:** the peak deviation `√(c1² + c2²)` is at most 35 % of `c0` (a real ellipse, not a runaway fit) and at least the constant-radius consistency tolerance (below that it cannot help).
+- **2× SNR over its own residuals:** the amplitude is at least twice the RMS of the fit's inlier residuals — a fit merely chasing a noisy (e.g. heavily blurred) peak field fails this gate.
+- **Strictly better:** the model's theta consistency, measured against `r(θ)` per ray, exceeds the constant-radius consistency. Ties keep the constant-radius path.
+
+When attached, the model drives both the theta-consistency gate and the per-ray refinement: each ray's local edge search recenters on `r_outer_px + (r(θ) − c0)`, so strongly tilted markers stop losing rays near the axes. Near-circular and noisy peak fields keep the constant-radius path, so the nominal (mostly circular) benchmark suite is unchanged.
+
 ### Multiple Hypotheses
 
 When `allow_two_hypotheses` is enabled (default: true), the estimator may return up to two hypotheses if the runner-up peak has at least `second_peak_min_rel` (default: 85%) of the best peak's strength. Multiple hypotheses improve robustness when the expected radius is slightly off: both candidates are evaluated in the [outer fit stage](outer-fit.md) and the better one is selected.
@@ -65,7 +84,7 @@ The `OuterEstimate` struct contains:
 - `r_outer_expected_px`: The expected radius from the scale prior.
 - `search_window_px`: The `[min, max]` radial search window.
 - `polarity`: The selected contrast polarity.
-- `hypotheses`: Up to two `OuterHypothesis` structs, sorted best-first, each with `r_outer_px`, `peak_strength`, and `theta_consistency`.
+- `hypotheses`: Up to two `OuterHypothesis` structs, sorted best-first, each with `r_outer_px`, `peak_strength`, `theta_consistency`, and an optional `radius_model` (the attached `RadialHarmonic` when the eccentricity model earned its place).
 - `status`: `Ok` or `Failed` with a diagnostic reason.
 
 ## Configuration
@@ -79,7 +98,7 @@ The `OuterEstimationConfig` struct controls this stage:
 | `aggregator` | Median | Angular aggregation method |
 | `grad_polarity` | DarkToLight | Expected edge polarity |
 | `min_theta_coverage` | 0.6 | Minimum fraction of valid rays |
-| `min_theta_consistency` | 0.25 | Minimum fraction of rays agreeing with peak |
+| `min_theta_consistency` | 0.35 | Minimum fraction of rays agreeing with peak (or with the attached eccentricity model) |
 | `allow_two_hypotheses` | true | Emit runner-up hypothesis if strong enough |
 | `second_peak_min_rel` | 0.85 | Runner-up must be this fraction of best peak |
 | `refine_halfwidth_px` | 1.0 | Per-theta local refinement half-width |

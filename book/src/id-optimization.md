@@ -71,15 +71,16 @@ Use these directly with any detection interface:
 
 ```bash
 # CLI
-ringgrid detect --board tools/board/board_spec_optimized.json --image photo.png --out result.json
+ringgrid detect --target tools/board/board_spec_optimized.json --image photo.png --out result.json
 
 # Python
 import ringgrid
-det = ringgrid.Detector(board_spec_json=open("tools/board/board_spec_optimized.json").read())
+board = ringgrid.BoardLayout.from_json_file("tools/board/board_spec_optimized.json")
+detector = ringgrid.Detector.from_board(board)
 
 # Rust
-let board = BoardLayout::from_json_file(Path::new("tools/board/board_spec_optimized.json"))?;
-let detector = Detector::new(board);
+let target = TargetLayout::from_json_file(Path::new("tools/board/board_spec_optimized.json"))?;
+let detector = Detector::new(target);
 ```
 
 ### Option 2: Optimize your own board
@@ -165,3 +166,10 @@ When `id_assignment` is absent, IDs are assigned sequentially. When present,
 `id_assignment[i]` is the codebook ID for the i-th marker in the `markers`
 array. The array length must equal the number of markers, and all IDs must be
 unique.
+
+This optimizer's input/output remains the legacy flat `ringgrid.target.v4`
+schema; loading it through `TargetLayout::from_json_file` (Rust), the CLI's
+`--target`, or `ringgrid.BoardLayout.from_json_file` (Python) auto-migrates it
+to the canonical `ringgrid.target.v5` schema, carrying `id_assignment` over
+unchanged. See [Target JSON (schema v5)](targets/target-json-v5.md) for the
+migration rules.

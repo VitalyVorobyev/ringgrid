@@ -14,7 +14,7 @@ Controls seed injection for multi-pass detection. In the two-pass pipeline, pass
 | `seed_score` | `f32` | 1e12 | Score assigned to injected seed proposals. The high default ensures seeds survive NMS against weaker gradient-based proposals. |
 | `max_seeds` | `Option<usize>` | `Some(512)` | Maximum number of seeds consumed per run. `None` removes the cap. |
 
-**Source:** `crates/ringgrid/src/detector/config.rs`
+**Source:** `crates/ringgrid/src/detector/config/`
 
 ---
 
@@ -34,7 +34,7 @@ Controls the homography-guided completion stage. After the global homography fil
 | `require_perfect_decode` | `bool` | `false` | Require a perfect decode (dist=0 and margin >= min cyclic distance) for acceptance. Useful for Scheimpflug / high-distortion setups without a calibrated camera model. |
 | `max_radii_std_ratio` | `f32` | 0.35 | Maximum coefficient of variation (std/mean) of per-ray outer radii. Rejects completions with inconsistent edge sampling. |
 
-**Source:** `crates/ringgrid/src/detector/config.rs`
+**Source:** `crates/ringgrid/src/detector/config/`
 
 ---
 
@@ -62,7 +62,7 @@ Controls structural ID verification/recovery that runs in finalize after project
 | `remove_unverified` | `bool` | `false` | Remove unresolved markers instead of clearing their IDs. |
 | `seed_min_decode_confidence` | `f32` | `0.7` | Confidence threshold for weak anchor bootstrap. |
 
-**Source:** `crates/ringgrid/src/detector/config.rs`, `crates/ringgrid/src/detector/id_correction/`
+**Source:** `crates/ringgrid/src/detector/config/`, `crates/ringgrid/src/detector/id_correction/`
 
 ---
 
@@ -78,11 +78,11 @@ Projective center is enabled by setting `CircleRefinementMethod::ProjectiveCente
 |---|---|---|---|
 | `use_expected_ratio` | `bool` | `true` | Use `marker_spec.r_inner_expected` as an eigenvalue prior when selecting among candidate centers. |
 | `ratio_penalty_weight` | `f64` | 1.0 | Weight of the eigenvalue-vs-expected-ratio penalty term in candidate selection. Higher values prefer candidates whose conic-pencil eigenvalue ratio matches the expected inner/outer ratio. |
-| `max_center_shift_px` | `Option<f64>` | `None` | Maximum allowed shift (px) from the pre-correction center. Large jumps are rejected and the original center is kept. Auto-derived from scale prior as `2 * r_nom`. |
+| `max_correction_shift_px` | `Option<f64>` | `None` | Maximum allowed shift (px) from the pre-correction center. Large jumps are rejected and the original center is kept. `None` means **"auto"**: the gate uses the nominal marker diameter (from `MarkerScalePrior`) at the point of use, so it is *not* baked into the config and explicit values survive target re-derivation. Renamed from `max_center_shift_px` in 0.8 (the old JSON key is still accepted as a serde alias) to disambiguate from the unrelated `InnerFitConfig.max_center_shift_px`. |
 | `max_selected_residual` | `Option<f64>` | `Some(0.25)` | Maximum accepted projective-selection residual. Higher values are less strict. `None` disables this gate. |
 | `min_eig_separation` | `Option<f64>` | `Some(1e-6)` | Minimum eigenvalue separation for a stable conic-pencil eigenpair. Low separation indicates numerical instability. `None` disables this gate. |
 
-**Source:** `crates/ringgrid/src/detector/config.rs`
+**Source:** `crates/ringgrid/src/detector/config/`
 
 ---
 
@@ -113,7 +113,7 @@ The `ransac` field is a `RansacConfig` struct embedded within `InnerFitConfig`:
 | `ransac.min_inliers` | `usize` | 8 | Minimum inlier count for a valid inner ellipse model. |
 | `ransac.seed` | `u64` | 43 | Random seed for reproducibility. |
 
-**Source:** `crates/ringgrid/src/detector/config.rs`
+**Source:** `crates/ringgrid/src/detector/config/`
 
 ---
 
@@ -134,7 +134,7 @@ let method = CircleRefinementMethod::ProjectiveCenter;
 assert!(method.uses_projective_center());
 ```
 
-**Source:** `crates/ringgrid/src/detector/config.rs`
+**Source:** `crates/ringgrid/src/detector/config/`
 
 ---
 

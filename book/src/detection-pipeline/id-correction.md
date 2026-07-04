@@ -1,15 +1,19 @@
 # ID Correction
 
-The `id_correction` stage runs in `pipeline/finalize.rs` after projective-center correction and before optional global homography filtering.
+The `id_correction` stage runs in the `pipeline/finalize/` module after projective-center correction and before optional global homography filtering.
 
 It enforces structural consistency between decoded marker IDs and the board's hex-lattice topology, while recovering safe missing IDs.
+
+## Applicability
+
+ID correction is a hex-neighbor BFS consensus, so it runs **only for hex coded targets** — its algorithmic domain. Rect coded targets carry decodable IDs but have no hex neighborhood, so they rely on the global RANSAC homography filter plus [geometric verification](overview.md#geometric-verification) instead. Plain targets carry no IDs at all and are labeled by [grid assignment](overview.md#grid-assignment). The gate is `config.advanced.id_correction.enable && target.is_coded() && lattice == Hex`.
 
 ## Inputs and Outputs
 
 Inputs:
 - marker centers in image pixels (`DetectedMarker.center`)
 - decoded IDs (`DetectedMarker.id`)
-- board layout topology/coordinates (`BoardLayout`)
+- target layout topology/coordinates (`TargetLayout`, hex coded)
 - `IdCorrectionConfig`
 
 Outputs:
@@ -64,3 +68,15 @@ Fallback is conservative:
 - fixed RANSAC seed for fallback homography
 
 `IdCorrectionStats` reports corrections, recoveries, cleared IDs, unverified reasons, and residual inconsistency count.
+
+## Voting soundness fixes (0.8)
+
+Several latent voting bugs were fixed in 0.8; each had made a fallback silently misfire on hex boards:
+
+- **Scale-vote pitch.** Scale-vote predictions converted one-hop image distances to millimeters via the axial pitch, but hex board-adjacent centers sit `pitch·√3` apart — predictions fell ~42 % short and outside tolerance, so the scale-vote fallback never fired. It now uses the nearest-neighbor spacing.
+- **Rotated scale votes.** Scale votes now follow the locally-estimated board→image rotation (from the same trusted adjacent pairs). The previous axis-aligned prediction assumed an unrotated board and, near the hex 60° symmetry, voted for exactly the wrong lattice site.
+- **Affine hypothesis weight.** The affine hypothesis now casts one vote instead of one per neighbor, so a single ill-conditioned affine can no longer satisfy `min_votes` on its own with zero corroboration.
+- **Duplicate claims.** Within one batch, duplicate claims on the same ID are resolved by anchor-homography reprojection error (previously both were applied, and a later confidence-based pass could evict a correct assignment for a confident wrong one).
+- **Homography fallback floor.** `homography_min_trusted` now acts as a *ceiling*: the effective floor scales with the visible marker count (`max(8, n/3)`), so sparse/partial views are no longer locked out of the geometric fallback.
+
+See the [0.8 changelog](https://github.com/VitalyVorobyev/ringgrid/blob/main/CHANGELOG.md) for the full list.

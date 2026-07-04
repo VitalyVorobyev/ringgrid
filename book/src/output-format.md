@@ -57,6 +57,7 @@ nested `diagnostics` object, and may additionally include:
 | `homography_frame` | always | Coordinate frame of the `homography` matrix: `image` or `working`. |
 | `image_size` | always | Input image dimensions as `[width, height]`. |
 | `homography` | when fitted | 3x3 row-major homography mapping board millimeters into `homography_frame`. |
+| `board_frame` | when at least one marker was labeled | Reference frame of every marker's `grid_coord` / `board_xy_mm` and of `homography`: `"absolute"` or `"relative_canonical"`. Omitted (not `null`) when nothing was labeled. See [Origin Fiducials](targets/origin-fiducials.md). |
 | `self_undistort` | when self-undistort ran | Estimated division-model correction and whether it was applied. |
 | `diagnostics` | CLI only, always | Nested [`DetectionDiagnostics`](output-types/detection-result.md#detectiondiagnostics) object: per-marker `markers` and homography `ransac` stats. |
 | `camera` | CLI only, when camera input was provided | The `CameraModel` used by the two-pass mapper path. |
@@ -77,8 +78,9 @@ post-processing:
 
 | Field | Meaning |
 |---|---|
-| `id` | Decoded codebook index. Omitted when decoding was rejected or cleared. |
-| `board_xy_mm` | Board-space marker location in millimeters for valid decoded IDs. |
+| `id` | Decoded codebook index. Omitted when decoding was rejected or cleared; always omitted for plain (uncoded) targets. |
+| `grid_coord` | `[u, v]` lattice cell coordinate, omitted until grid assignment succeeds. Coded targets: the cell of the decoded `id`. Plain targets: frame given by top-level `board_frame` (absolute cell when `"absolute"`, canonical relative-frame coordinate when `"relative_canonical"`). See [Origin Fiducials](targets/origin-fiducials.md). |
+| `board_xy_mm` | Board-space marker location in millimeters. Coded targets: present for valid decoded IDs. Plain targets: present only when top-level `board_frame` is `"absolute"`; omitted when `"relative_canonical"`. |
 | `confidence` | Combined fit/decode confidence in `[0, 1]`. |
 | `center` | Marker center in raw image pixels. Always safe to overlay on the original image. |
 | `center_mapped` | Working-frame center when a mapper was active. |
@@ -141,6 +143,7 @@ the homography RANSAC stats are nested under `diagnostics`. The
   "detected_markers": [
     {
       "id": 42,
+      "grid_coord": [6, 3],
       "board_xy_mm": [24.0, 16.0],
       "confidence": 0.95,
       "center": [512.3, 384.7],
@@ -161,6 +164,7 @@ the homography RANSAC stats are nested under `diagnostics`. The
     [-0.05, 3.48, 480.3],
     [0.00012, -0.00003, 1.0]
   ],
+  "board_frame": "absolute",
   "diagnostics": {
     "markers": [
       {

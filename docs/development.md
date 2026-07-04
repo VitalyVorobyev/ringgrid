@@ -18,7 +18,7 @@ must point at `.venv` so `maturin develop` installs into it rather than system P
 
 ```bash
 uv venv .venv
-.venv/bin/uv pip install -U maturin numpy matplotlib
+.venv/bin/uv pip install -U maturin numpy matplotlib pillow
 VIRTUAL_ENV=.venv .venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 

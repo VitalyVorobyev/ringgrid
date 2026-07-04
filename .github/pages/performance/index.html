@@ -131,10 +131,29 @@ function bar(label, fills, valueHtml, max) {
 function renderImageCard(img) {
   const card = document.createElement("div"); card.className = "card imgcard";
 
-  if (img.img) {
+  const overlaySrc = img.overlay || img.img;
+  const inputSrc = img.img || img.overlay;
+  if (overlaySrc) {
     const fig = document.createElement("img"); fig.className = "preview";
-    fig.src = img.img; fig.alt = img.label; fig.loading = "lazy";
+    fig.src = overlaySrc; fig.alt = img.label; fig.loading = "lazy";
+    const cap = document.createElement("div");
+    cap.style.cssText = "font-size:12px;color:var(--muted);margin:6px 0 2px;";
+    const hasBoth = img.overlay && img.img && img.overlay !== img.img;
+    let showingOverlay = true;
+    const capText = () => showingOverlay
+      ? (hasBoth ? "detection overlay — click to toggle input" : "detection overlay")
+      : "input — click to toggle overlay";
+    cap.textContent = img.overlay ? capText() : "input";
+    if (hasBoth) {
+      fig.style.cursor = "pointer";
+      fig.addEventListener("click", () => {
+        showingOverlay = !showingOverlay;
+        fig.src = showingOverlay ? overlaySrc : inputSrc;
+        cap.textContent = capText();
+      });
+    }
     card.appendChild(fig);
+    card.appendChild(cap);
   }
 
   const h = document.createElement("h3");
@@ -143,9 +162,10 @@ function renderImageCard(img) {
   file.innerHTML = "<code>" + img.file + "</code>";
   const meta = document.createElement("div"); meta.className = "meta";
   let metaHtml = "<span><b>" + img.width + "×" + img.height + "</b> px</span>" +
-    "<span><b>" + img.raw_corners + "</b> raw corners</span>" +
-    "<span><b>" + img.labelled + "</b> labelled</span>";
-  if (img.markers != null) metaHtml += "<span><b>" + img.markers + "</b> markers</span>";
+    "<span><b>" + img.markers + "</b> markers</span>";
+  if (img.decoded != null && img.decoded > 0 && img.decoded < img.markers)
+    metaHtml += "<span><b>" + img.decoded + "</b> decoded</span>";
+  if (img.board_frame) metaHtml += "<span>frame <b>" + img.board_frame + "</b></span>";
   meta.innerHTML = metaHtml;
   card.append(h, file, meta);
 

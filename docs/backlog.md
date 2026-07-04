@@ -31,6 +31,25 @@ _None currently assigned._
 
 _None currently assigned._
 
+## 2026-07 Closure: task-ID era retired
+
+The roadmap tracked here through `INFRA-015` (2026-03-22) continued informally
+after this file's task-ID convention stopped being updated: dependency
+adaptation (`projective-grid` 0.10, `radsym` 0.4) → the compositional target
+model (`TargetLayout`: hex/rect lattices, coded/plain rings, origin fiducials)
+→ the 0.8.0 public-surface revision (diagnostics/codebook tiering, the
+`max_correction_shift_px` rename) → algorithm soundness and proposal
+performance work → the book/demo documentation pass and 0.8.0 release. All of
+it shipped across `0.6.0` → `0.8.0`.
+
+Going forward, `CHANGELOG.md` and git history are the source of truth for
+shipped work — this file stays as the historical record of the `ALGO`/`INFRA`/
+`DOCS`/`PERF`/`BUG` task-ID era (entries below `INFRA-015`) and is not being
+extended with new task IDs. The `docs/handoffs/`, `docs/sessions/`,
+`docs/templates/`, and `docs/workflows/` archives referenced elsewhere in this
+file (ID Model, Historical Notes) have been removed as part of this cleanup;
+those sections are kept as-is for historical context only.
+
 ## API / Interface Tracking
 
 - Rust API backlog direction: add file-oriented JSON/SVG/PNG target-generation API in `ringgrid` crate using direct board geometry args.

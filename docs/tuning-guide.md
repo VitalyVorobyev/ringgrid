@@ -3,6 +3,16 @@
 This guide maps common imaging challenges to the specific configuration knobs that
 address them. All settings live in the JSON config file passed via `--config`.
 
+Per-stage settings referenced below (`marker_spec`, `inner_fit`, `outer_fit`,
+`decode`, `completion`, `id_correction`, `inner_as_outer_recovery`) nest under
+the top-level `"advanced"` key in the config JSON, as shown in each section's
+example; `marker_scale`, `circle_refinement`, and `self_undistort` are
+top-level `DetectConfig` fields and are not nested.
+
+This guide covers per-stage tuning for coded hex targets. For rect lattices,
+plain (uncoded) rings, and origin-fiducial resolution, see the book's
+[Targets](https://vitalyvorobyev.github.io/ringgrid/book/) chapters.
+
 ---
 
 ## 1. Blurred / Defocused Images
@@ -20,13 +30,15 @@ gating to reject inner estimates and weakening gradient proposals.
 
 ```json
 {
-  "marker_spec": { "min_theta_consistency": 0.18 },
-  "inner_fit": {
-    "min_points": 12,
-    "ransac": { "inlier_threshold": 2.0 }
-  },
-  "completion": { "enable": true },
-  "inner_as_outer_recovery": { "enable": true }
+  "advanced": {
+    "marker_spec": { "min_theta_consistency": 0.18 },
+    "inner_fit": {
+      "min_points": 12,
+      "ransac": { "inlier_threshold": 2.0 }
+    },
+    "completion": { "enable": true },
+    "inner_as_outer_recovery": { "enable": true }
+  }
 }
 ```
 
@@ -45,10 +57,12 @@ both suffer from noisy sector samples.
 
 ```json
 {
-  "decode": {
-    "min_decode_contrast": 0.01,
-    "n_radial_rings": 5,
-    "samples_per_sector": 7
+  "advanced": {
+    "decode": {
+      "min_decode_contrast": 0.01,
+      "n_radial_rings": 5,
+      "samples_per_sector": 7
+    }
   }
 }
 ```
@@ -68,11 +82,13 @@ Widen the RANSAC tolerance windows.
 
 ```json
 {
-  "outer_fit": {
-    "ransac": { "inlier_threshold": 2.5, "min_inliers": 5 }
-  },
-  "inner_fit": {
-    "ransac": { "inlier_threshold": 2.5 }
+  "advanced": {
+    "outer_fit": {
+      "ransac": { "inlier_threshold": 2.5, "min_inliers": 5 }
+    },
+    "inner_fit": {
+      "ransac": { "inlier_threshold": 2.5 }
+    }
   }
 }
 ```
@@ -93,11 +109,13 @@ their edge point sets.
 
 ```json
 {
-  "outer_fit": { "max_angular_gap_rad": 2.0 },
-  "completion": {
-    "enable": true,
-    "min_arc_coverage": 0.25,
-    "image_margin_px": 5.0
+  "advanced": {
+    "outer_fit": { "max_angular_gap_rad": 2.0 },
+    "completion": {
+      "enable": true,
+      "min_arc_coverage": 0.25,
+      "image_margin_px": 5.0
+    }
   }
 }
 ```
@@ -145,7 +163,9 @@ the proposal stage may miss markers in those areas. In that case:
 ```json
 {
   "marker_scale": { "diameter_max_px": 72.0 },
-  "completion": { "enable": true }
+  "advanced": {
+    "completion": { "enable": true }
+  }
 }
 ```
 

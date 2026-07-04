@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-04
+
+The compositional target model ships end to end: rect lattices and plain
+(uncoded) rings are first-class alongside the classic coded hex board, origin
+fiducials resolve absolute board frames for targets with no per-marker IDs,
+and the public surface is tiered so diagnostics/codebook internals no longer
+crowd the stable root. Outer-radius estimation and code-band sampling both
+become ellipse-aware, holding accuracy at tilt without touching the nominal
+benchmark suite; several id-correction and conic-degeneracy soundness gaps
+found in review are closed. The interactive WASM demo moves into the book and
+the 0.8 documentation pass is complete.
+
 ### Added
 
 - **Compositional target model** (`TargetLayout`, new `target` module): a
@@ -63,6 +75,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frames, origin-resolution metrics), `tools/run_rect_benchmark.sh`
   (dots + no-dots modes), with baselines appended to
   `tools/ci/regression_baseline.json`.
+- **Embedded live browser demo** (`book/demo/`, served at `/demo/` and iframe-
+  embedded on the book's new Interactive Demo page): runs always-adaptive
+  WASM detection over hex-coded and rect-plain sample images directly from
+  the documentation, replacing the old standalone
+  `crates/ringgrid-wasm/demo/` page (retired).
+- **0.8 book documentation pass completed**: every chapter now reflects the
+  compositional `TargetLayout` model, the `gen-target` subcommand family, and
+  the 0.8 config/result surface — new Targets part, a 0.7→0.8 migration
+  guide, and updated pipeline/config-reference/output-schema/CLI pages.
 
 ### Changed
 
@@ -180,6 +201,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validly-shaped small-scaled conics), and the ellipse-constrained
   eigenvalue solve survives repeated eigenvalues, falling back to nalgebra's
   Schur eigenvalues when the closed-form cubic route fails.
+- **Python bindings**: `to_dict()` now serializes
+  `projective_center.max_correction_shift_px`, `completion.max_attempts`, and
+  `seed_proposals.max_seeds` as explicit JSON `null` when the Python value is
+  `None`, instead of omitting the key. Overlays merge rather than replace, so
+  omitting the key left a previously-set explicit value stuck forever —
+  resetting to auto/unlimited could never round-trip.
 
 - **Dependency migration: `projective-grid` 0.9 → 0.10.1.** The 0.10 release
   rewrote projective-grid's public API; ringgrid's three call sites migrate

@@ -799,6 +799,14 @@ fn write_target_png(
 }
 
 #[pyfunction]
+fn write_target_dxf(spec_json: &str, path: &str) -> PyResult<()> {
+    let target = target_from_spec_json(spec_json)?;
+    target
+        .write_target_dxf(std::path::Path::new(path))
+        .map_err(py_target_generation_error)
+}
+
+#[pyfunction]
 #[pyo3(signature = (image_path, config_json=None))]
 fn proposal_json_path(image_path: &str, config_json: Option<&str>) -> PyResult<String> {
     let gray = load_gray_image(image_path)?;
@@ -959,6 +967,7 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_png, m)?)?;
+    m.add_function(wrap_pyfunction!(write_target_dxf, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_path, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_array, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_result_payload_path, m)?)?;

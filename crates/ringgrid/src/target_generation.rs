@@ -396,6 +396,79 @@ impl TargetLayout {
         encode_png(writer, &image, dpi)?;
         Ok(())
     }
+
+    /// Render the target as a 2D DXF drawing in millimeters, for laser/CNC
+    /// fabrication of a physical target.
+    ///
+    /// Model space carries real-world millimeters with the board-frame origin
+    /// at the first cell. Coordinates are emitted with `y` flipped so that, in
+    /// a standard `+y`-up CAD viewer, the drawing matches the printed SVG/PNG
+    /// exactly (same handedness — the 16-sector codes are not mirror-symmetric,
+    /// so a reflected target would decode to different IDs). Geometry is split
+    /// across layers for cut/engrave workflows:
+    /// - `rings` — outer and inner ring-boundary circles (both target kinds),
+    /// - `code` — one closed polyline per dark code-band sector (coded only),
+    /// - `fiducials` — one circle per origin dot.
+    pub fn render_target_dxf(&self) -> String {
+        let geometry = render_geometry(self);
+        let mut lines: Vec<String> = Vec::new();
+        dxf_prologue(&mut lines);
+
+        for cell in self.cells() {
+            let cx = f64::from(cell.xy_mm[0]);
+            let cy = f64::from(cell.xy_mm[1]);
+            match cell.id {
+                Some(id) => {
+                    append_coded_marker_dxf(&mut lines, cx, cy, geometry, CODEBOOK[id].into())
+                }
+                None => {
+                    dxf_circle(
+                        &mut lines,
+                        DXF_LAYER_RINGS,
+                        cx,
+                        cy,
+                        geometry.outer_radius_mm,
+                    );
+                    dxf_circle(
+                        &mut lines,
+                        DXF_LAYER_RINGS,
+                        cx,
+                        cy,
+                        geometry.inner_radius_mm,
+                    );
+                }
+            }
+        }
+
+        if let Some(fiducials) = self.fiducials() {
+            let r = f64::from(fiducials.dot_radius_mm);
+            for dot in &fiducials.dots_mm {
+                dxf_circle(
+                    &mut lines,
+                    DXF_LAYER_FIDUCIALS,
+                    f64::from(dot[0]),
+                    f64::from(dot[1]),
+                    r,
+                );
+            }
+        }
+
+        dxf_epilogue(&mut lines);
+        lines.join("\n") + "\n"
+    }
+
+    /// Write a DXF target to disk. See [`TargetLayout::render_target_dxf`].
+    #[cfg(feature = "std")]
+    pub fn write_target_dxf(&self, path: &Path) -> Result<(), TargetGenerationError> {
+        let dxf = self.render_target_dxf();
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, dxf)?;
+        Ok(())
+    }
 }
 
 // Rendering facade for the deprecated v4 board type, kept until removal.
@@ -486,6 +559,150 @@ fn append_coded_marker_svg(
                 angle1,
             )
         ));
+    }
+}
+
+// --- DXF (R12) target export ---------------------------------------------
+
+const DXF_LAYER_RINGS: &str = "rings";
+const DXF_LAYER_CODE: &str = "code";
+const DXF_LAYER_FIDUCIALS: &str = "fiducials";
+/// Straight segments per code-band arc (an R12 POLYLINE has no true arc).
+const DXF_ARC_SEGMENTS: usize = 12;
+
+/// Format a millimeter coordinate for DXF (fixed precision, no exponent).
+fn dxf_fmt(x: f64) -> String {
+    let v = if x == 0.0 { 0.0 } else { x }; // collapse "-0" to "0"
+    format!("{v:.6}")
+}
+
+/// Append a DXF group-code / value pair.
+fn dxf_pair(lines: &mut Vec<String>, code: i32, value: &str) {
+    lines.push(code.to_string());
+    lines.push(value.to_string());
+}
+
+fn dxf_layer(lines: &mut Vec<String>, name: &str, color: i32) {
+    dxf_pair(lines, 0, "LAYER");
+    dxf_pair(lines, 2, name);
+    dxf_pair(lines, 70, "0");
+    dxf_pair(lines, 62, &color.to_string());
+    dxf_pair(lines, 6, "CONTINUOUS");
+}
+
+fn dxf_prologue(lines: &mut Vec<String>) {
+    // R12 (AC1009) is the most portable DXF flavor for laser/CNC software and
+    // needs no object handles.
+    dxf_pair(lines, 0, "SECTION");
+    dxf_pair(lines, 2, "HEADER");
+    dxf_pair(lines, 9, "$ACADVER");
+    dxf_pair(lines, 1, "AC1009");
+    dxf_pair(lines, 9, "$INSUNITS");
+    dxf_pair(lines, 70, "4"); // 4 = millimeters
+    dxf_pair(lines, 0, "ENDSEC");
+
+    dxf_pair(lines, 0, "SECTION");
+    dxf_pair(lines, 2, "TABLES");
+    dxf_pair(lines, 0, "TABLE");
+    dxf_pair(lines, 2, "LAYER");
+    dxf_pair(lines, 70, "4");
+    dxf_layer(lines, "0", 7);
+    dxf_layer(lines, DXF_LAYER_RINGS, 5);
+    dxf_layer(lines, DXF_LAYER_CODE, 7);
+    dxf_layer(lines, DXF_LAYER_FIDUCIALS, 1);
+    dxf_pair(lines, 0, "ENDTAB");
+    dxf_pair(lines, 0, "ENDSEC");
+
+    dxf_pair(lines, 0, "SECTION");
+    dxf_pair(lines, 2, "ENTITIES");
+}
+
+fn dxf_epilogue(lines: &mut Vec<String>) {
+    dxf_pair(lines, 0, "ENDSEC");
+    dxf_pair(lines, 0, "EOF");
+}
+
+/// Emit a CIRCLE. `cy` is board mm (`+y` down); flipped to CAD `+y`-up.
+fn dxf_circle(lines: &mut Vec<String>, layer: &str, cx: f64, cy: f64, r: f64) {
+    dxf_pair(lines, 0, "CIRCLE");
+    dxf_pair(lines, 8, layer);
+    dxf_pair(lines, 10, &dxf_fmt(cx));
+    dxf_pair(lines, 20, &dxf_fmt(-cy));
+    dxf_pair(lines, 30, "0.0");
+    dxf_pair(lines, 40, &dxf_fmt(r));
+}
+
+/// Emit a closed POLYLINE from board-mm vertices (each `y` flipped to `+y`-up).
+fn dxf_closed_polyline(lines: &mut Vec<String>, layer: &str, verts: &[(f64, f64)]) {
+    dxf_pair(lines, 0, "POLYLINE");
+    dxf_pair(lines, 8, layer);
+    dxf_pair(lines, 66, "1"); // vertices follow
+    dxf_pair(lines, 70, "1"); // closed
+    for (vx, vy) in verts {
+        dxf_pair(lines, 0, "VERTEX");
+        dxf_pair(lines, 8, layer);
+        dxf_pair(lines, 10, &dxf_fmt(*vx));
+        dxf_pair(lines, 20, &dxf_fmt(-*vy));
+        dxf_pair(lines, 30, "0.0");
+    }
+    dxf_pair(lines, 0, "SEQEND");
+}
+
+/// Closed annular-sector polygon in board mm (outer arc forward, inner back).
+fn dxf_annular_sector_vertices(
+    cx: f64,
+    cy: f64,
+    r_outer: f64,
+    r_inner: f64,
+    angle0: f64,
+    angle1: f64,
+) -> Vec<(f64, f64)> {
+    let n = DXF_ARC_SEGMENTS;
+    let mut verts = Vec::with_capacity(2 * (n + 1));
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let a = angle0 + (angle1 - angle0) * t;
+        verts.push((cx + r_outer * a.cos(), cy + r_outer * a.sin()));
+    }
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let a = angle1 + (angle0 - angle1) * t;
+        verts.push((cx + r_inner * a.cos(), cy + r_inner * a.sin()));
+    }
+    verts
+}
+
+/// Append a coded marker's DXF outline: the ring circles plus one closed
+/// polyline per dark (bit == 0) code-band sector.
+fn append_coded_marker_dxf(
+    lines: &mut Vec<String>,
+    cx: f64,
+    cy: f64,
+    geometry: RenderGeometry,
+    codeword: u32,
+) {
+    dxf_circle(lines, DXF_LAYER_RINGS, cx, cy, geometry.outer_radius_mm);
+    dxf_circle(lines, DXF_LAYER_RINGS, cx, cy, geometry.inner_radius_mm);
+
+    let (code_band_inner_mm, code_band_outer_mm) = geometry
+        .code_band_mm
+        .expect("coded markers always have a code band");
+    let dtheta = 2.0 * PI / CODE_SECTORS as f64;
+    for sector in 0..CODE_SECTORS {
+        if ((codeword >> sector) & 1) == 1 {
+            continue; // bright sector: nothing to cut
+        }
+        let angle0 = -PI + sector as f64 * dtheta;
+        let angle1 = angle0 + dtheta;
+        let verts = dxf_annular_sector_vertices(
+            cx,
+            cy,
+            code_band_outer_mm,
+            code_band_inner_mm,
+            angle0,
+            angle1,
+        );
+        dxf_closed_polyline(lines, DXF_LAYER_CODE, &verts);
     }
 }
 
@@ -1078,5 +1295,42 @@ mod tests {
         assert!(png.width() >= 63, "canvas must cover the dots");
         assert_eq!(png.get_pixel(1, 17).0[0], 0, "out-of-bbox dot is drawn");
         assert_eq!(png.get_pixel(29, 17).0[0], 255, "ring center is white");
+    }
+
+    #[test]
+    fn plain_target_dxf_has_ring_and_dot_circles_only() {
+        let target = TargetLayout::rect_24x24();
+        let dxf = target.render_target_dxf();
+
+        assert!(dxf.starts_with("0\nSECTION\n"), "DXF starts with a section");
+        assert!(dxf.contains("\nENTITIES\n"), "has an entities section");
+        assert!(dxf.contains("\n$INSUNITS\n70\n4\n"), "declares millimeters");
+        assert!(dxf.ends_with("\nEOF\n"), "terminates with EOF");
+        assert!(
+            dxf.contains("\nfiducials\n"),
+            "declares the fiducials layer"
+        );
+
+        // Plain markers: two boundary circles each, plus one circle per dot.
+        let circles = dxf.matches("\nCIRCLE\n").count();
+        assert_eq!(circles, 2 * target.n_cells() + 3);
+        assert_eq!(
+            dxf.matches("\nPOLYLINE\n").count(),
+            0,
+            "plain markers have no code-band sectors"
+        );
+    }
+
+    #[test]
+    fn coded_target_dxf_emits_ring_circles_and_dark_sectors() {
+        let target = TargetLayout::coded_hex(8.0, 3, 4, 4.8, 3.2, 1.152).expect("valid geometry");
+        let dxf = target.render_target_dxf();
+
+        // Two ring circles per marker; no fiducials on the coded hex preset.
+        assert_eq!(dxf.matches("\nCIRCLE\n").count(), 2 * target.n_cells());
+        assert!(
+            dxf.matches("\nPOLYLINE\n").count() > 0,
+            "coded markers cut dark code-band sectors"
+        );
     }
 }

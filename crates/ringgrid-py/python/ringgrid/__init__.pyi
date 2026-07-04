@@ -161,6 +161,22 @@ class TargetLayout:
     def from_dict(cls, data: Mapping[str, Any]) -> TargetLayout: ...
     def to_dict(self) -> dict[str, Any]: ...
     def to_spec_json(self) -> str: ...
+    def write_svg(
+        self,
+        path: str | Path,
+        *,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
+    def write_png(
+        self,
+        path: str | Path,
+        *,
+        dpi: float = ...,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
+    def write_dxf(self, path: str | Path) -> None: ...
 
 class MarkerScalePrior:
     diameter_min_px: float

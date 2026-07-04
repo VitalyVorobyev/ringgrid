@@ -409,6 +409,19 @@ def test_target_layout_validation_errors_surface_as_valueerror() -> None:
         ringgrid.DetectConfig("not a target")
 
 
+def test_target_layout_write_dxf_for_both_target_kinds(tmp_path: Path) -> None:
+    for name, target in (
+        ("hex", ringgrid.TargetLayout.coded_hex(8.0, 3, 4, 4.8, 3.2, 1.152)),
+        ("rect", ringgrid.TargetLayout.rect_24x24()),
+    ):
+        dxf_path = tmp_path / f"{name}.dxf"
+        target.write_dxf(dxf_path)
+        text = dxf_path.read_text()
+        assert text.startswith("0\nSECTION\n")
+        assert text.rstrip().endswith("EOF")
+        assert "\nCIRCLE\n" in text
+
+
 def test_target_layout_from_dict_dispatches_and_rejects_unknown_kinds() -> None:
     rect = ringgrid.TargetLayout.rect_24x24().to_dict()
     assert isinstance(

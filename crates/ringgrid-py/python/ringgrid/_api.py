@@ -47,6 +47,7 @@ from ._ringgrid import (
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
     write_board_spec_json as _write_board_spec_json,
+    write_target_dxf as _write_target_dxf,
     write_target_png as _write_target_png,
     write_target_svg as _write_target_svg,
 )
@@ -649,6 +650,42 @@ class TargetLayout:
     def _spec_json_str(self) -> str:
         """v5 JSON handed to the native detector loaders at the boundary."""
         return json.dumps(self.to_dict())
+
+    def write_svg(
+        self,
+        path: str | Path,
+        *,
+        margin_mm: float = 0.0,
+        include_scale_bar: bool = True,
+    ) -> None:
+        """Write a printable SVG target using the Rust target-generation path."""
+        _write_target_svg(
+            self.to_spec_json(),
+            _coerce_path(path),
+            float(margin_mm),
+            bool(include_scale_bar),
+        )
+
+    def write_png(
+        self,
+        path: str | Path,
+        *,
+        dpi: float = 300.0,
+        margin_mm: float = 0.0,
+        include_scale_bar: bool = True,
+    ) -> None:
+        """Write a printable PNG target using the Rust target-generation path."""
+        _write_target_png(
+            self.to_spec_json(),
+            _coerce_path(path),
+            float(dpi),
+            float(margin_mm),
+            bool(include_scale_bar),
+        )
+
+    def write_dxf(self, path: str | Path) -> None:
+        """Write a 2D DXF target (millimeters) for laser/CNC fabrication."""
+        _write_target_dxf(self.to_spec_json(), _coerce_path(path))
 
 
 @dataclass(slots=True)

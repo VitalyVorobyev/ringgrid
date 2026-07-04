@@ -1228,7 +1228,9 @@ class CompletionConfig:
             "require_perfect_decode": bool(self.require_perfect_decode),
             "max_radii_std_ratio": float(self.max_radii_std_ratio),
         }
-        _set_optional(out, "max_attempts", None if self.max_attempts is None else int(self.max_attempts))
+        # Explicit null: overlays merge, so omitting the key would keep a
+        # previously-set value and "reset to unlimited" could never apply.
+        out["max_attempts"] = None if self.max_attempts is None else int(self.max_attempts)
         return out
 
 
@@ -1261,7 +1263,12 @@ class ProjectiveCenterConfig:
             "max_selected_residual": float(self.max_selected_residual),
             "min_eig_separation": float(self.min_eig_separation),
         }
-        _set_optional(out, "max_correction_shift_px", self.max_correction_shift_px)
+        # Explicit null: None means "auto" (nominal marker diameter); overlays
+        # merge, so omitting the key would keep a previously-set explicit value
+        # and a reset to auto could never apply.
+        out["max_correction_shift_px"] = (
+            None if self.max_correction_shift_px is None else float(self.max_correction_shift_px)
+        )
         return out
 
 
@@ -1285,7 +1292,9 @@ class SeedProposalConfig:
             "merge_radius_px": float(self.merge_radius_px),
             "seed_score": float(self.seed_score),
         }
-        _set_optional(out, "max_seeds", None if self.max_seeds is None else int(self.max_seeds))
+        # Explicit null: overlays merge, so omitting the key would keep a
+        # previously-set cap and "reset to unlimited" could never apply.
+        out["max_seeds"] = None if self.max_seeds is None else int(self.max_seeds)
         return out
 
 

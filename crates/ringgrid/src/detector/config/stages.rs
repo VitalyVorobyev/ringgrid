@@ -202,6 +202,11 @@ pub struct IdCorrectionConfig {
     /// Enable rough-homography fallback for unresolved markers.
     pub homography_fallback_enable: bool,
     /// Minimum trusted markers required before attempting homography fallback.
+    ///
+    /// Acts as a ceiling: the effective floor is
+    /// `min(homography_min_trusted, max(8, n_markers / 3))`, so sparse/partial
+    /// views (where local voting is weakest) still engage the geometric
+    /// fallback once a third of the visible markers are trusted.
     pub homography_min_trusted: usize,
     /// Minimum inliers required for fallback homography RANSAC acceptance.
     pub homography_min_inliers: usize,

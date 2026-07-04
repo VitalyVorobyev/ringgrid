@@ -23,6 +23,17 @@ fn seed_allowed_for_homography(trust: Trust) -> bool {
     trust.is_anchor()
 }
 
+/// Effective trusted-marker floor for the homography fallback.
+///
+/// A fixed floor would disable the geometric fallback on exactly the
+/// sparse/partial views where local voting is weakest. Scale it to the
+/// visible marker count: dense scenes keep the configured floor, sparse
+/// scenes engage the fallback once a third of the markers are trusted — but
+/// never below 8, a meaningful RANSAC consensus above the 4-point minimum.
+fn effective_min_trusted(configured: usize, n_markers: usize) -> usize {
+    configured.min((n_markers / 3).max(8))
+}
+
 #[inline]
 fn config_soft_lock_blocks_override(
     marker: &MarkerRecord,
@@ -279,10 +290,12 @@ pub(super) fn run_homography_fallback(ws: &mut IdCorrectionWorkspace<'_>) {
         return;
     }
     let n_trusted = ws.trust.iter().filter(|&&t| t.is_trusted()).count();
-    if n_trusted < ws.config.homography_min_trusted {
+    let min_trusted = effective_min_trusted(ws.config.homography_min_trusted, ws.markers.len());
+    if n_trusted < min_trusted {
         tracing::debug!(
             n_trusted,
-            min_required = ws.config.homography_min_trusted,
+            min_required = min_trusted,
+            configured_floor = ws.config.homography_min_trusted,
             "id_correction homography fallback skipped: insufficient trusted markers",
         );
         return;
@@ -321,4 +334,22 @@ pub(super) fn run_homography_fallback(ws: &mut IdCorrectionWorkspace<'_>) {
         top_k,
         "id_correction homography fallback summary",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_min_trusted_scales_with_scene_size() {
+        // Dense scene: the configured floor applies unchanged.
+        assert_eq!(effective_min_trusted(24, 203), 24);
+        // Sparse scene: a third of the visible markers is enough.
+        assert_eq!(effective_min_trusted(24, 30), 10);
+        // Very sparse: never below the 8-marker consensus floor.
+        assert_eq!(effective_min_trusted(24, 15), 8);
+        assert_eq!(effective_min_trusted(24, 6), 8);
+        // A configured floor below the adaptive one still wins (ceiling).
+        assert_eq!(effective_min_trusted(6, 203), 6);
+    }
 }

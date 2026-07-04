@@ -36,18 +36,18 @@ All geometry stays in image space throughout.
 
 ## Basic Usage
 
-The minimal workflow loads a board layout, opens a grayscale image, and runs
+The minimal workflow loads a target layout, opens a grayscale image, and runs
 detection:
 
 ```rust
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{TargetLayout, Detector};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
 let image = image::open("photo.png")?.to_luma8();
 
-let detector = Detector::new(board);
-let result = detector.detect(&image);
+let detector = Detector::new(target);
+let result = detector.detect(&image).unwrap(); // 0.8: detect* return Result<_, DetectError>
 
 for marker in &result.detected_markers {
     if let Some(id) = marker.id {
@@ -62,7 +62,7 @@ If you know the approximate marker diameter in pixels, passing it as a hint
 narrows the radius search and speeds up detection:
 
 ```rust
-let detector = Detector::with_marker_diameter_hint(board, 32.0);
+let detector = Detector::with_marker_diameter_hint(target, 32.0);
 ```
 
 ## Providing a Scale Range
@@ -73,7 +73,7 @@ can specify a min/max diameter range with `MarkerScalePrior`:
 ```rust
 use ringgrid::MarkerScalePrior;
 
-let detector = Detector::with_marker_scale(board, MarkerScalePrior::new(14.0, 66.0));
+let detector = Detector::with_marker_scale(target, MarkerScalePrior::new(14.0, 66.0));
 ```
 
 For very wide variation (for example very small and very large markers in one
@@ -81,7 +81,7 @@ image), switch to [Adaptive Scale Detection](adaptive-scale.md).
 
 ## One-Step Construction from JSON
 
-`Detector::from_target_json_file` loads the board layout and creates the detector
+`Detector::from_target_json_file` loads the target layout and creates the detector
 in a single call:
 
 ```rust
@@ -95,7 +95,7 @@ After creating the detector you can adjust individual configuration fields throu
 example, to disable the completion stage:
 
 ```rust
-let mut detector = Detector::new(board);
+let mut detector = Detector::new(target);
 detector.config_mut().advanced.completion.enable = false;
 ```
 

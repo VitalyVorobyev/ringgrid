@@ -1,6 +1,8 @@
 # Introduction
 
-**ringgrid** is a pure-Rust library for detecting dense coded ring calibration targets arranged on a hexagonal lattice. It detects markers with subpixel accuracy, decodes unique IDs from the shipped baseline 893-codeword profile (with an opt-in extended profile available for larger ID spaces), estimates a board-to-image homography, and returns structured results ready for downstream camera calibration.
+**ringgrid** is a pure-Rust library for detecting dense ring calibration targets. It detects markers with subpixel accuracy, decodes unique IDs from the shipped baseline 893-codeword profile (with an opt-in extended profile available for larger ID spaces), estimates a board-to-image homography, and returns structured results ready for downstream camera calibration.
+
+Since 0.8, targets are described compositionally rather than as a single fixed layout: a hex or rect lattice, coded (16-sector, ID-bearing) or plain rings, and optional origin fiducials for plain targets that carry no per-marker identity. See [The Compositional Target Model](targets/target-model.md) for the full picture.
 
 > *No OpenCV bindings — all image processing is implemented in Rust.*
 
@@ -59,7 +61,9 @@ This book is for Rust developers working on:
 
 ## Book Structure
 
-- **Fast Start** — one-command workflow to generate `board_spec.json` + printable SVG/PNG and run first detection
+- **Fast Start** — one-command workflow to generate `target_spec.json` + printable SVG/PNG and run first detection
+- **Migration: 0.7 → 0.8** — breaking changes per interface (Rust, Python, CLI, WASM), with before/after snippets
+- **Targets** — the compositional target model: hex/rect lattices, coded/plain marker rings, optional origin fiducials
 - **Marker Design** — anatomy of the ring marker, coding scheme, and hex lattice layout
 - **Detection Pipeline** — detailed walkthrough of all 10 detection stages
 - **Mathematical Foundations** — full derivations of the core algorithms (ellipse fitting, RANSAC, homography, projective center recovery, division model)

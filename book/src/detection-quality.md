@@ -90,14 +90,14 @@ The gate is the final guarantee, layered on top of earlier per-marker gates:
 A typical calibration consumer needs only the trusted correspondences:
 
 ```rust
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{TargetLayout, Detector};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
 let image = image::open("photo.png")?.to_luma8();
 
-let detector = Detector::new(board);
-let result = detector.detect(&image);
+let detector = Detector::new(target);
+let result = detector.detect(&image).unwrap(); // 0.8: detect* return Result<_, DetectError>
 
 // Every marker with an id is lattice-consistent: a board↔image correspondence.
 // Feed these (board_mm, image_px) pairs straight to your calibrator.

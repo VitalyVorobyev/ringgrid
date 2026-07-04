@@ -2,7 +2,7 @@
 
 This section gets you from zero to:
 
-- `board_spec.json` (target config used by the detector)
+- `target_spec.json` (target config used by the detector)
 - printable `target_print.svg`
 - printable `target_print.png`
 
@@ -10,63 +10,42 @@ in one command.
 
 ## 1. Generate target JSON + SVG + PNG
 
-Choose one of the three equivalent target-generation paths.
-
-Rust CLI:
+The canonical path is the Rust CLI `gen-target` subcommand family. For the
+classic hex coded board:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target \
+cargo run -p ringgrid-cli -- gen-target hex \
   --out_dir tools/out/target_faststart \
   --pitch_mm 8 \
   --rows 15 \
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
-  --name ringgrid_200mm_hex \
+  --marker_ring_width_mm 1.152 \
   --dpi 600 \
   --margin_mm 5
 ```
 
-Python script (same geometry, same output files):
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip maturin
-./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
-./.venv/bin/python tools/gen_target.py \
-  --out_dir tools/out/target_faststart \
-  --pitch_mm 8 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --name ringgrid_200mm_hex \
-  --dpi 600 \
-  --margin_mm 5
-```
-
-Rust API:
-
-- Use `BoardLayout::new` / `BoardLayout::with_name` with `write_json_file`,
-  `write_target_svg`, and `write_target_png` when target generation happens
-  inside a Rust application instead of from the terminal.
+Other paths (the `TargetLayout` Rust API, the `tools/gen_target.py` Python
+script, and the `rect` / `preset` / `from-spec` subcommands for plain and
+rectangular targets) are covered in [Target Generation](target-generation.md).
 
 ## 2. Output files
 
 After the command finishes, you will have:
 
-- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_spec.json`
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
 
 If you also need synthetic camera renders and ground truth, use
-`tools/gen_synth.py` instead of the dedicated Rust CLI or Python target-generator path.
+`tools/gen_synth.py` instead of the target-generator path.
 
 ## 3. Detect against this board
 
 ```bash
 cargo run -- detect \
-  --target tools/out/target_faststart/board_spec.json \
+  --target tools/out/target_faststart/target_spec.json \
   --image path/to/photo.png \
   --out tools/out/target_faststart/detect.json
 ```

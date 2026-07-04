@@ -23,58 +23,45 @@ The binary is named `ringgrid`.
 
 ### `ringgrid gen-target` -- Generate canonical target JSON + printable SVG/PNG
 
-This command generates:
+`gen-target` is a subcommand family. Each subcommand builds a `TargetLayout` and
+writes `target_spec.json` (schema `ringgrid.target.v5`), `<basename>.svg`, and
+`<basename>.png` to `--out_dir`.
 
-- `board_spec.json`
-- `<basename>.svg`
-- `<basename>.png`
+| Subcommand | Target |
+|---|---|
+| `hex` | Hex lattice of 16-sector coded rings (the classic ringgrid target). |
+| `rect` | Rectangular lattice of plain (uncoded) rings, optionally with origin dots. |
+| `preset` | A built-in preset: `default-hex` or `isra24x24`. |
+| `from-spec` | Render from an existing target spec JSON (v5, or legacy v4). |
 
-from direct board geometry arguments.
-
-It is the Rust CLI equivalent of `tools/gen_target.py` and uses the same practical
-geometry/print options. For the same geometry, DPI, margin, and scale-bar setting,
-the generated artifacts are equivalent to the Python script and the Rust API writers.
-
-**Geometry and output flags:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--pitch_mm <mm>` | required | Marker center spacing in mm. |
-| `--rows <n>` | required | Number of hex lattice rows. |
-| `--long_row_cols <n>` | required | Number of markers in long rows. |
-| `--marker_outer_radius_mm <mm>` | required | Outer ring radius in mm. |
-| `--marker_inner_radius_mm <mm>` | required | Inner ring radius in mm. |
-| `--name <string>` | auto | Optional board name. Omitted uses deterministic geometry-derived naming. |
-| `--out_dir <path>` | `tools/out/target` | Output directory for `board_spec.json`, SVG, and PNG. |
-| `--basename <string>` | `target_print` | Base filename for SVG and PNG outputs. |
-| `--dpi <f>` | `300.0` | PNG raster DPI (also embedded in PNG metadata). |
-| `--margin_mm <mm>` | `0.0` | Extra white border around the board in SVG/PNG outputs. |
-| `--no-scale-bar` | `false` | Omit the default scale bar from SVG/PNG outputs. |
-
-The Rust CLI accepts the underscore flag names above for parity with `tools/gen_target.py`.
-Hyphenated aliases such as `--pitch-mm`, `--long-row-cols`, and `--margin-mm`
-are also accepted.
-
-Example:
+Common examples:
 
 ```bash
-ringgrid gen-target \
-    --out_dir tools/out/target_faststart \
-    --pitch_mm 8 \
-    --rows 15 \
-    --long_row_cols 14 \
-    --marker_outer_radius_mm 4.8 \
-    --marker_inner_radius_mm 3.2 \
-    --name ringgrid_200mm_hex \
-    --dpi 600 \
-    --margin_mm 5
+# Classic hex coded target
+ringgrid gen-target hex \
+    --pitch_mm 8 --rows 15 --long_row_cols 14 \
+    --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 \
+    --marker_ring_width_mm 1.152 \
+    --out_dir tools/out/target
+
+# Rectangular plain target with three origin dots
+ringgrid gen-target rect \
+    --pitch_mm 14 --rows 24 --cols 24 \
+    --marker_outer_radius_mm 5.6 --marker_inner_radius_mm 2.8 \
+    --dot_radius_mm 1.4 --dot_mm 161,161 --dot_mm 147,161 --dot_mm 161,175 \
+    --out_dir tools/out/target_rect
+
+# A built-in preset
+ringgrid gen-target preset isra24x24 --out_dir tools/out/target
+
+# Re-render (and upgrade to v5) an existing spec
+ringgrid gen-target from-spec --spec tools/out/target/target_spec.json --out_dir tools/out/target2
 ```
 
-Generated files:
-
-- `tools/out/target_faststart/board_spec.json`
-- `tools/out/target_faststart/target_print.svg`
-- `tools/out/target_faststart/target_print.png`
+Underscore flag names are primary; hyphenated aliases such as `--pitch-mm`,
+`--long-row-cols`, and `--out-dir` are also accepted. For the full
+per-subcommand flag reference and the equivalent Rust API, see
+[Target Generation](target-generation.md).
 
 ### `ringgrid detect` -- Detect markers in an image
 
@@ -98,7 +85,7 @@ results as JSON.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--target <path>` | built-in board | Path to a board layout JSON file. When omitted, uses the built-in default 203-marker hex board. |
+| `--target <path>` | built-in board | Path to a target spec JSON file (`ringgrid.target.v5`, or legacy `v4`). When omitted, uses the built-in default 203-marker hex board. |
 
 **Marker scale:**
 
@@ -200,11 +187,11 @@ ringgrid detect \
     --marker-diameter-max 56
 ```
 
-Using a custom board specification:
+Using a custom target specification:
 
 ```bash
 ringgrid detect \
-    --target board_spec.json \
+    --target target_spec.json \
     --image photo.png \
     --out result.json
 ```

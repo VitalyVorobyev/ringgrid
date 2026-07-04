@@ -83,10 +83,10 @@ operates in.
 ## Full Example
 
 ```rust
-use ringgrid::{BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
+use ringgrid::{TargetLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
 let image = image::open("photo.png")?.to_luma8();
 let (w, h) = image.dimensions();
 
@@ -103,8 +103,8 @@ let camera = CameraModel {
     },
 };
 
-let detector = Detector::new(board);
-let result = detector.detect_with_mapper(&image, &camera);
+let detector = Detector::new(target);
+let result = detector.detect_with_mapper(&image, &camera).unwrap(); // 0.8: detect* return Result<_, DetectError>
 
 for marker in &result.detected_markers {
     // center is always in image (distorted) space

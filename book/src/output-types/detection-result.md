@@ -29,6 +29,7 @@ proposal-diagnostics fields, see [Detection Output Format](../output-format.md).
 | `homography_frame` | `DetectionFrame` | Coordinate frame of the `homography` matrix (`Image` or `Working`). |
 | `image_size` | `[u32; 2]` | Image dimensions as `[width, height]`. |
 | `homography` | `Option<[[f64; 3]; 3]>` | 3x3 row-major board-to-output-frame homography. Present when 4 or more markers were decoded. |
+| `board_frame` | `Option<BoardFrame>` | Reference frame of `grid_coord` / `board_xy_mm` / `homography` outputs: `Absolute` or `RelativeCanonical`. `None` when no grid assignment took place (no markers labeled). Coded targets are always `Absolute`; plain targets are `Absolute` only when origin fiducials resolved the board origin. See [Origin Fiducials](../targets/origin-fiducials.md). |
 | `self_undistort` | `Option<SelfUndistortResult>` | Estimated division-model distortion correction, present when self-undistort mode was used. |
 
 `DetectionResult` no longer carries a `ransac` field — the RANSAC homography
@@ -64,6 +65,23 @@ if let Some(stats) = &diagnostics.ransac {
 - **`Image`** -- raw image pixel coordinates.
 - **`Working`** -- working-frame coordinates (undistorted pixel space when a `PixelMapper` is active).
 
+## BoardFrame
+
+`BoardFrame` is an enum with two variants, reported on `board_frame` whenever
+grid-labeled outputs (`grid_coord`, `board_xy_mm`, and the homography's source
+plane) are available:
+
+- **`Absolute`** -- outputs are absolute board-frame values. Always the case
+  for coded targets (decoded IDs anchor markers to physical cells); for plain
+  targets, only when origin fiducials resolved the board origin.
+- **`RelativeCanonical`** -- origin unresolved: `grid_coord` is in a canonical
+  relative frame (non-negative, `+u` roughly along image `+x`); `board_xy_mm`
+  is absent on every labeled marker.
+
+`BoardFrame::origin_resolved()` is a convenience predicate equivalent to
+`matches!(frame, BoardFrame::Absolute)`. See [Origin Fiducials](../targets/origin-fiducials.md)
+for the full resolution algorithm and the per-marker consequences.
+
 ## Frame conventions
 
 The values of `center_frame` and `homography_frame` depend on how detection was invoked:
@@ -94,7 +112,7 @@ pixel_y = v' / w
 
 ## Serialization
 
-`DetectionResult` derives `serde::Serialize` and `serde::Deserialize`. Optional fields (`homography`, `self_undistort`) use `#[serde(skip_serializing_if = "Option::is_none")]`, so they are omitted from the JSON output when absent. Serializing a `DetectionResult` does **not** include diagnostics — serialize the `DetectionDiagnostics` value separately, or use the CLI, which nests it under `diagnostics`.
+`DetectionResult` derives `serde::Serialize` and `serde::Deserialize`. Optional fields (`homography`, `board_frame`, `self_undistort`) use `#[serde(skip_serializing_if = "Option::is_none")]`, so they are omitted from the JSON output when absent -- never serialized as `null`. Serializing a `DetectionResult` does **not** include diagnostics — serialize the `DetectionDiagnostics` value separately, or use the CLI, which nests it under `diagnostics`.
 
 ## Example JSON
 
@@ -105,8 +123,10 @@ A typical serialized `DetectionResult` with a fitted homography:
   "detected_markers": [
     {
       "id": 42,
+      "grid_coord": [6, 3],
       "confidence": 0.95,
       "center": [512.3, 384.7],
+      "board_xy_mm": [48.0, 24.0],
       "ellipse_outer": {
         "cx": 512.3, "cy": 384.7, "a": 16.1, "b": 15.8, "angle": 0.12
       }
@@ -119,7 +139,8 @@ A typical serialized `DetectionResult` with a fitted homography:
     [3.52, 0.08, 640.1],
     [-0.05, 3.48, 480.3],
     [0.00012, -0.00003, 1.0]
-  ]
+  ],
+  "board_frame": "absolute"
 }
 ```
 

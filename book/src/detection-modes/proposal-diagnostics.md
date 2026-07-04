@@ -119,15 +119,18 @@ python tools/plot_proposal.py \
     --out tools/out/synth_001/proposals_0000.png
 ```
 
-Detector-aware mode (with marker scale prior):
+To emulate a marker scale prior, constrain the voting-radius band around the
+expected outer-ring radius (≈16 px for 32 px-diameter markers):
 
 ```bash
 python tools/plot_proposal.py \
     --image testdata/target_3_split_00.png \
-    --target tools/out/target_faststart/board_spec.json \
-    --marker-diameter 32.0 \
+    --r-min 10 --r-max 24 \
     --out proposals_overlay.png
 ```
+
+A full `ProposalConfig` JSON can also be supplied via `--config`; individual
+flags override its fields.
 
 ## Backward Compatibility
 

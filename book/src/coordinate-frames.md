@@ -47,7 +47,7 @@ pub struct DetectionResult {
 
 ## Homography Frame
 
-The `homography` field in `DetectionResult` maps from **board coordinates** (millimeters, as defined in `BoardLayout`) to whichever frame `homography_frame` indicates:
+The `homography` field in `DetectionResult` maps from **board coordinates** (millimeters, as defined in `TargetLayout`) to whichever frame `homography_frame` indicates:
 
 - When `homography_frame == Image`: the homography maps board mm to distorted image pixels.
 - When `homography_frame == Working`: the homography maps board mm to undistorted working-frame pixels.

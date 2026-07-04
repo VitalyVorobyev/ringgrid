@@ -92,7 +92,7 @@ The detector applies additional gates via `ProjectiveCenterConfig`:
 
 | Gate | Purpose |
 |---|---|
-| `max_center_shift_px` | Reject if correction moves center too far from ellipse-fit center |
+| `max_correction_shift_px` | Reject if correction moves center too far from ellipse-fit center |
 | `max_selected_residual` | Reject if geometric residual is too high (unreliable solution) |
 | `min_eig_separation` | Reject if eigenvalues are nearly degenerate (unstable) |
 

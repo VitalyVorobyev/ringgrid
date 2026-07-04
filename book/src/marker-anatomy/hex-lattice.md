@@ -38,8 +38,9 @@ coordinates** `(q, r)`, following the standard hex grid convention:
   range of `q` depends on the row length.
 
 Axial coordinates are integers and provide a natural addressing scheme for
-hex grids. They are stored as optional fields on each `BoardMarker` for
-diagnostic and visualization purposes.
+hex grids. Each generated cell carries its coordinate as `TargetCell::coord`
+(a `projective_grid::Coord { u, v }`, where `u = q` and `v = r` for a hex
+lattice).
 
 ## Cartesian conversion
 
@@ -85,123 +86,133 @@ This distance determines the minimum clearance between markers and constrains
 the maximum allowed marker diameter (see
 [Ring Structure](ring-structure.md#design-constraints)).
 
-## The `BoardLayout` type
+## The `TargetLayout` type
 
-The `BoardLayout` struct is the runtime representation of a calibration target.
-It holds the lattice parameters, marker radii, and a generated list of all
-marker positions:
+At runtime a calibration target is described by a `TargetLayout`, the
+compositional model introduced in 0.8. A hex board is one point in that model:
+its lattice aspect is `LatticeGeometry::Hex`, its rings are a shared
+`RingGeometry`, and (for coded boards) its coding is `MarkerCoding::Coded16`.
+The [Compositional Target Model](../targets/target-model.md) covers the full
+space (rect lattices, plain rings, origin fiducials); this page stays on the hex
+lattice.
+
+The hex lattice parameters from the table above live in `HexGeometry`:
 
 ```rust
-pub struct BoardLayout {
-    pub name: String,
-    pub pitch_mm: f32,
-    pub rows: usize,
-    pub long_row_cols: usize,
-    pub marker_outer_radius_mm: f32,
-    pub marker_inner_radius_mm: f32,
-    pub markers: Vec<BoardMarker>,
-    // internal: fast ID -> index lookup
+use ringgrid::{TargetLayout, LatticeGeometry};
+
+// The classic 15-row, 203-marker coded board.
+let target = TargetLayout::default_hex();
+assert_eq!(target.n_cells(), 203);
+assert_eq!(target.pitch_mm(), 8.0);
+
+if let LatticeGeometry::Hex(hex) = target.lattice() {
+    assert_eq!(hex.rows, 15);
+    assert_eq!(hex.long_row_cols, 14);
 }
 ```
 
-Key methods:
+Construct a hex target with `TargetLayout::default_hex()`, from direct geometry
+with `TargetLayout::coded_hex(pitch_mm, rows, long_row_cols, outer_radius_mm,
+inner_radius_mm, ring_width_mm)`, the general `TargetLayout::new(...)`, or a JSON
+loader. Geometry is not mutated in place: construction derives a cell cache
+(positions and ID/coordinate lookups) that an in-place edit would silently
+desync.
+
+Key methods (hex-relevant):
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `default()` | `BoardLayout` | Default 15x14 board with 203 markers |
-| `from_json_file(path)` | `Result<BoardLayout>` | Load from a JSON spec file |
-| `xy_mm(id)` | `Option<[f32; 2]>` | Look up Cartesian position by marker ID |
-| `n_markers()` | `usize` | Total number of markers |
-| `marker_ids()` | `Iterator<usize>` | Iterate over all marker IDs |
-| `marker_bounds_mm()` | `Option<([f32;2], [f32;2])>` | Axis-aligned bounding box |
-| `marker_span_mm()` | `Option<[f32; 2]>` | Width and height of the marker field |
+| `default_hex()` | `TargetLayout` | Classic 15×14 hex board, 203 coded markers |
+| `coded_hex(pitch, rows, long_row_cols, outer, inner, ring_width)` | `Result<TargetLayout, _>` | Coded hex from direct geometry |
+| `from_json_file(path)` | `Result<TargetLayout, TargetLoadError>` | Load a target spec (v5, or legacy v4) |
+| `cells()` | `&[TargetCell]` | All marker cells in generation order |
+| `n_cells()` | `usize` | Total number of marker cells |
+| `cell_xy_mm(coord)` | `Option<[f32; 2]>` | Cell center by axial coordinate |
+| `xy_mm_of_id(id)` | `Option<[f32; 2]>` | Cell center by codebook ID (coded) |
+| `id_of(coord)` / `coord_of_id(id)` | `Option<_>` | Coordinate ↔ ID lookups (coded) |
+| `marker_ids()` | `impl Iterator<Item = usize>` | Iterate codebook IDs (empty for plain) |
+| `marker_bounds_mm()` / `marker_span_mm()` | `Option<_>` | Cell-center bounding box / span |
+| `pitch_mm()` / `min_center_spacing_mm()` | `f32` | Lattice pitch and nearest-neighbor spacing |
 
-`BoardLayout` maintains an internal `HashMap<usize, usize>` for O(1) lookup
-of marker positions by ID, built automatically during construction.
+Lookups are O(1): `TargetLayout` builds ID→cell and coordinate→cell hash maps
+during construction.
 
-## The `BoardMarker` type
+> **Deprecation.** The pre-0.8 flat `BoardLayout` type still exists as a thin,
+> hex-only facade over `TargetLayout` and is geometry-identical to
+> `TargetLayout::default_hex()`. It is deprecated and will be removed after 0.8
+> — new code should use `TargetLayout`. See the
+> [Compositional Target Model](../targets/target-model.md) and the
+> [Migration Guide](../migration-0.8.md).
 
-Each marker on the board is represented by:
+## The `TargetCell` type
+
+Each cell generated for the lattice is a `TargetCell`:
 
 ```rust
-pub struct BoardMarker {
-    pub id: usize,
+pub struct TargetCell {
+    /// Lattice coordinate: axial (q, r) for hex, carried as Coord { u, v }.
+    pub coord: projective_grid::Coord,
+    /// Cell center in board-frame millimeters.
     pub xy_mm: [f32; 2],
-    pub q: Option<i16>,
-    pub r: Option<i16>,
+    /// Codebook ID for coded targets; None for plain targets.
+    pub id: Option<usize>,
 }
 ```
 
-The `id` field is the marker's codebook index (0 through 892 for the default
-board). Markers are assigned IDs sequentially in row-major order during
-generation. The `q` and `r` fields store the axial hex coordinates.
+For a hex board, `coord.u` is the axial `q` and `coord.v` is the axial `r`.
+Cells are generated top row first, left to right; for coded boards the `id` is
+the codebook index (0 through 892 for the default board), assigned sequentially
+in that order unless the target carries an explicit `id_assignment`.
 
 ## JSON schema
 
-Board layouts are specified in JSON files using the `ringgrid.target.v4`
-schema. The schema is deliberately **parametric**: it contains only the
-lattice parameters, and marker positions are generated at runtime. This
-avoids the maintenance burden and potential inconsistencies of storing
-per-marker coordinate lists.
+Targets are specified in JSON. The canonical schema is
+[`ringgrid.target.v5`](../targets/target-json-v5.md), whose `lattice` section is
+tagged `"kind": "hex"` for a hex board. The pre-0.8 flat `ringgrid.target.v4`
+schema (top-level `pitch_mm`, `rows`, `long_row_cols`, `marker_*_mm`) is still
+accepted on input and migrated on load; writers always emit v5.
 
-Example JSON for the default board:
+A minimal v5 hex spec:
 
-```json
+```jsonc
 {
-    "schema": "ringgrid.target.v4",
-    "name": "ringgrid_200mm_hex",
-    "pitch_mm": 8.0,
-    "rows": 15,
-    "long_row_cols": 14,
-    "marker_outer_radius_mm": 4.8,
-    "marker_inner_radius_mm": 3.2,
-    "marker_ring_width_mm": 1.152
+  "schema": "ringgrid.target.v5",
+  "name": "ringgrid_200mm_hex",
+  "lattice": { "kind": "hex", "rows": 15, "long_row_cols": 14, "pitch_mm": 8.0 },
+  "marker": { "outer_radius_mm": 4.8, "inner_radius_mm": 3.2 },
+  "coding": { "kind": "coded16", "ring_width_mm": 1.152 }
 }
 ```
 
-Schema fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema` | string | Must be `"ringgrid.target.v4"` |
-| `name` | string | Human-readable target name |
-| `pitch_mm` | float | Center-to-center marker spacing |
-| `rows` | int | Number of rows in the lattice |
-| `long_row_cols` | int | Markers per long row |
-| `marker_outer_radius_mm` | float | Outer ring radius |
-| `marker_inner_radius_mm` | float | Inner ring radius |
-| `marker_ring_width_mm` | float | Full printed ring width |
-
-The loader enforces strict validation via `#[serde(deny_unknown_fields)]`:
-any extra fields (such as legacy `origin_mm`, `board_size_mm`, or explicit
-`markers` lists) cause a parse error. This prevents silent use of outdated
-board specifications.
+See [Target JSON (schema v5)](../targets/target-json-v5.md) for the full field
+reference and v4 auto-migration.
 
 ## Validation rules
 
-The `BoardLayout` loader validates several geometric constraints:
+`TargetLayout::new` (and the JSON loaders) reject illegal hex geometry up front:
 
-1. **Positive dimensions**: `pitch_mm`, `marker_outer_radius_mm`,
-   `marker_inner_radius_mm`, and `marker_ring_width_mm` must all be finite
-   and positive.
-2. **Inner < outer**: The inner radius must be strictly less than the outer
+1. **Positive dimensions**: `pitch_mm`, both ring radii, and (for coded targets)
+   `ring_width_mm` must be finite and positive.
+2. **Inner < outer**: the inner radius must be strictly less than the outer
    radius.
-3. **Positive code band**: The outer edge of the inner ring must stay inside
-   the inner edge of the outer ring, so the annular code band has non-zero
-   width.
-4. **Non-overlapping printed markers**: The full printed marker diameter,
-   including ring stroke width, must be smaller than the nearest-neighbor
-   distance (`pitch * sqrt(3)`).
-5. **Sufficient columns**: When `rows > 1`, `long_row_cols` must be at least 2
+3. **Positive code band**: for coded markers, the outer edge of the inner ring
+   stroke must stay inside the inner edge of the outer ring stroke, so the code
+   band has non-zero width.
+4. **Non-overlapping markers**: the drawn marker diameter (including ring stroke)
+   must be smaller than the minimum center spacing (`pitch * sqrt(3)` for hex).
+5. **Sufficient columns**: when `rows > 1`, `long_row_cols` must be at least 2
    (to allow short rows with `long_row_cols - 1 >= 1` markers).
+6. **Codebook capacity**: a coded target may not have more cells than the
+   embedded codebook (893 codewords).
 
 ## Board generation
 
-Board specification files are generated by the Python utility
-`tools/gen_board_spec.py`:
+Hex board specs can be produced by the Python utility `tools/gen_board_spec.py`,
+which writes a v4 `board_spec.json` (loaders migrate it to v5 automatically):
 
 ```bash
-python3 tools/gen_board_spec.py \
+.venv/bin/python tools/gen_board_spec.py \
     --pitch_mm 8.0 \
     --rows 15 \
     --long_row_cols 14 \
@@ -209,6 +220,8 @@ python3 tools/gen_board_spec.py \
     --json_out tools/board/board_spec.json
 ```
 
-The generated JSON file is then loaded at runtime by the detector via
-`BoardLayout::from_json_file()`, or the `BoardLayout::default()` constructor
-can be used without any file for the standard 15x14 board.
+Load the result at runtime with `TargetLayout::from_json_file()`, or skip the
+file entirely and use `TargetLayout::default_hex()` for the standard 15×14 board.
+For the pure-Rust CLI generator — which writes a v5 `target_spec.json` plus
+printable SVG/PNG and also handles rect and plain targets — see
+[Target Generation](../target-generation.md).

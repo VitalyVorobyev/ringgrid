@@ -50,7 +50,7 @@ When a `DetectConfig` is constructed (or `set_marker_scale_prior()` is called), 
 
 ### Proposal search radii
 
-Proposal parameters depend on both the marker scale and the board geometry. The derivation uses a **spacing ratio** `S = min_center_spacing_mm / (2 * outer_radius_mm)` from the active `BoardLayout`, which captures how densely markers are packed relative to their size. Let `spacing_min_px = S * d_min` and `spacing_max_px = S * d_max`:
+Proposal parameters depend on both the marker scale and the target geometry. The derivation uses a **spacing ratio** `S = min_center_spacing_mm / (2 * outer_radius_mm)` from the active `TargetLayout`, which captures how densely markers are packed relative to their size. Let `spacing_min_px = S * d_min` and `spacing_max_px = S * d_max`:
 
 | Derived field | Formula |
 |---|---|
@@ -88,9 +88,7 @@ Note: the number of angular rays for outer estimation is controlled by `EdgeSamp
 
 ### Projective center shift gate
 
-| Derived field | Formula |
-|---|---|
-| `projective_center.max_center_shift_px` | `Some(2.0 * r_nom)` |
+`projective_center.max_correction_shift_px` (`Option<f64>`) is **not** derived by the constructors — it defaults to `None` and stays `None` across scale-prior changes. `None` means **"auto"**: at the point of use, the correction gate resolves to the nominal marker diameter, `d_nom = 2.0 * r_nom`, computed live from the *current* `MarkerScalePrior` rather than baked into the config. Set the field explicitly to override the gate with a fixed value that survives target re-derivation.
 
 ## Usage guidance
 
@@ -108,4 +106,4 @@ Note: the number of angular rays for outer estimation is controlled by `EdgeSamp
 
 ## Source
 
-`crates/ringgrid/src/detector/config.rs`
+`crates/ringgrid/src/detector/config/`

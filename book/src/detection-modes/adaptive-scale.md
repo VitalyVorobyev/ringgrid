@@ -15,22 +15,22 @@ Adaptive mode runs multiple scale tiers and merges results with size-aware dedup
 ## API Entry Points
 
 ```rust
-use ringgrid::{BoardLayout, Detector, ScaleTiers};
+use ringgrid::{TargetLayout, Detector, ScaleTiers};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json"))?;
-let detector = Detector::new(board);
+let target = TargetLayout::from_json_file(Path::new("target.json"))?;
+let detector = Detector::new(target);
 let image = image::open("photo.png")?.to_luma8();
 
-// 1) Automatic probe + auto-tier selection
-let r1 = detector.detect_adaptive(&image);
+// 1) Automatic probe + auto-tier selection (0.8: detect* return Result<_, DetectError>)
+let r1 = detector.detect_adaptive(&image).unwrap();
 
 // 2) Optional nominal size hint (px) -> 2-tier bracket around hint
-let r2 = detector.detect_adaptive_with_hint(&image, Some(32.0));
+let r2 = detector.detect_adaptive_with_hint(&image, Some(32.0)).unwrap();
 
 // 3) Explicit manual tiers
 let tiers = ScaleTiers::four_tier_wide();
-let r3 = detector.detect_multiscale(&image, &tiers);
+let r3 = detector.detect_multiscale(&image, &tiers).unwrap();
 # let _ = (r1, r2, r3);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

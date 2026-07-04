@@ -661,6 +661,64 @@ fn board_snapshot_json(spec_json: &str) -> PyResult<String> {
     serde_json::to_string(&board_snapshot(&board)).map_err(py_value_error)
 }
 
+/// Canonical `ringgrid.target.v5` JSON for a named [`ringgrid::TargetLayout`]
+/// preset. Presets are the single source of truth for their geometry — the
+/// typed Python `TargetLayout` constructors read this JSON rather than
+/// duplicating constants.
+#[pyfunction]
+fn target_preset_json(name: &str) -> PyResult<String> {
+    let target = match name {
+        "default_hex" => ringgrid::TargetLayout::default_hex(),
+        "isra_rect_24x24" => ringgrid::TargetLayout::isra_rect_24x24(),
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown target preset '{other}' (expected 'default_hex' or 'isra_rect_24x24')"
+            )));
+        }
+    };
+    Ok(target.to_json_string())
+}
+
+/// Canonical `ringgrid.target.v5` JSON for a 16-sector coded hex target built
+/// from direct geometry arguments (mirrors [`ringgrid::TargetLayout::coded_hex`]).
+#[pyfunction]
+#[pyo3(signature = (
+    pitch_mm,
+    rows,
+    long_row_cols,
+    outer_radius_mm,
+    inner_radius_mm,
+    ring_width_mm
+))]
+fn coded_hex_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    ring_width_mm: f32,
+) -> PyResult<String> {
+    let target = ringgrid::TargetLayout::coded_hex(
+        pitch_mm,
+        rows,
+        long_row_cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        ring_width_mm,
+    )
+    .map_err(py_value_error)?;
+    Ok(target.to_json_string())
+}
+
+/// Validate a target spec (`ringgrid.target.v5`, or legacy `v4` auto-migrated)
+/// and return its canonical `v5` JSON. Validation failures surface as
+/// `ValueError` carrying the Rust error message.
+#[pyfunction]
+fn canonical_target_spec_json(spec_json: &str) -> PyResult<String> {
+    let target = target_from_spec_json(spec_json)?;
+    Ok(target.to_json_string())
+}
+
 #[pyfunction]
 fn canonical_board_spec_json(spec_json: &str) -> PyResult<String> {
     let board = board_from_spec_json(spec_json)?;
@@ -894,6 +952,9 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(board_snapshot_json, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_board_spec_json, m)?)?;
+    m.add_function(wrap_pyfunction!(target_preset_json, m)?)?;
+    m.add_function(wrap_pyfunction!(coded_hex_target_json, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_target_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(board_spec_json_from_geometry, m)?)?;
     m.add_function(wrap_pyfunction!(write_board_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;

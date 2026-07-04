@@ -10,17 +10,17 @@ wasm-pack build crates/ringgrid-wasm --target web --release
 
 ## Demo
 
-Build the WASM package and serve from the repository root:
+The interactive demo now lives at `book/demo/` (single canonical source) and
+is embedded in the mdBook user guide. Build and serve it from the repository
+root:
 
 ```bash
-# From the repository root
-wasm-pack build crates/ringgrid-wasm --target web --release
-python3 -m http.server 8080
+bash book/build.sh
+python3 -m http.server -d book/book
 ```
 
-Open [http://localhost:8080/crates/ringgrid-wasm/demo/](http://localhost:8080/crates/ringgrid-wasm/demo/) in your browser.
-
-> **Important:** The server must be started from the repository root (not from the `demo/` directory), so that the WASM package at `pkg/` and the test images at `testdata/` are both accessible.
+Open [http://localhost:8000/demo/index.html](http://localhost:8000/demo/index.html) in your browser, or visit the
+live demo at <https://vitalyvorobyev.github.io/ringgrid/demo/>.
 
 The demo supports:
 

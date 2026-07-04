@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ringgrid — interactive demo</title>
+    <meta
+      name="description"
+      content="Run the ringgrid ring-marker detector in your browser via WebAssembly: pick a coded-hex or plain-rect target, load a sample or your own image, and inspect centers, ellipses, IDs, grid coordinates and the resolved origin."
+    />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <img class="logo" src="./favicon.svg" alt="" />
+        <div>
+          <div class="title"><b>ringgrid</b> · interactive demo</div>
+          <div class="tag">Rust · WebAssembly · runs on your device</div>
+        </div>
+        <span class="spacer"></span>
+        <span class="ver" id="version"></span>
+        <a class="home" href="../">← docs</a>
+      </header>
+
+      <div class="layout">
+        <!-- ─────────────────────────── SIDEBAR ─────────────────────────── -->
+        <aside class="sidebar">
+          <section class="card">
+            <div class="run-row">
+              <button class="btn primary" id="runBtn" disabled>Run detection</button>
+              <label class="check" style="margin: 0">
+                <input type="checkbox" id="autoRun" checked />
+                Re-run automatically on change
+              </label>
+              <div class="status" id="status">Loading WebAssembly…</div>
+              <div class="timing" id="timing"></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">Calibration target</h2>
+            <div class="field">
+              <label for="target">Target geometry</label>
+              <select id="target">
+                <option value="hex">Hex · 16-sector coded (default)</option>
+                <option value="rect">Rect · plain rings (ISRA 24×24)</option>
+              </select>
+            </div>
+            <p class="gallery-caption" style="margin-top:0">
+              Detection runs in adaptive multi-scale mode, so markers are found
+              without knowing their pixel size in advance.
+            </p>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">Sample image</h2>
+            <div class="gallery" id="gallery"></div>
+            <input type="file" id="fileInput" accept="image/*" hidden />
+            <p class="gallery-caption" id="galleryCaption"></p>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">Overlay</h2>
+            <div class="toggles">
+              <label class="check"><input type="checkbox" id="showEllipses" checked /> Outer ellipses</label>
+              <label class="check"><input type="checkbox" id="showCenters" checked /> Marker centers</label>
+              <label class="check"><input type="checkbox" id="showLabels" checked /> Labels (ID / grid coord)</label>
+              <label class="check"><input type="checkbox" id="showOrigin" checked /> Origin dots &amp; cell</label>
+            </div>
+          </section>
+        </aside>
+
+        <!-- ──────────────────────────── MAIN ───────────────────────────── -->
+        <main class="main">
+          <section class="card">
+            <div class="stage-head">
+              <div>
+                <h2>Detection</h2>
+                <div class="sub" id="resultSub">propose → fit → decode → homography</div>
+              </div>
+            </div>
+            <div class="stats" id="stats"></div>
+            <div class="viewport-wrap" id="viewportWrap">
+              <div class="viewport" id="viewport">
+                <canvas id="cvImage" class="image"></canvas>
+                <canvas id="cvOverlay" class="overlay"></canvas>
+              </div>
+            </div>
+            <div class="legend" id="legend">
+              <span class="item"><span class="swatch" style="background:#1a9a54"></span>conf ≥ 0.7</span>
+              <span class="item"><span class="swatch" style="background:#c67b12"></span>0.4–0.7</span>
+              <span class="item"><span class="swatch" style="background:#d1433a"></span>&lt; 0.4</span>
+              <span class="item"><span class="swatch" style="background:#8a5cf6"></span>origin</span>
+            </div>
+          </section>
+
+          <footer class="footer">
+            <span>ringgrid runs entirely in your browser via WebAssembly — no image leaves your device.</span>
+            <span>·</span>
+            <span><a href="https://github.com/VitalyVorobyev/ringgrid">Source on GitHub</a></span>
+          </footer>
+        </main>
+      </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+    <noscript>The interactive demo requires JavaScript and WebAssembly support.</noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

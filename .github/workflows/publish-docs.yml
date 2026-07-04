@@ -48,20 +48,20 @@ jobs:
         with:
           tool: wasm-pack
 
-      - name: Build mdbook
-        run: mdbook build book
+      # book/build.sh runs `wasm-pack build`, stages the demo assets (HTML/JS/CSS
+      # + samples + freshly built pkg/) into book/src/demo/, then `mdbook build`
+      # so /demo/ ships self-contained. Must run after both tool installs.
+      - name: Build book (WASM demo + mdBook)
+        run: bash book/build.sh
 
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --all-features --no-deps
 
-      - name: Build WASM demo
-        run: wasm-pack build crates/ringgrid-wasm --target web --release
-
       - name: Assemble site
         run: |
-          mkdir -p target/site/api target/site/demo target/site/testdata
+          mkdir -p target/site/api
           # Landing page + performance dashboard (committed static source).
           cp -r .github/pages/index.html .github/pages/img .github/pages/performance target/site/
           # User guide (mdBook) at /book.
@@ -74,12 +74,9 @@ jobs:
           <link rel="canonical" href="ringgrid/index.html">
           <a href="ringgrid/index.html">ringgrid API reference</a>
           EOF
-          # WASM demo at /demo; pkg/ at site root (the demo imports ../pkg/), plus
-          # the sample image the demo's "Load Test Image" button fetches.
-          cp crates/ringgrid-wasm/demo/index.html target/site/demo/index.html
-          cp -r crates/ringgrid-wasm/pkg target/site/pkg
-          cp testdata/target_3_split_00.png target/site/testdata/
-          # Disable Jekyll so rustdoc _-prefixed files and pkg/ are served verbatim.
+          # Standalone WASM demo at /demo (mdBook bundled it from book/src/demo).
+          cp -r book/book/demo target/site/demo
+          # Disable Jekyll so rustdoc _-prefixed files and demo assets are served verbatim.
           touch target/site/.nojekyll
 
       - name: Upload artifact for Pages

@@ -2,6 +2,13 @@
 
 [Introduction](introduction.md)
 [Fast Start](fast-start.md)
+[Migration: 0.7 → 0.8](migration-0.8.md)
+
+# Targets
+
+- [The Compositional Target Model](targets/target-model.md)
+- [Target JSON (schema v5)](targets/target-json-v5.md)
+- [Origin Fiducials](targets/origin-fiducials.md)
 
 # Marker Design
 

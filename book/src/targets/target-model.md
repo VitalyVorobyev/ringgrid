@@ -2,8 +2,8 @@
 
 A ringgrid target is described at runtime by a `TargetLayout`. Before 0.8 the
 only target was a hex lattice of 16-sector coded rings, modeled by the flat
-`BoardLayout` type. `TargetLayout` generalizes that into four **orthogonal**
-aspects that compose freely:
+`BoardLayout` type (removed in 0.9). `TargetLayout` generalizes that into four
+**orthogonal** aspects that compose freely:
 
 ```text
 TargetLayout  =  lattice  ×  ring geometry  ×  coding  ×  optional fiducials
@@ -105,8 +105,8 @@ Three presets cover the common cases:
 | `TargetLayout::coded_hex(...)` | hex (caller geometry) | Coded16 | — | coded hex from direct geometry arguments |
 | `TargetLayout::rect_24x24()` | 24×24 rect, 14 mm pitch | Plain | 576 | 24×24 plain target with three Ø2.8 mm origin dots |
 
-`default_hex()` is geometry-identical to the legacy `BoardLayout::default()`
-(locked by a parity test), so existing hex-coded workflows are unchanged.
+`default_hex()` is geometry-identical to the classic pre-0.9 hex board, so
+existing hex-coded workflows are unchanged.
 
 ## Construction
 
@@ -133,9 +133,8 @@ let target = TargetLayout::new(
 ).expect("valid target");
 ```
 
-`TargetLayout` implements `From<BoardLayout>`, and the `Detector` /
-`DetectConfig` constructors take `impl Into<TargetLayout>`, so callers holding a
-legacy `BoardLayout` keep compiling.
+The `Detector` / `DetectConfig` constructors take `impl Into<TargetLayout>`, so
+a `TargetLayout` (or anything convertible into one) can be passed directly.
 
 ## Validation
 
@@ -152,13 +151,13 @@ legacy `BoardLayout` keep compiling.
   fails to break every rotational symmetry of the lattice
   (see [Origin Fiducials](origin-fiducials.md)).
 
-## Relationship to `BoardLayout`
+## Relationship to `BoardLayout` (removed in 0.9)
 
-`BoardLayout`, `BoardMarker`, and their error aliases are the **deprecated** flat
-v4 hex facade. They remain fully functional for the 0.8 release cycle (a thin
-wrapper over the target module, with one shared implementation of hex cell
-generation and validation) and will be removed after it. New code should use
-`TargetLayout`. See the [Migration Guide](../migration-0.8.md).
+`BoardLayout`, `BoardMarker`, and their error aliases were the flat v4 hex
+facade over this target module. They were deprecated in 0.8 and **removed in
+0.9** — use `TargetLayout`. Legacy v4 `board_spec.json` files still load
+unchanged: `TargetLayout::from_json_*` auto-migrates the v4 schema to v5. See
+the [Migration Guide](../migration-0.8.md).
 
 **Source:** `crates/ringgrid/src/target/` (`layout.rs`, `lattice.rs`, `ring.rs`,
 `fiducials.rs`)

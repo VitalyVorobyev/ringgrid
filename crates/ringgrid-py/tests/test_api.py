@@ -14,12 +14,6 @@ from ringgrid import viz
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BOARD_JSON = REPO_ROOT / "tools" / "board" / "board_spec.json"
 SAMPLE_IMAGE = REPO_ROOT / "testdata" / "target_3_split_00.png"
-TARGET_FIXTURE_DIR = (
-    REPO_ROOT / "crates" / "ringgrid" / "tests" / "fixtures" / "target_generation"
-)
-TARGET_FIXTURE_JSON = TARGET_FIXTURE_DIR / "fixture_compact_hex.json"
-TARGET_FIXTURE_SVG = TARGET_FIXTURE_DIR / "fixture_compact_hex.svg"
-TARGET_FIXTURE_PNG = TARGET_FIXTURE_DIR / "fixture_compact_hex.png"
 README_PATH = REPO_ROOT / "crates" / "ringgrid-py" / "README.md"
 
 README_SECTION_TYPES: dict[str, type[object]] = {
@@ -59,10 +53,6 @@ README_ALIAS_NAMES = (
 )
 
 
-def _normalize_text_newlines(text: str) -> str:
-    return text.replace("\r\n", "\n")
-
-
 def _markdown_section(text: str, heading: str) -> str:
     marker = f"### {heading}\n"
     start = text.find(marker)
@@ -75,199 +65,6 @@ def _markdown_section(text: str, heading: str) -> str:
     stops = [idx for idx in (next_h3, next_h2) if idx >= 0]
     end = min(stops) if stops else len(text)
     return text[start:end]
-
-
-def _fixture_board() -> ringgrid.BoardLayout:
-    return ringgrid.BoardLayout.from_geometry(
-        8.0,
-        3,
-        4,
-        4.8,
-        3.2,
-        1.152,
-        name="fixture_compact_hex",
-    )
-
-
-def _png_phys(path: Path) -> tuple[int, int, int]:
-    data = path.read_bytes()
-    assert data.startswith(b"\x89PNG\r\n\x1a\n")
-
-    offset = 8
-    while offset + 12 <= len(data):
-        length = int.from_bytes(data[offset : offset + 4], "big")
-        chunk_type = data[offset + 4 : offset + 8]
-        chunk_data_start = offset + 8
-        chunk_data_end = chunk_data_start + length
-        chunk_data = data[chunk_data_start:chunk_data_end]
-        if chunk_type == b"pHYs":
-            return (
-                int.from_bytes(chunk_data[0:4], "big"),
-                int.from_bytes(chunk_data[4:8], "big"),
-                int(chunk_data[8]),
-            )
-        offset = chunk_data_end + 4
-
-    raise AssertionError("missing pHYs chunk")
-
-
-def _png_pixels(path: Path) -> np.ndarray:
-    import matplotlib.image as mpimg
-
-    pixels = np.asarray(mpimg.imread(path))
-    if pixels.ndim == 3:
-        rgb = pixels[..., :3]
-        if rgb.dtype.kind == "f":
-            rgb = np.rint(rgb * 255.0).astype(np.uint8)
-        else:
-            rgb = rgb.astype(np.uint8, copy=False)
-        assert np.array_equal(rgb[..., 0], rgb[..., 1])
-        assert np.array_equal(rgb[..., 0], rgb[..., 2])
-        return rgb[..., 0]
-
-    if pixels.dtype.kind == "f":
-        return np.rint(pixels * 255.0).astype(np.uint8)
-    return pixels.astype(np.uint8, copy=False)
-
-
-def test_board_layout_default_and_from_json() -> None:
-    board_default = ringgrid.BoardLayout.default()
-    assert board_default.schema == "ringgrid.target.v4"
-    assert board_default.rows > 0
-    assert board_default.long_row_cols > 0
-    assert board_default.marker_ring_width_mm > 0.0
-    assert len(board_default.markers) > 0
-
-    board_file = ringgrid.BoardLayout.from_json_file(BOARD_JSON)
-    assert board_file.schema == "ringgrid.target.v4"
-    assert board_file.rows == 15
-    assert board_file.long_row_cols == 14
-    assert board_file.marker_ring_width_mm == pytest.approx(1.152)
-    assert len(board_file.markers) > 0
-
-
-def test_board_layout_from_geometry_matches_fixture_and_generated_name() -> None:
-    board = _fixture_board()
-    assert board.schema == "ringgrid.target.v4"
-    assert board.name == "fixture_compact_hex"
-    assert board.marker_ring_width_mm == pytest.approx(1.152)
-    assert board.to_spec_dict() == json.loads(TARGET_FIXTURE_JSON.read_text())
-
-    generated = ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2, 1.152)
-    assert generated.name == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152"
-
-
-def test_board_layout_spec_json_roundtrip_and_file_write(tmp_path: Path) -> None:
-    board = _fixture_board()
-
-    spec_json = board.to_spec_json()
-    assert isinstance(spec_json, str)
-    assert (
-        _normalize_text_newlines(spec_json + "\n")
-        == _normalize_text_newlines(TARGET_FIXTURE_JSON.read_text())
-    )
-
-    out_json = tmp_path / "nested" / "fixture.json"
-    saved = board.to_spec_json(out_json)
-    assert saved is None
-    assert (
-        _normalize_text_newlines(out_json.read_text())
-        == _normalize_text_newlines(TARGET_FIXTURE_JSON.read_text())
-    )
-
-    loaded = ringgrid.BoardLayout.from_json_file(out_json)
-    assert loaded.to_spec_dict() == board.to_spec_dict()
-
-
-def test_board_layout_svg_and_png_generation_match_rust_fixtures(tmp_path: Path) -> None:
-    board = _fixture_board()
-
-    svg_path = tmp_path / "nested" / "fixture.svg"
-    png_path = tmp_path / "nested" / "fixture.target"
-
-    board.write_svg(svg_path)
-    board.write_png(png_path, dpi=96.0)
-
-    assert (
-        _normalize_text_newlines(svg_path.read_text())
-        == _normalize_text_newlines(TARGET_FIXTURE_SVG.read_text())
-    )
-
-    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    expected_ppm = round(96.0 * 1000.0 / 25.4)
-    assert _png_phys(png_path) == (expected_ppm, expected_ppm, 1)
-    assert np.array_equal(_png_pixels(png_path), _png_pixels(TARGET_FIXTURE_PNG))
-
-
-def test_board_layout_target_generation_tracks_mutated_spec_fields(
-    tmp_path: Path,
-) -> None:
-    board = _fixture_board()
-    original_marker_xy = list(board.markers[1].xy_mm)
-
-    board.name = "mutated_fixture"
-    board.pitch_mm = 10.0
-
-    spec = json.loads(board.to_spec_json())
-    assert spec["name"] == "mutated_fixture"
-    assert spec["pitch_mm"] == pytest.approx(10.0)
-    assert board.to_spec_dict() == spec
-    assert board.markers[1].xy_mm != original_marker_xy
-
-    svg_path = tmp_path / "mutated.svg"
-    png_path = tmp_path / "mutated.png"
-    board.write_svg(svg_path)
-    board.write_png(png_path, dpi=96.0)
-
-    assert _normalize_text_newlines(svg_path.read_text()) != _normalize_text_newlines(
-        TARGET_FIXTURE_SVG.read_text()
-    )
-    assert _png_pixels(png_path).shape != _png_pixels(TARGET_FIXTURE_PNG).shape
-
-
-def test_board_layout_target_generation_rejects_invalid_geometry_and_options(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 0, 4, 4.8, 3.2, 1.152)
-
-    with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 2, 1, 4.8, 3.2, 1.152)
-
-    with pytest.raises(ValueError):
-        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.8, 1.152)
-
-    with pytest.raises(ValueError, match="no code band between rings"):
-        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 4.1, 1.152)
-
-    with pytest.raises(ValueError, match="marker_ring_width_mm"):
-        ringgrid.BoardLayout.from_geometry(8.0, 3, 4, 4.8, 3.2, 0.0)
-
-    board = _fixture_board()
-
-    with pytest.raises(ValueError):
-        board.write_svg(tmp_path / "bad.svg", margin_mm=-1.0)
-
-    for dpi in (float("nan"), float("inf"), 0.0, -1.0):
-        with pytest.raises(ValueError):
-            board.write_png(tmp_path / "bad.png", dpi=dpi)
-
-
-def test_board_layout_target_generation_write_errors_raise_oserror(
-    tmp_path: Path,
-) -> None:
-    board = _fixture_board()
-    blocked_parent = tmp_path / "blocked"
-    blocked_parent.write_text("not a directory", encoding="utf-8")
-
-    with pytest.raises(OSError):
-        board.to_spec_json(blocked_parent / "fixture.json")
-
-    with pytest.raises(OSError):
-        board.write_svg(blocked_parent / "fixture.svg")
-
-    with pytest.raises(OSError):
-        board.write_png(blocked_parent / "fixture.png")
 
 
 def test_target_layout_default_hex_roundtrips_and_matches_native_v5() -> None:
@@ -289,18 +86,6 @@ def test_target_layout_default_hex_roundtrips_and_matches_native_v5() -> None:
     assert native["lattice"]["kind"] == "hex"
     assert native["coding"]["kind"] == "coded16"
     assert "fiducials" not in native
-
-
-def test_target_layout_default_hex_geometry_matches_legacy_board() -> None:
-    target = ringgrid.TargetLayout.default_hex()
-    board = ringgrid.BoardLayout.default()
-
-    assert target.lattice.rows == board.rows
-    assert target.lattice.long_row_cols == board.long_row_cols
-    assert target.lattice.pitch_mm == pytest.approx(board.pitch_mm)
-    assert target.marker.outer_radius_mm == pytest.approx(board.marker_outer_radius_mm)
-    assert target.marker.inner_radius_mm == pytest.approx(board.marker_inner_radius_mm)
-    assert target.coding.ring_width_mm == pytest.approx(board.marker_ring_width_mm)
 
 
 def test_target_layout_rect_preset_roundtrips_and_has_expected_shape() -> None:
@@ -366,11 +151,9 @@ def test_detect_config_and_detector_accept_typed_target_layout() -> None:
 
     cfg = ringgrid.DetectConfig(target)
     assert cfg.target is target
-    assert cfg.board is target  # deprecated alias
 
     detector = ringgrid.Detector(cfg)
     assert detector.target is target
-    assert detector.board is target
 
     from_target = ringgrid.Detector.from_target(target)
     assert isinstance(from_target, ringgrid.Detector)
@@ -440,7 +223,7 @@ def test_target_layout_from_dict_dispatches_and_rejects_unknown_kinds() -> None:
 
 
 def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
     baseline = cfg.to_dict()
@@ -469,7 +252,7 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
 
 
 def test_detect_config_typed_sections_are_settable_without_mapping_overlays() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
     marker_scale = cfg.marker_scale
@@ -563,7 +346,7 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
 
 
 def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
     assert cfg._resolved_cache is None
@@ -586,7 +369,7 @@ def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
 
 
 def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
     # The `decode` section nests under `advanced` in the v0.6 config schema.
@@ -606,7 +389,7 @@ def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> N
 
 
 def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
-    cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
+    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
     legacy_payload = dict(cfg.to_dict()["advanced"]["decode"])
     del legacy_payload["codebook_profile"]
 
@@ -619,9 +402,9 @@ def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
 def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> None:
     from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
 
-    board = ringgrid.BoardLayout.default()
-    cfg = ringgrid.DetectConfig(board)
-    native = NativeDetectConfigCore(board._spec_json)
+    target = ringgrid.TargetLayout.default_hex()
+    cfg = ringgrid.DetectConfig(target)
+    native = NativeDetectConfigCore(target._spec_json_str())
 
     # Stage tuning nests under "advanced" in both the dump and the overlay.
     cfg.decode_min_confidence = 0.4
@@ -654,9 +437,9 @@ def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> Non
 def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
     from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
 
-    board = ringgrid.BoardLayout.default()
-    cfg = ringgrid.DetectConfig(board)
-    native = NativeDetectConfigCore(board._spec_json)
+    target = ringgrid.TargetLayout.default_hex()
+    cfg = ringgrid.DetectConfig(target)
+    native = NativeDetectConfigCore(target._spec_json_str())
 
     baseline = cfg.to_dict()
     prior = ringgrid.MarkerScalePrior(diameter_min_px=24.0, diameter_max_px=80.0)
@@ -673,8 +456,8 @@ def test_detect_config_marker_scale_refreshes_cache_from_native() -> None:
 def test_native_detect_config_overlay_merges_nested_completion_fields() -> None:
     from ringgrid._ringgrid import DetectConfigCore as NativeDetectConfigCore
 
-    board = ringgrid.BoardLayout.default()
-    native = NativeDetectConfigCore(board._spec_json)
+    target = ringgrid.TargetLayout.default_hex()
+    native = NativeDetectConfigCore(target._spec_json_str())
 
     # The recursive overlay merge reaches arbitrarily nested leaves; stage
     # tuning lives under "advanced" in the v0.6 config schema.
@@ -701,11 +484,10 @@ def test_native_detect_config_overlay_merges_nested_completion_fields() -> None:
 
 
 def test_readme_detect_config_field_guide_covers_python_surface() -> None:
-    cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
+    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
     readme = README_PATH.read_text(encoding="utf-8")
 
     assert "## DetectConfig Field Guide" in readme
-    assert "`cfg.board`" in readme
 
     # The v0.6 config schema nests stage tuning under "advanced". Flatten it so
     # each curated section is still verified field-by-field. The full Rust
@@ -729,29 +511,29 @@ def test_readme_detect_config_field_guide_covers_python_surface() -> None:
 
 
 def test_detector_constructor_and_classmethods() -> None:
-    board = ringgrid.BoardLayout.default()
-    cfg = ringgrid.DetectConfig(board)
+    target = ringgrid.TargetLayout.default_hex()
+    cfg = ringgrid.DetectConfig(target)
 
     detector = ringgrid.Detector(cfg)
     assert detector.config is cfg
-    assert detector.board is cfg.board
+    assert detector.target is cfg.target
 
-    detector_from_board = ringgrid.Detector.from_board(board)
-    assert isinstance(detector_from_board, ringgrid.Detector)
-    assert detector_from_board.board is board
-    assert detector_from_board.config.board is board
+    detector_from_target = ringgrid.Detector.from_target(target)
+    assert isinstance(detector_from_target, ringgrid.Detector)
+    assert detector_from_target.target is target
+    assert detector_from_target.config.target is target
 
     detector_with_config = ringgrid.Detector.with_config(cfg)
     assert detector_with_config.config is cfg
 
     with pytest.raises(TypeError):
-        ringgrid.Detector(board)
+        ringgrid.Detector(target)
     with pytest.raises(TypeError):
-        ringgrid.Detector(board, cfg)
+        ringgrid.Detector(target, cfg)
 
 
 def test_detector_refreshes_native_core_after_config_update() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
     detector = ringgrid.Detector(cfg)
 
@@ -767,7 +549,7 @@ def test_detector_refreshes_native_core_after_config_update() -> None:
 
 
 def _make_detector() -> ringgrid.Detector:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
     cfg.completion_enable = False
     cfg.use_global_filter = False
@@ -777,7 +559,7 @@ def _make_detector() -> ringgrid.Detector:
 def _make_proposal_detector(
     proposal_config: ringgrid.ProposalConfig | None = None,
 ) -> ringgrid.Detector:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
     cfg.proposal = ringgrid.ProposalConfig() if proposal_config is None else proposal_config
     return ringgrid.Detector(cfg)
@@ -927,7 +709,7 @@ def test_raw_module_default_matches_explicit_proposal_config() -> None:
 
 
 def test_size_aware_module_proposals_match_detector_with_marker_hint() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
     cfg.marker_scale = ringgrid.MarkerScalePrior.from_nominal_diameter_px(32.0)
     detector = ringgrid.Detector(cfg)
@@ -953,7 +735,7 @@ def test_size_aware_module_proposals_match_detector_with_marker_hint() -> None:
 
 
 def test_size_aware_module_target_only_matches_detector_defaults() -> None:
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     detector = ringgrid.Detector(ringgrid.DetectConfig(board))
 
     module_proposals = ringgrid.propose(SAMPLE_IMAGE, target=board)
@@ -973,7 +755,7 @@ def test_module_proposal_rejects_mixed_raw_and_size_aware_args() -> None:
         ringgrid.propose(
             SAMPLE_IMAGE,
             config=ringgrid.ProposalConfig(),
-            target=ringgrid.BoardLayout.default(),
+            target=ringgrid.TargetLayout.default_hex(),
             marker_diameter=32.0,
         )
 
@@ -1207,7 +989,7 @@ def test_config_none_values_reset_previous_explicit_settings() -> None:
     # meaningful (auto / unlimited) must serialize as explicit JSON null —
     # omitting the key would keep the stale explicit value forever
     # (codex review on #55).
-    board = ringgrid.BoardLayout.default()
+    board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
     pc = cfg.projective_center

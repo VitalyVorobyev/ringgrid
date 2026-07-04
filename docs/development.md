@@ -37,7 +37,6 @@ crates/
       lib.rs       # public re-exports
       api.rs       # Detector facade
       target/      # compositional target model (lattice x ring x coding x fiducials)
-      board_layout.rs  # deprecated v4 hex facade over target/ (removal after 0.8)
       pipeline/    # single-pass / multi-pass orchestration
       detector/    # proposal, fit, decode, dedup, filter, completion
       ring/        # radial sampling and projective center logic
@@ -50,7 +49,9 @@ crates/
   ringgrid-py/     # Python bindings and package README
   ringgrid-wasm/   # WebAssembly bindings (wasm-pack, no_std feature set)
 tools/
-  gen_target.py        # board_spec.json + SVG + PNG generation
+  gen_target.py        # legacy target-spec + SVG/PNG generator (prefer the CLI
+                       #   `gen-target` or the Python `TargetLayout` API, which
+                       #   also emit DXF)
   gen_synth.py         # synthetic dataset generator
   gen_synth_rect.py    # rect-plain synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score

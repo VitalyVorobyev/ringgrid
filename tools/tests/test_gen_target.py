@@ -99,11 +99,11 @@ def test_gen_target_matches_committed_fixture_outputs(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Board spec JSON written to" in result.stdout
+    assert "Target spec JSON written to" in result.stdout
     assert "Print SVG written to" in result.stdout
     assert "Print PNG written to" in result.stdout
 
-    json_path = out_dir / "board_spec.json"
+    json_path = out_dir / "target_spec.json"
     svg_path = out_dir / "fixture_compact_hex.svg"
     png_path = out_dir / "fixture_compact_hex.png"
 
@@ -141,7 +141,7 @@ def test_gen_target_uses_generated_name_when_name_is_omitted(tmp_path: Path) -> 
     )
 
     assert result.returncode == 0, result.stderr
-    spec = json.loads((out_dir / "board_spec.json").read_text())
+    spec = json.loads((out_dir / "target_spec.json").read_text())
     assert spec["name"] == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152"
 
 

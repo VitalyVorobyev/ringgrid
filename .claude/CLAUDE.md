@@ -62,7 +62,6 @@ better than it found them.
 crates/ringgrid/src/
 ├── lib.rs              # Re-exports only (public API: root + diagnostics/codebook tiers)
 ├── api.rs              # Detector facade + propose_with_* free functions
-├── board_layout.rs     # DEPRECATED v4 hex facade over target/ (removal after 0.8)
 ├── target/             # Compositional target model (lattice × ring × coding × fiducials)
 │   ├── layout.rs       # TargetLayout + presets (default_hex, coded_hex, rect_24x24)
 │   ├── lattice.rs      # LatticeGeometry (Hex | Rect) + cell generation
@@ -179,7 +178,7 @@ Key public types (root tier):
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
 - `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
-- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (`BoardLayout`/`BoardMarker` are the deprecated v4 facade)
+- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (legacy v4 `board_spec.json` still loads via `TargetLayout::from_json_*` auto-migration; the `BoardLayout`/`BoardMarker` types were removed in 0.9)
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
 - `Ellipse` — conic geometry
 - `Proposal`, `ProposalConfig`, `ProposalResult` — proposal types

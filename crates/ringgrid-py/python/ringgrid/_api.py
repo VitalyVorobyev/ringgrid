@@ -4,7 +4,7 @@ This module exposes a native detector backed by Rust (`PyO3` extension) and a
 typed Python surface that feels idiomatic in notebooks and applications.
 
 Typical flow:
-1. Build/load a :class:`BoardLayout`.
+1. Build/load a :class:`TargetLayout`.
 2. Construct :class:`DetectConfig` and :class:`Detector`.
 3. Call :meth:`Detector.detect` / :meth:`Detector.detect_adaptive` /
    :meth:`Detector.detect_multiscale`.
@@ -27,13 +27,8 @@ import numpy as np
 from ._ringgrid import (
     DetectConfigCore as _DetectConfigCore,
     DetectorCore as _DetectorCore,
-    board_snapshot_json as _board_snapshot_json,
-    board_spec_json_from_geometry as _board_spec_json_from_geometry,
-    canonical_board_spec_json as _canonical_board_spec_json,
     canonical_target_spec_json as _canonical_target_spec_json,
     coded_hex_target_json as _coded_hex_target_json,
-    default_board_spec_json as _default_board_spec_json,
-    load_board_spec_json as _load_board_spec_json,
     target_preset_json as _target_preset_json,
     package_version as _package_version,
     proposal_result_payload_array as _proposal_result_payload_array,
@@ -46,7 +41,6 @@ from ._ringgrid import (
     proposal_with_scale_json_path as _proposal_with_scale_json_path,
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
-    write_board_spec_json as _write_board_spec_json,
     write_target_dxf as _write_target_dxf,
     write_target_png as _write_target_png,
     write_target_svg as _write_target_svg,
@@ -85,15 +79,12 @@ def _json_loads_path_or_text(path_or_json: str | Path) -> dict[str, Any]:
     return json.loads(text)
 
 
-def _coerce_board_layout(value: "BoardLayout | str | Path") -> "BoardLayout":
-    if isinstance(value, BoardLayout):
+def _coerce_target_layout(value: "TargetLayout | str | Path") -> "TargetLayout":
+    if isinstance(value, TargetLayout):
         return value
     if isinstance(value, (str, Path)):
-        text = str(value)
-        if text.lstrip().startswith("{"):
-            return BoardLayout.from_dict(_json_loads_path_or_text(text))
-        return BoardLayout.from_json_file(text)
-    raise TypeError("target must be BoardLayout, str, or Path")
+        return TargetLayout.from_json(value)
+    raise TypeError("target must be TargetLayout, str, or Path")
 
 
 def _proposal_result_from_payload(
@@ -118,244 +109,6 @@ class CircleRefinementMethod(str, Enum):
 
     NONE = "none"
     PROJECTIVE_CENTER = "projective_center"
-
-
-@dataclass(slots=True)
-class BoardMarker:
-    """Marker metadata on the physical board."""
-
-    id: int
-    xy_mm: list[float]
-    q: int | None = None
-    r: int | None = None
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "BoardMarker":
-        return cls(
-            id=int(data["id"]),
-            xy_mm=[float(data["xy_mm"][0]), float(data["xy_mm"][1])],
-            q=None if data.get("q") is None else int(data["q"]),
-            r=None if data.get("r") is None else int(data["r"]),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "id": int(self.id),
-            "xy_mm": [float(self.xy_mm[0]), float(self.xy_mm[1])],
-        }
-        if self.q is not None:
-            out["q"] = int(self.q)
-        if self.r is not None:
-            out["r"] = int(self.r)
-        return out
-
-
-@dataclass(slots=True)
-class BoardLayout:
-    """Board layout specification and generated marker list.
-
-    The board object carries both:
-    - the compact board spec (`schema`, `rows`, `pitch_mm`, radii, ring width), and
-    - the generated marker list (`markers`) with board coordinates.
-
-    .. deprecated::
-        `BoardLayout` is the legacy `ringgrid.target.v4` facade, limited to
-        16-sector coded hex targets. Prefer :class:`TargetLayout`, the typed
-        `ringgrid.target.v5` model that also expresses rectangular lattices,
-        plain (uncoded) markers, and origin fiducials. `DetectConfig` and
-        `Detector` accept either type.
-    """
-
-    schema: str
-    name: str
-    pitch_mm: float
-    rows: int
-    long_row_cols: int
-    marker_outer_radius_mm: float
-    marker_inner_radius_mm: float
-    marker_ring_width_mm: float
-    markers: list[BoardMarker] = field(default_factory=list)
-    _spec_json: str = field(default="", repr=False)
-
-    @classmethod
-    def default(cls) -> "BoardLayout":
-        """Construct the built-in default board layout."""
-        spec_json = _default_board_spec_json()
-        return cls._from_spec_json(spec_json)
-
-    @classmethod
-    def from_json_file(cls, path: str | Path) -> "BoardLayout":
-        """Load a board layout from a `ringgrid.target.v4` JSON file."""
-        spec_json = _load_board_spec_json(_coerce_path(path))
-        return cls._from_spec_json(spec_json)
-
-    @classmethod
-    def from_geometry(
-        cls,
-        pitch_mm: float,
-        rows: int,
-        long_row_cols: int,
-        marker_outer_radius_mm: float,
-        marker_inner_radius_mm: float,
-        marker_ring_width_mm: float,
-        *,
-        name: str | None = None,
-    ) -> "BoardLayout":
-        """Construct a board layout from direct geometry arguments.
-
-        When `name` is omitted, the Rust library derives a deterministic
-        geometry-based name that round-trips through the canonical target JSON.
-        """
-        spec_json = _board_spec_json_from_geometry(
-            float(pitch_mm),
-            int(rows),
-            int(long_row_cols),
-            float(marker_outer_radius_mm),
-            float(marker_inner_radius_mm),
-            float(marker_ring_width_mm),
-            name,
-        )
-        return cls._from_spec_json(spec_json)
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "BoardLayout":
-        """Construct a board layout from a board-spec mapping."""
-        data = _require_mapping(data, name="data")
-        spec = {
-            "schema": str(data["schema"]),
-            "name": str(data["name"]),
-            "pitch_mm": float(data["pitch_mm"]),
-            "rows": int(data["rows"]),
-            "long_row_cols": int(data["long_row_cols"]),
-            "marker_outer_radius_mm": float(data["marker_outer_radius_mm"]),
-            "marker_inner_radius_mm": float(data["marker_inner_radius_mm"]),
-            "marker_ring_width_mm": float(data["marker_ring_width_mm"]),
-        }
-        spec_json = _canonical_board_spec_json(json.dumps(spec))
-        return cls._from_spec_json(spec_json)
-
-    @classmethod
-    def _from_spec_json(cls, spec_json: str) -> "BoardLayout":
-        snapshot = json.loads(_board_snapshot_json(spec_json))
-        return cls._from_snapshot(snapshot, spec_json)
-
-    @classmethod
-    def _from_snapshot(cls, snapshot: Mapping[str, Any], spec_json: str) -> "BoardLayout":
-        markers = [BoardMarker.from_dict(m) for m in snapshot.get("markers", [])]
-        return cls(
-            schema=str(snapshot["schema"]),
-            name=str(snapshot["name"]),
-            pitch_mm=float(snapshot["pitch_mm"]),
-            rows=int(snapshot["rows"]),
-            long_row_cols=int(snapshot["long_row_cols"]),
-            marker_outer_radius_mm=float(snapshot["marker_outer_radius_mm"]),
-            marker_inner_radius_mm=float(snapshot["marker_inner_radius_mm"]),
-            marker_ring_width_mm=float(snapshot["marker_ring_width_mm"]),
-            markers=markers,
-            _spec_json=spec_json,
-        )
-
-    def _refresh_from_current_spec_fields(self) -> str:
-        spec_json = _canonical_board_spec_json(
-            json.dumps(self.to_spec_dict(), separators=(",", ":"))
-        )
-        refreshed = type(self)._from_spec_json(spec_json)
-        object.__setattr__(self, "schema", refreshed.schema)
-        object.__setattr__(self, "name", refreshed.name)
-        object.__setattr__(self, "pitch_mm", refreshed.pitch_mm)
-        object.__setattr__(self, "rows", refreshed.rows)
-        object.__setattr__(self, "long_row_cols", refreshed.long_row_cols)
-        object.__setattr__(
-            self,
-            "marker_outer_radius_mm",
-            refreshed.marker_outer_radius_mm,
-        )
-        object.__setattr__(
-            self,
-            "marker_inner_radius_mm",
-            refreshed.marker_inner_radius_mm,
-        )
-        object.__setattr__(
-            self,
-            "marker_ring_width_mm",
-            refreshed.marker_ring_width_mm,
-        )
-        object.__setattr__(self, "markers", refreshed.markers)
-        object.__setattr__(self, "_spec_json", refreshed._spec_json)
-        return refreshed._spec_json
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the full board payload including generated marker list."""
-        return {
-            "schema": self.schema,
-            "name": self.name,
-            "pitch_mm": float(self.pitch_mm),
-            "rows": int(self.rows),
-            "long_row_cols": int(self.long_row_cols),
-            "marker_outer_radius_mm": float(self.marker_outer_radius_mm),
-            "marker_inner_radius_mm": float(self.marker_inner_radius_mm),
-            "marker_ring_width_mm": float(self.marker_ring_width_mm),
-            "markers": [m.to_dict() for m in self.markers],
-        }
-
-    def to_spec_dict(self) -> dict[str, Any]:
-        """Serialize only the board spec fields (no expanded marker list)."""
-        return {
-            "schema": self.schema,
-            "name": self.name,
-            "pitch_mm": float(self.pitch_mm),
-            "rows": int(self.rows),
-            "long_row_cols": int(self.long_row_cols),
-            "marker_outer_radius_mm": float(self.marker_outer_radius_mm),
-            "marker_inner_radius_mm": float(self.marker_inner_radius_mm),
-            "marker_ring_width_mm": float(self.marker_ring_width_mm),
-        }
-
-    def to_spec_json(self, path: str | Path | None = None) -> str | None:
-        """Serialize canonical `ringgrid.target.v4` spec JSON.
-
-        This is spec-only JSON and intentionally does not include the expanded
-        `markers` snapshot that :meth:`to_dict` returns.
-        """
-        spec_json = self._refresh_from_current_spec_fields()
-        if path is None:
-            return spec_json
-        _write_board_spec_json(spec_json, _coerce_path(path))
-        return None
-
-    def write_svg(
-        self,
-        path: str | Path,
-        *,
-        margin_mm: float = 0.0,
-        include_scale_bar: bool = True,
-    ) -> None:
-        """Write a printable SVG target using the Rust target-generation path."""
-        spec_json = self._refresh_from_current_spec_fields()
-        _write_target_svg(
-            spec_json,
-            _coerce_path(path),
-            float(margin_mm),
-            bool(include_scale_bar),
-        )
-
-    def write_png(
-        self,
-        path: str | Path,
-        *,
-        dpi: float = 300.0,
-        margin_mm: float = 0.0,
-        include_scale_bar: bool = True,
-    ) -> None:
-        """Write a printable PNG target using the Rust target-generation path."""
-        spec_json = self._refresh_from_current_spec_fields()
-        _write_target_png(
-            spec_json,
-            _coerce_path(path),
-            float(dpi),
-            float(margin_mm),
-            bool(include_scale_bar),
-        )
 
 
 @dataclass(slots=True)
@@ -2048,13 +1801,12 @@ class DetectConfig:
     Parameters
     ----------
     target:
-        Target layout used to derive default scale-coupled settings. Accepts a
-        :class:`TargetLayout` (the `ringgrid.target.v5` model) or the legacy
-        :class:`BoardLayout` facade. Invalid target geometry raises
-        :class:`ValueError` with the native error message.
+        :class:`TargetLayout` used to derive default scale-coupled settings.
+        Invalid target geometry raises :class:`ValueError` with the native
+        error message.
     """
 
-    def __init__(self, target: "BoardLayout | TargetLayout") -> None:
+    def __init__(self, target: "TargetLayout") -> None:
         spec_json = _target_spec_json(target)
         self._target = target
         self._spec_json = spec_json
@@ -2159,13 +1911,8 @@ class DetectConfig:
         self._version += 1
 
     @property
-    def target(self) -> "BoardLayout | TargetLayout":
+    def target(self) -> "TargetLayout":
         """The target layout this config was built from (read-only)."""
-        return self._target
-
-    @property
-    def board(self) -> "BoardLayout | TargetLayout":
-        """Deprecated alias for :attr:`target`."""
         return self._target
 
     @property
@@ -2461,30 +2208,18 @@ class Detector:
         self._core_config_version = config._version
 
     @classmethod
-    def from_target(cls, target: "BoardLayout | TargetLayout") -> "Detector":
+    def from_target(cls, target: "TargetLayout") -> "Detector":
         """Build a detector with default config from a target layout."""
         return cls(DetectConfig(target))
-
-    @classmethod
-    def from_board(cls, board: BoardLayout) -> "Detector":
-        """Deprecated alias for :meth:`from_target` (legacy `BoardLayout` facade)."""
-        if not isinstance(board, BoardLayout):
-            raise TypeError("board must be BoardLayout")
-        return cls(DetectConfig(board))
 
     @classmethod
     def with_config(cls, config: DetectConfig) -> "Detector":
         return cls(config)
 
     @property
-    def target(self) -> "BoardLayout | TargetLayout":
+    def target(self) -> "TargetLayout":
         """The target layout backing this detector (read-only)."""
         return self._config.target
-
-    @property
-    def board(self) -> "BoardLayout | TargetLayout":
-        """Deprecated alias for :attr:`target`."""
-        return self._config.board
 
     @property
     def config(self) -> DetectConfig:
@@ -2754,13 +2489,11 @@ class Detector:
 __version__ = _package_version()
 
 
-def _target_spec_json(target: "BoardLayout | TargetLayout") -> str:
-    """v5/v4 spec JSON for a target layout handed to the native loaders."""
+def _target_spec_json(target: "TargetLayout") -> str:
+    """v5 spec JSON for a target layout handed to the native loaders."""
     if isinstance(target, TargetLayout):
         return target._spec_json_str()
-    if isinstance(target, BoardLayout):
-        return target._spec_json
-    raise TypeError("target must be TargetLayout or BoardLayout")
+    raise TypeError("target must be TargetLayout")
 
 
 def _coerce_mapper_payload(
@@ -2893,11 +2626,11 @@ def _proposal_marker_scale_prior(
 
 def _resolve_size_aware_proposal_inputs(
     *,
-    target: BoardLayout | str | Path | None,
+    target: TargetLayout | str | Path | None,
     marker_diameter: float | None,
     marker_diameter_min: float | None,
     marker_diameter_max: float | None,
-) -> tuple[BoardLayout, MarkerScalePrior] | None:
+) -> tuple[TargetLayout, MarkerScalePrior] | None:
     marker_scale = _proposal_marker_scale_prior(
         marker_diameter, marker_diameter_min, marker_diameter_max
     )
@@ -2905,17 +2638,17 @@ def _resolve_size_aware_proposal_inputs(
         return None
     if target is None:
         raise ValueError("target is required when marker_diameter* is provided")
-    board = _coerce_board_layout(target)
+    target_layout = _coerce_target_layout(target)
     if marker_scale is None:
-        marker_scale = DetectConfig(board).marker_scale
-    return board, marker_scale
+        marker_scale = DetectConfig(target_layout).marker_scale
+    return target_layout, marker_scale
 
 
 def _propose_free_impl(
     image: np.ndarray | str | Path,
     *,
     config: ProposalConfig | None,
-    target: BoardLayout | str | Path | None,
+    target: TargetLayout | str | Path | None,
     marker_diameter: float | None,
     marker_diameter_min: float | None,
     marker_diameter_max: float | None,
@@ -2932,16 +2665,17 @@ def _propose_free_impl(
         raise TypeError("config must be ProposalConfig or None")
 
     if size_aware is not None:
-        board, marker_scale = size_aware
+        target_layout, marker_scale = size_aware
+        spec_json = _target_spec_json(target_layout)
         marker_scale_json = json.dumps(marker_scale.to_dict())
         if isinstance(image, np.ndarray):
             _validate_image_array(image)
             proposals_json = _proposal_with_scale_json_array(
-                image, board._spec_json, marker_scale_json
+                image, spec_json, marker_scale_json
             )
         else:
             proposals_json = _proposal_with_scale_json_path(
-                _coerce_path(image), board._spec_json, marker_scale_json
+                _coerce_path(image), spec_json, marker_scale_json
             )
         return [Proposal.from_dict(p) for p in json.loads(proposals_json)]
 
@@ -2959,7 +2693,7 @@ def _propose_with_heatmap_free_impl(
     image: np.ndarray | str | Path,
     *,
     config: ProposalConfig | None,
-    target: BoardLayout | str | Path | None,
+    target: TargetLayout | str | Path | None,
     marker_diameter: float | None,
     marker_diameter_min: float | None,
     marker_diameter_max: float | None,
@@ -2976,16 +2710,17 @@ def _propose_with_heatmap_free_impl(
         raise TypeError("config must be ProposalConfig or None")
 
     if size_aware is not None:
-        board, marker_scale = size_aware
+        target_layout, marker_scale = size_aware
+        spec_json = _target_spec_json(target_layout)
         marker_scale_json = json.dumps(marker_scale.to_dict())
         if isinstance(image, np.ndarray):
             _validate_image_array(image)
             diagnostics_json, accumulator = _proposal_result_with_scale_payload_array(
-                image, board._spec_json, marker_scale_json
+                image, spec_json, marker_scale_json
             )
         else:
             diagnostics_json, accumulator = _proposal_result_with_scale_payload_path(
-                _coerce_path(image), board._spec_json, marker_scale_json
+                _coerce_path(image), spec_json, marker_scale_json
             )
         return _proposal_result_from_payload(diagnostics_json, accumulator)
 
@@ -3005,7 +2740,7 @@ def propose(
     image: np.ndarray | str | Path,
     config: ProposalConfig | None = None,
     *,
-    target: BoardLayout | str | Path | None = None,
+    target: TargetLayout | str | Path | None = None,
     marker_diameter: float | None = None,
     marker_diameter_min: float | None = None,
     marker_diameter_max: float | None = None,
@@ -3025,7 +2760,7 @@ def propose_with_heatmap(
     image: np.ndarray | str | Path,
     config: ProposalConfig | None = None,
     *,
-    target: BoardLayout | str | Path | None = None,
+    target: TargetLayout | str | Path | None = None,
     marker_diameter: float | None = None,
     marker_diameter_min: float | None = None,
     marker_diameter_max: float | None = None,
@@ -3042,8 +2777,6 @@ def propose_with_heatmap(
 
 
 __all__ = [
-    "BoardLayout",
-    "BoardMarker",
     "TargetLayout",
     "HexGeometry",
     "RectGeometry",

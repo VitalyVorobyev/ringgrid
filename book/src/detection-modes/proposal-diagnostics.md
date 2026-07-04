@@ -31,8 +31,8 @@ When a board layout and marker diameter are available, the proposal config is
 derived from `MarkerScalePrior` for tighter search windows:
 
 ```python
-board = ringgrid.BoardLayout.default()
-cfg = ringgrid.DetectConfig(board)
+target = ringgrid.TargetLayout.default_hex()
+cfg = ringgrid.DetectConfig(target)
 detector = ringgrid.Detector(cfg)
 
 result = detector.propose_with_heatmap("photo.png")

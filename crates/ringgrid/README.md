@@ -14,7 +14,7 @@ homography. No OpenCV dependency.
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
-- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; the legacy `BoardLayout` is a deprecated one-release facade (see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
+- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v4 `board_spec.json` files still load via `TargetLayout::from_json_*` auto-migration (the deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 
 ## Pipeline Stages
@@ -98,11 +98,11 @@ python3 -m venv .venv
   --margin_mm 5
 ```
 
-All three paths generate the same SVG/PNG. The Rust CLI and Rust API write a v5
-`target_spec.json`; the repo Python script (which still uses `BoardLayout`)
-writes a v4 `board_spec.json`. Both schemas load in detection.
+All three paths generate the same SVG/PNG and write a v5 `target_spec.json`.
+Legacy v4 `board_spec.json` files still load in detection —
+`TargetLayout::from_json_*` auto-migrates the v4 schema.
 
-- `tools/out/target_faststart/target_spec.json` (Rust CLI/API) or `board_spec.json` (Python script)
+- `tools/out/target_faststart/target_spec.json`
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
 

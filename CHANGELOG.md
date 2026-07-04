@@ -11,9 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0] — 2026-07-04
 
-Post-0.8 cleanup: the private "ISRA" label is gone from the public surface,
-targets export DXF for fabrication, the Python `TargetLayout` API is fully typed
-and can render, and the release pipeline is idempotent.
+Post-0.8 cleanup: the deprecated v4 `BoardLayout` facade is removed, the private
+"ISRA" label is gone from the public surface, targets export DXF for
+fabrication, the Python `TargetLayout` API is fully typed and can render, and the
+release pipeline is idempotent.
 
 ### Added
 
@@ -37,6 +38,18 @@ and can render, and the release pipeline is idempotent.
   `name` value `rect_24x24`, CLI `gen-target preset rect24x24`, and WASM
   `rect_24x24_target_json()`. "ISRA / XG3D / drawing 5256-57-102" references are
   removed from docs and help; the geometry is unchanged.
+
+### Removed
+
+- **Breaking:** the deprecated v4 `BoardLayout` / `BoardMarker` facade (and the
+  `BoardLayoutValidationError` / `BoardLayoutLoadError` aliases, the
+  `Detector.from_board` / `DetectConfig.board` Python paths, and the Python v4
+  `board_spec.json` helpers) is removed from the Rust and Python public API.
+  It was a pure shim over `TargetLayout` — use `TargetLayout` instead
+  (`TargetLayout::default_hex()` is the geometry-identical replacement). Legacy
+  v4 `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
+  (Rust) / `ringgrid.TargetLayout.from_json(...)` (Python) auto-migrate the v4
+  schema to v5.
 
 ### CI
 

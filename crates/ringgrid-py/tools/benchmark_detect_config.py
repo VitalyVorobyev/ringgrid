@@ -11,7 +11,7 @@ import ringgrid
 
 
 def build_config() -> ringgrid.DetectConfig:
-    cfg = ringgrid.DetectConfig(ringgrid.BoardLayout.default())
+    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
     cfg.to_dict()
     return cfg
 

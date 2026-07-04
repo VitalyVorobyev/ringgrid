@@ -72,12 +72,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    board = (
-        ringgrid.BoardLayout.default()
+    target = (
+        ringgrid.TargetLayout.default_hex()
         if args.board is None
-        else ringgrid.BoardLayout.from_json_file(args.board)
+        else ringgrid.TargetLayout.from_json(args.board)
     )
-    detector = ringgrid.Detector.from_board(board)
+    detector = ringgrid.Detector.from_target(target)
     tiers = build_tiers(args)
 
     result = detector.detect_multiscale(args.image, tiers)

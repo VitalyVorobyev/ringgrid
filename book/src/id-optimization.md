@@ -75,8 +75,8 @@ ringgrid detect --target tools/board/board_spec_optimized.json --image photo.png
 
 # Python
 import ringgrid
-board = ringgrid.BoardLayout.from_json_file("tools/board/board_spec_optimized.json")
-detector = ringgrid.Detector.from_board(board)
+target = ringgrid.TargetLayout.from_json("tools/board/board_spec_optimized.json")
+detector = ringgrid.Detector.from_target(target)
 
 # Rust
 let target = TargetLayout::from_json_file(Path::new("tools/board/board_spec_optimized.json"))?;
@@ -169,7 +169,7 @@ unique.
 
 This optimizer's input/output remains the legacy flat `ringgrid.target.v4`
 schema; loading it through `TargetLayout::from_json_file` (Rust), the CLI's
-`--target`, or `ringgrid.BoardLayout.from_json_file` (Python) auto-migrates it
+`--target`, or `ringgrid.TargetLayout.from_json` (Python) auto-migrates it
 to the canonical `ringgrid.target.v5` schema, carrying `id_assignment` over
 unchanged. See [Target JSON (schema v5)](targets/target-json-v5.md) for the
 migration rules.

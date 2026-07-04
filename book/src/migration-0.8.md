@@ -7,6 +7,14 @@ interface with concrete before/after snippets. The pre-1.0 policy favors the
 cleaner design over source stability, but most changes are shims or renames with
 compatibility aliases, so migration is mechanical.
 
+> **Update for 0.9.** The `BoardLayout` / `BoardMarker` compatibility facade that
+> 0.8 kept (Rust and Python) is **removed in 0.9**. Move to `TargetLayout`
+> (`TargetLayout::default_hex()` for the classic hex board; `Detector::from_target`
+> / `Detector.from_target(...)` in Python). Legacy v4 `board_spec.json` files still
+> load — `TargetLayout::from_json_*` (Rust) / `ringgrid.TargetLayout.from_json(...)`
+> (Python) auto-migrate the v4 schema to v5. The 0.8 snippets below that reference
+> `BoardLayout` still describe the 0.8 shim; on 0.9 use the `TargetLayout` form.
+
 ## At a glance
 
 | Change | Rust | Python | CLI | WASM |
@@ -15,7 +23,7 @@ compatibility aliases, so migration is mechanical.
 | `detect*` return `Result<_, DetectError>` | ✓ | — (raises on error) | — | — |
 | Diagnostics/codebook moved off the crate root | ✓ | — | — | — |
 | `max_center_shift_px` → `max_correction_shift_px` (proj. center) | ✓ | ✓ | via `--config` | via overlay |
-| `BoardLayout` deprecated (use `TargetLayout`) | ✓ | still v4-shaped | — | — |
+| `BoardLayout` deprecated in 0.8, **removed in 0.9** (use `TargetLayout`) | ✓ | ✓ | — | — |
 | Target JSON v5 (v4 still accepted on input) | ✓ | ✓ | ✓ | ✓ |
 | New result fields `grid_coord`, `board_frame` | ✓ | ✓ | ✓ | ✓ |
 | `gen-target` is now a subcommand family | — | — | ✓ | — |
@@ -24,9 +32,11 @@ compatibility aliases, so migration is mechanical.
 
 ### `DetectConfig.board` → `DetectConfig.target`
 
-The config field and its builder are renamed, and constructors now take
-`impl Into<TargetLayout>`. `From<BoardLayout> for TargetLayout` means existing
-`BoardLayout` callers still compile:
+The config field and its builder are renamed, and constructors take
+`impl Into<TargetLayout>`. In 0.8 a `From<BoardLayout> for TargetLayout`
+conversion kept existing `BoardLayout` callers compiling; on 0.9 use
+`TargetLayout` directly (v4 `board_spec.json` still loads via
+`TargetLayout::from_json_*`):
 
 ```rust
 // 0.7
@@ -34,8 +44,8 @@ let board = BoardLayout::from_json_file(Path::new("board_spec.json"))?;
 let mut cfg = DetectConfig::from_target(board);
 let target_ref = &cfg.board;
 
-// 0.8
-let target = TargetLayout::from_json_file(Path::new("target_spec.json"))?; // or a BoardLayout
+// 0.9
+let target = TargetLayout::from_json_file(Path::new("target_spec.json"))?; // v4 also loads
 let mut cfg = DetectConfig::from_target(target);
 let target_ref = &cfg.target;
 ```
@@ -98,13 +108,13 @@ cfg.advanced.projective_center.max_correction_shift_px = None;       // "auto" (
 A `serde` alias keeps 0.7.x JSON configs loading (the old key deserializes into
 the new field).
 
-### `BoardLayout` deprecation
+### `BoardLayout` deprecation (removed in 0.9)
 
 `BoardLayout`, `BoardMarker`, `BoardLayoutValidationError`, and
-`BoardLayoutLoadError` are deprecated (a thin facade over the target module) and
-will be removed after 0.8. Prefer `TargetLayout` and the target error types
-(`TargetValidationError`, `TargetLoadError`). Until then the facade is fully
-functional and geometry-identical to `TargetLayout::default_hex()`.
+`BoardLayoutLoadError` were deprecated in 0.8 (a thin facade over the target
+module) and **removed in 0.9**. Use `TargetLayout` and the target error types
+(`TargetValidationError`, `TargetLoadError`); `TargetLayout::default_hex()` is
+the geometry-identical replacement for `BoardLayout::default()`.
 
 ### New result fields
 
@@ -121,9 +131,12 @@ Loaders accept both schemas; writers emit v5. Existing v4 files (including
 
 ## Python
 
-The Python `BoardLayout` class and the `Detector(board)` / `Detector.from_board`
-construction path are **unchanged** — they stay v4-shaped (hex coded targets)
-for the 0.8 cycle, so existing Python code needs no construction changes.
+In 0.8 the Python `BoardLayout` class and the `Detector(board)` /
+`Detector.from_board` path stayed v4-shaped. **In 0.9 they are removed**: build a
+`TargetLayout` (`ringgrid.TargetLayout.default_hex()`, `coded_hex(...)`, or
+`from_json(...)`) and construct with `ringgrid.Detector.from_target(target)` (or
+`ringgrid.Detector(target)`). v4 `board_spec.json` still loads via
+`ringgrid.TargetLayout.from_json(...)`.
 
 What changed:
 

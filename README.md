@@ -13,20 +13,22 @@
 - Subpixel ring-marker detection using direct ellipse fitting and projective center correction
 - Stable shipped `base` profile (`893` IDs, minimum cyclic Hamming distance `2`) plus opt-in `extended`
 - Rust library, CLI workflow, and Python bindings in one workspace
-- Compositional `TargetLayout`: hex or rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials (the legacy `BoardLayout` is a deprecated one-release facade — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
+- Compositional `TargetLayout`: hex or rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials (legacy v4 `board_spec.json` files still load via auto-migration; the deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
 - Canonical `target_spec.json` (schema v5) plus printable SVG/PNG target generation
 
 Pipeline at a glance: proposals -> local fit/decode -> dedup -> projective center -> `id_correction` -> optional global filter -> optional completion -> final homography refit.
 
 ## Visual Overview
 
-Target print example:
+`ringgrid` detects two target families from one `TargetLayout` model — a
+**coded hex** board (16-sector rings decode to stable IDs) and a **plain rect**
+board (uncoded rings, grid-labeled and anchored by origin dots). Each pair below
+shows the printable target and a detection overlay (green = fitted ellipses).
 
-![Ringgrid target print](docs/assets/target_print.png)
-
-Detection overlay example:
-
-![Detection overlay example](docs/assets/det_overlay_0002.png)
+| Coded hex — decoded IDs | Plain rect — origin-anchored |
+|---|---|
+| ![Coded hex target print](docs/assets/target_print.png) | ![Plain rect target print](docs/assets/rect_target_print.png) |
+| ![Coded hex detection overlay](docs/assets/det_overlay_0002.png) | ![Plain rect detection overlay](docs/assets/rect_det_overlay.png) |
 
 ## Quick Links
 

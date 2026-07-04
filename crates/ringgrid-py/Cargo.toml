@@ -13,6 +13,12 @@ publish = false
 name = "_ringgrid"
 crate-type = ["cdylib"]
 
+# Empty workspace table: this crate is excluded from the root workspace and
+# builds standalone (it carries its own Cargo.lock). Declaring it explicitly
+# lets cargo resolve it correctly even when the checkout is nested inside
+# another workspace (e.g. a git worktree under the parent repo).
+[workspace]
+
 [dependencies]
 ringgrid = { path = "../ringgrid", version = "0.8.0" }
 pyo3 = { version = "0.29", features = ["extension-module"] }

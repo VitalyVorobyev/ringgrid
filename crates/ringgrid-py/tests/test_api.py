@@ -270,6 +270,162 @@ def test_board_layout_target_generation_write_errors_raise_oserror(
         board.write_png(blocked_parent / "fixture.png")
 
 
+def test_target_layout_default_hex_roundtrips_and_matches_native_v5() -> None:
+    from ringgrid._ringgrid import target_preset_json
+
+    target = ringgrid.TargetLayout.default_hex()
+    assert isinstance(target.lattice, ringgrid.HexGeometry)
+    assert isinstance(target.coding, ringgrid.Coded16)
+    assert target.coding.id_assignment is None
+    assert target.fiducials is None
+
+    # v5 verbatim round-trip through the typed dataclasses.
+    assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
+
+    # Parity with the native preset JSON (compare parsed dicts, not strings).
+    native = json.loads(target_preset_json("default_hex"))
+    assert target.to_dict() == native
+    assert native["schema"] == "ringgrid.target.v5"
+    assert native["lattice"]["kind"] == "hex"
+    assert native["coding"]["kind"] == "coded16"
+    assert "fiducials" not in native
+
+
+def test_target_layout_default_hex_geometry_matches_legacy_board() -> None:
+    target = ringgrid.TargetLayout.default_hex()
+    board = ringgrid.BoardLayout.default()
+
+    assert target.lattice.rows == board.rows
+    assert target.lattice.long_row_cols == board.long_row_cols
+    assert target.lattice.pitch_mm == pytest.approx(board.pitch_mm)
+    assert target.marker.outer_radius_mm == pytest.approx(board.marker_outer_radius_mm)
+    assert target.marker.inner_radius_mm == pytest.approx(board.marker_inner_radius_mm)
+    assert target.coding.ring_width_mm == pytest.approx(board.marker_ring_width_mm)
+
+
+def test_target_layout_isra_preset_roundtrips_and_has_expected_shape() -> None:
+    target = ringgrid.TargetLayout.isra_rect_24x24()
+
+    assert isinstance(target.lattice, ringgrid.RectGeometry)
+    assert target.lattice.rows == 24
+    assert target.lattice.cols == 24
+    assert isinstance(target.coding, ringgrid.Plain)
+    assert target.fiducials is not None
+    assert len(target.fiducials.dots_mm) == 3
+
+    data = target.to_dict()
+    assert data["lattice"]["kind"] == "rect"
+    assert data["coding"] == {"kind": "plain"}
+    assert all(len(dot) == 2 for dot in data["fiducials"]["dots_mm"])
+
+    assert ringgrid.TargetLayout.from_dict(data) == target
+
+
+def test_target_layout_coded_hex_matches_board_geometry_and_name() -> None:
+    target = ringgrid.TargetLayout.coded_hex(8.0, 3, 4, 4.8, 3.2, 1.152)
+
+    assert target.name == "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152"
+    assert isinstance(target.lattice, ringgrid.HexGeometry)
+    assert target.lattice.rows == 3
+    assert target.lattice.long_row_cols == 4
+    assert isinstance(target.coding, ringgrid.Coded16)
+    assert target.coding.id_assignment is None
+    assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
+
+
+def test_target_layout_from_json_migrates_v4_board_spec() -> None:
+    target = ringgrid.TargetLayout.from_json(BOARD_JSON)
+
+    assert isinstance(target.lattice, ringgrid.HexGeometry)
+    assert target.lattice.rows == 15
+    assert target.lattice.long_row_cols == 14
+    assert isinstance(target.coding, ringgrid.Coded16)
+    # The migrated target is emitted as canonical v5 and round-trips.
+    assert target.to_dict()["schema"] == "ringgrid.target.v5"
+    assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
+
+
+def test_target_layout_coded16_id_assignment_roundtrips() -> None:
+    assignment = [10, 3, 7, 1, 9, 2, 5, 0, 8, 4, 6]
+    target = ringgrid.TargetLayout(
+        name="assigned",
+        lattice=ringgrid.HexGeometry(3, 4, 8.0),
+        marker=ringgrid.RingGeometry(4.8, 3.2),
+        coding=ringgrid.Coded16(1.152, id_assignment=assignment),
+    )
+
+    data = target.to_dict()
+    assert data["coding"]["id_assignment"] == assignment
+    assert ringgrid.TargetLayout.from_dict(data) == target
+    # The native validator accepts the explicit assignment.
+    assert json.loads(target.to_spec_json())["coding"]["id_assignment"] == assignment
+
+
+def test_detect_config_and_detector_accept_typed_target_layout() -> None:
+    target = ringgrid.TargetLayout.default_hex()
+
+    cfg = ringgrid.DetectConfig(target)
+    assert cfg.target is target
+    assert cfg.board is target  # deprecated alias
+
+    detector = ringgrid.Detector(cfg)
+    assert detector.target is target
+    assert detector.board is target
+
+    from_target = ringgrid.Detector.from_target(target)
+    assert isinstance(from_target, ringgrid.Detector)
+    assert from_target.target is target
+
+    result = detector.detect(np.zeros((64, 96), dtype=np.uint8))
+    assert isinstance(result, ringgrid.DetectionResult)
+
+
+def test_detector_accepts_plain_rect_target_layout() -> None:
+    target = ringgrid.TargetLayout.isra_rect_24x24()
+    detector = ringgrid.Detector.from_target(target)
+
+    result = detector.detect(np.zeros((80, 120), dtype=np.uint8))
+    assert isinstance(result, ringgrid.DetectionResult)
+
+
+def test_target_layout_validation_errors_surface_as_valueerror() -> None:
+    bad_ring = ringgrid.TargetLayout(
+        name="bad",
+        lattice=ringgrid.HexGeometry(3, 4, 8.0),
+        marker=ringgrid.RingGeometry(4.8, 4.8),
+        coding=ringgrid.Coded16(1.152),
+    )
+    with pytest.raises(
+        ValueError, match="marker_inner_radius_mm must be < marker_outer_radius_mm"
+    ):
+        bad_ring.to_spec_json()
+    with pytest.raises(ValueError):
+        ringgrid.DetectConfig(bad_ring)
+
+    with pytest.raises(ValueError, match="rows must be >= 1"):
+        ringgrid.TargetLayout.coded_hex(8.0, 0, 4, 4.8, 3.2, 1.152)
+
+    with pytest.raises(TypeError):
+        ringgrid.DetectConfig("not a target")
+
+
+def test_target_layout_from_dict_dispatches_and_rejects_unknown_kinds() -> None:
+    rect = ringgrid.TargetLayout.isra_rect_24x24().to_dict()
+    assert isinstance(
+        ringgrid.TargetLayout.from_dict(rect).lattice, ringgrid.RectGeometry
+    )
+
+    bad_lattice = json.loads(json.dumps(rect))
+    bad_lattice["lattice"]["kind"] = "triangular"
+    with pytest.raises(ValueError, match="unknown lattice kind"):
+        ringgrid.TargetLayout.from_dict(bad_lattice)
+
+    bad_coding = json.loads(json.dumps(ringgrid.TargetLayout.default_hex().to_dict()))
+    bad_coding["coding"]["kind"] = "coded32"
+    with pytest.raises(ValueError, match="unknown coding kind"):
+        ringgrid.TargetLayout.from_dict(bad_coding)
+
+
 def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
     board = ringgrid.BoardLayout.default()
     cfg = ringgrid.DetectConfig(board)

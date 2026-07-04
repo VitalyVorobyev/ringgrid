@@ -23,69 +23,72 @@ pip install maturin
 maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
-## Fast Start: Generate `board_spec.json` + Printable SVG/PNG
+## Fast Start: Generate `target_spec.json` + Printable SVG/PNG/DXF
 
-Installed-package target generation is available directly from `import ringgrid`:
+Installed-package target generation is available directly from `import ringgrid`
+via the typed `TargetLayout` API:
 
 ```python
 from pathlib import Path
 import ringgrid
 
-board = ringgrid.BoardLayout.from_geometry(
-    8.0,
-    15,
-    14,
-    4.8,
-    3.2,
-    1.152,
-    name="ringgrid_200mm_hex",
+target = ringgrid.TargetLayout.coded_hex(
+    pitch_mm=8.0,
+    rows=15,
+    long_row_cols=14,
+    outer_radius_mm=4.8,
+    inner_radius_mm=3.2,
+    ring_width_mm=1.152,
 )
 
-board.to_spec_json(Path("board_spec.json"))
-board.write_svg(Path("target_print.svg"), margin_mm=5.0)
-board.write_png(Path("target_print.png"), dpi=600.0, margin_mm=5.0)
+Path("target_spec.json").write_text(target.to_spec_json())
+target.write_svg(Path("target_print.svg"), margin_mm=5.0)
+target.write_png(Path("target_print.png"), dpi=600.0, margin_mm=5.0)
+target.write_dxf(Path("target_print.dxf"))
 ```
 
 Key knobs:
 
 | API | What it controls | Typical value |
 |---|---|---|
-| `BoardLayout.from_geometry(...)` | Board geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, ring width) | `8.0`, `15`, `14`, `4.8`, `3.2`, `1.152` |
-| `name=` | Optional explicit board name; omitted uses deterministic geometry-derived name | `"ringgrid_200mm_hex"` |
+| `TargetLayout.coded_hex(...)` | Hex geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, ring width) | `8.0`, `15`, `14`, `4.8`, `3.2`, `1.152` |
+| `TargetLayout.rect_24x24()` / `TargetLayout(...)` | Presets and the full compositional constructor (hex/rect × coded/plain × fiducials) | — |
 | `write_svg(..., margin_mm=...)` | Extra white border around the printable page | `3-10` |
 | `write_png(..., dpi=...)` | PNG raster resolution and embedded print metadata | `300` or `600` |
 | `write_png(..., include_scale_bar=...)` | Include or omit the default scale bar | `True` |
 
 Outputs:
 
-- `board_spec.json`
+- `target_spec.json` (schema v5)
 - `target_print.svg`
 - `target_print.png`
+- `target_print.dxf` (2D CAD, millimeters — for laser/CNC fabrication)
 
-Equivalent paths for the same geometry (identical SVG/PNG; the Rust CLI/API emit a v5 `target_spec.json`, this Python package a v4 `board_spec.json` — both load in detection):
+Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v5
+`target_spec.json`):
 
 - Rust CLI: `ringgrid gen-target hex --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --marker_ring_width_mm 1.152 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
 - Python script from the repo: `tools/gen_target.py` with the same arguments
-- Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, and `write_target_png`
+- Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf`
 
-> The installed Python package keeps the v4-shaped `BoardLayout` for the 0.8 cycle. The Rust core's target model is now compositional (`TargetLayout`: hex/rect lattices, coded/plain rings, optional origin fiducials), and the Python surface will follow in a future release. See the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html).
+Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates the v4 schema to v5. (The deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html).)
 
-Load this board in Python:
+Load this target in Python:
 
 ```python
 from pathlib import Path
 import ringgrid
 
-board = ringgrid.BoardLayout.from_json_file(Path("tools/out/target_faststart/board_spec.json"))
-cfg = ringgrid.DetectConfig(board)
+target = ringgrid.TargetLayout.from_json(Path("tools/out/target_faststart/target_spec.json"))
+cfg = ringgrid.DetectConfig(target)
 detector = ringgrid.Detector(cfg)
-# Convenience defaults: detector = ringgrid.Detector.from_board(board)
+# Convenience default (config-free): detector = ringgrid.Detector.from_target(target)
 ```
 
 If you are working from a repository checkout and also need synthetic images or
 ground truth, the repo tools under `tools/` still provide the combined
 generation/evaluation workflow. The installed package target-generation API is
-for board JSON + printable SVG/PNG only. The repo-level `tools/gen_target.py`
+for target JSON + printable SVG/PNG/DXF only. The repo-level `tools/gen_target.py`
 is a thin wrapper over this same installed-package surface.
 
 Complete target-generation tutorial and full flag reference:
@@ -94,16 +97,15 @@ Complete target-generation tutorial and full flag reference:
 ## Target layouts
 
 `TargetLayout` is the typed, first-class target model — the Python mirror of the
-Rust `ringgrid.target.v5` schema. Prefer it over the legacy `BoardLayout`
-facade: it expresses hex **and** rectangular lattices, coded **and** plain
-(uncoded) markers, and optional origin fiducials.
+Rust `ringgrid.target.v5` schema. It expresses hex **and** rectangular lattices,
+coded **and** plain (uncoded) markers, and optional origin fiducials.
 
 ```python
 import ringgrid
 
 # Presets (geometry comes from the native library — no duplicated constants):
 hex_target = ringgrid.TargetLayout.default_hex()        # 15-row coded hex, 203 markers
-isra_target = ringgrid.TargetLayout.isra_rect_24x24()   # 24x24 plain rect + origin dots
+rect_target = ringgrid.TargetLayout.rect_24x24()   # 24x24 plain rect + origin dots
 
 # Coded hex from direct geometry (deterministic, geometry-derived name):
 custom = ringgrid.TargetLayout.coded_hex(
@@ -141,13 +143,10 @@ restored = ringgrid.TargetLayout.from_json("target.json")
 assert ringgrid.TargetLayout.from_dict(restored.to_dict()) == restored
 ```
 
-`BoardLayout` remains available for the coded-hex target-generation flow shown
-above and is unchanged, but new code should reach for `TargetLayout`.
-
 ## Features
 
 - Typed `TargetLayout` (`ringgrid.target.v5`) — hex/rect lattices, coded/plain markers, origin fiducials
-- Native `BoardLayout` target generation for canonical spec JSON + printable SVG/PNG
+- Native `TargetLayout` target generation for canonical spec JSON + printable SVG/PNG/DXF
 - Native `Detector` API with NumPy input support
 - Slim `DetectionResult` model objects with JSON round-trips
 - Opt-in `DetectionDiagnostics` channel (`detector.detect_with_diagnostics(...)`)
@@ -188,8 +187,8 @@ If you want proposal generation to follow the detector's existing scale tuning,
 use the detector-bound methods instead:
 
 ```python
-board = ringgrid.BoardLayout.default()
-cfg = ringgrid.DetectConfig(board)
+target = ringgrid.TargetLayout.default_hex()
+cfg = ringgrid.DetectConfig(target)
 detector = ringgrid.Detector(cfg)
 
 diagnostics = detector.propose_with_heatmap("photo.png")
@@ -210,8 +209,8 @@ Full tutorial and repo tool workflow:
 ```python
 import ringgrid
 
-board = ringgrid.BoardLayout.default()
-cfg = ringgrid.DetectConfig(board)
+target = ringgrid.TargetLayout.default_hex()
+cfg = ringgrid.DetectConfig(target)
 
 # Section properties return copies: mutate, then reassign.
 decode = cfg.decode
@@ -230,7 +229,7 @@ print(snapshot["advanced"]["decode"]["codebook_profile"])  # "extended"
 
 How Python `DetectConfig` behaves:
 
-- `cfg.board` is the constructor input and stays read-only. It is not included
+- `cfg.target` is the constructor input and stays read-only. It is not included
   in `cfg.to_dict()`.
 - `cfg.to_dict()` returns the resolved native wire view. That is the easiest way
   to inspect the exact config the Rust detector will use. Its top-level keys are
@@ -244,14 +243,14 @@ How Python `DetectConfig` behaves:
   `advanced` wire fields automatically.)
 - `cfg.marker_scale` defaults to `14-66` px outer diameter and re-derives the
   scale-coupled search windows when you replace it.
-- Board geometry derives `cfg.marker_spec.r_inner_expected` and
-  `cfg.decode.code_band_ratio`. For `BoardLayout.default()`, those resolve to
+- Target geometry derives `cfg.marker_spec.r_inner_expected` and
+  `cfg.decode.code_band_ratio`. For `TargetLayout.default_hex()`, those resolve to
   `0.48809522` and `0.74404764`.
 - `cfg.circle_refinement` uses the Python enum
   `ringgrid.CircleRefinementMethod`, while `cfg.to_dict()["circle_refinement"]`
   stores the native wire strings `"ProjectiveCenter"` or `"None"`.
 
-Default `marker_scale` derivations for `DetectConfig(BoardLayout.default())`
+Default `marker_scale` derivations for `DetectConfig(TargetLayout.default_hex())`
 (stage sections shown as nested `advanced` wire keys):
 
 - `advanced.proposal.r_min` — spacing-aware, `max(0.15 * spacing_min_px, 2.0)` -> `3.0310888`
@@ -270,7 +269,7 @@ Deeper theory and Rust-side derivation details:
 
 | Surface | Type | What it controls |
 |---|---|---|
-| `cfg.board` | `BoardLayout` | Board geometry used to derive geometry-coupled defaults |
+| `cfg.target` | `TargetLayout` | Target geometry used to derive geometry-coupled defaults |
 | `cfg.marker_scale` | `MarkerScalePrior` | Expected marker diameter range in working pixels |
 | `cfg.proposal` | `ProposalConfig` | Scharr-vote proposal generation |
 | `cfg.edge_sample` | `EdgeSampleConfig` | Radial edge sampling limits and density |
@@ -291,7 +290,7 @@ Deeper theory and Rust-side derivation details:
 
 | Property | Default | Practical notes |
 |---|---|---|
-| `cfg.board` | constructor input | Read-only board layout. Replace the whole config if you need a different board. |
+| `cfg.target` | constructor input | Read-only target layout. Replace the whole config if you need a different target. |
 | `cfg.circle_refinement` | `ringgrid.CircleRefinementMethod.PROJECTIVE_CENTER` | Use `NONE` for raw ellipse centers, or keep `PROJECTIVE_CENTER` for the accuracy-oriented default. |
 | `cfg.dedup_radius` | `6.0` | Final marker merge radius in pixels. Raise only if duplicate fits survive; lower if nearby valid markers merge incorrectly. |
 | `cfg.max_aspect_ratio` | `3.0` | Rejects very elongated ellipses. Tighten when false positives are obviously non-circular; loosen only for extreme perspective. |
@@ -373,7 +372,7 @@ reject weak hypotheses early.
 
 ### `marker_spec`
 
-Describes the expected ring geometry. The board layout drives
+Describes the expected ring geometry. The target layout drives
 `r_inner_expected`, while the remaining fields control radial/theta sampling
 and coverage checks.
 
@@ -605,8 +604,8 @@ Unknown scene scale:
 from pathlib import Path
 import ringgrid
 
-board = ringgrid.BoardLayout.default()
-detector = ringgrid.Detector.from_board(board)
+target = ringgrid.TargetLayout.default_hex()
+detector = ringgrid.Detector.from_target(target)
 image = Path("testdata/target_3_split_00.png")
 
 result = detector.detect_adaptive(image)

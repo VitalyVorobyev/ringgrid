@@ -1,6 +1,6 @@
 # ringgrid-wasm
 
-WebAssembly bindings for [ringgrid](https://github.com/VitalyVorobyev/ringgrid) — a pure-Rust detector for dense coded ring calibration targets.
+WebAssembly bindings for [ringgrid](https://github.com/VitalyVorobyev/ringgrid) — a pure-Rust detector for dense ring calibration targets on hex or rectangular lattices (coded 16-sector or plain rings).
 
 ## Building
 
@@ -32,12 +32,20 @@ The demo supports:
 ## Usage
 
 ```js
-import init, { RinggridDetector, default_board_json, default_config_json } from './pkg/ringgrid_wasm.js';
+import init, {
+  RinggridDetector,
+  default_board_json,
+  rect_24x24_target_json,
+  default_config_json,
+} from './pkg/ringgrid_wasm.js';
 
 await init();
 
-const boardJson = default_board_json();
-const detector = new RinggridDetector(boardJson);
+// The constructor accepts any `ringgrid.target.v5` JSON: default_board_json()
+// for the classic coded hex board, rect_24x24_target_json() for the 24×24
+// plain rect target, or your own TargetLayout JSON.
+const targetJson = default_board_json();
+const detector = new RinggridDetector(targetJson);
 
 // From canvas ImageData (RGBA)
 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -46,7 +54,9 @@ const result = JSON.parse(resultJson);
 
 console.log(`Found ${result.detected_markers.length} markers`);
 for (const m of result.detected_markers) {
-    console.log(`  Marker ${m.id} at (${m.center[0].toFixed(1)}, ${m.center[1].toFixed(1)})`);
+    // Coded targets key markers by `id`; plain targets by `grid_coord`.
+    const key = m.id ?? `cell ${m.grid_coord}`;
+    console.log(`  Marker ${key} at (${m.center[0].toFixed(1)}, ${m.center[1].toFixed(1)})`);
 }
 ```
 
@@ -115,8 +125,9 @@ detector.update_config(JSON.stringify({ completion: { enable: true } }));
 
 | Function | Output |
 |----------|--------|
-| `default_board_json()` | Default board layout JSON string |
-| `default_config_json(board_json)` | Default detection config for a board |
+| `default_board_json()` | Classic coded hex target JSON string |
+| `rect_24x24_target_json()` | 24×24 plain rect target JSON string (with origin dots) |
+| `default_config_json(board_json)` | Default detection config for a target |
 | `scale_tiers_four_tier_wide_json()` | Four-tier preset (8-220 px) |
 | `scale_tiers_two_tier_standard_json()` | Two-tier preset (14-100 px) |
 | `version()` | Package version string |
@@ -125,7 +136,9 @@ detector.update_config(JSON.stringify({ completion: { enable: true } }));
 
 Detection results are returned as JSON strings matching the Rust `DetectionResult` type.
 Key fields:
-- `detected_markers[].id` — codebook index (0-892)
+- `detected_markers[].id` — codebook index (0-892) on coded targets; `null` on plain targets
+- `detected_markers[].grid_coord` — lattice coordinate (`[q, r]` hex, `[col, row]` rect); the marker key on plain targets
+- `board_frame` — `absolute` (origin-anchored) or `relative_canonical` (plain target with no resolved origin)
 - `detected_markers[].center` — `[x, y]` pixel coordinates
 - `detected_markers[].confidence` — detection confidence (0-1)
 - `detected_markers[].ellipse_outer` / `ellipse_inner` — fitted ellipse parameters (`{cx, cy, a, b, angle}`)

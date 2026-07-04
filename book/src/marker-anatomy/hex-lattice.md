@@ -138,10 +138,11 @@ Key methods (hex-relevant):
 Lookups are O(1): `TargetLayout` builds ID→cell and coordinate→cell hash maps
 during construction.
 
-> **Deprecation.** The pre-0.8 flat `BoardLayout` type still exists as a thin,
-> hex-only facade over `TargetLayout` and is geometry-identical to
-> `TargetLayout::default_hex()`. It is deprecated and will be removed after 0.8
-> — new code should use `TargetLayout`. See the
+> **Removed in 0.9.** The pre-0.8 flat `BoardLayout` type (a thin, hex-only
+> facade over `TargetLayout`) was removed in 0.9 — use `TargetLayout`
+> (`TargetLayout::default_hex()` is the geometry-identical replacement). Legacy
+> v4 `board_spec.json` files still load: `TargetLayout::from_json_*` auto-migrates
+> the v4 schema. See the
 > [Compositional Target Model](../targets/target-model.md) and the
 > [Migration Guide](../migration-0.8.md).
 

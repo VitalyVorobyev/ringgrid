@@ -2,96 +2,120 @@
   "meta": {
     "cpu": "Apple M4 Pro",
     "rustc": "1.95.0",
-    "git_sha": "29e4da3",
-    "generated": "2026-06-25",
+    "git_sha": "3872e796",
+    "generated": "2026-07-04",
     "repeats": 15,
     "source": "tools/gen_pages_perf.py"
   },
   "images": [
     {
-      "label": "Coded ring board \u2014 real capture",
-      "kind": "ringgrid",
-      "file": "testdata/target_3_split_00.png",
+      "label": "Coded hex \u2014 real capture",
+      "kind": "real",
+      "file": "target_3_split_00.png",
       "width": 720,
       "height": 540,
-      "raw_corners": 93,
-      "labelled": 78,
-      "markers": 78,
-      "proposal_ms": 15.129083999999999,
-      "fit_decode_ms": 8.621375,
-      "finalize_ms": 4.454625,
-      "img": "./img/target_3_split_00.png",
-      "note": "Dense hex lattice, decoded to absolute IDs with homography."
+      "markers": 79,
+      "decoded": 79,
+      "board_frame": "absolute",
+      "proposal_ms": 15.482332999999999,
+      "fit_decode_ms": 9.614417,
+      "finalize_ms": 4.661625,
+      "img": "./img/real_hex_input.jpg",
+      "overlay": "./img/real_hex_overlay.jpg",
+      "note": "Dense hex lattice photographed in the lab; decoded to absolute IDs."
     },
     {
-      "label": "Synthetic board #1",
+      "label": "Coded hex \u2014 sparse board",
       "kind": "synthetic",
-      "file": "synth/img_0000.png",
-      "width": 1280,
-      "height": 960,
-      "raw_corners": 203,
-      "labelled": 203,
-      "markers": 203,
-      "proposal_ms": 31.520208,
-      "fit_decode_ms": 24.32325,
-      "finalize_ms": 8.748458000000001,
-      "img": "./img/synth_0000.png",
-      "note": "Generated target, <1 px blur \u2014 also scored for accuracy."
+      "file": "hex_sparse/img_0000.png",
+      "width": 900,
+      "height": 700,
+      "markers": 42,
+      "decoded": 42,
+      "board_frame": "absolute",
+      "proposal_ms": 20.1025,
+      "fit_decode_ms": 3.941083,
+      "finalize_ms": 2.986916,
+      "img": "./img/hex_sparse_input.jpg",
+      "overlay": "./img/hex_sparse_overlay.jpg",
+      "note": "45-cell hex at 0.63 MP \u2014 sparse lattice, larger markers."
     },
     {
-      "label": "Synthetic board #2",
+      "label": "Coded hex \u2014 dense board",
       "kind": "synthetic",
-      "file": "synth/img_0001.png",
+      "file": "hex_dense/img_0000.png",
       "width": 1280,
       "height": 960,
-      "raw_corners": 203,
-      "labelled": 203,
       "markers": 203,
-      "proposal_ms": 31.701624999999996,
-      "fit_decode_ms": 24.280708,
-      "finalize_ms": 8.834833,
-      "img": "./img/synth_0001.png",
-      "note": "Generated target, <1 px blur \u2014 also scored for accuracy."
+      "decoded": 203,
+      "board_frame": "absolute",
+      "proposal_ms": 37.443042000000005,
+      "fit_decode_ms": 26.863458,
+      "finalize_ms": 9.547375,
+      "img": "./img/hex_dense_input.jpg",
+      "overlay": "./img/hex_dense_overlay.jpg",
+      "note": "203-cell hex at 1.23 MP \u2014 the standard reference density."
+    },
+    {
+      "label": "Plain rect \u2014 origin-anchored",
+      "kind": "synthetic",
+      "file": "rect_plain/img_0000.png",
+      "width": 1000,
+      "height": 1000,
+      "markers": 144,
+      "decoded": 0,
+      "board_frame": "absolute",
+      "proposal_ms": 23.972667,
+      "fit_decode_ms": 15.283708,
+      "finalize_ms": 4.412208,
+      "img": "./img/rect_plain_input.jpg",
+      "overlay": "./img/rect_plain_overlay.jpg",
+      "note": "144-cell plain rect with origin dots \u2014 grid-labeled, anchored to absolute mm (no per-marker IDs)."
     }
   ],
   "end_to_end": {
-    "desc": "End-to-end single-pass latency (median of 15 repeats) on public sample images.",
+    "desc": "End-to-end single-pass latency (median of 15 repeats) across the scene set.",
     "frames": [
       {
-        "file": "testdata/target_3_split_00.png",
-        "note": "Dense hex lattice, decoded to absolute IDs with homography.",
-        "ms": 28.259375
+        "file": "target_3_split_00.png",
+        "note": "Dense hex lattice photographed in the lab; decoded to absolute IDs.",
+        "ms": 29.81025
       },
       {
-        "file": "synth/img_0000.png",
-        "note": "Generated target, <1 px blur \u2014 also scored for accuracy.",
-        "ms": 64.478708
+        "file": "hex_sparse/img_0000.png",
+        "note": "45-cell hex at 0.63 MP \u2014 sparse lattice, larger markers.",
+        "ms": 26.99475
       },
       {
-        "file": "synth/img_0001.png",
-        "note": "Generated target, <1 px blur \u2014 also scored for accuracy.",
-        "ms": 64.947167
+        "file": "hex_dense/img_0000.png",
+        "note": "203-cell hex at 1.23 MP \u2014 the standard reference density.",
+        "ms": 74.014083
+      },
+      {
+        "file": "rect_plain/img_0000.png",
+        "note": "144-cell plain rect with origin dots \u2014 grid-labeled, anchored to absolute mm (no per-marker IDs).",
+        "ms": 43.738333999999995
       }
     ]
   },
   "accuracy": {
-    "desc": "Synthetic reference set (3 boards, <1 px blur) scored against generated ground truth. Centre error is the mean per-marker distance to the true centre; lower is sharper. Projective-centre refinement removes the perspective bias of the raw ellipse centre.",
+    "desc": "Synthetic reference set (3 hex boards, <1 px blur) scored against generated ground truth. Centre error is the mean per-marker distance to the true centre; lower is sharper. Projective-centre refinement removes the perspective bias of the raw ellipse centre.",
     "sets": [
       {
         "label": "No refinement",
         "precision": 1.0,
         "recall": 1.0,
-        "center_mean_px": 0.08487004730559349,
-        "h_vs_gt_mean_px": 0.03549133942351027,
-        "h_vs_gt_p95_px": 0.06180247897392472
+        "center_mean_px": 0.08444774035111889,
+        "h_vs_gt_mean_px": 0.035454466548027176,
+        "h_vs_gt_p95_px": 0.0635011880623096
       },
       {
         "label": "Projective centre",
         "precision": 1.0,
         "recall": 1.0,
-        "center_mean_px": 0.06004752697886368,
-        "h_vs_gt_mean_px": 0.019468395481356305,
-        "h_vs_gt_p95_px": 0.03475467388820989
+        "center_mean_px": 0.05961737251024912,
+        "h_vs_gt_mean_px": 0.018841292839753793,
+        "h_vs_gt_p95_px": 0.03390304259167388
       }
     ]
   }

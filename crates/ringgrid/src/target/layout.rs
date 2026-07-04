@@ -42,7 +42,7 @@ pub struct TargetCell {
 ///   orientation for targets whose markers don't encode identity.
 ///
 /// Construct via [`TargetLayout::new`], a preset
-/// ([`TargetLayout::default_hex`], [`TargetLayout::isra_rect_24x24`]), or the
+/// ([`TargetLayout::default_hex`], [`TargetLayout::rect_24x24`]), or the
 /// JSON loaders. All construction paths validate; geometry cannot be mutated
 /// in place because the derived cell cache would silently desync.
 #[derive(Debug, Clone)]
@@ -210,12 +210,12 @@ impl TargetLayout {
         .expect("default hex target spec must be valid")
     }
 
-    /// The ISRA XG3D-style rect target (drawing 5256-57-102): a 24×24 square
-    /// lattice of plain rings at 14 mm pitch (outer Ø11.2 / inner Ø5.6 mm)
-    /// with three Ø2.8 mm origin dots in the cell gaps near the board center.
-    pub fn isra_rect_24x24() -> Self {
+    /// A 24×24 plain rect target: a square lattice of plain rings at 14 mm
+    /// pitch (outer Ø11.2 / inner Ø5.6 mm) with three Ø2.8 mm origin dots in
+    /// the cell gaps near the board center.
+    pub fn rect_24x24() -> Self {
         Self::new(
-            "isra_rect_24x24",
+            "rect_24x24",
             LatticeGeometry::Rect(RectGeometry {
                 rows: 24,
                 cols: 24,
@@ -234,7 +234,7 @@ impl TargetLayout {
                 dots_mm: vec![[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]],
             }),
         )
-        .expect("ISRA rect preset must be valid")
+        .expect("rect_24x24 preset must be valid")
     }
 
     /// Human-readable name of the target layout.
@@ -366,9 +366,9 @@ impl Default for TargetLayout {
     }
 }
 
-/// Deterministic geometry-derived name for coded hex targets, shared with the
-/// legacy `BoardLayout` constructors so v4 and v5 flows produce identical
-/// names for identical geometry.
+/// Deterministic geometry-derived name for coded hex targets, matching the
+/// scheme legacy v4 boards used so v4 and v5 flows produce identical names for
+/// identical geometry.
 pub(crate) fn hex_generated_name(
     pitch_mm: f32,
     rows: usize,
@@ -402,28 +402,8 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // parity check against the legacy v4 facade
-    fn default_hex_matches_board_layout_exactly() {
-        let target = TargetLayout::default_hex();
-        let board = crate::BoardLayout::default();
-
-        assert_eq!(target.n_cells(), board.n_markers());
-        for (cell, marker) in target.cells().iter().zip(board.markers()) {
-            assert_eq!(cell.id, Some(marker.id));
-            // Bitwise equality: the hex generation math must be shared.
-            assert_eq!(cell.xy_mm, marker.xy_mm);
-            assert_eq!(cell.coord.u, i32::from(marker.q.expect("hex q")));
-            assert_eq!(cell.coord.v, i32::from(marker.r.expect("hex r")));
-        }
-        assert_eq!(
-            target.min_center_spacing_mm(),
-            board.pitch_mm() * f32::sqrt(3.0)
-        );
-    }
-
-    #[test]
-    fn isra_preset_has_expected_shape() {
-        let target = TargetLayout::isra_rect_24x24();
+    fn rect_preset_has_expected_shape() {
+        let target = TargetLayout::rect_24x24();
         assert_eq!(target.n_cells(), 576);
         assert!(!target.is_coded());
         assert_eq!(target.pitch_mm(), 14.0);
@@ -626,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_matches_board_layout_semantics() {
+    fn validation_rejects_degenerate_geometry() {
         let ring = |outer, inner| RingGeometry {
             outer_radius_mm: outer,
             inner_radius_mm: inner,

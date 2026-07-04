@@ -13,7 +13,7 @@
 import init, {
   RinggridDetector,
   default_board_json,
-  isra_rect_board_json,
+  rect_24x24_target_json,
   version,
 } from './pkg/ringgrid_wasm.js';
 
@@ -31,7 +31,7 @@ const els = {};
 // Board JSON + parsed spec, built lazily per target and cached (the spec is
 // re-parsed from the wasm-provided JSON so origin fiducials stay a single
 // source of truth with the Rust preset).
-const BOARD_JSON = { hex: default_board_json, rect: isra_rect_board_json };
+const BOARD_JSON = { hex: default_board_json, rect: rect_24x24_target_json };
 
 // ── State ───────────────────────────────────────────────────────────
 let detectors = {};   // targetKey -> RinggridDetector

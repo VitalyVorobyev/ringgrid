@@ -34,9 +34,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    board = ringgrid.BoardLayout.default() if args.board is None else ringgrid.BoardLayout.from_json_file(args.board)
+    target = ringgrid.TargetLayout.default_hex() if args.board is None else ringgrid.TargetLayout.from_json(args.board)
 
-    config = ringgrid.DetectConfig(board)
+    config = ringgrid.DetectConfig(target)
     detector = ringgrid.Detector(config)
 
     mapper = ringgrid.CameraModel(

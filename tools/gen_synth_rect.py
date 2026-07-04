@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate synthetic rect-lattice plain-ring target images with ground truth.
 
-Rect counterpart of gen_synth.py for the ISRA-style target: a rows x cols grid
+Rect counterpart of gen_synth.py for the plain rect target: a rows x cols grid
 of plain (uncoded) filled annuli at uniform pitch, with optional origin dots at
 cell-gap centers. Reuses gen_synth's homography/blur/illumination/noise
 pipeline; only the lattice, the annulus rendering, and the coordinate-keyed
@@ -33,7 +33,7 @@ from gen_synth import (
     write_png_gray,
 )
 
-# ISRA drawing 5256-57-102 defaults (24x24, pitch 14 mm, ring outer/inner
+# 24x24 plain rect defaults (pitch 14 mm, ring outer/inner
 # diameter 11.2/5.6 mm, three Ø2.8 mm dots at cell-gap centers near center).
 DEFAULT_ROWS = 24
 DEFAULT_COLS = 24

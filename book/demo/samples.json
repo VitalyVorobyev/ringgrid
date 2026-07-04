@@ -9,7 +9,7 @@
     },
     {
       "id": "rect-plain",
-      "label": "Rect · plain (ISRA 24×24)",
+      "label": "Rect · plain (24×24)",
       "file": "samples/rect-plain.png",
       "target": "rect",
       "caption": "576 plain rings on a 24×24 square lattice with three origin fiducial dots. Plain rings carry no ID, so markers are labeled by lattice coordinate; the origin dots resolve the absolute board frame (drawn in violet)."

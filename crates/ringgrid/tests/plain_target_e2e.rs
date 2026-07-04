@@ -10,7 +10,7 @@ use ringgrid::{
     MarkerCoding, OriginFiducials, PngTargetOptions, RectGeometry, RingGeometry, TargetLayout,
 };
 
-/// Compact ISRA-style plain rect target: 8×8 rings at 14 mm pitch with the
+/// Compact plain rect target: 8×8 rings at 14 mm pitch with the
 /// L-shaped origin-dot triple near the center.
 fn plain_rect_with_dots() -> TargetLayout {
     TargetLayout::new(

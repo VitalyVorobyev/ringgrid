@@ -50,8 +50,6 @@ use ringgrid::codebook::{CodebookInfo, CodewordMatch, codebook_info, decode_word
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 use ringgrid::Ellipse;
-#[allow(deprecated)] // the guard pins the deprecated v4 facade until removal
-use ringgrid::{BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker};
 use ringgrid::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
     RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
@@ -109,13 +107,6 @@ fn facade_names_resolve() {
     _assert_named::<OuterEstimationConfig>();
     _assert_named::<CodebookInfo>();
     _assert_named::<CodewordMatch>();
-    #[allow(deprecated)]
-    {
-        _assert_named::<BoardLayout>();
-        _assert_named::<BoardLayoutLoadError>();
-        _assert_named::<BoardLayoutValidationError>();
-        _assert_named::<BoardMarker>();
-    }
     _assert_named::<DetectError>();
     _assert_named::<TargetLayout>();
     _assert_named::<TargetCell>();

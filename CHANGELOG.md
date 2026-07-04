@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-04
+
+Post-0.8 cleanup: the deprecated v4 `BoardLayout` facade is removed, the private
+"ISRA" label is gone from the public surface, targets export DXF for
+fabrication, the Python `TargetLayout` API is fully typed and can render, and the
+release pipeline is idempotent.
+
+### Added
+
+- **DXF target export** (`TargetLayout::render_target_dxf` /
+  `write_target_dxf`, Python `TargetLayout.write_dxf`, and a `.dxf` from every
+  CLI `gen-target` run): a pure-Rust R12 DXF in millimeters for laser/CNC
+  fabrication of both coded-hex and plain-rect targets — ring boundaries as
+  circles, dark code-band sectors as closed polylines, split across
+  `rings` / `code` / `fiducials` layers.
+- **Typed Python `TargetLayout` API** (mixed Rust/Python package): dataclasses
+  mirroring the v5 model (`HexGeometry`/`RectGeometry`, `RingGeometry`,
+  `Coded16`/`Plain`, `OriginFiducials`), presets, `from_json`/`from_dict`
+  round-trips, and `Detector.from_target(...)`. `TargetLayout` now also exposes
+  `write_svg` / `write_png` / `write_dxf` (previously only the deprecated
+  `BoardLayout` could render).
+
+### Changed
+
+- **Breaking:** renamed the `isra_rect_24x24` preset to `rect_24x24` across
+  every public token — Rust `TargetLayout::rect_24x24()`, the emitted JSON
+  `name` value `rect_24x24`, CLI `gen-target preset rect24x24`, and WASM
+  `rect_24x24_target_json()`. "ISRA / XG3D / drawing 5256-57-102" references are
+  removed from docs and help; the geometry is unchanged.
+
+### Removed
+
+- **Breaking:** the deprecated v4 `BoardLayout` / `BoardMarker` facade (and the
+  `BoardLayoutValidationError` / `BoardLayoutLoadError` aliases, the
+  `Detector.from_board` / `DetectConfig.board` Python paths, and the Python v4
+  `board_spec.json` helpers) is removed from the Rust and Python public API.
+  It was a pure shim over `TargetLayout` — use `TargetLayout` instead
+  (`TargetLayout::default_hex()` is the geometry-identical replacement). Legacy
+  v4 `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
+  (Rust) / `ringgrid.TargetLayout.from_json(...)` (Python) auto-migrate the v4
+  schema to v5.
+
+### CI
+
+- Release workflows tolerate an already-published version (manual publish
+  before tagging no longer fails the tag job): crates.io checks the sparse
+  index and falls back to swallowing "already exists"; PyPI uses
+  `skip-existing`; npm guards on `npm view`.
+
+### Docs
+
+- New book pages: consolidated **Plain / Rect Target Detection** algorithm page
+  and a **both-targets** generate→detect→interpret tutorial; ADR-017 records the
+  compositional-target-model and plain-detection rationale.
+- Performance dashboard shows a **varied** scene set (sparse/dense hex + plain
+  rect, differing resolutions) each with a **detection overlay**.
+
 ## [0.8.0] — 2026-07-04
 
 The compositional target model ships end to end: rect lattices and plain
@@ -27,7 +84,7 @@ the 0.8 documentation pass is complete.
   printed target is now lattice (`hex` | `rect`) × ring geometry × coding
   (`coded16` | `plain`) × optional origin fiducials. Presets:
   `TargetLayout::default_hex()` (the classic board) and
-  `TargetLayout::isra_rect_24x24()` (24×24 rect lattice of plain rings at
+  `TargetLayout::rect_24x24()` (24×24 rect lattice of plain rings at
   14 mm pitch with three Ø2.8 mm origin dots). Fiducial validation enforces
   dot/ring clearance and requires the dot pattern to break every rotational
   symmetry of the lattice (rotations only — an opaque planar target always
@@ -41,7 +98,7 @@ the 0.8 documentation pass is complete.
   (stroked rings + 16-sector code band vs. filled annulus) and draws origin
   fiducial dots. CLI `gen-target` becomes a subcommand family:
   `hex` (classic flags), `rect` (`--rows --cols --pitch_mm ...` with optional
-  `--dot_mm x,y` / `--dot_radius_mm`), `preset` (`isra24x24`, `default-hex`),
+  `--dot_mm x,y` / `--dot_radius_mm`), `preset` (`rect24x24`, `default-hex`),
   and `from-spec` (render any target JSON). Output spec file is
   `target_spec.json` (v5).
 - `DetectError` — `Detector::detect*` now return
@@ -69,7 +126,7 @@ the 0.8 documentation pass is complete.
   `DetectionResult.board_frame: Option<BoardFrame>`
   (`absolute` | `relative_canonical`). Exposed in the Python typed API and in
   the WASM/CLI JSON output.
-- **Rect synthetic eval**: `tools/gen_synth_rect.py` (ISRA-style rect-plain
+- **Rect synthetic eval**: `tools/gen_synth_rect.py` (rect-plain
   renderer with in-plane rotation), `tools/score_detect_rect.py`
   (coordinate-keyed scoring with best-over-symmetry matching for unresolved
   frames, origin-resolution metrics), `tools/run_rect_benchmark.sh`

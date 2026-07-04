@@ -60,4 +60,15 @@ jobs:
 
       - name: Publish to npm with Trusted Publishing
         working-directory: crates/ringgrid-wasm/pkg
-        run: npm publish --access public
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG="$(node -p "require('./package.json').name")"
+          VER="$(node -p "require('./package.json').version")"
+          # Idempotency: skip if this exact version is already on npm
+          # (e.g. a re-run, or a manual publish before tagging).
+          if npm view "${PKG}@${VER}" version >/dev/null 2>&1; then
+            echo "::notice title=Already published::${PKG}@${VER} is already on npm; skipping publish."
+            exit 0
+          fi
+          npm publish --access public

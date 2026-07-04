@@ -10,7 +10,7 @@ time and how the detector resolves the origin from it.
 ## The dots
 
 `OriginFiducials { dot_radius_mm, dots_mm }` lists dark disks in board-frame
-millimeters (the same frame as cell centers). The ISRA preset uses three dots in
+millimeters (the same frame as cell centers). The rect_24x24 preset uses three dots in
 an L near the board center. Dots serve two jobs:
 
 1. **Break the lattice symmetry** so exactly one orientation is consistent with

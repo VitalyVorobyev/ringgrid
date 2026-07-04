@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn v5_round_trip_preserves_all_aspects() {
-        let target = TargetLayout::isra_rect_24x24();
+        let target = TargetLayout::rect_24x24();
         let json = target.to_json_string();
         let reloaded = TargetLayout::from_json_str(&json).expect("round-trip");
 
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn v5_json_shape_is_compositional() {
-        let json = TargetLayout::isra_rect_24x24().to_json_string();
+        let json = TargetLayout::rect_24x24().to_json_string();
         let val: serde_json::Value = serde_json::from_str(&json).expect("valid json");
         assert_eq!(val["schema"], "ringgrid.target.v5");
         assert_eq!(val["lattice"]["kind"], "rect");

@@ -146,4 +146,4 @@ The marker geometry must satisfy several constraints for reliable detection:
    encroach on the code band.
 
 These relationships are baked into the `MarkerSpecConfig` defaults and validated by
-the `BoardLayout` loader (see [Hex Lattice Layout](hex-lattice.md)).
+the `TargetLayout` loader (see [Hex Lattice Layout](hex-lattice.md)).

@@ -13,63 +13,6 @@ class CircleRefinementMethod(str, Enum):
     NONE: CircleRefinementMethod
     PROJECTIVE_CENTER: CircleRefinementMethod
 
-class BoardMarker:
-    id: int
-    xy_mm: list[float]
-    q: int | None
-    r: int | None
-    def __init__(self, id: int, xy_mm: list[float], q: int | None = ..., r: int | None = ...) -> None: ...
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> BoardMarker: ...
-    def to_dict(self) -> dict[str, Any]: ...
-
-class BoardLayout:
-    schema: str
-    name: str
-    pitch_mm: float
-    rows: int
-    long_row_cols: int
-    marker_outer_radius_mm: float
-    marker_inner_radius_mm: float
-    marker_ring_width_mm: float
-    markers: list[BoardMarker]
-    @classmethod
-    def default(cls) -> BoardLayout: ...
-    @classmethod
-    def from_json_file(cls, path: str | Path) -> BoardLayout: ...
-    @classmethod
-    def from_geometry(
-        cls,
-        pitch_mm: float,
-        rows: int,
-        long_row_cols: int,
-        marker_outer_radius_mm: float,
-        marker_inner_radius_mm: float,
-        marker_ring_width_mm: float,
-        *,
-        name: str | None = ...,
-    ) -> BoardLayout: ...
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> BoardLayout: ...
-    def to_dict(self) -> dict[str, Any]: ...
-    def to_spec_dict(self) -> dict[str, Any]: ...
-    def to_spec_json(self, path: str | Path | None = ...) -> str | None: ...
-    def write_svg(
-        self,
-        path: str | Path,
-        *,
-        margin_mm: float = ...,
-        include_scale_bar: bool = ...,
-    ) -> None: ...
-    def write_png(
-        self,
-        path: str | Path,
-        *,
-        dpi: float = ...,
-        margin_mm: float = ...,
-        include_scale_bar: bool = ...,
-    ) -> None: ...
-
 class HexGeometry:
     rows: int
     long_row_cols: int
@@ -144,7 +87,7 @@ class TargetLayout:
     @classmethod
     def default_hex(cls) -> TargetLayout: ...
     @classmethod
-    def isra_rect_24x24(cls) -> TargetLayout: ...
+    def rect_24x24(cls) -> TargetLayout: ...
     @classmethod
     def coded_hex(
         cls,
@@ -161,6 +104,22 @@ class TargetLayout:
     def from_dict(cls, data: Mapping[str, Any]) -> TargetLayout: ...
     def to_dict(self) -> dict[str, Any]: ...
     def to_spec_json(self) -> str: ...
+    def write_svg(
+        self,
+        path: str | Path,
+        *,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
+    def write_png(
+        self,
+        path: str | Path,
+        *,
+        dpi: float = ...,
+        margin_mm: float = ...,
+        include_scale_bar: bool = ...,
+    ) -> None: ...
+    def write_dxf(self, path: str | Path) -> None: ...
 
 class MarkerScalePrior:
     diameter_min_px: float
@@ -779,12 +738,10 @@ class InnerAsOuterRecoveryConfig:
     def to_dict(self) -> dict[str, Any]: ...
 
 class DetectConfig:
-    def __init__(self, target: BoardLayout | TargetLayout) -> None: ...
+    def __init__(self, target: TargetLayout) -> None: ...
     def to_dict(self) -> dict[str, Any]: ...
     @property
-    def target(self) -> BoardLayout | TargetLayout: ...
-    @property
-    def board(self) -> BoardLayout | TargetLayout: ...
+    def target(self) -> TargetLayout: ...
     @property
     def marker_scale(self) -> MarkerScalePrior: ...
     @marker_scale.setter
@@ -897,15 +854,11 @@ class DetectConfig:
 class Detector:
     def __init__(self, config: DetectConfig) -> None: ...
     @classmethod
-    def from_target(cls, target: BoardLayout | TargetLayout) -> Detector: ...
-    @classmethod
-    def from_board(cls, board: BoardLayout) -> Detector: ...
+    def from_target(cls, target: TargetLayout) -> Detector: ...
     @classmethod
     def with_config(cls, config: DetectConfig) -> Detector: ...
     @property
-    def target(self) -> BoardLayout | TargetLayout: ...
-    @property
-    def board(self) -> BoardLayout | TargetLayout: ...
+    def target(self) -> TargetLayout: ...
     @property
     def config(self) -> DetectConfig: ...
     def propose(self, image: np.ndarray | str | Path) -> list[Proposal]: ...
@@ -923,7 +876,7 @@ def propose(
     image: np.ndarray | str | Path,
     config: ProposalConfig | None = ...,
     *,
-    target: BoardLayout | str | Path | None = ...,
+    target: TargetLayout | str | Path | None = ...,
     marker_diameter: float | None = ...,
     marker_diameter_min: float | None = ...,
     marker_diameter_max: float | None = ...,
@@ -932,7 +885,7 @@ def propose_with_heatmap(
     image: np.ndarray | str | Path,
     config: ProposalConfig | None = ...,
     *,
-    target: BoardLayout | str | Path | None = ...,
+    target: TargetLayout | str | Path | None = ...,
     marker_diameter: float | None = ...,
     marker_diameter_min: float | None = ...,
     marker_diameter_max: float | None = ...,

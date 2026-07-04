@@ -4,7 +4,7 @@
 
 ## Construction
 
-`DetectConfig` is designed to be built from a [`TargetLayout`](../targets/target-model.md) (target geometry) and an optional scale prior. The constructors take `impl Into<TargetLayout>`, so a legacy `BoardLayout` still works via `From<BoardLayout>`. Three recommended constructors cover the common cases:
+`DetectConfig` is designed to be built from a [`TargetLayout`](../targets/target-model.md) (target geometry) and an optional scale prior. Three recommended constructors cover the common cases:
 
 ```rust
 use ringgrid::{TargetLayout, DetectConfig, MarkerScalePrior};

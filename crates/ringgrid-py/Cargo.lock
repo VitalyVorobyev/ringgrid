@@ -1336,7 +1336,7 @@ checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
 
 [[package]]
 name = "ringgrid"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "approx",
  "image",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "ringgrid-py"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "image",
  "numpy",

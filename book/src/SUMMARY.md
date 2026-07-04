@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Fast Start](fast-start.md)
+[Tutorial: Both Targets End to End](tutorial-both-targets.md)
 [Migration: 0.7 → 0.8](migration-0.8.md)
 
 # Targets
@@ -29,6 +30,7 @@
 - [Projective Center & Global Filter](detection-pipeline/projective-center.md)
 - [ID Correction](detection-pipeline/id-correction.md)
 - [Completion & Final Refit](detection-pipeline/completion.md)
+- [Plain / Rect Target Detection](detection-pipeline/plain-target.md)
 
 # Mathematical Foundations
 

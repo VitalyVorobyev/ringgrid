@@ -53,35 +53,53 @@ def load_ringgrid():
     return ringgrid
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    ringgrid = load_ringgrid()
+def _build_target(ringgrid, args):
+    """Build a 16-sector coded hex ``TargetLayout`` from CLI geometry args.
 
-    out_dir = args.out_dir
-    json_path = out_dir / "board_spec.json"
-    svg_path = out_dir / f"{args.basename}.svg"
-    png_path = out_dir / f"{args.basename}.png"
-
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        board = ringgrid.BoardLayout.from_geometry(
+    With ``--name`` omitted, defer to :meth:`TargetLayout.coded_hex`, which
+    assigns the deterministic geometry-derived name. With ``--name`` given,
+    build the typed layout directly so the custom name is preserved.
+    """
+    if args.name is None:
+        return ringgrid.TargetLayout.coded_hex(
             args.pitch_mm,
             args.rows,
             args.long_row_cols,
             args.marker_outer_radius_mm,
             args.marker_inner_radius_mm,
             args.marker_ring_width_mm,
-            name=args.name,
         )
+    return ringgrid.TargetLayout(
+        name=args.name,
+        lattice=ringgrid.HexGeometry(args.rows, args.long_row_cols, args.pitch_mm),
+        marker=ringgrid.RingGeometry(
+            args.marker_outer_radius_mm, args.marker_inner_radius_mm
+        ),
+        coding=ringgrid.Coded16(args.marker_ring_width_mm),
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    ringgrid = load_ringgrid()
+
+    out_dir = args.out_dir
+    json_path = out_dir / "target_spec.json"
+    svg_path = out_dir / f"{args.basename}.svg"
+    png_path = out_dir / f"{args.basename}.png"
+
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = _build_target(ringgrid, args)
         include_scale_bar = not args.no_scale_bar
-        board.to_spec_json(json_path)
-        board.write_svg(
+        json_path.write_text(target.to_spec_json() + "\n", encoding="utf-8")
+        target.write_svg(
             svg_path,
             margin_mm=args.margin_mm,
             include_scale_bar=include_scale_bar,
         )
-        board.write_png(
+        target.write_png(
             png_path,
             dpi=args.dpi,
             margin_mm=args.margin_mm,
@@ -91,13 +109,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gen_target.py: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Board spec JSON written to {json_path}")
+    print(f"Target spec JSON written to {json_path}")
     print(f"Print SVG written to {svg_path}")
     print(f"Print PNG written to {png_path} ({float(args.dpi):.1f} dpi)")
     print(
-        f"Board: {board.name}, schema={board.schema}, rows={board.rows}, "
-        f"long_row_cols={board.long_row_cols}, markers={len(board.markers)}, "
-        f"pitch={board.pitch_mm}mm"
+        f"Target: {target.name}, schema={target.schema}, "
+        f"rows={target.lattice.rows}, long_row_cols={target.lattice.long_row_cols}, "
+        f"pitch={target.lattice.pitch_mm}mm"
     )
     return 0
 

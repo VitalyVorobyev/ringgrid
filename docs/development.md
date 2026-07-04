@@ -18,7 +18,7 @@ must point at `.venv` so `maturin develop` installs into it rather than system P
 
 ```bash
 uv venv .venv
-.venv/bin/uv pip install -U maturin numpy matplotlib
+.venv/bin/uv pip install -U maturin numpy matplotlib pillow
 VIRTUAL_ENV=.venv .venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
@@ -37,7 +37,6 @@ crates/
       lib.rs       # public re-exports
       api.rs       # Detector facade
       target/      # compositional target model (lattice x ring x coding x fiducials)
-      board_layout.rs  # deprecated v4 hex facade over target/ (removal after 0.8)
       pipeline/    # single-pass / multi-pass orchestration
       detector/    # proposal, fit, decode, dedup, filter, completion
       ring/        # radial sampling and projective center logic
@@ -50,12 +49,15 @@ crates/
   ringgrid-py/     # Python bindings and package README
   ringgrid-wasm/   # WebAssembly bindings (wasm-pack, no_std feature set)
 tools/
-  gen_target.py        # board_spec.json + SVG + PNG generation
+  gen_target.py        # legacy target-spec + SVG/PNG generator (prefer the CLI
+                       #   `gen-target` or the Python `TargetLayout` API, which
+                       #   also emit DXF)
   gen_synth.py         # synthetic dataset generator
-  gen_synth_rect.py    # ISRA-style rect-plain synthetic dataset generator
+  gen_synth_rect.py    # rect-plain synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
   viz_detect.py        # detection overlay renderer
+  gen_pages_perf.py    # performance-dashboard data + overlays (.github/pages)
 docs/
   backlog.md
   performance.md

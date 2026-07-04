@@ -167,3 +167,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          # Tolerate re-runs / manually pre-published versions: files that
+          # already exist on PyPI are skipped instead of failing the job.
+          skip-existing: true

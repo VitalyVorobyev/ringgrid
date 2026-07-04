@@ -54,7 +54,6 @@
 #![warn(missing_docs)]
 
 mod api;
-mod board_layout;
 mod conic;
 mod detector;
 mod homography;
@@ -114,17 +113,14 @@ pub mod codebook {
     pub use crate::marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 }
 
-// Geometry — compositional target model (primary) and the legacy hex facade.
+// Geometry — compositional target model. Legacy v4 `board_spec.json` files load
+// via `TargetLayout::from_json_*` (schema auto-migration); the deprecated
+// `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
 pub use target::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
     RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
 };
 
-// Deprecated v4 facade, re-exported until removal after 0.8.
-#[allow(deprecated)]
-pub use board_layout::{
-    BoardLayout, BoardLayoutLoadError, BoardLayoutValidationError, BoardMarker,
-};
 pub use conic::Ellipse;
 pub use marker::MarkerSpecConfig;
 pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};

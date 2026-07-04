@@ -8,7 +8,7 @@ writers always emit v5.
 
 ## Annotated example — plain rect with origin dots
 
-Produced by `TargetLayout::isra_rect_24x24()` (abbreviated to a 4×4 lattice with
+Produced by `TargetLayout::rect_24x24()` (abbreviated to a 4×4 lattice with
 two dots so the shape is easy to read):
 
 ```jsonc
@@ -161,7 +161,7 @@ ringgrid gen-target rect \
 
 # A built-in preset
 ringgrid gen-target preset default-hex --out_dir tools/out/target
-ringgrid gen-target preset isra24x24   --out_dir tools/out/target
+ringgrid gen-target preset rect24x24   --out_dir tools/out/target
 
 # Re-render (and upgrade) an existing spec, v5 or legacy v4
 ringgrid gen-target from-spec --spec path/to/target_spec.json --out_dir tools/out/target

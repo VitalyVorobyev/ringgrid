@@ -5,8 +5,6 @@ native Rust detector.
 """
 
 from ._api import (
-    BoardLayout,
-    BoardMarker,
     CameraIntrinsics,
     CameraModel,
     CircleRefinementMethod,
@@ -60,8 +58,6 @@ from ._api import (
 )
 
 __all__ = [
-    "BoardLayout",
-    "BoardMarker",
     "TargetLayout",
     "HexGeometry",
     "RectGeometry",

@@ -107,7 +107,7 @@ pub struct FitMetrics {
 /// whether a [`PixelMapper`](crate::PixelMapper) was used. When a mapper is
 /// active, `center_mapped` provides the working-frame (undistorted)
 /// coordinates. `board_xy_mm` provides board-space marker coordinates in
-/// millimeters when the decoded `id` is valid for the active [`BoardLayout`](crate::BoardLayout).
+/// millimeters when the decoded `id` is valid for the active [`TargetLayout`](crate::TargetLayout).
 /// Ellipses are in the working frame when a mapper is active.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MarkerRecord {

@@ -1363,7 +1363,7 @@ def generate_one_sample(
 
     tilt = float(tilt_strength) if projective else 0.0
     H = make_random_homography(rng, img_w, img_h, board_mm, tilt_strength=tilt)
-    # Runtime BoardLayout normalizes marker coordinates so marker id=0 is at (0, 0).
+    # The runtime target loader normalizes marker coordinates so marker id=0 is at (0, 0).
     # Store GT homography in that same board frame for consistent scoring.
     h_shift = np.array(
         [[1.0, 0.0, anchor_x], [0.0, 1.0, anchor_y], [0.0, 0.0, 1.0]],

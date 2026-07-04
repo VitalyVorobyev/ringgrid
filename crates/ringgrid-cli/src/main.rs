@@ -71,7 +71,7 @@ enum GenTargetCommands {
 
 #[derive(Debug, Clone, Args)]
 struct CliGenOutputArgs {
-    /// Output directory for target_spec.json, SVG, and PNG.
+    /// Output directory for target_spec.json, SVG, PNG, and DXF.
     #[arg(
         long = "out_dir",
         visible_alias = "out-dir",
@@ -97,11 +97,12 @@ struct CliGenOutputArgs {
 }
 
 impl CliGenOutputArgs {
-    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf) {
+    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
         let json_path = self.out_dir.join("target_spec.json");
         let svg_path = self.out_dir.join(format!("{}.svg", self.basename));
         let png_path = self.out_dir.join(format!("{}.png", self.basename));
-        (json_path, svg_path, png_path)
+        let dxf_path = self.out_dir.join(format!("{}.dxf", self.basename));
+        (json_path, svg_path, png_path, dxf_path)
     }
 }
 
@@ -287,9 +288,9 @@ impl CliGenRectArgs {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum GenTargetPresetArg {
-    /// ISRA XG3D-style 24x24 rect target: plain rings at 14 mm pitch with
+    /// 24x24 plain rect target: plain rings at 14 mm pitch with
     /// three origin dots (drawing 5256-57-102).
-    Isra24x24,
+    Rect24x24,
     /// The classic 15-row hex coded ringgrid target (200 mm board).
     DefaultHex,
 }
@@ -307,7 +308,7 @@ struct CliGenPresetArgs {
 impl CliGenPresetArgs {
     fn to_target(&self) -> ringgrid::TargetLayout {
         match self.preset {
-            GenTargetPresetArg::Isra24x24 => ringgrid::TargetLayout::isra_rect_24x24(),
+            GenTargetPresetArg::Rect24x24 => ringgrid::TargetLayout::rect_24x24(),
             GenTargetPresetArg::DefaultHex => ringgrid::TargetLayout::default_hex(),
         }
     }
@@ -1169,7 +1170,7 @@ fn write_target_outputs(
     output: &CliGenOutputArgs,
 ) -> CliResult<()> {
     let include_scale_bar = !output.no_scale_bar;
-    let (json_path, svg_path, png_path) = output.output_paths();
+    let (json_path, svg_path, png_path, dxf_path) = output.output_paths();
 
     target
         .write_json_file(&json_path)
@@ -1204,6 +1205,11 @@ fn write_target_outputs(
         .map_err(|e| -> CliError {
             format!("Failed to write target PNG {}: {}", png_path.display(), e).into()
         })?;
+    target
+        .write_target_dxf(&dxf_path)
+        .map_err(|e| -> CliError {
+            format!("Failed to write target DXF {}: {}", dxf_path.display(), e).into()
+        })?;
 
     println!("Target spec JSON written to {}", json_path.display());
     println!("Print SVG written to {}", svg_path.display());
@@ -1212,6 +1218,7 @@ fn write_target_outputs(
         png_path.display(),
         output.dpi
     );
+    println!("Fabrication DXF written to {}", dxf_path.display());
     let lattice = match target.lattice() {
         ringgrid::LatticeGeometry::Hex(h) => {
             format!("hex rows={} long_row_cols={}", h.rows, h.long_row_cols)
@@ -2055,8 +2062,8 @@ mod tests {
     }
 
     #[test]
-    fn gen_target_preset_isra_builds_rect_target() {
-        let cli = Cli::try_parse_from(["ringgrid", "gen-target", "preset", "isra24x24"])
+    fn gen_target_preset_rect_builds_rect_target() {
+        let cli = Cli::try_parse_from(["ringgrid", "gen-target", "preset", "rect24x24"])
             .expect("parse gen-target preset cli");
         let Commands::GenTarget {
             command: GenTargetCommands::Preset(args),
@@ -2065,7 +2072,7 @@ mod tests {
             panic!("unexpected command variant");
         };
         let target = args.to_target();
-        assert_eq!(target.name(), "isra_rect_24x24");
+        assert_eq!(target.name(), "rect_24x24");
         assert_eq!(target.n_cells(), 576);
     }
 
@@ -2099,6 +2106,12 @@ mod tests {
             .into_luma8();
         assert_eq!(written_png.dimensions(), expected_png.dimensions());
         assert_eq!(written_png.as_raw(), expected_png.as_raw());
+
+        let dxf_path = out_dir.join("fixture_compact_hex.dxf");
+        let dxf = std::fs::read_to_string(&dxf_path).expect("read dxf");
+        assert!(dxf.starts_with("0\nSECTION\n"), "DXF is well-formed");
+        assert!(dxf.ends_with("\nEOF\n"), "DXF terminates with EOF");
+        assert!(dxf.contains("\nCIRCLE\n"), "DXF carries ring geometry");
 
         let _ = std::fs::remove_dir_all(out_dir.parent().expect("nested dir"));
     }

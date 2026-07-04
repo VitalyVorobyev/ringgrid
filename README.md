@@ -44,11 +44,12 @@ Detection overlay example:
 
 ## Quick Start From the Repo
 
-### 1. Generate `target_spec.json` plus printable SVG/PNG
+### 1. Generate `target_spec.json` plus printable SVG/PNG/DXF
 
 Choose one of the three target-generation paths. `gen-target` is a subcommand
 family (`hex`, `rect`, `preset`, `from-spec`); the classic hex coded board lives
-under `hex`.
+under `hex`. Every path also emits a DXF (2D CAD, millimeters) for laser/CNC
+fabrication.
 
 Rust CLI:
 
@@ -66,34 +67,40 @@ cargo run -p ringgrid-cli -- gen-target hex \
   --margin_mm 5
 ```
 
-Python script (same geometry, same artifact set):
+Python (typed `TargetLayout` API — same geometry, same artifact set):
 
 ```bash
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -U pip maturin
 ./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
-./.venv/bin/python tools/gen_target.py \
-  --out_dir tools/out/target_faststart \
-  --pitch_mm 8 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --marker_ring_width_mm 1.152 \
-  --name ringgrid_200mm_hex \
-  --dpi 600 \
-  --margin_mm 5
+```
+
+```python
+from pathlib import Path
+import ringgrid
+
+out = Path("tools/out/target_faststart")
+out.mkdir(parents=True, exist_ok=True)
+target = ringgrid.TargetLayout.coded_hex(
+    pitch_mm=8.0, rows=15, long_row_cols=14,
+    outer_radius_mm=4.8, inner_radius_mm=3.2, ring_width_mm=1.152,
+)
+(out / "target_spec.json").write_text(target.to_spec_json())
+target.write_svg(out / "target_print.svg", margin_mm=5.0)
+target.write_png(out / "target_print.png", dpi=600.0, margin_mm=5.0)
+target.write_dxf(out / "target_print.dxf")
 ```
 
 Rust API:
 
-- Use [`TargetLayout::coded_hex(...)`](crates/ringgrid/README.md) (or the compositional `TargetLayout::new(...)`) plus `write_json_file`, `write_target_svg`, and `write_target_png` when generation is part of your application code.
+- Use [`TargetLayout::coded_hex(...)`](crates/ringgrid/README.md) (or the compositional `TargetLayout::new(...)`) plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf` when generation is part of your application code.
 
-Generated files (the SVG/PNG are identical across paths; the Rust CLI and Rust API write a v5 `target_spec.json`, while the installed Python package still writes a v4 `board_spec.json` — both load in detection):
+Generated files (identical across the Rust CLI, Rust API, and Python paths; all write a v5 `target_spec.json`):
 
-- `tools/out/target_faststart/target_spec.json` (Rust CLI/API) or `board_spec.json` (Python script)
+- `tools/out/target_faststart/target_spec.json`
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
+- `tools/out/target_faststart/target_print.dxf`
 
 ### 2. Run detection
 

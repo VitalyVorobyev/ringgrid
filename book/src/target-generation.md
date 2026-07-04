@@ -5,6 +5,7 @@ This chapter documents the complete workflow for generating:
 - the canonical target spec JSON (`target_spec.json`, schema `ringgrid.target.v5`)
 - a printable vector target (`.svg`)
 - a printable raster target (`.png`)
+- a 2D CAD target for laser/CNC fabrication (`.dxf`, millimeters)
 
 for physical calibration targets.
 
@@ -14,14 +15,16 @@ Two Rust paths cover the full [compositional target model](targets/target-model.
 — hex or rect lattices, coded or plain markers, and optional origin fiducials:
 
 1. **Rust CLI: `ringgrid gen-target`** — a subcommand family (`hex`, `rect`,
-   `preset`, `from-spec`) that emits `target_spec.json`, `.svg`, and `.png` in
-   one run. Best for a pure-Rust command-line workflow.
+   `preset`, `from-spec`) that emits `target_spec.json`, `.svg`, `.png`, and
+   `.dxf` in one run. Best for a pure-Rust command-line workflow.
 2. **Rust API: `TargetLayout` + writers** — `write_json_file`,
-   `write_target_svg`, and `write_target_png` emit the same artifacts from
-   application code. Best when target generation is embedded in a Rust program.
+   `write_target_svg`, `write_target_png`, and `write_target_dxf` emit the same
+   artifacts from application code. Best when target generation is embedded in a
+   Rust program. (The Python `TargetLayout` exposes the matching
+   `write_svg` / `write_png` / `write_dxf`.)
 
 Both paths use the same Rust rendering engine, so identical geometry and print
-options produce identical JSON, SVG, and PNG.
+options produce identical JSON, SVG, PNG, and DXF.
 
 A few older Python helpers remain, but they predate the compositional model and
 generate **hex coded** targets only, writing the legacy flat
@@ -32,7 +35,8 @@ generate **hex coded** targets only, writing the legacy flat
 - `tools/gen_synth.py` — synthetic camera images with ground truth, plus
   optional print files.
 
-For rectangular, plain, or fiducial-bearing targets, use the Rust CLI or API.
+For rectangular, plain, or fiducial-bearing targets, use the Rust CLI/API or the
+typed Python `TargetLayout` (`write_svg` / `write_png` / `write_dxf`).
 
 ## Prerequisites
 
@@ -57,7 +61,7 @@ python3 -m venv .venv
 ## Rust CLI: `ringgrid gen-target`
 
 Each subcommand builds a `TargetLayout` and writes `target_spec.json`,
-`<basename>.svg`, and `<basename>.png` to `--out_dir`.
+`<basename>.svg`, `<basename>.png`, and `<basename>.dxf` to `--out_dir`.
 
 | Subcommand | Target |
 |---|---|
@@ -70,8 +74,8 @@ Each subcommand builds a `TargetLayout` and writes `target_spec.json`,
 
 | Flag | Default | Description |
 |---|---|---|
-| `--out_dir <path>` | `tools/out/target` | Output directory for `target_spec.json`, SVG, and PNG. |
-| `--basename <string>` | `target_print` | Base filename for SVG/PNG outputs. |
+| `--out_dir <path>` | `tools/out/target` | Output directory for `target_spec.json`, SVG, PNG, and DXF. |
+| `--basename <string>` | `target_print` | Base filename for SVG/PNG/DXF outputs. |
 | `--dpi <f>` | `300.0` | PNG raster DPI (also embedded in PNG metadata). |
 | `--margin_mm <mm>` | `0.0` | Extra white margin around the target in print outputs. |
 | `--no-scale-bar` | `false` | Omit the default scale bar from SVG/PNG outputs. |

@@ -49,24 +49,13 @@ Both thresholds adapt to the observed inlier-residual distribution (`max(floor, 
 
 ## Plain-Target Path
 
-Plain (uncoded) rings carry no IDs, so the coded path's decode → ID correction → global filter cannot label them. The plain finalize path (`pipeline/finalize/plain.rs`) replaces the decode-anchored stages with coordinate-keyed counterparts:
-
-| Order | Name | Description |
-|-------|------|-------------|
-| 1 | Projective Center | Same as coded: correct fit centers once per marker |
-| 2 | [Grid Assignment](#grid-assignment) | Label ring centers with lattice coordinates and fit the frame homography |
-| 3 | [Origin Anchor](../targets/origin-fiducials.md) | Resolve the board origin from fiducial dots (when present) |
-| 4 | Completion | Coordinate-keyed fits at missing cells; grows the labeled patch when unanchored |
-| 5 | Final H Refit | Refit the frame/board homography over all labeled markers |
-| 6 | [Geometric Verify](#geometric-verification) | Same lattice-consistency gate as the coded path |
-
-### Grid Assignment
-
-`pipeline/assign.rs` labels the fitted ring centers with lattice coordinates using `projective_grid::detect_grid` (topological labeling only; its detection facade is `f32`), then refits the frame homography in `f64` with ringgrid's RANSAC over the labeled correspondences — mirroring the coded global filter, which likewise keeps only homography inliers. Labels start in a canonical *relative* frame.
-
-### Origin resolution
-
-When the target carries [origin fiducials](../targets/origin-fiducials.md), `pipeline/anchor.rs` resolves the board origin by verifying dot darkness at predicted image positions; on success, labels are remapped to absolute board cells and `board_xy_mm` is emitted. Otherwise outputs stay in the relative canonical frame with `board_xy_mm` omitted (`board_frame = relative_canonical`). Plain completion is coordinate-keyed and lattice-generic: when unanchored it grows the labeled patch's bounding box by one lattice ring per round, recovering cells the topological labeler dropped.
+Plain (uncoded) rings carry no IDs, so the coded path's decode → ID correction →
+global filter cannot label them. The plain finalize path
+(`pipeline/finalize/plain.rs`) replaces the decode-anchored stages with
+coordinate-keyed grid labeling and origin anchoring. The full walkthrough —
+grid assignment, origin resolution, completion, and the absolute/relative frame
+contract — is on its own page: **[Plain / Rect Target
+Detection](plain-target.md)**.
 
 ## Projective Center Correction
 

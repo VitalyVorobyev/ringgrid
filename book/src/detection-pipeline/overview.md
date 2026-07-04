@@ -1,6 +1,8 @@
 # Pipeline Overview
 
-The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs, and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction and structural ID correction in finalize.
+The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs (coded targets) or lattice coordinates (plain targets), and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction and structural ID correction in finalize.
+
+The pages below describe the **coded** path (16-sector coded rings, the classic hex board). [Plain (uncoded) targets](#plain-target-path) share the fit and projective-center stages but replace the decode-driven back half with grid labeling and origin anchoring. Which combinations run which path is summarized in the [target composition matrix](../targets/target-model.md#composition-matrix--how-each-combination-detects).
 
 ## Two-Phase Architecture
 
@@ -21,17 +23,50 @@ Stages 2--5 are executed per-proposal inside `process_candidate()`. A proposal t
 
 ### Phase 2: Finalize
 
-Orchestrated by `pipeline/finalize.rs`, this phase applies global geometric reasoning to improve and extend the detection set:
+Orchestrated by the `pipeline/finalize/` module, this phase applies global geometric reasoning to improve and extend the detection set. The coded path (`finalize/coded.rs`) runs:
 
 | Order | Name | Description |
 |-------|------|-------------|
 | 1 | [Projective Center](projective-center.md) | Correct fit-decode marker centers (once per marker) |
-| 2 | [ID Correction](id-correction.md) | Structural consistency scrub/recovery of decoded IDs |
+| 2 | [ID Correction](id-correction.md) | Structural consistency scrub/recovery of decoded IDs (hex coded targets only) |
 | 3 | [Global Filter](projective-center.md#global-filter) | Optional RANSAC homography from decoded markers with known board positions |
 | 4 | [Completion](completion.md) | Optional conservative fits at missing H-projected IDs (+ projective center for new markers) |
 | 5 | [Final H Refit](completion.md#final-homography-refit) | Optional refit homography from all corrected centers |
+| 6 | [Geometric Verify](#geometric-verification) | Precision-first lattice-consistency gate; removes geometrically impossible markers |
 
-When `use_global_filter` is `false`, finalize still runs projective center + ID correction, then returns immediately, skipping the homography-dependent stages (global filter/completion/final refit).
+When `use_global_filter` is `false`, finalize still runs projective center + ID correction, then returns immediately, skipping the homography-dependent stages (global filter/completion/final refit/geometric verify).
+
+Plain (uncoded) targets take a different back half — see [Plain-Target Path](#plain-target-path).
+
+## Geometric Verification
+
+After the final homography, a precision-first gate (`pipeline/geometric_verify.rs`, enabled by `advanced.geometric_verify`, default `true`) checks every labeled marker against the target lattice and **removes** the geometrically inconsistent ones, so only trusted board correspondences reach the output. Two complementary tests run, rejecting on their union:
+
+1. **Local lattice-midpoint** (homography-free, distortion-robust primary): each marker's center versus the midpoint predicted by its lattice neighbors. Being locally affine, it sees only second-difference curvature under smooth lens distortion, while a wrong-cell marker sits ~1 pitch off.
+2. **Global final-H reprojection** (gross-blunder backstop): each marker's center versus its board position projected through the final homography. Catches boundary markers that lack a complete neighbor pair for the local test.
+
+Both thresholds adapt to the observed inlier-residual distribution (`max(floor, median + k·MAD)`), so the gate stays recall-safe on clean and distorted boards alike. It is lattice-generic and coordinate-keyed, so it applies to coded and plain targets identically. See [Detection Quality & Rejection](../detection-quality.md).
+
+## Plain-Target Path
+
+Plain (uncoded) rings carry no IDs, so the coded path's decode → ID correction → global filter cannot label them. The plain finalize path (`pipeline/finalize/plain.rs`) replaces the decode-anchored stages with coordinate-keyed counterparts:
+
+| Order | Name | Description |
+|-------|------|-------------|
+| 1 | Projective Center | Same as coded: correct fit centers once per marker |
+| 2 | [Grid Assignment](#grid-assignment) | Label ring centers with lattice coordinates and fit the frame homography |
+| 3 | [Origin Anchor](../targets/origin-fiducials.md) | Resolve the board origin from fiducial dots (when present) |
+| 4 | Completion | Coordinate-keyed fits at missing cells; grows the labeled patch when unanchored |
+| 5 | Final H Refit | Refit the frame/board homography over all labeled markers |
+| 6 | [Geometric Verify](#geometric-verification) | Same lattice-consistency gate as the coded path |
+
+### Grid Assignment
+
+`pipeline/assign.rs` labels the fitted ring centers with lattice coordinates using `projective_grid::detect_grid` (topological labeling only; its detection facade is `f32`), then refits the frame homography in `f64` with ringgrid's RANSAC over the labeled correspondences — mirroring the coded global filter, which likewise keeps only homography inliers. Labels start in a canonical *relative* frame.
+
+### Origin resolution
+
+When the target carries [origin fiducials](../targets/origin-fiducials.md), `pipeline/anchor.rs` resolves the board origin by verifying dot darkness at predicted image positions; on success, labels are remapped to absolute board cells and `board_xy_mm` is emitted. Otherwise outputs stay in the relative canonical frame with `board_xy_mm` omitted (`board_frame = relative_canonical`). Plain completion is coordinate-keyed and lattice-generic: when unanchored it grows the labeled patch's bounding box by one lattice ring per round, recovering cells the topological labeler dropped.
 
 ## Projective Center Correction
 
@@ -120,4 +155,4 @@ For the serialized JSON shape used by the CLI and examples, see
 
 <!-- TODO: Pipeline flow diagram -->
 
-**Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize.rs`
+**Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize/` (`coded.rs`, `plain.rs`, `common.rs`), `pipeline/assign.rs`, `pipeline/anchor.rs`, `pipeline/geometric_verify.rs`

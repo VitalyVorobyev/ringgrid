@@ -23,5 +23,3 @@ pub use fiducials::OriginFiducials;
 pub use lattice::{HexGeometry, LatticeGeometry, RectGeometry};
 pub use layout::{TargetCell, TargetLayout};
 pub use ring::{CodedRingSpec, MarkerCoding, RingGeometry};
-
-pub(crate) use schema::{BoardSpecV4, TARGET_SCHEMA_V4};

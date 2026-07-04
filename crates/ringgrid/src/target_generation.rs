@@ -1,7 +1,5 @@
 //! Printable target rendering (SVG and PNG) for any [`TargetLayout`].
 
-#[allow(deprecated)]
-use crate::BoardLayout;
 use crate::marker::codebook::CODEBOOK;
 use crate::target::{MarkerCoding, TargetLayout};
 use image::{GrayImage, Luma};
@@ -468,46 +466,6 @@ impl TargetLayout {
         }
         std::fs::write(path, dxf)?;
         Ok(())
-    }
-}
-
-// Rendering facade for the deprecated v4 board type, kept until removal.
-#[allow(deprecated)]
-impl BoardLayout {
-    /// Render a printable SVG target (delegates to [`TargetLayout`]).
-    pub fn render_target_svg(
-        &self,
-        options: &SvgTargetOptions,
-    ) -> Result<String, TargetGenerationError> {
-        TargetLayout::from(self).render_target_svg(options)
-    }
-
-    /// Write a printable SVG target to disk (delegates to [`TargetLayout`]).
-    #[cfg(feature = "std")]
-    pub fn write_target_svg(
-        &self,
-        path: &Path,
-        options: &SvgTargetOptions,
-    ) -> Result<(), TargetGenerationError> {
-        TargetLayout::from(self).write_target_svg(path, options)
-    }
-
-    /// Render a printable PNG target (delegates to [`TargetLayout`]).
-    pub fn render_target_png(
-        &self,
-        options: &PngTargetOptions,
-    ) -> Result<GrayImage, TargetGenerationError> {
-        TargetLayout::from(self).render_target_png(options)
-    }
-
-    /// Write a printable PNG target to disk (delegates to [`TargetLayout`]).
-    #[cfg(feature = "std")]
-    pub fn write_target_png(
-        &self,
-        path: &Path,
-        options: &PngTargetOptions,
-    ) -> Result<(), TargetGenerationError> {
-        TargetLayout::from(self).write_target_png(path, options)
     }
 }
 
@@ -1147,9 +1105,9 @@ fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
 }
 
 #[cfg(test)]
-#[allow(deprecated)] // also exercises the deprecated BoardLayout render facade
 mod tests {
     use super::*;
+    use crate::target::CodedRingSpec;
 
     #[test]
     fn rejects_invalid_svg_margin() {
@@ -1177,19 +1135,18 @@ mod tests {
 
     #[test]
     fn render_geometry_uses_ring_edges_for_code_band() {
-        let board = BoardLayout::with_name("fixture_gap_free", 7.0, 3, 4, 4.8, 2.8, 1.152)
-            .expect("valid geometry");
-        let target = TargetLayout::from(&board);
+        let ring_width_mm = 1.152_f32;
+        let target =
+            TargetLayout::coded_hex(7.0, 3, 4, 4.8, 2.8, ring_width_mm).expect("valid geometry");
         let geometry = render_geometry(&target);
 
-        let half = 0.5 * f64::from(board.marker_ring_width_mm());
+        let ring = target.ring();
+        let half = 0.5 * f64::from(ring_width_mm);
         let (code_inner, code_outer) = geometry.code_band_mm.expect("coded band");
-        assert!((code_inner - (f64::from(board.marker_inner_radius_mm()) + half)).abs() < 1e-6);
-        assert!((code_outer - (f64::from(board.marker_outer_radius_mm()) - half)).abs() < 1e-6);
+        assert!((code_inner - (f64::from(ring.inner_radius_mm) + half)).abs() < 1e-6);
+        assert!((code_outer - (f64::from(ring.outer_radius_mm) - half)).abs() < 1e-6);
         assert!(
-            (geometry.outer_draw_extent_mm - (f64::from(board.marker_outer_radius_mm()) + half))
-                .abs()
-                < 1e-6
+            (geometry.outer_draw_extent_mm - (f64::from(ring.outer_radius_mm) + half)).abs() < 1e-6
         );
     }
 
@@ -1197,18 +1154,23 @@ mod tests {
     fn svg_codewords_follow_id_assignment() {
         // A board whose first marker carries a non-sequential ID must render
         // that ID's codeword (regression: rendering used the cell index).
-        let board = BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2, 1.152)
-            .expect("valid geometry");
-        let mut val: serde_json::Value =
-            serde_json::from_str(&board.to_json_string()).expect("json");
-        let n = board.n_markers();
+        let base = TargetLayout::coded_hex(8.0, 3, 4, 4.8, 3.2, 1.152).expect("valid geometry");
+        let n = base.n_cells();
         // Reverse assignment: cell i gets ID n-1-i.
         let ids: Vec<usize> = (0..n).rev().collect();
-        val["id_assignment"] = serde_json::json!(ids);
-        let board = BoardLayout::from_json_str(&serde_json::to_string(&val).expect("json"))
-            .expect("valid board");
+        let target = TargetLayout::new(
+            base.name().to_string(),
+            *base.lattice(),
+            base.ring(),
+            MarkerCoding::Coded16(CodedRingSpec {
+                ring_width_mm: 1.152,
+                id_assignment: Some(ids),
+            }),
+            None,
+        )
+        .expect("valid board");
 
-        let svg = board
+        let svg = target
             .render_target_svg(&SvgTargetOptions::default())
             .expect("render");
         assert!(

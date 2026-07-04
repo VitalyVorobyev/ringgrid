@@ -1,8 +1,9 @@
-#![allow(deprecated)] // pins the legacy BoardLayout facade until removal
-
 use image::load_from_memory;
 use png::{Decoder as PngDecoder, Unit};
-use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
+use ringgrid::{
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, PngTargetOptions, RingGeometry,
+    SvgTargetOptions, TargetLayout,
+};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,9 +16,25 @@ fn normalize_text_newlines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-fn fixture_board() -> BoardLayout {
-    BoardLayout::with_name("fixture_compact_hex", 8.0, 3, 4, 4.8, 3.2, 1.152)
-        .expect("fixture board must be valid")
+fn fixture_target() -> TargetLayout {
+    TargetLayout::new(
+        "fixture_compact_hex",
+        LatticeGeometry::Hex(HexGeometry {
+            rows: 3,
+            long_row_cols: 4,
+            pitch_mm: 8.0,
+        }),
+        RingGeometry {
+            outer_radius_mm: 4.8,
+            inner_radius_mm: 3.2,
+        },
+        MarkerCoding::Coded16(CodedRingSpec {
+            ring_width_mm: 1.152,
+            id_assignment: None,
+        }),
+        None,
+    )
+    .expect("fixture target must be valid")
 }
 
 fn temp_output_dir(prefix: &str) -> PathBuf {
@@ -34,17 +51,17 @@ fn temp_output_dir(prefix: &str) -> PathBuf {
 
 #[test]
 fn json_generation_matches_committed_fixture() {
-    let board = fixture_board();
+    let target = fixture_target();
     assert_eq!(
-        format!("{}\n", board.to_json_string()),
+        format!("{}\n", target.to_json_string()),
         normalize_text_newlines(EXPECTED_JSON)
     );
 }
 
 #[test]
 fn svg_generation_matches_committed_fixture() {
-    let board = fixture_board();
-    let svg = board
+    let target = fixture_target();
+    let svg = target
         .render_target_svg(&SvgTargetOptions::default())
         .expect("fixture svg");
     assert_eq!(
@@ -55,8 +72,8 @@ fn svg_generation_matches_committed_fixture() {
 
 #[test]
 fn png_generation_matches_committed_fixture_pixels() {
-    let board = fixture_board();
-    let rendered = board
+    let target = fixture_target();
+    let rendered = target
         .render_target_png(&PngTargetOptions {
             dpi: 96.0,
             ..PngTargetOptions::default()
@@ -72,19 +89,19 @@ fn png_generation_matches_committed_fixture_pixels() {
 
 #[test]
 fn file_writers_create_parent_dirs_and_round_trip() {
-    let board = fixture_board();
+    let target = fixture_target();
     let out_dir = temp_output_dir("target_generation");
     let json_path = out_dir.join("nested/fixture.json");
     let svg_path = out_dir.join("nested/fixture.svg");
     let png_path = out_dir.join("nested/fixture.target");
 
-    board
+    target
         .write_json_file(&json_path)
         .expect("write fixture json");
-    board
+    target
         .write_target_svg(&svg_path, &SvgTargetOptions::default())
         .expect("write fixture svg");
-    board
+    target
         .write_target_png(
             &png_path,
             &PngTargetOptions {

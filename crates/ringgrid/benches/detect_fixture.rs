@@ -1,23 +1,8 @@
-#![allow(deprecated)] // pins the legacy BoardLayout facade until removal
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use image::ImageReader;
-use ringgrid::{BoardLayout, Detector};
-use serde::Deserialize;
+use ringgrid::{Detector, TargetLayout};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BoardLayoutSpecV3 {
-    schema: String,
-    name: String,
-    pitch_mm: f32,
-    rows: usize,
-    long_row_cols: usize,
-    marker_outer_radius_mm: f32,
-    marker_inner_radius_mm: f32,
-}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -27,7 +12,7 @@ fn fixture_image_path() -> PathBuf {
     repo_root().join("testdata/target_3_split_00.png")
 }
 
-fn fixture_board_path() -> PathBuf {
+fn fixture_target_path() -> PathBuf {
     repo_root().join("testdata/board_ringgrid.json")
 }
 
@@ -39,40 +24,16 @@ fn load_fixture_image() -> image::GrayImage {
         .to_luma8()
 }
 
-fn load_fixture_board() -> BoardLayout {
-    let board_path = fixture_board_path();
-    let raw = std::fs::read_to_string(&board_path).expect("read fixture board json");
-
-    if let Ok(board) = BoardLayout::from_json_str(&raw) {
-        return board;
-    }
-
-    let legacy: BoardLayoutSpecV3 =
-        serde_json::from_str(&raw).expect("fixture board must parse as legacy v3");
-    assert_eq!(legacy.schema, "ringgrid.target.v3");
-
-    let canonical = BoardLayout::default();
-    assert!((legacy.pitch_mm - canonical.pitch_mm()).abs() < 1e-6);
-    assert_eq!(legacy.rows, canonical.rows());
-    assert_eq!(legacy.long_row_cols, canonical.long_row_cols());
-    assert!((legacy.marker_outer_radius_mm - canonical.marker_outer_radius_mm()).abs() < 1e-6);
-    assert!((legacy.marker_inner_radius_mm - canonical.marker_inner_radius_mm()).abs() < 1e-6);
-
-    BoardLayout::with_name(
-        legacy.name,
-        legacy.pitch_mm,
-        legacy.rows,
-        legacy.long_row_cols,
-        legacy.marker_outer_radius_mm,
-        legacy.marker_inner_radius_mm,
-        canonical.marker_ring_width_mm(),
-    )
-    .expect("legacy fixture board geometry must remain valid")
+fn load_fixture_target() -> TargetLayout {
+    let path = fixture_target_path();
+    let raw = std::fs::read_to_string(&path).expect("read fixture target json");
+    // v4 board_spec.json files auto-migrate to the v5 model on load.
+    TargetLayout::from_json_str(&raw).expect("fixture target json must parse (v4/v5)")
 }
 
 fn bench_detect_fixture(c: &mut Criterion) {
     let image = load_fixture_image();
-    let detector = Detector::new(load_fixture_board());
+    let detector = Detector::new(load_fixture_target());
 
     c.bench_function("propose_target_3_split_00", |b| {
         b.iter(|| {

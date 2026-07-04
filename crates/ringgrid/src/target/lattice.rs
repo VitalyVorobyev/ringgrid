@@ -102,7 +102,7 @@ impl LatticeGeometry {
     /// Generate cell coordinates and positions in generation order.
     ///
     /// The first generated cell is normalized to `[0, 0]` mm; downstream
-    /// consumers rely on this anchoring (see `BoardLayout` docs).
+    /// consumers (homography, ID assignment) rely on this anchoring.
     pub(crate) fn generate_cells(&self) -> Result<Vec<(Coord, [f32; 2])>, TargetValidationError> {
         let mut cells = match *self {
             Self::Hex(HexGeometry {
@@ -123,8 +123,8 @@ impl LatticeGeometry {
 
 /// Generate hex cells row by row.
 ///
-/// This is the single source of truth for hex marker placement; `BoardLayout`
-/// delegates here. The math is kept in f64 and the generation order (top row
+/// This is the single source of truth for hex marker placement. The math is
+/// kept in f64 and the generation order (top row
 /// first, left to right) is load-bearing: sequential IDs and the `[0, 0]`
 /// anchor both derive from it.
 fn generate_hex_cells(

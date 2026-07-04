@@ -30,7 +30,7 @@ pub enum DetectionFrame {
 /// active, `center_mapped` provides the working-frame (undistorted)
 /// coordinates. `board_xy_mm` provides board-space marker coordinates in
 /// millimeters when the decoded `id` is valid for the active
-/// [`BoardLayout`](crate::BoardLayout). Ellipses are in the working frame when
+/// [`TargetLayout`](crate::TargetLayout). Ellipses are in the working frame when
 /// a mapper is active.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]

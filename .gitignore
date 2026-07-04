@@ -17,3 +17,6 @@ uv.lock
 crates/ringgrid-wasm/pkg/
 API_REVISION.md
 docs/rectring.pdf
+
+# Claude Code harness worktrees (ephemeral agent sandboxes)
+.claude/worktrees/

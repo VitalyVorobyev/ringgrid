@@ -283,26 +283,6 @@ pub fn conic_to_ellipse(c: &ConicCoeffs) -> Option<Ellipse> {
         return None;
     }
 
-    // Matrix form: M = [[A, B/2, D/2], [B/2, C, E/2], [D/2, E/2, F]]
-    let m = Matrix3::new(
-        a,
-        b / 2.0,
-        d / 2.0,
-        b / 2.0,
-        c_coeff,
-        e / 2.0,
-        d / 2.0,
-        e / 2.0,
-        f,
-    );
-    let det_m = m.determinant();
-
-    // For a proper ellipse, det(M) must be nonzero and have opposite sign to A+C
-    // (so that the ellipse encloses a finite area).
-    if det_m.abs() < 1e-15 {
-        return None;
-    }
-
     // Center by solving the 2x2 system:
     //   2A·cx + B·cy + D = 0
     //   B·cx + 2C·cy + E = 0
@@ -310,8 +290,14 @@ pub fn conic_to_ellipse(c: &ConicCoeffs) -> Option<Ellipse> {
     let cx = (b * e - 2.0 * c_coeff * d) / denom;
     let cy = (b * d - 2.0 * a * e) / denom;
 
-    // Rotation angle
-    let angle = if (a - c_coeff).abs() < 1e-15 {
+    if !(cx.is_finite() && cy.is_finite()) {
+        return None;
+    }
+
+    // Rotation angle. The near-circular tie-break is relative to the
+    // quadratic-part magnitude: conic coefficients are homogeneous, so an
+    // absolute epsilon would depend on the arbitrary common scale factor.
+    let angle = if (a - c_coeff).abs() < 1e-15 * (a.abs() + c_coeff.abs()) {
         if b > 0.0 {
             std::f64::consts::FRAC_PI_4
         } else if b < 0.0 {
@@ -329,10 +315,21 @@ pub fn conic_to_ellipse(c: &ConicCoeffs) -> Option<Ellipse> {
     let lambda1 = (sum + diff) / 2.0;
     let lambda2 = (sum - diff) / 2.0;
 
-    // F' = value of the conic at the center
+    // F' = value of the conic at the center. `det(M) = F'·(4AC−B²)/4` with
+    // `4AC−B² > 0` already established, so F' ≈ 0 is exactly the degenerate
+    // (point-conic) case — no separate det(M) guard is needed. The guard is
+    // cancellation-aware rather than absolute: F' is meaningless when it is
+    // tiny relative to the magnitudes of the terms that summed to it, and any
+    // absolute epsilon would depend on the conic's arbitrary common scale.
     let f_prime = a * cx * cx + b * cx * cy + c_coeff * cy * cy + d * cx + e * cy + f;
+    let f_prime_magnitude = (a * cx * cx).abs()
+        + (b * cx * cy).abs()
+        + (c_coeff * cy * cy).abs()
+        + (d * cx).abs()
+        + (e * cy).abs()
+        + f.abs();
 
-    if f_prime.abs() < 1e-15 {
+    if !f_prime.is_finite() || f_prime.abs() < 1e-12 * f_prime_magnitude.max(f64::MIN_POSITIVE) {
         return None;
     }
 
@@ -392,4 +389,59 @@ fn normalize_angle(mut angle: f64) -> f64 {
         angle += pi;
     }
     angle
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Conic coefficients are homogeneous — scaling all six by a common factor
+    /// describes the same curve, so recovery must not depend on that factor.
+    /// Absolute degeneracy epsilons used to reject small-scaled conics.
+    #[test]
+    fn conic_to_ellipse_is_scale_invariant() {
+        let reference = Ellipse {
+            cx: 320.0,
+            cy: 240.0,
+            a: 40.0,
+            b: 25.0,
+            angle: 0.6,
+        };
+        let coeffs = ellipse_to_conic(&reference);
+
+        for factor in [1.0, 1e-12, 1e+12] {
+            let scaled = ConicCoeffs(coeffs.0.map(|v| v * factor));
+            let recovered = conic_to_ellipse(&scaled)
+                .unwrap_or_else(|| panic!("conic scaled by {factor:e} must stay an ellipse"));
+            assert!(
+                (recovered.cx - reference.cx).abs() < 1e-6,
+                "cx at {factor:e}"
+            );
+            assert!(
+                (recovered.cy - reference.cy).abs() < 1e-6,
+                "cy at {factor:e}"
+            );
+            assert!((recovered.a - reference.a).abs() < 1e-6, "a at {factor:e}");
+            assert!((recovered.b - reference.b).abs() < 1e-6, "b at {factor:e}");
+            assert!(
+                (recovered.angle - reference.angle).abs() < 1e-9,
+                "angle at {factor:e}"
+            );
+        }
+    }
+
+    /// A genuinely degenerate conic (rank-deficient M) must still be rejected
+    /// regardless of its scale.
+    #[test]
+    fn conic_to_ellipse_rejects_degenerate_conic_at_any_scale() {
+        // x² + y² = 0: a point, not a proper ellipse (det(M) = 0).
+        let point_conic = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+        for factor in [1.0, 1e-12, 1e+12] {
+            let scaled = ConicCoeffs(point_conic.map(|v| v * factor));
+            assert!(
+                conic_to_ellipse(&scaled).is_none(),
+                "degenerate conic scaled by {factor:e} must be rejected"
+            );
+        }
+    }
 }

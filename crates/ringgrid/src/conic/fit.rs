@@ -65,8 +65,9 @@ pub fn fit_conic_direct(points: &[[f64; 2]]) -> Option<ConicCoeffs> {
     // Solve the generalized eigenvalue problem M a1 = λ C1 a1.
     //
     // C1_inv * M is generally NOT symmetric, so we cannot use SymmetricEigen.
-    // Instead, we solve it via real Schur decomposition of C1_inv * M,
-    // then extract real eigenvalues and their eigenvectors.
+    // Instead the eigenvalues come from the characteristic polynomial (cubic
+    // formula) with a guarded Schur fallback, and eigenvectors from the
+    // adjugate null-space; see `solve_gep_3x3`.
     let c1_inv = c1.try_inverse()?;
     let system = c1_inv * m;
 

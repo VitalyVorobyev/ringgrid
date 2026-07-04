@@ -1,11 +1,15 @@
-//! Circular 16-sector sampling and codebook matching.
+//! Elliptical 16-sector sampling and codebook matching.
 //!
-//! Samples sector intensities along a circle at the code band radius
-//! (derived from the fitted outer ellipse). Uses the ellipse center and
-//! mean semi-axis but NOT the ellipse angle — the fitted angle reflects
-//! perspective distortion rather than the board-to-image rotation.
-//! The codebook matcher handles the unknown rotation via cyclic matching
-//! over all 16 sector offsets. Inverted polarity is also tried as fallback.
+//! Samples sector intensities along the fitted outer ellipse scaled to the
+//! code band ratio. The board's sectors are equal-angle in board space; under
+//! the affine approximation of the fitted ellipse that corresponds to uniform
+//! *parametric* angle on the ellipse, so sampling in parametric angle keeps
+//! every sector's angular support equal regardless of eccentricity (a circle
+//! of mean radius drifts off the elliptical code band on tilted views and
+//! corrupts sectors near the minor axis). The unknown constant offset between
+//! parametric angle and board rotation is absorbed by cyclic codebook
+//! matching over all 16 sector offsets, exactly as image rotation is.
+//! Inverted polarity is also tried as fallback.
 
 use image::GrayImage;
 
@@ -327,14 +331,13 @@ fn compute_iterative_two_means_threshold(
     threshold
 }
 
-/// Validate the outer ellipse and compute the code band sampling radius.
+/// Validate the outer ellipse and return it as the code band sampling frame.
 ///
-/// Returns `Ok((cx, cy, r_mean))` on success, or `Err(diagnostics)` if the
-/// ellipse is invalid or too small to sample.
+/// Returns `Err(diagnostics)` if the ellipse is invalid or too small to sample.
 #[allow(clippy::result_large_err)]
 fn validate_decode_ellipse(
     outer_ellipse: &Ellipse,
-) -> Result<(f64, f64, f64), (Option<DecodeResult>, DecodeDiagnostics)> {
+) -> Result<(), (Option<DecodeResult>, DecodeDiagnostics)> {
     if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
         return Err((
             None,
@@ -358,24 +361,24 @@ fn validate_decode_ellipse(
             },
         ));
     }
-    let cx = outer_ellipse.cx;
-    let cy = outer_ellipse.cy;
-    let r_mean = (outer_ellipse.a + outer_ellipse.b) / 2.0;
-    Ok((cx, cy, r_mean))
+    Ok(())
 }
 
 /// Sample the 16 sector intensities from the code band.
 ///
 /// Each sector's intensity is the average of `samples_per_sector * n_radial_rings`
-/// bilinear samples taken along the code band annulus.
+/// bilinear samples taken along the code band annulus of the fitted ellipse:
+/// sample points sit at uniform parametric angle on the ellipse scaled by the
+/// code band ratio, which keeps the samples on the (affine-approximated) code
+/// band and every sector's angular support equal under perspective.
 fn sample_sector_intensities(
     sampler: &DistortionAwareSampler<'_>,
-    cx: f64,
-    cy: f64,
-    r_mean: f64,
+    ellipse: &Ellipse,
     config: &DecodeConfig,
 ) -> [f32; 16] {
     let mut sector_intensities = [0.0f32; 16];
+    let (cx, cy) = (ellipse.cx, ellipse.cy);
+    let (sin_rot, cos_rot) = ellipse.angle.sin_cos();
 
     for s in 0..16u32 {
         let mut sum = 0.0f32;
@@ -384,6 +387,9 @@ fn sample_sector_intensities(
         for j in 0..config.samples_per_sector {
             let t = (j as f64 + 0.5) / config.samples_per_sector as f64;
             let theta = (s as f64 + t) / 16.0 * 2.0 * std::f64::consts::PI;
+            // Axis-aligned point at parametric angle theta, before rotation.
+            let px = ellipse.a * theta.cos();
+            let py = ellipse.b * theta.sin();
 
             for k in 0..config.n_radial_rings {
                 let r_ratio = if config.n_radial_rings == 1 {
@@ -392,10 +398,9 @@ fn sample_sector_intensities(
                     let t_r = k as f64 / (config.n_radial_rings - 1) as f64;
                     config.code_band_ratio as f64 * (0.90 + 0.20 * t_r)
                 };
-                let r = r_ratio * r_mean;
 
-                let x_img = cx + r * theta.cos();
-                let y_img = cy + r * theta.sin();
+                let x_img = cx + r_ratio * (cos_rot * px - sin_rot * py);
+                let y_img = cy + r_ratio * (sin_rot * px + cos_rot * py);
 
                 if let Some(intensity) = sampler.sample_checked(x_img as f32, y_img as f32) {
                     sum += intensity;
@@ -558,13 +563,12 @@ fn decode_marker_impl(
     config: &DecodeConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    let (cx, cy, r_mean) = match validate_decode_ellipse(outer_ellipse) {
-        Ok(v) => v,
-        Err(early) => return early,
-    };
+    if let Err(early) = validate_decode_ellipse(outer_ellipse) {
+        return early;
+    }
 
     let sampler = DistortionAwareSampler::new(gray, mapper);
-    let sector_intensities = sample_sector_intensities(&sampler, cx, cy, r_mean, config);
+    let sector_intensities = sample_sector_intensities(&sampler, outer_ellipse, config);
 
     threshold_and_match_codebook(sector_intensities, config)
 }
@@ -754,6 +758,35 @@ mod tests {
                 .id,
             42
         );
+    }
+
+    #[test]
+    fn test_decode_eccentric_ellipse() {
+        // Strongly eccentric marker (tilted board): a circle of mean radius
+        // (14 px) would leave the code band near both axes (normalized radius
+        // 14/18 ≈ 0.78 at the major axis but 14/10 = 1.4 at the minor axis),
+        // corrupting sectors. Elliptical sampling must decode it exactly.
+        let cw = CODEBOOK[123];
+        let ellipse = Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 18.0,
+            b: 10.0,
+            angle: 0.5,
+        };
+        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
+        let config = DecodeConfig::default();
+
+        let (result, diag) =
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+        let result = result.expect("eccentric marker should decode");
+        assert_eq!(
+            result.id, 123,
+            "decoded id should be 123, got {}",
+            result.id
+        );
+        assert_eq!(result.dist, 0, "eccentric decode should be exact");
+        assert!(!diag.inverted_used);
     }
 
     #[test]

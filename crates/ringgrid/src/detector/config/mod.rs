@@ -369,7 +369,6 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     let d_nom = config.marker_scale.nominal_diameter_px();
     let outer_radius_min_px = d_min * 0.5;
     let outer_radius_max_px = d_max * 0.5;
-    let r_nom = d_nom * 0.5;
     let adv = &mut config.advanced;
     adv.proposal = derive_proposal_config(&config.target, config.marker_scale, &adv.proposal);
 
@@ -387,8 +386,9 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     // Completion ROI
     adv.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
 
-    // Projective center max shift
-    adv.projective_center.max_correction_shift_px = Some((2.0 * r_nom) as f64);
+    // `projective_center.max_correction_shift_px` is deliberately NOT derived
+    // here: `None` means "auto" and the nominal-diameter fallback is applied at
+    // the use site, so explicit config values survive target re-derivation.
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
@@ -521,11 +521,7 @@ mod tests {
         // The serialized base already carries `max_correction_shift_px`; a
         // 0.7.x overlay uses the old name. Without normalization the merged
         // object holds both spellings and serde rejects the whole config as
-        // a duplicate field (regression: codex review on PR #54). Note the
-        // final value of this specific field is re-derived by `with_target`
-        // (pre-existing behavior, unchanged from 0.7.x) — the contract under
-        // test is that a legacy overlay keeps LOADING and its other keys
-        // still apply.
+        // a duplicate field (regression: codex review on PR #54).
         let overlay = serde_json::json!({
             "advanced": { "projective_center": {
                 "max_center_shift_px": 7.5,
@@ -536,6 +532,12 @@ mod tests {
             .with_json_overlay(overlay)
             .expect("legacy overlay key must keep loading");
         assert!(!merged.advanced.projective_center.use_expected_ratio);
+        // Explicit shift values survive target re-derivation since 0.8.0
+        // (`None` means "auto"; `with_target` no longer clobbers the field).
+        assert_eq!(
+            merged.advanced.projective_center.max_correction_shift_px,
+            Some(7.5)
+        );
 
         // Mixed spellings in one overlay must also load (current name wins
         // pre-merge; the merged document never carries both keys).

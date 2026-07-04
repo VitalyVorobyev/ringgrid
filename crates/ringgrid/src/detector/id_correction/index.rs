@@ -13,6 +13,14 @@ pub(super) struct BoardIndex {
     pub(super) board_neighbors: HashMap<usize, Vec<usize>>,
     /// Board pitch in mm.
     pub(super) pitch_mm: f64,
+    /// Center-to-center distance (mm) between board-adjacent markers.
+    ///
+    /// On the hex lattice this is `pitch_mm · √3`, not the axial pitch.
+    /// Scale-vote predictions must use this metric: conflating it with
+    /// `pitch_mm` shortened predicted one-hop deltas by √3, pushing them
+    /// outside the acceptance tolerance (the scale fallback silently never
+    /// fired on hex boards).
+    pub(super) neighbor_spacing_mm: f64,
 }
 
 impl BoardIndex {
@@ -41,6 +49,7 @@ impl BoardIndex {
             id_to_xy,
             board_neighbors,
             pitch_mm: target.pitch_mm() as f64,
+            neighbor_spacing_mm: f64::from(target.lattice().min_center_spacing_mm()),
         }
     }
 
@@ -108,6 +117,7 @@ mod tests {
             id_to_xy: positions.iter().copied().collect(),
             board_neighbors: HashMap::new(),
             pitch_mm: 1.0,
+            neighbor_spacing_mm: 1.0,
         }
     }
 

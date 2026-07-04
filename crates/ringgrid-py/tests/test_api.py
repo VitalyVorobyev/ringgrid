@@ -1031,3 +1031,35 @@ def test_detection_result_to_json_path_and_plot(tmp_path: Path) -> None:
     viz.plot_detection(image=gray, detection=result, out=out_plot_2)
     assert out_plot_2.exists()
     assert out_plot_2.stat().st_size > 0
+
+
+def test_config_none_values_reset_previous_explicit_settings() -> None:
+    # Overlays merge rather than replace, so config Options whose None is
+    # meaningful (auto / unlimited) must serialize as explicit JSON null —
+    # omitting the key would keep the stale explicit value forever
+    # (codex review on #55).
+    board = ringgrid.BoardLayout.default()
+    cfg = ringgrid.DetectConfig(board)
+
+    pc = cfg.projective_center
+    pc.max_correction_shift_px = 7.5
+    cfg.projective_center = pc
+    assert cfg.to_dict()["advanced"]["projective_center"]["max_correction_shift_px"] == 7.5
+
+    cfg.projective_center = ringgrid.ProjectiveCenterConfig()
+    assert (
+        cfg.to_dict()["advanced"]["projective_center"]["max_correction_shift_px"] is None
+    ), "assigning a fresh section must reset the shift gate to auto"
+
+    completion = cfg.completion
+    completion.max_attempts = 5
+    cfg.completion = completion
+    assert cfg.to_dict()["advanced"]["completion"]["max_attempts"] == 5
+    completion.max_attempts = None
+    cfg.completion = completion
+    assert cfg.to_dict()["advanced"]["completion"]["max_attempts"] is None
+
+    seeds = cfg.seed_proposals
+    seeds.max_seeds = None
+    cfg.seed_proposals = seeds
+    assert cfg.to_dict()["advanced"]["seed_proposals"]["max_seeds"] is None

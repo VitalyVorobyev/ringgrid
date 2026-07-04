@@ -39,6 +39,51 @@ pub(super) fn candidate_reprojection_error(
     Some(dist2(proj, center).sqrt())
 }
 
+/// Resolve within-batch duplicate ID claims collected in one correction pass.
+///
+/// Two markers may claim the same candidate ID in the same batch; applying
+/// both and leaving the conflict to the later confidence-based
+/// `resolve_id_conflicts` pass lets a confident *wrong* assignment evict a
+/// correct one. Keep the geometrically better claim instead: lower
+/// anchor-homography reprojection error, then higher confidence, then lower
+/// marker index (deterministic).
+fn resolve_batch_id_claims(
+    ws: &IdCorrectionWorkspace<'_>,
+    claims: Vec<(usize, usize)>,
+) -> Vec<(usize, usize)> {
+    if claims.len() < 2 {
+        return claims;
+    }
+    let mut scored: Vec<(usize, usize, f64, f32)> = claims
+        .into_iter()
+        .map(|(i, id)| {
+            let err = candidate_reprojection_error(
+                ws.anchor_h.as_ref(),
+                &ws.board_index,
+                id,
+                ws.markers[i].center,
+            )
+            .unwrap_or(f64::INFINITY);
+            (i, id, err, ws.markers[i].confidence)
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| a.2.total_cmp(&b.2))
+            .then_with(|| b.3.total_cmp(&a.3))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let mut out = Vec::with_capacity(scored.len());
+    let mut last_id = None;
+    for (i, id, _, _) in scored {
+        if last_id != Some(id) {
+            out.push((i, id));
+            last_id = Some(id);
+        }
+    }
+    out
+}
+
 fn run_local_stage(
     ws: &mut IdCorrectionWorkspace<'_>,
     stage_name: &str,
@@ -108,6 +153,8 @@ fn run_local_stage(
             }
             corrections.push((i, candidate_id));
         }
+
+        let corrections = resolve_batch_id_claims(ws, corrections);
 
         let mut promoted = 0usize;
         for (i, candidate_id) in corrections {
@@ -267,6 +314,7 @@ fn run_topology_refinement(ws: &mut IdCorrectionWorkspace<'_>) {
         if updates.is_empty() {
             break;
         }
+        let updates = resolve_batch_id_claims(ws, updates);
         for (i, id) in updates {
             if apply_id_assignment(&mut ws.markers[i], id, &mut ws.stats, RecoverySource::Local) {
                 ws.trust[i] = Trust::RecoveredLocal;
@@ -293,5 +341,72 @@ pub(super) fn run_post_consistency_refill(ws: &mut IdCorrectionWorkspace<'_>) {
         let _ = scrub_inconsistent_ids(ws, ScrubStage::Post);
         run_local_stage(ws, "post_consistency_refill", first_outer_mul, 1);
         run_topology_refinement(ws);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::config::IdCorrectionConfig;
+    use crate::detector::id_correction::workspace::IdCorrectionWorkspace;
+    use crate::target::TargetLayout;
+
+    fn marker_at(center: [f64; 2], confidence: f32) -> MarkerRecord {
+        MarkerRecord {
+            center,
+            confidence,
+            ..MarkerRecord::default()
+        }
+    }
+
+    #[test]
+    fn batch_claims_prefer_lower_reprojection_error() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        // Anchor H: board mm → image px, uniform scale ×4.
+        let h = nalgebra::Matrix3::new(4.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 1.0);
+
+        // Claimed id and its exact projected position.
+        let claimed_id = 0usize;
+        let board_index = crate::detector::id_correction::index::BoardIndex::build(&board);
+        let bxy = board_index.id_to_xy[&claimed_id].map(f64::from);
+        let exact = [4.0 * bxy[0], 4.0 * bxy[1]];
+
+        // Marker 0 sits exactly at the projection (low confidence); marker 1
+        // is 6 px off but far more confident. The geometric claim must win —
+        // deferring to the later confidence-based conflict pass would evict
+        // the correct assignment.
+        let mut markers = vec![
+            marker_at(exact, 0.4),
+            marker_at([exact[0] + 6.0, exact[1]], 0.95),
+        ];
+        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+        ws.anchor_h = Some(h);
+
+        let resolved = resolve_batch_id_claims(&ws, vec![(0, claimed_id), (1, claimed_id)]);
+        assert_eq!(resolved, vec![(0, claimed_id)]);
+    }
+
+    #[test]
+    fn batch_claims_fall_back_to_confidence_without_anchor() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        let mut markers = vec![marker_at([0.0, 0.0], 0.4), marker_at([10.0, 0.0], 0.9)];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+
+        let resolved = resolve_batch_id_claims(&ws, vec![(0, 7), (1, 7)]);
+        assert_eq!(resolved, vec![(1, 7)], "higher confidence wins without H");
+    }
+
+    #[test]
+    fn batch_claims_with_distinct_ids_all_survive() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        let mut markers = vec![marker_at([0.0, 0.0], 0.4), marker_at([10.0, 0.0], 0.9)];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+
+        let mut resolved = resolve_batch_id_claims(&ws, vec![(0, 3), (1, 9)]);
+        resolved.sort_unstable();
+        assert_eq!(resolved, vec![(0, 3), (1, 9)]);
     }
 }

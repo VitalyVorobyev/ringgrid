@@ -20,7 +20,7 @@ use crate::ring::OuterEstimationConfig;
 use super::{
     DetectConfig, inner_fit, marker_build,
     marker_build::compute_marker_confidence,
-    median_outer_radius_from_neighbors_px,
+    median_neighbor_outer_radius_px,
     outer_fit::{self, OuterFitCandidate},
 };
 
@@ -38,11 +38,12 @@ pub(crate) fn annotate_neighbor_radius_ratios(
         let m_ref: &[MarkerRecord] = markers;
         m_ref
             .iter()
-            .map(|m| {
-                let own_radius = m.ellipse_outer.as_ref()?.mean_axis() as f32;
-                let median = median_outer_radius_from_neighbors_px(m.center, m_ref, k + 1)?;
+            .enumerate()
+            .map(|(i, m)| {
+                let own_radius = m.ellipse_outer.as_ref()?.mean_axis();
+                let median = median_neighbor_outer_radius_px(m.center, m_ref, k, Some(i), 1)?;
                 if median > 0.0 {
-                    Some(own_radius / median)
+                    Some((own_radius / median) as f32)
                 } else {
                     None
                 }
@@ -165,9 +166,14 @@ fn recover_marker_at_index(
     let center_wf = marker_center_working(&markers[idx]);
     let center_f32 = [center_wf[0] as f32, center_wf[1] as f32];
 
-    let Some(r_corrected) =
-        median_outer_radius_from_neighbors_px(markers[idx].center, markers, cfg.k_neighbors + 1)
-    else {
+    let Some(r_corrected) = median_neighbor_outer_radius_px(
+        markers[idx].center,
+        markers,
+        cfg.k_neighbors,
+        Some(idx),
+        1,
+    )
+    .map(|r| r as f32) else {
         tracing::debug!(
             idx,
             "recovery skipped: could not compute neighbor median radius"

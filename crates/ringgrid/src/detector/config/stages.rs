@@ -105,9 +105,12 @@ pub struct ProjectiveCenterConfig {
     pub use_expected_ratio: bool,
     /// Weight of the eigenvalue-vs-ratio penalty term.
     pub ratio_penalty_weight: f64,
-    /// Optional maximum allowed shift (pixels) from the pre-correction center.
+    /// Maximum allowed shift (pixels) from the pre-correction center.
     ///
-    /// When set, large jumps are rejected and the original center is kept.
+    /// Corrections jumping further than this are rejected and the original
+    /// center is kept. `None` means "auto": the gate uses the nominal marker
+    /// diameter derived from the active [`MarkerScalePrior`](super::MarkerScalePrior).
+    /// Explicit values are honored as-is and survive target re-derivation.
     /// (Renamed from `max_center_shift_px` in 0.8.0 to disambiguate from the
     /// unrelated inner-fit field of the same name; the old JSON key is still
     /// accepted as an alias.)
@@ -199,6 +202,11 @@ pub struct IdCorrectionConfig {
     /// Enable rough-homography fallback for unresolved markers.
     pub homography_fallback_enable: bool,
     /// Minimum trusted markers required before attempting homography fallback.
+    ///
+    /// Acts as a ceiling: the effective floor is
+    /// `min(homography_min_trusted, max(8, n_markers / 3))`, so sparse/partial
+    /// views (where local voting is weakest) still engage the geometric
+    /// fallback once a third of the visible markers are trusted.
     pub homography_min_trusted: usize,
     /// Minimum inliers required for fallback homography RANSAC acceptance.
     pub homography_min_inliers: usize,

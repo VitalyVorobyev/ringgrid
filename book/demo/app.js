@@ -194,16 +194,13 @@ function maybeRun(force = false) {
 function run() {
   if (!img) return;
   const targetKey = els.target.value;
-  const mode = els.mode.value;
   try {
     const det = getDetector(targetKey);
     const t0 = performance.now();
-    const json = mode === 'adaptive'
-      ? det.detect_adaptive_rgba(img.rgba, img.w, img.h)
-      : det.detect_rgba(img.rgba, img.w, img.h);
+    const json = det.detect_adaptive_rgba(img.rgba, img.w, img.h);
     const ms = performance.now() - t0;
     result = JSON.parse(json);
-    els.timing.textContent = `${mode === 'adaptive' ? 'adaptive' : 'single-pass'} · ${ms.toFixed(0)} ms`;
+    els.timing.textContent = `adaptive · ${ms.toFixed(0)} ms`;
     renderOverlay();
     renderStats();
     runSeq++;
@@ -388,7 +385,6 @@ function showTooltip(m, clientX, clientY) {
 function wireControls() {
   els.runBtn.addEventListener('click', () => run());
   els.target.addEventListener('change', () => maybeRun(true));
-  els.mode.addEventListener('change', () => maybeRun(true));
   for (const id of ['showEllipses', 'showCenters', 'showLabels', 'showOrigin']) {
     els[id].addEventListener('change', () => renderOverlay());
   }
@@ -411,7 +407,7 @@ window.__demo = {
   get displayScale() { return displayScale; },
   tx: TX, ty: TY, tr: TR,
   run,
-  selectTargetMode(target, mode) { els.target.value = target; els.mode.value = mode; },
+  selectTarget(target) { els.target.value = target; },
   async selectSampleById(id) { await selectSample(manifest.find((s) => s.id === id)); },
 };
 

@@ -59,4 +59,4 @@
 - [Target Generation](target-generation.md)
 - [ID Assignment Optimization](id-optimization.md)
 - [CLI Guide](cli-guide.md)
-- [WASM & Web Demo](wasm-demo.md)
+- [Interactive Demo](demo.md)

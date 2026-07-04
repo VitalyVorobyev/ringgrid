@@ -32,6 +32,7 @@ Detection overlay example:
 | I want to... | Start here |
 |---|---|
 | Print a target and run first detection from this repo | [Quick Start](#quick-start-from-the-repo) |
+| Try detection in the browser, no install | [Live Demo](https://vitalyvorobyev.github.io/ringgrid/demo/) |
 | Read the full user guide | [mdBook User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) |
 | Use the CLI | [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html) |
 | Understand `detect.json` | [Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) |
@@ -156,6 +157,7 @@ diagnostics. Full reference: [Book: Detection Output Format](https://vitalyvorob
 
 ## Documentation Map
 
+- [Live Demo](https://vitalyvorobyev.github.io/ringgrid/demo/) - in-browser WASM detection over sample and uploaded images, no install required
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) - full mdBook covering marker design, pipeline stages, math, configuration, target generation, and usage
 - [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) - repo-oriented first-run path for target generation and detection
 - [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) - exact `detect.json` structure, marker fields, and CLI-only wrapper fields

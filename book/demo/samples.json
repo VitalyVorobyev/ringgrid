@@ -1,0 +1,20 @@
+{
+  "samples": [
+    {
+      "id": "hex-coded",
+      "label": "Hex · coded",
+      "file": "samples/hex-coded.png",
+      "target": "hex",
+      "mode": "adaptive",
+      "caption": "203 coded 16-sector rings on a hex lattice — the default ringgrid target. Adaptive multi-scale detection finds every marker and decodes its ID against the 893-word codebook; the fitted homography anchors the board frame."
+    },
+    {
+      "id": "rect-plain",
+      "label": "Rect · plain (ISRA 24×24)",
+      "file": "samples/rect-plain.png",
+      "target": "rect",
+      "mode": "single",
+      "caption": "576 plain rings on a 24×24 square lattice with three origin fiducial dots. Plain rings carry no ID, so markers are labeled by lattice coordinate; the origin dots resolve the absolute board frame (drawn in violet)."
+    }
+  ]
+}

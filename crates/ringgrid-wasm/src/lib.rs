@@ -516,9 +516,21 @@ impl RinggridDetector {
 // ── Free functions ──────────────────────────────────────────────────
 
 /// Default target layout as a JSON string (`ringgrid.target.v5` schema).
+///
+/// The classic coded hex target: a 15-row hex lattice of 16-sector coded rings.
 #[wasm_bindgen]
 pub fn default_board_json() -> String {
     ringgrid::TargetLayout::default_hex().to_json_string()
+}
+
+/// ISRA XG3D-style rect target as a JSON string (`ringgrid.target.v5` schema).
+///
+/// A 24×24 square lattice of plain (uncoded) rings with three origin fiducial
+/// dots. Grid-coordinate labeling replaces ID decoding; the origin resolves to
+/// an absolute board frame only when the fiducials are located.
+#[wasm_bindgen]
+pub fn isra_rect_board_json() -> String {
+    ringgrid::TargetLayout::isra_rect_24x24().to_json_string()
 }
 
 /// Default detection config for a given target layout, as a JSON string.

@@ -1,6 +1,7 @@
 /target
 crates/*/target/
 book/book/
+book/src/demo/
 .venv/
 tools/out/
 **/*.rs.bk

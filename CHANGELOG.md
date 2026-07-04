@@ -111,6 +111,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detector/config.rs` and `pipeline/finalize.rs` split into focused
   submodules (`config/{fit,scale,stages}`, `finalize/{coded,plain,common}`);
   pure moves, no behavior change.
+- **Decode samples the code band along the fitted ellipse** at uniform
+  parametric angle instead of a circle at the mean radius. A circle drifts
+  off the elliptical code band on tilted views and corrupts sectors near the
+  minor axis; parametric sampling keeps every sector's angular support equal
+  at any eccentricity (the constant offset is absorbed by cyclic matching,
+  exactly like image rotation). Equal-or-better across the whole benchmark
+  suite (reference center-mean 0.0849 → 0.0846 px / 0.0600 → 0.0598 px).
+- **Outer estimation is eccentricity-aware**: a second-harmonic radius model
+  `r(θ) = c0 + c1·cos2θ + c2·sin2θ` (the first-order elliptical signature)
+  is fitted to the per-theta edge peaks; when it clears its attach gates
+  (same-edge bound, plausible amplitude, 2× SNR over its own residuals, and
+  strictly better theta-consistency than the constant radius) it drives both
+  the consistency gate and the per-ray refine centers, so strongly tilted
+  markers stop losing rays near the major/minor axes. Near-circular and
+  noisy (heavily blurred) peak fields keep the constant-radius path — the
+  nominal benchmark suite is unchanged.
+- `projective_center.max_correction_shift_px = None` now means "auto"
+  (nominal marker diameter at the point of use). Previously the value was
+  re-derived into the config on every `with_target`, silently clobbering
+  explicit settings.
+- One canonical neighborhood-radius statistic (`detector/neighbors`) backs
+  the dedup, completion, and recovery size gates: f64, proper median,
+  self-excluded. Completion seeds previously used an f32 upper median, and
+  the recovery ratio included the queried marker's own radius in its own
+  neighborhood median.
 
 ### Deprecated
 
@@ -132,6 +157,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from rendered SVG/PNG targets; canvas bounds now include fiducial extents.
 - The inner-as-outer recovery warn threshold now follows the configured
   `ratio_threshold` instead of a separately hardcoded 0.75.
+- ID-correction scale-vote predictions converted one-hop image distances to
+  millimeters via the axial pitch, but hex board-adjacent centers sit at
+  `pitch·√3` — predictions fell ~42 % short and outside the acceptance
+  tolerance, so the scale-vote fallback silently never fired on hex boards.
+- ID-correction scale votes now follow the locally-estimated board→image
+  rotation (from the same trusted adjacent pairs); the previous axis-aligned
+  prediction assumed an unrotated board and, near the hex 60° symmetry,
+  voted for exactly the wrong lattice site.
+- The ID-correction affine hypothesis casts one vote instead of one per
+  neighbor — a single ill-conditioned affine could satisfy `min_votes` by
+  itself with zero corroboration.
+- Within one ID-correction batch, duplicate claims on the same ID are
+  resolved by anchor-homography reprojection error (previously both applied,
+  and the later confidence-based conflict pass could evict a correct
+  assignment in favor of a confident wrong one).
+- `homography_min_trusted` now acts as a ceiling — the effective floor
+  scales with the visible marker count (`max(8, n/3)`), so sparse/partial
+  views are no longer locked out of the geometric fallback.
+- `conic_to_ellipse` degeneracy guards are scale-relative (conic
+  coefficients are homogeneous; the old absolute epsilons falsely rejected
+  validly-shaped small-scaled conics), and the ellipse-constrained
+  eigenvalue solve survives repeated eigenvalues, falling back to nalgebra's
+  Schur eigenvalues when the closed-form cubic route fails.
 
 - **Dependency migration: `projective-grid` 0.9 → 0.10.1.** The 0.10 release
   rewrote projective-grid's public API; ringgrid's three call sites migrate

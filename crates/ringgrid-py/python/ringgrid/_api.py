@@ -19,7 +19,7 @@ from enum import Enum
 import json
 import math
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 import warnings
 
 import numpy as np
@@ -30,8 +30,11 @@ from ._ringgrid import (
     board_snapshot_json as _board_snapshot_json,
     board_spec_json_from_geometry as _board_spec_json_from_geometry,
     canonical_board_spec_json as _canonical_board_spec_json,
+    canonical_target_spec_json as _canonical_target_spec_json,
+    coded_hex_target_json as _coded_hex_target_json,
     default_board_spec_json as _default_board_spec_json,
     load_board_spec_json as _load_board_spec_json,
+    target_preset_json as _target_preset_json,
     package_version as _package_version,
     proposal_result_payload_array as _proposal_result_payload_array,
     proposal_result_payload_path as _proposal_result_payload_path,
@@ -153,6 +156,13 @@ class BoardLayout:
     The board object carries both:
     - the compact board spec (`schema`, `rows`, `pitch_mm`, radii, ring width), and
     - the generated marker list (`markers`) with board coordinates.
+
+    .. deprecated::
+        `BoardLayout` is the legacy `ringgrid.target.v4` facade, limited to
+        16-sector coded hex targets. Prefer :class:`TargetLayout`, the typed
+        `ringgrid.target.v5` model that also expresses rectangular lattices,
+        plain (uncoded) markers, and origin fiducials. `DetectConfig` and
+        `Detector` accept either type.
     """
 
     schema: str
@@ -345,6 +355,300 @@ class BoardLayout:
             float(margin_mm),
             bool(include_scale_bar),
         )
+
+
+@dataclass(slots=True)
+class HexGeometry:
+    """Hex-lattice geometry (`ringgrid.target.v5` ``lattice.kind == "hex"``).
+
+    Axial rows alternate between ``long_row_cols`` and ``long_row_cols - 1``
+    markers at ``pitch_mm`` axial spacing.
+    """
+
+    rows: int
+    long_row_cols: int
+    pitch_mm: float
+    kind: ClassVar[str] = "hex"
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "HexGeometry":
+        data = _require_mapping(data, name="lattice")
+        return cls(
+            rows=int(data["rows"]),
+            long_row_cols=int(data["long_row_cols"]),
+            pitch_mm=float(data["pitch_mm"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "rows": int(self.rows),
+            "long_row_cols": int(self.long_row_cols),
+            "pitch_mm": float(self.pitch_mm),
+        }
+
+
+@dataclass(slots=True)
+class RectGeometry:
+    """Rectangular-lattice geometry (`ringgrid.target.v5` ``lattice.kind == "rect"``).
+
+    A ``rows × cols`` grid of markers at uniform ``pitch_mm`` center spacing.
+    """
+
+    rows: int
+    cols: int
+    pitch_mm: float
+    kind: ClassVar[str] = "rect"
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RectGeometry":
+        data = _require_mapping(data, name="lattice")
+        return cls(
+            rows=int(data["rows"]),
+            cols=int(data["cols"]),
+            pitch_mm=float(data["pitch_mm"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "rows": int(self.rows),
+            "cols": int(self.cols),
+            "pitch_mm": float(self.pitch_mm),
+        }
+
+
+#: Lattice arrangement of marker cells (tagged by ``kind`` in v5 JSON).
+LatticeGeometry = HexGeometry | RectGeometry
+
+
+def _lattice_from_dict(data: Mapping[str, Any]) -> LatticeGeometry:
+    data = _require_mapping(data, name="lattice")
+    kind = str(data.get("kind"))
+    if kind == HexGeometry.kind:
+        return HexGeometry.from_dict(data)
+    if kind == RectGeometry.kind:
+        return RectGeometry.from_dict(data)
+    raise ValueError(f"unknown lattice kind: {kind!r}")
+
+
+@dataclass(slots=True)
+class RingGeometry:
+    """Ring radii shared by every marker on the target, in millimeters."""
+
+    outer_radius_mm: float
+    inner_radius_mm: float
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RingGeometry":
+        data = _require_mapping(data, name="marker")
+        return cls(
+            outer_radius_mm=float(data["outer_radius_mm"]),
+            inner_radius_mm=float(data["inner_radius_mm"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outer_radius_mm": float(self.outer_radius_mm),
+            "inner_radius_mm": float(self.inner_radius_mm),
+        }
+
+
+@dataclass(slots=True)
+class Coded16:
+    """16-sector coded ring style (`ringgrid.target.v5` ``coding.kind == "coded16"``).
+
+    ``id_assignment[i]`` is the codebook ID for the i-th cell in generation
+    order; ``None`` assigns IDs sequentially (0, 1, 2, ...).
+    """
+
+    ring_width_mm: float
+    id_assignment: list[int] | None = None
+    kind: ClassVar[str] = "coded16"
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Coded16":
+        data = _require_mapping(data, name="coding")
+        assignment = data.get("id_assignment")
+        return cls(
+            ring_width_mm=float(data["ring_width_mm"]),
+            id_assignment=None if assignment is None else [int(v) for v in assignment],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "kind": self.kind,
+            "ring_width_mm": float(self.ring_width_mm),
+        }
+        if self.id_assignment is not None:
+            out["id_assignment"] = [int(v) for v in self.id_assignment]
+        return out
+
+
+@dataclass(slots=True)
+class Plain:
+    """Plain uncoded annulus style (`ringgrid.target.v5` ``coding.kind == "plain"``).
+
+    Markers carry no identity and are labeled by lattice position instead.
+    """
+
+    kind: ClassVar[str] = "plain"
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Plain":
+        _require_mapping(data, name="coding")
+        return cls()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind}
+
+
+#: Marker coding style (tagged by ``kind`` in v5 JSON).
+MarkerCoding = Coded16 | Plain
+
+
+def _coding_from_dict(data: Mapping[str, Any]) -> MarkerCoding:
+    data = _require_mapping(data, name="coding")
+    kind = str(data.get("kind"))
+    if kind == Coded16.kind:
+        return Coded16.from_dict(data)
+    if kind == Plain.kind:
+        return Plain.from_dict(data)
+    raise ValueError(f"unknown coding kind: {kind!r}")
+
+
+@dataclass(slots=True)
+class OriginFiducials:
+    """Filled circular dots that anchor the target origin and orientation."""
+
+    dot_radius_mm: float
+    dots_mm: list[list[float]]
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "OriginFiducials":
+        data = _require_mapping(data, name="fiducials")
+        return cls(
+            dot_radius_mm=float(data["dot_radius_mm"]),
+            dots_mm=[[float(dot[0]), float(dot[1])] for dot in data["dots_mm"]],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dot_radius_mm": float(self.dot_radius_mm),
+            "dots_mm": [[float(dot[0]), float(dot[1])] for dot in self.dots_mm],
+        }
+
+
+@dataclass(slots=True)
+class TargetLayout:
+    """Compositional calibration target: lattice × ring × coding × fiducials.
+
+    The typed Python mirror of the Rust `ringgrid.target.v5` model. It composes
+    four orthogonal aspects:
+
+    - :data:`LatticeGeometry` (:class:`HexGeometry` | :class:`RectGeometry`) —
+      how marker cells are arranged;
+    - :class:`RingGeometry` — the ring radii shared by every marker;
+    - :data:`MarkerCoding` (:class:`Coded16` | :class:`Plain`) — whether markers
+      encode a 16-sector identity or are plain annuli;
+    - :class:`OriginFiducials` — optional dots anchoring origin and orientation.
+
+    Build via a preset (:meth:`default_hex`, :meth:`coded_hex`,
+    :meth:`isra_rect_24x24`), :meth:`from_json`, or :meth:`from_dict`.
+    :meth:`to_dict` / :meth:`from_dict` round-trip the v5 schema verbatim.
+    Pass a `TargetLayout` straight to :class:`DetectConfig` or :class:`Detector`.
+    """
+
+    name: str
+    lattice: LatticeGeometry
+    marker: RingGeometry
+    coding: MarkerCoding
+    fiducials: OriginFiducials | None = None
+    schema: ClassVar[str] = "ringgrid.target.v5"
+
+    @classmethod
+    def default_hex(cls) -> "TargetLayout":
+        """The classic 15-row hex lattice of coded rings (203 markers, 200 mm)."""
+        return cls.from_dict(json.loads(_target_preset_json("default_hex")))
+
+    @classmethod
+    def isra_rect_24x24(cls) -> "TargetLayout":
+        """The ISRA XG3D-style 24×24 rect target: plain rings with origin dots."""
+        return cls.from_dict(json.loads(_target_preset_json("isra_rect_24x24")))
+
+    @classmethod
+    def coded_hex(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        long_row_cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        ring_width_mm: float,
+    ) -> "TargetLayout":
+        """Build a 16-sector coded hex target from direct geometry arguments.
+
+        Uses the deterministic geometry-derived name the Rust preset assigns.
+        Raises :class:`ValueError` if the geometry is invalid.
+        """
+        spec_json = _coded_hex_target_json(
+            float(pitch_mm),
+            int(rows),
+            int(long_row_cols),
+            float(outer_radius_mm),
+            float(inner_radius_mm),
+            float(ring_width_mm),
+        )
+        return cls.from_dict(json.loads(spec_json))
+
+    @classmethod
+    def from_json(cls, path_or_json: str | Path) -> "TargetLayout":
+        """Load from v5 (or legacy v4, auto-migrated) JSON text or a file path.
+
+        Validates through the native loader, so malformed geometry raises
+        :class:`ValueError` with the Rust error message.
+        """
+        raw = _json_loads_path_or_text(path_or_json)
+        canonical = _canonical_target_spec_json(json.dumps(raw))
+        return cls.from_dict(json.loads(canonical))
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "TargetLayout":
+        """Construct from a `ringgrid.target.v5` mapping (as :meth:`to_dict` emits)."""
+        data = _require_mapping(data, name="data")
+        fiducials = data.get("fiducials")
+        return cls(
+            name=str(data["name"]),
+            lattice=_lattice_from_dict(data["lattice"]),
+            marker=RingGeometry.from_dict(data["marker"]),
+            coding=_coding_from_dict(data["coding"]),
+            fiducials=None if fiducials is None else OriginFiducials.from_dict(fiducials),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a canonical `ringgrid.target.v5` mapping."""
+        out: dict[str, Any] = {
+            "schema": self.schema,
+            "name": str(self.name),
+            "lattice": self.lattice.to_dict(),
+            "marker": self.marker.to_dict(),
+            "coding": self.coding.to_dict(),
+        }
+        if self.fiducials is not None:
+            out["fiducials"] = self.fiducials.to_dict()
+        return out
+
+    def to_spec_json(self) -> str:
+        """Return canonical, validated `ringgrid.target.v5` JSON text.
+
+        Round-trips through the native validator, so invalid geometry surfaces
+        as :class:`ValueError` carrying the Rust error message.
+        """
+        return _canonical_target_spec_json(self._spec_json_str())
+
+    def _spec_json_str(self) -> str:
+        """v5 JSON handed to the native detector loaders at the boundary."""
+        return json.dumps(self.to_dict())
 
 
 @dataclass(slots=True)
@@ -1706,15 +2010,18 @@ class DetectConfig:
 
     Parameters
     ----------
-    board:
-        Board layout used to derive default scale-coupled settings.
+    target:
+        Target layout used to derive default scale-coupled settings. Accepts a
+        :class:`TargetLayout` (the `ringgrid.target.v5` model) or the legacy
+        :class:`BoardLayout` facade. Invalid target geometry raises
+        :class:`ValueError` with the native error message.
     """
 
-    def __init__(self, board: BoardLayout) -> None:
-        if not isinstance(board, BoardLayout):
-            raise TypeError("board must be BoardLayout")
-        self._board = board
-        self._core = _DetectConfigCore(board._spec_json)
+    def __init__(self, target: "BoardLayout | TargetLayout") -> None:
+        spec_json = _target_spec_json(target)
+        self._target = target
+        self._spec_json = spec_json
+        self._core = _DetectConfigCore(spec_json)
         self._resolved_cache: dict[str, Any] | None = None
         self._version = 0
 
@@ -1815,8 +2122,14 @@ class DetectConfig:
         self._version += 1
 
     @property
-    def board(self) -> BoardLayout:
-        return self._board
+    def target(self) -> "BoardLayout | TargetLayout":
+        """The target layout this config was built from (read-only)."""
+        return self._target
+
+    @property
+    def board(self) -> "BoardLayout | TargetLayout":
+        """Deprecated alias for :attr:`target`."""
+        return self._target
 
     @property
     def marker_scale(self) -> MarkerScalePrior:
@@ -2107,11 +2420,17 @@ class Detector:
         if not isinstance(config, DetectConfig):
             raise TypeError("config must be DetectConfig")
         self._config = config
-        self._core = _DetectorCore(config.board._spec_json, config._config_json())
+        self._core = _DetectorCore(config._spec_json, config._config_json())
         self._core_config_version = config._version
 
     @classmethod
+    def from_target(cls, target: "BoardLayout | TargetLayout") -> "Detector":
+        """Build a detector with default config from a target layout."""
+        return cls(DetectConfig(target))
+
+    @classmethod
     def from_board(cls, board: BoardLayout) -> "Detector":
+        """Deprecated alias for :meth:`from_target` (legacy `BoardLayout` facade)."""
         if not isinstance(board, BoardLayout):
             raise TypeError("board must be BoardLayout")
         return cls(DetectConfig(board))
@@ -2121,7 +2440,13 @@ class Detector:
         return cls(config)
 
     @property
-    def board(self) -> BoardLayout:
+    def target(self) -> "BoardLayout | TargetLayout":
+        """The target layout backing this detector (read-only)."""
+        return self._config.target
+
+    @property
+    def board(self) -> "BoardLayout | TargetLayout":
+        """Deprecated alias for :attr:`target`."""
         return self._config.board
 
     @property
@@ -2385,11 +2710,20 @@ class Detector:
     def _refresh_core_if_needed(self) -> None:
         if self._core_config_version == self._config._version:
             return
-        self._core = _DetectorCore(self._config.board._spec_json, self._config._config_json())
+        self._core = _DetectorCore(self._config._spec_json, self._config._config_json())
         self._core_config_version = self._config._version
 
 
 __version__ = _package_version()
+
+
+def _target_spec_json(target: "BoardLayout | TargetLayout") -> str:
+    """v5/v4 spec JSON for a target layout handed to the native loaders."""
+    if isinstance(target, TargetLayout):
+        return target._spec_json_str()
+    if isinstance(target, BoardLayout):
+        return target._spec_json
+    raise TypeError("target must be TargetLayout or BoardLayout")
 
 
 def _coerce_mapper_payload(
@@ -2673,6 +3007,15 @@ def propose_with_heatmap(
 __all__ = [
     "BoardLayout",
     "BoardMarker",
+    "TargetLayout",
+    "HexGeometry",
+    "RectGeometry",
+    "LatticeGeometry",
+    "RingGeometry",
+    "Coded16",
+    "Plain",
+    "MarkerCoding",
+    "OriginFiducials",
     "CircleRefinementMethod",
     "MarkerSpecConfig",
     "MarkerScalePrior",

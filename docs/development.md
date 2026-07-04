@@ -13,10 +13,13 @@ cargo test
 
 ### Python tooling
 
+Python package management uses `uv`; the virtualenv lives at `.venv`. `VIRTUAL_ENV`
+must point at `.venv` so `maturin develop` installs into it rather than system Python.
+
 ```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip maturin numpy matplotlib
-./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+uv venv .venv
+.venv/bin/uv pip install -U maturin numpy matplotlib
+VIRTUAL_ENV=.venv .venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ```
 
 ### Docs
@@ -33,6 +36,8 @@ crates/
     src/
       lib.rs       # public re-exports
       api.rs       # Detector facade
+      target/      # compositional target model (lattice x ring x coding x fiducials)
+      board_layout.rs  # deprecated v4 hex facade over target/ (removal after 0.8)
       pipeline/    # single-pass / multi-pass orchestration
       detector/    # proposal, fit, decode, dedup, filter, completion
       ring/        # radial sampling and projective center logic
@@ -43,19 +48,23 @@ crates/
     examples/      # concise library usage examples
   ringgrid-cli/    # clap-based CLI binary
   ringgrid-py/     # Python bindings and package README
+  ringgrid-wasm/   # WebAssembly bindings (wasm-pack, no_std feature set)
 tools/
   gen_target.py        # board_spec.json + SVG + PNG generation
   gen_synth.py         # synthetic dataset generator
+  gen_synth_rect.py    # ISRA-style rect-plain synthetic dataset generator
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
   viz_detect.py        # detection overlay renderer
 docs/
-  module_structure.md
-  pipeline_analysis.md
+  backlog.md
   performance.md
+  tuning-guide.md
 ```
 
-For deeper ownership and layering notes, see [module_structure.md](module_structure.md) and [pipeline_analysis.md](pipeline_analysis.md).
+For deeper ownership and layering notes (full module tree, pipeline stage
+ordering, public API tiers), see the Module Layout section of
+[`.claude/CLAUDE.md`](../.claude/CLAUDE.md) or the [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/).
 
 ## Common Workflows
 
@@ -79,12 +88,12 @@ For fuller Rust-library usage and detection-mode examples, use [`../crates/ringg
 The committed codebook artifacts live in `tools/codebook.json` and `crates/ringgrid/src/marker/codebook.rs`. Regenerate them only via the generators:
 
 ```bash
-python3 tools/gen_codebook.py \
+.venv/bin/python tools/gen_codebook.py \
   --n 893 --seed 1 \
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/marker/codebook.rs
 
-python3 tools/gen_board_spec.py \
+.venv/bin/python tools/gen_board_spec.py \
   --pitch_mm 8.0 \
   --rows 15 --long_row_cols 14 \
   --board_mm 200.0 \
@@ -107,7 +116,7 @@ cargo doc --workspace --all-features --no-deps
 cargo test --doc --workspace
 mdbook build book
 ./.venv/bin/python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
-./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+VIRTUAL_ENV=.venv ./.venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ./.venv/bin/python -m pytest crates/ringgrid-py/tests -q
 ```
 
@@ -116,4 +125,4 @@ mdbook build book
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for end-user workflows, theory, and detailed configuration notes
 - [Performance & Evaluation](performance.md) for scoring semantics and benchmark commands
 - [Tuning Guide](tuning-guide.md) for symptom-driven config adjustments
-- [docs/workflows/](workflows) for the repo’s task and handoff workflows
+- [`.claude/CLAUDE.md`](../.claude/CLAUDE.md) for the full module layout, pipeline stage ordering, and engineering conventions

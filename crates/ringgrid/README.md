@@ -1,8 +1,8 @@
 # ringgrid
 
-Pure-Rust detector for dense coded ring calibration targets on a hex lattice.
-Detects markers with subpixel edge precision, decodes 16-sector binary IDs from
-a shipped baseline 893-codeword profile (with an opt-in extended profile
+Pure-Rust detector for dense ring calibration targets on hex or rectangular
+lattices. Detects markers with subpixel edge precision, decodes 16-sector binary
+IDs from a shipped baseline 893-codeword profile (with an opt-in extended profile
 available for larger ID spaces), fits ellipses via Fitzgibbon's direct method with
 RANSAC, corrects projective center bias, and estimates a board-to-image
 homography. No OpenCV dependency.
@@ -14,6 +14,7 @@ homography. No OpenCV dependency.
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
+- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; the legacy `BoardLayout` is a deprecated one-release facade (see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 
 ## Pipeline Stages
@@ -25,7 +26,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.6.0"
+ringgrid = "0.8.0"
 ```
 
 ## Rust Target Generation
@@ -33,16 +34,18 @@ ringgrid = "0.6.0"
 The library can generate canonical target JSON plus printable SVG/PNG directly:
 
 ```rust,no_run
-use ringgrid::{BoardLayout, PngTargetOptions, SvgTargetOptions};
+use ringgrid::{PngTargetOptions, SvgTargetOptions, TargetLayout};
 use std::path::Path;
 
-let board = BoardLayout::with_name("ringgrid_demo", 8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
+// `coded_hex` uses a deterministic geometry-derived name; use `TargetLayout::new`
+// for full control over lattice, ring geometry, coding, and origin fiducials.
+let target = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
 
-board.write_json_file(Path::new("target.json")).unwrap();
-board
+target.write_json_file(Path::new("target.json")).unwrap();
+target
     .write_target_svg(Path::new("target.svg"), &SvgTargetOptions::default())
     .unwrap();
-board
+target
     .write_target_png(
         Path::new("target.png"),
         &PngTargetOptions {
@@ -63,7 +66,7 @@ same artifact set from the terminal instead of from application code.
 Rust CLI:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target \
+cargo run -p ringgrid-cli -- gen-target hex \
   --out_dir tools/out/target_faststart \
   --pitch_mm 8 \
   --rows 15 \
@@ -95,20 +98,22 @@ python3 -m venv .venv
   --margin_mm 5
 ```
 
-All three paths generate:
+All three paths generate the same SVG/PNG. The Rust CLI and Rust API write a v5
+`target_spec.json`; the repo Python script (which still uses `BoardLayout`)
+writes a v4 `board_spec.json`. Both schemas load in detection.
 
-- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_spec.json` (Rust CLI/API) or `board_spec.json` (Python script)
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
 
 Use the generated JSON in detection:
 
 ```rust,no_run
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{Detector, TargetLayout};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("tools/out/target_faststart/board_spec.json")).unwrap();
-let detector = Detector::new(board);
+let target = TargetLayout::from_json_file(Path::new("tools/out/target_faststart/target_spec.json")).unwrap();
+let detector = Detector::new(target);
 ```
 
 Complete step-by-step target generation docs (Rust API, Rust CLI, Python script, and helper tools):
@@ -117,14 +122,14 @@ Complete step-by-step target generation docs (Rust API, Rust CLI, Python script,
 ## Simple Detection
 
 ```rust,no_run
-use ringgrid::{BoardLayout, Detector};
+use ringgrid::{Detector, TargetLayout};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 let image = image::open("photo.png").unwrap().to_luma8();
 
-let detector = Detector::new(board);
-let result = detector.detect(&image);
+let detector = Detector::new(target);
+let result = detector.detect(&image).unwrap();
 
 for marker in &result.detected_markers {
     if let Some(id) = marker.id {
@@ -144,10 +149,10 @@ meanings, see:
 With a marker diameter hint for better scale tuning:
 
 ```rust,no_run
-# use ringgrid::{BoardLayout, Detector};
+# use ringgrid::{Detector, TargetLayout};
 # use std::path::Path;
-# let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-let detector = Detector::with_marker_diameter_hint(board, 32.0);
+# let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
+let detector = Detector::with_marker_diameter_hint(target, 32.0);
 ```
 
 ## Proposal-Only Diagnostics
@@ -156,13 +161,13 @@ When you want to inspect candidate centers before fit/decode, use the proposal
 API directly:
 
 ```rust,no_run
-use ringgrid::{BoardLayout, Detector, ProposalConfig};
+use ringgrid::{Detector, ProposalConfig, TargetLayout};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 let image = image::open("photo.png").unwrap().to_luma8();
 
-let detector = Detector::with_marker_diameter_hint(board, 32.0);
+let detector = Detector::with_marker_diameter_hint(target, 32.0);
 let proposals = detector.propose(&image);
 let diagnostics = detector.propose_with_heatmap(&image);
 
@@ -190,14 +195,14 @@ used for thresholding and NMS. Proposal tutorial and Python plotting workflow:
 For scenes with large marker size variation, use adaptive multi-scale methods:
 
 ```rust,no_run
-# use ringgrid::{BoardLayout, Detector, ScaleTiers};
+# use ringgrid::{Detector, ScaleTiers, TargetLayout};
 # use std::path::Path;
-# let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-# let detector = Detector::new(board);
+# let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
+# let detector = Detector::new(target);
 # let image = image::open("photo.png").unwrap().to_luma8();
-let result = detector.detect_adaptive(&image);
-let result = detector.detect_adaptive_with_hint(&image, Some(32.0));
-let result = detector.detect_multiscale(&image, &ScaleTiers::four_tier_wide());
+let result = detector.detect_adaptive(&image).unwrap();
+let result = detector.detect_adaptive_with_hint(&image, Some(32.0)).unwrap();
+let result = detector.detect_multiscale(&image, &ScaleTiers::four_tier_wide()).unwrap();
 ```
 
 Which method to choose:
@@ -212,13 +217,13 @@ Which method to choose:
 Inspect adaptive tiers before detecting:
 
 ```rust,no_run
-# use ringgrid::{BoardLayout, Detector};
+# use ringgrid::{Detector, TargetLayout};
 # use std::path::Path;
-# let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
-# let detector = Detector::new(board);
+# let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
+# let detector = Detector::new(target);
 # let image = image::open("photo.png").unwrap().to_luma8();
 let tiers = detector.adaptive_tiers(&image, Some(32.0));
-let result = detector.detect_multiscale(&image, &tiers);
+let result = detector.detect_multiscale(&image, &tiers).unwrap();
 ```
 
 Adaptive scale guide:
@@ -231,11 +236,11 @@ for distortion-aware detection via a two-pass pipeline:
 
 ```rust,no_run
 use ringgrid::{
-    BoardLayout, CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion,
+    CameraIntrinsics, CameraModel, Detector, RadialTangentialDistortion, TargetLayout,
 };
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 let image = image::open("photo.png").unwrap().to_luma8();
 let (w, h) = image.dimensions();
 
@@ -249,8 +254,8 @@ let camera = CameraModel {
     },
 };
 
-let detector = Detector::new(board);
-let result = detector.detect_with_mapper(&image, &camera);
+let detector = Detector::new(target);
+let result = detector.detect_with_mapper(&image, &camera).unwrap();
 
 for marker in &result.detected_markers {
     // center is always image-space
@@ -268,17 +273,17 @@ When camera calibration is unavailable, ringgrid can estimate a single-parameter
 division-model distortion correction from the detected markers:
 
 ```rust,no_run
-use ringgrid::{BoardLayout, DetectConfig, Detector};
+use ringgrid::{DetectConfig, Detector, TargetLayout};
 use std::path::Path;
 
-let board = BoardLayout::from_json_file(Path::new("target.json")).unwrap();
+let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 let image = image::open("photo.png").unwrap().to_luma8();
 
-let mut cfg = DetectConfig::from_target(board);
+let mut cfg = DetectConfig::from_target(target);
 cfg.self_undistort.enable = true;
 
 let detector = Detector::with_config(cfg);
-let result = detector.detect(&image);
+let result = detector.detect(&image).unwrap();
 
 if let Some(su) = &result.self_undistort {
     println!("Lambda: {:.3e}, applied: {}", su.model.lambda, su.applied);
@@ -310,8 +315,9 @@ Then use it with `detector.detect_with_mapper(&image, &mapper)`.
 
 - `DetectedMarker.center` — always raw image pixel coordinates
 - `DetectedMarker.center_mapped` — working-frame (undistorted) coordinates when a mapper is active
+- `DetectedMarker.grid_coord` — lattice cell (`[q, r]` for hex, `[col, row]` for rect); the only marker key on plain targets
 - `DetectedMarker.board_xy_mm` — board-space marker coordinates in millimeters for valid decoded IDs
-- `DetectionResult.center_frame` / `homography_frame` — explicit frame metadata
+- `DetectionResult.center_frame` / `homography_frame` / `board_frame` — explicit frame metadata
 
 ## Documentation
 

@@ -172,7 +172,7 @@ Default `MarkerScalePrior` is **[14, 66] px**.
 
 All detection goes through the `Detector` struct (`api.rs`). Standalone proposal functions are also available:
 - `find_ellipse_centers`, `find_ellipse_centers_with_heatmap` — low-level proposal generation
-- `propose_with_marker_scale`, `propose_with_marker_diameter` (+ heatmap variants) — board-aware proposal helpers
+- `propose_with_marker_scale`, `propose_with_heatmap_and_marker_scale` — board-aware proposal helpers
 
 Key public types (root tier):
 - `Detector`, `DetectError` — entry point
@@ -290,7 +290,7 @@ scripts resolve `version.workspace = true` by falling back to the workspace root
 
 GitHub Actions workflows in `.github/workflows/`:
 - `ci.yml` — fmt, clippy, test, WASM build smoke test on push/PR
-- `publish-crates.yml` — publish ringgrid + ringgrid-cli to crates.io on tag
+- `publish-crates.yml` — publish ringgrid to crates.io on tag (ringgrid-cli is intentionally unpublished, installable from source)
 - `release-pypi.yml` — build and publish Python wheels to PyPI on tag
 - `release-npm.yml` — build and publish WASM npm package on tag
 - `release.yml` — create GitHub release

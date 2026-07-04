@@ -1,6 +1,6 @@
 # DEC-005: Public API Surface
 
-**Status:** Active
+**Status:** Superseded by [016](016-tiered-public-surface.md)
 **Date:** 2025
 
 ## Decision

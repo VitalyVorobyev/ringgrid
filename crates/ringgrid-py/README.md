@@ -62,11 +62,13 @@ Outputs:
 - `target_print.svg`
 - `target_print.png`
 
-Equivalent paths for the same geometry and output set:
+Equivalent paths for the same geometry (identical SVG/PNG; the Rust CLI/API emit a v5 `target_spec.json`, this Python package a v4 `board_spec.json` — both load in detection):
 
-- Rust CLI: `ringgrid gen-target --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --marker_ring_width_mm 1.152 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
+- Rust CLI: `ringgrid gen-target hex --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --marker_ring_width_mm 1.152 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
 - Python script from the repo: `tools/gen_target.py` with the same arguments
-- Rust API: `BoardLayout::new` / `BoardLayout::with_name` plus `write_json_file`, `write_target_svg`, and `write_target_png`
+- Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, and `write_target_png`
+
+> The installed Python package keeps the v4-shaped `BoardLayout` for the 0.8 cycle. The Rust core's target model is now compositional (`TargetLayout`: hex/rect lattices, coded/plain rings, optional origin fiducials), and the Python surface will follow in a future release. See the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html).
 
 Load this board in Python:
 

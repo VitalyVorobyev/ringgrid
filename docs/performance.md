@@ -2,6 +2,13 @@
 
 This page collects the scoring notes, benchmark snapshots, and reference commands that were moved out of the root `README.md`.
 
+> **2026-07-04 note:** the numeric snapshots below predate the 0.8.0 algorithm
+> changes (eccentricity-aware outer estimation, elliptical code-band decode
+> sampling — equal-or-better across the benchmark suite per `CHANGELOG.md`)
+> and do not yet include the new rect/plain-target benchmarks
+> (`tools/run_rect_benchmark.sh`). A refresh covering both is planned for
+> post-0.8.0; the numbers here have not been re-run for this release.
+
 ## Distortion Correction Modes
 
 ringgrid supports three distortion-correction modes:

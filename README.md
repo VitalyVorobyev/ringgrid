@@ -6,14 +6,15 @@
 
 # ringgrid
 
-`ringgrid` is a pure-Rust detector for dense coded ring calibration targets on a hex lattice. It detects markers with subpixel precision, decodes stable baseline IDs from the shipped 893-codeword profile, estimates homography, and can generate printable target artifacts without OpenCV bindings.
+`ringgrid` is a pure-Rust detector for dense ring calibration targets on hex or rectangular lattices. It detects markers with subpixel precision, decodes stable baseline IDs for 16-sector coded rings from the shipped 893-codeword profile, estimates homography, and can generate printable target artifacts without OpenCV bindings.
 
 ## At a Glance
 
 - Subpixel ring-marker detection using direct ellipse fitting and projective center correction
 - Stable shipped `base` profile (`893` IDs, minimum cyclic Hamming distance `2`) plus opt-in `extended`
 - Rust library, CLI workflow, and Python bindings in one workspace
-- Canonical `board_spec.json` plus printable SVG/PNG target generation
+- Compositional `TargetLayout`: hex or rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials (the legacy `BoardLayout` is a deprecated one-release facade — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
+- Canonical `target_spec.json` (schema v5) plus printable SVG/PNG target generation
 
 Pipeline at a glance: proposals -> local fit/decode -> dedup -> projective center -> `id_correction` -> optional global filter -> optional completion -> final homography refit.
 
@@ -43,20 +44,23 @@ Detection overlay example:
 
 ## Quick Start From the Repo
 
-### 1. Generate `board_spec.json` plus printable SVG/PNG
+### 1. Generate `target_spec.json` plus printable SVG/PNG
 
-Choose one of the three equivalent target-generation paths.
+Choose one of the three target-generation paths. `gen-target` is a subcommand
+family (`hex`, `rect`, `preset`, `from-spec`); the classic hex coded board lives
+under `hex`.
 
 Rust CLI:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target \
+cargo run -p ringgrid-cli -- gen-target hex \
   --out_dir tools/out/target_faststart \
   --pitch_mm 8 \
   --rows 15 \
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5
@@ -75,6 +79,7 @@ python3 -m venv .venv
   --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 \
   --marker_inner_radius_mm 3.2 \
+  --marker_ring_width_mm 1.152 \
   --name ringgrid_200mm_hex \
   --dpi 600 \
   --margin_mm 5
@@ -82,11 +87,11 @@ python3 -m venv .venv
 
 Rust API:
 
-- Use [`BoardLayout::new` / `BoardLayout::with_name`](crates/ringgrid/README.md) plus `write_json_file`, `write_target_svg`, and `write_target_png` when generation is part of your application code.
+- Use [`TargetLayout::coded_hex(...)`](crates/ringgrid/README.md) (or the compositional `TargetLayout::new(...)`) plus `write_json_file`, `write_target_svg`, and `write_target_png` when generation is part of your application code.
 
-Generated files:
+Generated files (the SVG/PNG are identical across paths; the Rust CLI and Rust API write a v5 `target_spec.json`, while the installed Python package still writes a v4 `board_spec.json` — both load in detection):
 
-- `tools/out/target_faststart/board_spec.json`
+- `tools/out/target_faststart/target_spec.json` (Rust CLI/API) or `board_spec.json` (Python script)
 - `tools/out/target_faststart/target_print.svg`
 - `tools/out/target_faststart/target_print.png`
 
@@ -94,7 +99,7 @@ Generated files:
 
 ```bash
 cargo run -- detect \
-  --target tools/out/target_faststart/board_spec.json \
+  --target tools/out/target_faststart/target_spec.json \
   --image path/to/photo.png \
   --out tools/out/target_faststart/detect.json
 ```
@@ -132,7 +137,7 @@ If you want the full generate -> detect -> score loop in one command, use `./.ve
 
 ### CLI
 
-Use `ringgrid gen-target` / `ringgrid detect` or `cargo run -- gen-target ...` / `cargo run -- detect ...` when you want file-oriented workflows over printable targets, images, and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
+Use `ringgrid gen-target <hex|rect|preset|from-spec>` / `ringgrid detect` or `cargo run -- gen-target ...` / `cargo run -- detect ...` when you want file-oriented workflows over printable targets, images, and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
 
 ### Rust crate
 
@@ -145,13 +150,14 @@ The Python bindings live in [`crates/ringgrid-py/README.md`](crates/ringgrid-py/
 ## Detection Output
 
 The detector output is centered on `detected_markers`. Each marker can contain a
-decoded `id`, `board_xy_mm`, image-space `center`, optional `center_mapped`,
-ellipse fits, fit/decode metrics, and a `source` telling you whether it came
-from the main fit/decode path, completion, or a seeded mapper pass.
+decoded `id`, its lattice `grid_coord`, `board_xy_mm`, image-space `center`,
+optional `center_mapped`, and ellipse fits. Per-marker fit/decode metrics and
+the detection `source` live in the opt-in `diagnostics` channel.
 
 At the top level, you always get `image_size`, `center_frame`, and
-`homography_frame`. When enough valid IDs exist, you also get `homography` and
-`ransac`. Self-undistort runs add `self_undistort`. CLI runs with camera input
+`homography_frame`, plus `board_frame` for grid-labeled runs. When enough valid
+IDs exist, you also get the board-to-image `homography` (RANSAC stats live in the
+`diagnostics` channel). Self-undistort runs add `self_undistort`. CLI runs with camera input
 echo the top-level `camera`, and `--include-proposals` adds proposal
 diagnostics. Full reference: [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
 

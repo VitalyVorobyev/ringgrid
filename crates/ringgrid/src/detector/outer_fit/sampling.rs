@@ -1,38 +1,7 @@
-use crate::detector::MarkerRecord;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig};
 use crate::ring::inner_estimate::Polarity;
 
 const MAX_EXPECTED_RADIUS_DEVIATION_FRAC: f32 = 0.4;
-
-pub(crate) fn median_outer_radius_from_neighbors_px(
-    projected_center: [f64; 2],
-    markers: &[MarkerRecord],
-    k: usize,
-) -> Option<f32> {
-    let mut candidates: Vec<(f64, f32)> = Vec::new();
-    for m in markers {
-        let r = match m.ellipse_outer {
-            Some(v) => v.mean_axis(),
-            None => continue,
-        };
-        let dx = m.center[0] - projected_center[0];
-        let dy = m.center[1] - projected_center[1];
-        let d2 = dx * dx + dy * dy;
-        if d2.is_finite() {
-            candidates.push((d2, r as f32));
-        }
-    }
-    if candidates.is_empty() {
-        return None;
-    }
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let radii: Vec<f32> = candidates
-        .iter()
-        .take(k.max(1).min(candidates.len()))
-        .map(|(_, r)| *r)
-        .collect();
-    Some(median_f32(&radii))
-}
 
 fn sample_signed_radial_derivative(
     sampler: DistortionAwareSampler<'_>,
@@ -205,15 +174,6 @@ pub(crate) fn max_angular_gap(center: [f64; 2], points: &[[f64; 2]]) -> f64 {
     // Wrap-around gap
     let wrap = tau - (angles.last().unwrap() - angles.first().unwrap());
     gap.max(wrap)
-}
-
-fn median_f32(values: &[f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
-    sorted[sorted.len() / 2]
 }
 
 #[cfg(test)]

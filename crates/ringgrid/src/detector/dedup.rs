@@ -90,61 +90,42 @@ fn outer_radius(m: &MarkerRecord) -> f64 {
 /// ring of surrounding markers.
 pub(crate) const MERGE_SIZE_K_NEIGHBORS: usize = 6;
 
+/// Minimum contributing neighbors for a reliable median; below this the
+/// score stays neutral.
+const MIN_NEIGHBORS_FOR_SCORE: usize = 3;
+
 /// Compute a size-consistency score in `[0, 1]` for each marker.
 ///
 /// The score measures how well the marker's outer radius matches the median
-/// outer radius of its `k` nearest spatial neighbors. A score of 1.0 means
-/// the radius equals the neighborhood median; lower values indicate
-/// outliers (possible wrong-tier detections).
+/// outer radius of its `k` nearest spatial neighbors (the shared statistic
+/// from [`super::neighbors`]). A score of 1.0 means the radius equals the
+/// neighborhood median; lower values indicate outliers (possible wrong-tier
+/// detections).
 fn size_consistency_scores(markers: &[MarkerRecord], k_neighbors: usize) -> Vec<f64> {
     let n = markers.len();
     let k = k_neighbors.min(n.saturating_sub(1));
-    let radii: Vec<f64> = markers.iter().map(outer_radius).collect();
     let mut scores = vec![1.0f64; n];
 
     if k == 0 || n <= 1 {
         return scores;
     }
 
-    for i in 0..n {
-        let ci = markers[i].center;
-
-        // k nearest neighbors by squared Euclidean distance.
-        let mut dists: Vec<(f64, usize)> = (0..n)
-            .filter(|&j| j != i)
-            .map(|j| {
-                let cj = markers[j].center;
-                let dx = ci[0] - cj[0];
-                let dy = ci[1] - cj[1];
-                (dx * dx + dy * dy, j)
-            })
-            .collect();
-        dists.sort_by(|a, b| a.0.total_cmp(&b.0));
-
-        let neighbor_radii: Vec<f64> = dists[..k.min(dists.len())]
-            .iter()
-            .map(|(_, j)| radii[*j])
-            .collect();
-
-        if neighbor_radii.len() < 3 {
+    for (i, marker) in markers.iter().enumerate() {
+        let Some(median_r) = super::median_neighbor_outer_radius_px(
+            marker.center,
+            markers,
+            k,
+            Some(i),
+            MIN_NEIGHBORS_FOR_SCORE,
+        ) else {
             // Too few neighbors for a reliable median; leave score neutral.
             continue;
-        }
-
-        let mut sorted_nr = neighbor_radii.clone();
-        sorted_nr.sort_by(|a, b| a.total_cmp(b));
-        let mid = sorted_nr.len() / 2;
-        let median_r = if sorted_nr.len().is_multiple_of(2) {
-            (sorted_nr[mid - 1] + sorted_nr[mid]) * 0.5
-        } else {
-            sorted_nr[mid]
         };
-
         if median_r <= 0.0 {
             continue;
         }
 
-        let r_i = radii[i];
+        let r_i = outer_radius(marker);
         scores[i] = (1.0 - (r_i - median_r).abs() / median_r).max(0.0);
     }
 

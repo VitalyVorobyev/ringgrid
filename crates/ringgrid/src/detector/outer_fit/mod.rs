@@ -15,7 +15,7 @@ mod sampling;
 mod scoring;
 mod solver;
 
-pub(crate) use sampling::{max_angular_gap, median_outer_radius_from_neighbors_px};
+pub(crate) use sampling::max_angular_gap;
 
 /// Stable reject code for outer-fit candidate creation.
 #[derive(

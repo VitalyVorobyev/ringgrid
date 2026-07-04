@@ -21,7 +21,7 @@ use super::{
     CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
-    median_outer_radius_from_neighbors_px,
+    median_neighbor_outer_radius_px,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -523,11 +523,14 @@ fn try_complete_marker(
 ) -> Option<MarkerRecord> {
     let active_codebook_min_cyclic_dist =
         Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
-    let r_expected = median_outer_radius_from_neighbors_px(
+    let r_expected = median_neighbor_outer_radius_px(
         projected_center,
         markers,
         EXPECTED_RADIUS_K_NEIGHBORS,
+        None,
+        1,
     )
+    .map(|r| r as f32)
     .unwrap_or(config.marker_scale.nominal_outer_radius_px());
 
     let cand = match fit_outer_candidate_from_prior_for_completion(

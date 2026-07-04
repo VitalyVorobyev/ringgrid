@@ -4,7 +4,7 @@ members = [
     "crates/ringgrid",
     "crates/ringgrid-cli",
 ]
-exclude = ["crates/ringgrid-py", "crates/ringgrid-wasm"]
+exclude = ["crates/ringgrid-py", "crates/ringgrid-wasm", "crates/ringgrid-c"]
 
 [workspace.package]
 version = "0.9.0"

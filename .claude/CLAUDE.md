@@ -64,13 +64,13 @@ crates/ringgrid/src/
 ├── api.rs              # Detector facade + propose_with_* free functions
 ├── board_layout.rs     # DEPRECATED v4 hex facade over target/ (removal after 0.8)
 ├── target/             # Compositional target model (lattice × ring × coding × fiducials)
-│   ├── layout.rs       # TargetLayout + presets (default_hex, coded_hex, isra_rect_24x24)
+│   ├── layout.rs       # TargetLayout + presets (default_hex, coded_hex, rect_24x24)
 │   ├── lattice.rs      # LatticeGeometry (Hex | Rect) + cell generation
 │   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain)
 │   ├── fiducials.rs    # OriginFiducials (validation: rotation-asymmetry, clearance)
 │   ├── schema.rs       # JSON v5 (canonical) + v4 auto-migration
 │   └── error.rs        # TargetValidationError, TargetLoadError
-├── target_generation.rs # SVG/PNG target rendering (coded + plain + fiducial dots)
+├── target_generation.rs # SVG/PNG/DXF target rendering (coded + plain + fiducial dots)
 ├── proposal/           # Center proposal generation (delegates to radsym)
 │   ├── mod.rs          # Adapter: radsym fused RSD → ringgrid Proposal types
 │   ├── config.rs       # ProposalConfig (translated to radsym RsdConfig)

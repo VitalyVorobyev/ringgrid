@@ -56,6 +56,7 @@ tools/
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
   viz_detect.py        # detection overlay renderer
+  gen_pages_perf.py    # performance-dashboard data + overlays (.github/pages)
 docs/
   backlog.md
   performance.md

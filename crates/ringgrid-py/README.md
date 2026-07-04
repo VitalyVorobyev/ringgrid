@@ -89,8 +89,62 @@ is a thin wrapper over this same installed-package surface.
 Complete target-generation tutorial and full flag reference:
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
 
+## Target layouts
+
+`TargetLayout` is the typed, first-class target model — the Python mirror of the
+Rust `ringgrid.target.v5` schema. Prefer it over the legacy `BoardLayout`
+facade: it expresses hex **and** rectangular lattices, coded **and** plain
+(uncoded) markers, and optional origin fiducials.
+
+```python
+import ringgrid
+
+# Presets (geometry comes from the native library — no duplicated constants):
+hex_target = ringgrid.TargetLayout.default_hex()        # 15-row coded hex, 203 markers
+isra_target = ringgrid.TargetLayout.isra_rect_24x24()   # 24x24 plain rect + origin dots
+
+# Coded hex from direct geometry (deterministic, geometry-derived name):
+custom = ringgrid.TargetLayout.coded_hex(
+    pitch_mm=8.0, rows=15, long_row_cols=14,
+    outer_radius_mm=4.8, inner_radius_mm=3.2, ring_width_mm=1.152,
+)
+
+# Compose one explicitly — a tagged union mirrors the v5 schema verbatim:
+rect_plain = ringgrid.TargetLayout(
+    name="my_rect",
+    lattice=ringgrid.RectGeometry(rows=24, cols=24, pitch_mm=14.0),
+    marker=ringgrid.RingGeometry(outer_radius_mm=5.6, inner_radius_mm=2.8),
+    coding=ringgrid.Plain(),
+    fiducials=ringgrid.OriginFiducials(
+        dot_radius_mm=1.4,
+        dots_mm=[[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]],
+    ),
+)
+
+# Detector / DetectConfig accept a TargetLayout directly:
+detector = ringgrid.Detector.from_target(hex_target)
+# ...or: ringgrid.Detector(ringgrid.DetectConfig(hex_target))
+```
+
+`to_dict()` / `from_dict()` round-trip the v5 schema verbatim; `from_json(...)`
+loads v5 (or legacy v4, auto-migrated) text or a file path; `to_spec_json()`
+returns canonical, validated v5 JSON. Invalid geometry raises `ValueError` with
+the native error message:
+
+```python
+lattice: ringgrid.LatticeGeometry = ringgrid.HexGeometry(15, 14, 8.0)
+coding: ringgrid.MarkerCoding = ringgrid.Coded16(ring_width_mm=1.152)
+
+restored = ringgrid.TargetLayout.from_json("target.json")
+assert ringgrid.TargetLayout.from_dict(restored.to_dict()) == restored
+```
+
+`BoardLayout` remains available for the coded-hex target-generation flow shown
+above and is unchanged, but new code should reach for `TargetLayout`.
+
 ## Features
 
+- Typed `TargetLayout` (`ringgrid.target.v5`) — hex/rect lattices, coded/plain markers, origin fiducials
 - Native `BoardLayout` target generation for canonical spec JSON + printable SVG/PNG
 - Native `Detector` API with NumPy input support
 - Slim `DetectionResult` model objects with JSON round-trips

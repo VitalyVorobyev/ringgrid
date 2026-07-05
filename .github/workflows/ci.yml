@@ -347,11 +347,14 @@ jobs:
         shell: pwsh
         env:
           RINGGRID_SOURCE_DIR: ${{ github.workspace }}
-          # vcpkg sanitizes the port build env; preserve the rustup vars so the
-          # cargo proxy resolves the toolchain (cargo itself is located by the
-          # portfile's find_program fallback).
-          VCPKG_KEEP_ENV_VARS: "CARGO_HOME;RUSTUP_HOME"
         run: |
+          # vcpkg sanitizes the port build env. The portfile hands CMake the cargo
+          # path, but the rustup proxy still needs CARGO_HOME/RUSTUP_HOME to resolve
+          # the toolchain at build time. Set them to rustup's defaults if unset and
+          # keep them (plus USERPROFILE) across vcpkg's env sanitization.
+          if (-not $env:CARGO_HOME)  { $env:CARGO_HOME  = "$env:USERPROFILE\.cargo" }
+          if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = "$env:USERPROFILE\.rustup" }
+          $env:VCPKG_KEEP_ENV_VARS = "CARGO_HOME;RUSTUP_HOME;USERPROFILE"
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install ringgrid:x64-windows `
             --overlay-ports="$env:GITHUB_WORKSPACE/crates/ringgrid-c/vcpkg"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }

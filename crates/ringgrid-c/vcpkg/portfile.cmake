@@ -50,10 +50,14 @@ endif()
 
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "dynamic" RINGGRID_BUILD_SHARED)
 
+# Pass the cargo we already located explicitly: `vcpkg_cmake_configure` spawns
+# CMake in a further-sanitized environment where the package CMakeLists' own
+# `find_program(cargo)` cannot see rustup's ~/.cargo/bin, so hand it the path.
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}/crates/ringgrid-c"
     OPTIONS
         "-DRINGGRID_BUILD_SHARED=${RINGGRID_BUILD_SHARED}"
+        "-DCARGO_EXECUTABLE=${RINGGRID_CARGO}"
 )
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(PACKAGE_NAME ringgrid CONFIG_PATH lib/cmake/ringgrid)

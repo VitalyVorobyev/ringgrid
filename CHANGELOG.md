@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automatic origin-dot placement** — `OriginFiducials::auto` and
   `TargetLayout::with_auto_fiducials` place a valid asymmetric dot triad in the
   gaps near the board center (breaks every lattice rotation while staying inside
-  the densely-labeled interior). Single source of truth; `rect_24x24` uses it.
+  the densely-labeled interior). Single source of truth for automatic placement,
+  used by the recipe `dots: auto` option. (The `rect_24x24` preset keeps its own
+  frozen dot geometry for print compatibility.)
 - **Board-completeness signal** — `DetectionResult::board_complete`,
   `DetectConfig::require_complete_board`, and `DetectError::IncompleteBoard`.
   This is the success criterion for plain, no-dots targets, whose orientation can

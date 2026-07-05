@@ -203,23 +203,27 @@ impl Detector {
     /// Compute [`DetectionResult::board_complete`] and enforce
     /// [`DetectConfig::require_complete_board`].
     ///
-    /// Completeness is defined only when grid assignment ran
-    /// (`board_frame.is_some()`); otherwise the signal stays `None`. Under the
-    /// strict gate, an incomplete board becomes [`DetectError::IncompleteBoard`]
-    /// rather than a low-`board_complete` result.
+    /// The `board_complete` signal is *defined* only when grid assignment ran
+    /// (`board_frame.is_some()`); otherwise it stays `None`, since completeness
+    /// of an un-anchored board is meaningless.
+    ///
+    /// The strict gate is stricter than the signal: a run that was asked to
+    /// require the full board fails whenever the full board is not present —
+    /// including the degenerate case where grid assignment never ran at all
+    /// (blank image, fully cropped board, wrong target). There `found` is `0`
+    /// and the run returns [`DetectError::IncompleteBoard`] rather than
+    /// silently succeeding.
     fn apply_completeness(&self, result: &mut DetectionResult) -> Result<(), DetectError> {
-        if result.board_frame.is_none() {
-            return Ok(());
-        }
         let expected = self.config.target.n_cells();
         let found = result
             .detected_markers
             .iter()
             .filter(|m| m.grid_coord.is_some())
             .count();
-        let complete = found >= expected;
-        result.board_complete = Some(complete);
-        if self.config.require_complete_board && !complete {
+        if result.board_frame.is_some() {
+            result.board_complete = Some(found >= expected);
+        }
+        if self.config.require_complete_board && found < expected {
             return Err(DetectError::IncompleteBoard { found, expected });
         }
         Ok(())

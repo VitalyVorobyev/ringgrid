@@ -35,23 +35,24 @@ impl OriginFiducials {
     ///   particular has limited boundary recall).
     /// - **Orientation-resolving:** an L of three gaps is not invariant under
     ///   any lattice rotation, so it breaks every rotational symmetry — the
-    ///   invariant [`validate`](Self::validate) enforces.
+    ///   invariant `validate` enforces.
     ///
     /// The dot radius is derived from the gap clearance and the printed marker
     /// extent (targeting a legible `~0.1 × pitch`, shrunk to fit tight gaps).
     ///
-    /// This is the single source of truth for automatic dot placement: presets
-    /// ([`TargetLayout::with_auto_fiducials`](crate::TargetLayout::with_auto_fiducials),
-    /// [`TargetLayout::rect_24x24`](crate::TargetLayout::rect_24x24)) and the
-    /// `dots: auto` config option both route through it.
+    /// This is the single source of truth for automatic dot placement:
+    /// [`TargetLayout::with_auto_fiducials`](crate::TargetLayout::with_auto_fiducials)
+    /// and the recipe `dots: auto` option both route through it. (The
+    /// [`TargetLayout::rect_24x24`](crate::TargetLayout::rect_24x24) preset keeps
+    /// its own frozen dot geometry for print compatibility and does *not* use
+    /// this placement.)
     ///
     /// # Errors
     ///
     /// Returns [`TargetValidationError::AutoFiducialsDoNotFit`] when the markers
     /// are packed too tightly to admit a dot in the gaps, or propagates a
-    /// [`validate`](Self::validate) failure if the resulting pattern is
-    /// degenerate (e.g. a lattice so small or symmetric that the triad cannot
-    /// break its symmetry).
+    /// `validate` failure if the resulting pattern is degenerate (e.g. a lattice
+    /// so small or symmetric that the triad cannot break its symmetry).
     pub fn auto(
         lattice: &LatticeGeometry,
         marker: RingGeometry,

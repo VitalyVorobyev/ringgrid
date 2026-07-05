@@ -432,3 +432,32 @@ fn require_complete_board_errors_on_partial_board() {
     let result = lenient.detect(&cropped).expect("lenient detect");
     assert_eq!(result.board_complete, Some(false));
 }
+
+#[test]
+fn require_complete_board_errors_when_grid_assignment_never_runs() {
+    // A blank image never reaches grid assignment, so no board frame is
+    // produced and `board_complete` is undefined (`None`) in the lenient case.
+    // The strict gate must still reject it: the full board was asked for and
+    // zero cells are present, so it fails with `found = 0` rather than
+    // silently succeeding.
+    let target = plain_rect_no_dots();
+    let blank = GrayImage::from_pixel(320, 320, image::Luma([255]));
+
+    let mut config = DetectConfig::from_target(target.clone());
+    config.require_complete_board = true;
+    let strict = Detector::with_config(config);
+
+    match strict.detect(&blank) {
+        Err(DetectError::IncompleteBoard { found, expected }) => {
+            assert_eq!(found, 0, "a blank image labels no cells");
+            assert_eq!(expected, target.n_cells());
+        }
+        other => panic!("expected IncompleteBoard error, got {other:?}"),
+    }
+
+    // Lenient: no error, no false success signal — completeness stays undefined.
+    let lenient = Detector::new(target);
+    let result = lenient.detect(&blank).expect("lenient detect");
+    assert_eq!(result.board_complete, None);
+    assert!(result.board_frame.is_none());
+}

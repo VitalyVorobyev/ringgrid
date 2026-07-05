@@ -230,10 +230,17 @@ impl TargetLayout {
     }
 
     /// A 24×24 plain rect target: a square lattice of plain rings at 14 mm
-    /// pitch (outer Ø11.2 / inner Ø5.6 mm) with an auto-placed origin-dot triad
-    /// in the cell gaps at the origin corner.
+    /// pitch (outer Ø11.2 / inner Ø5.6 mm) with an origin-dot triad in the cell
+    /// gaps near the board center.
+    ///
+    /// The dot geometry is **frozen**: physical boards printed from this named
+    /// preset in earlier releases depend on these exact positions to anchor.
+    /// For a fresh target with automatically placed dots, use
+    /// [`with_auto_fiducials`](Self::with_auto_fiducials) or the recipe
+    /// `dots: auto` option instead — the auto placement is not required to match
+    /// this preset's historical triad.
     pub fn rect_24x24() -> Self {
-        Self::with_auto_fiducials(
+        Self::new(
             "rect_24x24",
             LatticeGeometry::Rect(RectGeometry {
                 rows: 24,
@@ -245,6 +252,13 @@ impl TargetLayout {
                 inner_radius_mm: 2.8,
             },
             MarkerCoding::Plain,
+            Some(OriginFiducials {
+                dot_radius_mm: 1.4,
+                // Cell-gap centers near the board center: middle, one pitch
+                // left, one pitch down (board frame: first ring at [0, 0],
+                // +y downward).
+                dots_mm: vec![[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]],
+            }),
         )
         .expect("rect_24x24 preset must be valid")
     }

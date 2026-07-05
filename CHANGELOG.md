@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Published `ringgrid` CLI** (built with `--features cli`): `gen`, `detect`,
+  `batch`, and `example` subcommands. `gen` is recipe-driven — a small TOML/JSON
+  target recipe (with CLI flag overrides) lowers to a `TargetLayout` and renders
+  `target_spec.json` + SVG/PNG/DXF. Example recipes for all six valid target
+  combinations ship embedded (`ringgrid example --list`) and in
+  `crates/ringgrid/examples/targets/`. The feature is off by default so library
+  builds keep a clean dependency graph (`cargo install ringgrid --features cli`).
+- **Automatic origin-dot placement** — `OriginFiducials::auto` and
+  `TargetLayout::with_auto_fiducials` place a valid asymmetric dot triad in the
+  gaps near the board center (breaks every lattice rotation while staying inside
+  the densely-labeled interior). Single source of truth for automatic placement,
+  used by the recipe `dots: auto` option. (The `rect_24x24` preset keeps its own
+  frozen dot geometry for print compatibility.)
+- **Board-completeness signal** — `DetectionResult::board_complete`,
+  `DetectConfig::require_complete_board`, and `DetectError::IncompleteBoard`.
+  This is the success criterion for plain, no-dots targets, whose orientation can
+  only be resolved from a fully-detected board.
+- End-to-end test coverage of all six valid target combinations
+  ({hex, rect} × {coded, plain} × {dots, no dots}, excluding coded + dots).
+
+### Fixed
+
+- **Hex origin-dot anchoring** — the plain-target origin anchor now enumerates
+  the full dihedral symmetry group (rotations **and** reflections) and lets the
+  physical orientation-preserving check select the valid embedding. The hex
+  relative-labeling frame is mirrored relative to the board's axial frame, so
+  hex + plain + dots boards previously never resolved an `Absolute` frame.
+
+### Changed
+
+- The in-repo dev CLI binary is renamed `ringgrid` → `ringgrid-dev`
+  (`cargo run -p ringgrid-cli --bin ringgrid-dev -- …`), unpublished, freeing the
+  `ringgrid` name for the published CLI. Its target writing now delegates to the
+  shared library helper.
+- `rect_24x24` origin dots are auto-placed (functionally identical: a Ø2.8 mm
+  triad in the central gaps).
+- Pre-1.0 migration guides moved from the mdBook to `docs/migrations/`.
+
 ## [0.9.0] — 2026-07-04
 
 Post-0.8 cleanup: the deprecated v4 `BoardLayout` facade is removed, the private

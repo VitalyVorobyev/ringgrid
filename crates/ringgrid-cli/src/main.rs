@@ -96,16 +96,6 @@ struct CliGenOutputArgs {
     no_scale_bar: bool,
 }
 
-impl CliGenOutputArgs {
-    fn output_paths(&self) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-        let json_path = self.out_dir.join("target_spec.json");
-        let svg_path = self.out_dir.join(format!("{}.svg", self.basename));
-        let png_path = self.out_dir.join(format!("{}.png", self.basename));
-        let dxf_path = self.out_dir.join(format!("{}.dxf", self.basename));
-        (json_path, svg_path, png_path, dxf_path)
-    }
-}
-
 #[derive(Debug, Clone, Args)]
 struct CliGenHexArgs {
     /// Marker center spacing in millimeters.
@@ -1169,56 +1159,25 @@ fn write_target_outputs(
     target: &ringgrid::TargetLayout,
     output: &CliGenOutputArgs,
 ) -> CliResult<()> {
-    let include_scale_bar = !output.no_scale_bar;
-    let (json_path, svg_path, png_path, dxf_path) = output.output_paths();
-
-    target
-        .write_json_file(&json_path)
-        .map_err(|e| -> CliError {
-            format!(
-                "Failed to write target spec JSON {}: {}",
-                json_path.display(),
-                e
-            )
-            .into()
-        })?;
-    target
-        .write_target_svg(
-            &svg_path,
-            &ringgrid::SvgTargetOptions {
-                margin_mm: output.margin_mm,
-                include_scale_bar,
-            },
-        )
-        .map_err(|e| -> CliError {
-            format!("Failed to write target SVG {}: {}", svg_path.display(), e).into()
-        })?;
-    target
-        .write_target_png(
-            &png_path,
-            &ringgrid::PngTargetOptions {
-                dpi: output.dpi,
-                margin_mm: output.margin_mm,
-                include_scale_bar,
-            },
-        )
-        .map_err(|e| -> CliError {
-            format!("Failed to write target PNG {}: {}", png_path.display(), e).into()
-        })?;
-    target
-        .write_target_dxf(&dxf_path)
-        .map_err(|e| -> CliError {
-            format!("Failed to write target DXF {}: {}", dxf_path.display(), e).into()
-        })?;
-
-    println!("Target spec JSON written to {}", json_path.display());
-    println!("Print SVG written to {}", svg_path.display());
-    println!(
-        "Print PNG written to {} ({:.1} dpi)",
-        png_path.display(),
-        output.dpi
-    );
-    println!("Fabrication DXF written to {}", dxf_path.display());
+    // Delegate to the shared library helper (single source of truth for target
+    // artifact writing, reused by the published `ringgrid` CLI).
+    let render = ringgrid::cli::RenderRecipe {
+        dpi: output.dpi,
+        margin_mm: output.margin_mm,
+        scale_bar: !output.no_scale_bar,
+        formats: vec![
+            ringgrid::cli::Format::Json,
+            ringgrid::cli::Format::Svg,
+            ringgrid::cli::Format::Png,
+            ringgrid::cli::Format::Dxf,
+        ],
+    };
+    let written =
+        ringgrid::cli::write_target_artifacts(target, &output.out_dir, &output.basename, &render)
+            .map_err(|e| -> CliError { e.to_string().into() })?;
+    for path in &written {
+        println!("wrote {}", path.display());
+    }
     let lattice = match target.lattice() {
         ringgrid::LatticeGeometry::Hex(h) => {
             format!("hex rows={} long_row_cols={}", h.rows, h.long_row_cols)

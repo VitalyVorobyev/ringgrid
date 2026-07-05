@@ -138,14 +138,6 @@ Key methods (hex-relevant):
 Lookups are O(1): `TargetLayout` builds ID→cell and coordinate→cell hash maps
 during construction.
 
-> **Removed in 0.9.** The pre-0.8 flat `BoardLayout` type (a thin, hex-only
-> facade over `TargetLayout`) was removed in 0.9 — use `TargetLayout`
-> (`TargetLayout::default_hex()` is the geometry-identical replacement). Legacy
-> v4 `board_spec.json` files still load: `TargetLayout::from_json_*` auto-migrates
-> the v4 schema. See the
-> [Compositional Target Model](../targets/target-model.md) and the
-> [Migration Guide](../migration-0.8.md).
-
 ## The `TargetCell` type
 
 Each cell generated for the lattice is a `TargetCell`:

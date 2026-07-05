@@ -14,7 +14,7 @@ homography. No OpenCV dependency.
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
-- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v4 `board_spec.json` files still load via `TargetLayout::from_json_*` auto-migration (the deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
+- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v4 `board_spec.json` files still load via `TargetLayout::from_json_*` auto-migration (see [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations))
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 
 ## Pipeline Stages
@@ -26,7 +26,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.8.0"
+ringgrid = "0.9"
 ```
 
 ## Rust Target Generation
@@ -58,49 +58,21 @@ target
 
 `render_target_svg` returns the SVG as a string, and `render_target_png` returns an in-memory grayscale `image::GrayImage` when you want to avoid file I/O. `write_target_png` embeds the requested DPI as PNG print metadata.
 
-## Equivalent Command-Line Workflows
+## Equivalent Command-Line Workflow
 
-The Rust API above is equivalent to these command-line paths when you want the
-same artifact set from the terminal instead of from application code.
-
-Rust CLI:
+The Rust API above is equivalent to the published `ringgrid` CLI when you want
+the same artifact set from the terminal instead of from application code:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target hex \
-  --out_dir tools/out/target_faststart \
-  --pitch_mm 8 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --marker_ring_width_mm 1.152 \
-  --name ringgrid_200mm_hex \
-  --dpi 600 \
-  --margin_mm 5
+cargo install ringgrid --features cli
+ringgrid example --name hex_coded --out hex_coded.toml   # start from a recipe
+ringgrid gen hex_coded.toml --out ./out/target           # SVG + PNG + DXF + JSON
 ```
 
-Python script from a repository checkout:
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip maturin
-./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
-./.venv/bin/python tools/gen_target.py \
-  --out_dir tools/out/target_faststart \
-  --pitch_mm 8 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --marker_ring_width_mm 1.152 \
-  --name ringgrid_200mm_hex \
-  --dpi 600 \
-  --margin_mm 5
-```
-
-All three paths generate the same SVG/PNG and write a v5 `target_spec.json`.
-Legacy v4 `board_spec.json` files still load in detection —
-`TargetLayout::from_json_*` auto-migrates the v4 schema.
+Both paths write a v5 `target_spec.json`. Legacy v4 `board_spec.json` files still
+load in detection — `TargetLayout::from_json_*` auto-migrates the v4 schema. See
+the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html)
+for the recipe format and every flag.
 
 - `tools/out/target_faststart/target_spec.json`
 - `tools/out/target_faststart/target_print.svg`

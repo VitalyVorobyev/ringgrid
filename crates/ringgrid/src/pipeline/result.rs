@@ -155,6 +155,16 @@ pub struct DetectionResult {
     /// `None` when no grid assignment took place (no markers labeled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board_frame: Option<BoardFrame>,
+    /// Whether every target cell was detected.
+    ///
+    /// `Some(true)` when grid assignment ran and all `TargetLayout` cells were
+    /// labeled, `Some(false)` when some are missing, and `None` when nothing was
+    /// labeled (completeness is undefined). This is the success criterion for
+    /// plain (uncoded) targets without origin dots, whose orientation can only
+    /// be resolved from a fully-detected board; see
+    /// [`DetectConfig::require_complete_board`](crate::DetectConfig::require_complete_board).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_complete: Option<bool>,
     /// Estimated self-undistort division model, if self-undistort was run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
@@ -221,6 +231,7 @@ impl DetectionResult {
             image_size: [width, height],
             homography: None,
             board_frame: None,
+            board_complete: None,
             self_undistort: None,
         }
     }
@@ -275,6 +286,8 @@ impl PipelineResult {
             image_size: self.image_size,
             homography: self.homography,
             board_frame: self.board_frame,
+            // Set by `Detector`'s finish step, which knows the target cell count.
+            board_complete: None,
             self_undistort: self.self_undistort,
         };
         let diag = DetectionDiagnostics {

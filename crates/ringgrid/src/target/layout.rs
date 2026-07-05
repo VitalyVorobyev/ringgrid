@@ -148,6 +148,25 @@ impl TargetLayout {
         })
     }
 
+    /// Construct and validate a target layout with automatically-placed origin
+    /// fiducials.
+    ///
+    /// Convenience over [`new`](Self::new): computes an asymmetric dot triad in
+    /// the lattice gaps near the origin corner via [`OriginFiducials::auto`],
+    /// then constructs. Works for any lattice/coding; the `dots: auto` config
+    /// option routes here. (Origin dots are only meaningful for plain targets —
+    /// coded markers already encode identity — but this method does not forbid
+    /// coded targets: the dots are simply inert during coded detection.)
+    pub fn with_auto_fiducials(
+        name: impl Into<String>,
+        lattice: LatticeGeometry,
+        marker: RingGeometry,
+        coding: MarkerCoding,
+    ) -> Result<Self, TargetValidationError> {
+        let fiducials = OriginFiducials::auto(&lattice, marker, &coding)?;
+        Self::new(name, lattice, marker, coding, Some(fiducials))
+    }
+
     /// Construct a 16-sector coded hex target from direct geometry arguments.
     ///
     /// Uses a deterministic geometry-derived name (the same scheme legacy v4
@@ -211,8 +230,15 @@ impl TargetLayout {
     }
 
     /// A 24×24 plain rect target: a square lattice of plain rings at 14 mm
-    /// pitch (outer Ø11.2 / inner Ø5.6 mm) with three Ø2.8 mm origin dots in
-    /// the cell gaps near the board center.
+    /// pitch (outer Ø11.2 / inner Ø5.6 mm) with an origin-dot triad in the cell
+    /// gaps near the board center.
+    ///
+    /// The dot geometry is **frozen**: physical boards printed from this named
+    /// preset in earlier releases depend on these exact positions to anchor.
+    /// For a fresh target with automatically placed dots, use
+    /// [`with_auto_fiducials`](Self::with_auto_fiducials) or the recipe
+    /// `dots: auto` option instead — the auto placement is not required to match
+    /// this preset's historical triad.
     pub fn rect_24x24() -> Self {
         Self::new(
             "rect_24x24",

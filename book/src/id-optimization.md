@@ -10,6 +10,14 @@ The **ID assignment optimizer** reassigns codebook IDs to board positions so
 that hex-adjacent markers have maximally dissimilar codewords, measured by
 cyclic Hamming distance.
 
+> **Developing ringgrid.** This is a maintainer workflow, not part of the
+> published `ringgrid` CLI. It requires a repository checkout, the in-repo Python
+> tooling (`.venv`, `tools/optimize_id_assignment.py`), and — where a Rust CLI is
+> referenced below — the in-repo dev binary
+> (`cargo run -p ringgrid-cli --bin ringgrid-dev -- …`). See
+> [Development](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/development.md). The pre-optimized reference boards it
+> produces ship in the repository and can be consumed by any detection interface.
+
 ## Why it matters
 
 The baseline codebook has a minimum cyclic Hamming distance of 2 across all

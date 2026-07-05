@@ -1,0 +1,24 @@
+# Plain hex target with origin dots.
+#
+# Uncoded rings carry no identity, so an asymmetric origin-dot triad
+# (auto-placed in the center gaps) resolves the board origin and orientation.
+# Detection reports absolute board-frame coordinates. Combination:
+# hex + plain + dots.
+name = "hex_plain_dots"
+coding = "plain"
+fiducials = "auto"      # "none" | "auto" | an explicit { dot_radius_mm, dots_mm } table
+
+[lattice]
+kind = "hex"
+rows = 15
+long_row_cols = 14
+pitch_mm = 8.0
+
+[marker]
+outer_radius_mm = 4.8
+inner_radius_mm = 3.2
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

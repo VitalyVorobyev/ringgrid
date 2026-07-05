@@ -1,0 +1,24 @@
+# Plain hex target without origin dots.
+#
+# No identity and no anchor: the board is labeled only up to its lattice
+# symmetry, so detection stays in a relative canonical frame. Success requires
+# the COMPLETE board to be detected (pass --strict, or gate on
+# result.board_complete). Combination: hex + plain + no dots.
+name = "hex_plain_nodots"
+coding = "plain"
+fiducials = "none"
+
+[lattice]
+kind = "hex"
+rows = 15
+long_row_cols = 14
+pitch_mm = 8.0
+
+[marker]
+outer_radius_mm = 4.8
+inner_radius_mm = 3.2
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

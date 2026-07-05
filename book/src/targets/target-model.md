@@ -151,13 +151,8 @@ a `TargetLayout` (or anything convertible into one) can be passed directly.
   fails to break every rotational symmetry of the lattice
   (see [Origin Fiducials](origin-fiducials.md)).
 
-## Relationship to `BoardLayout` (removed in 0.9)
-
-`BoardLayout`, `BoardMarker`, and their error aliases were the flat v4 hex
-facade over this target module. They were deprecated in 0.8 and **removed in
-0.9** — use `TargetLayout`. Legacy v4 `board_spec.json` files still load
-unchanged: `TargetLayout::from_json_*` auto-migrates the v4 schema to v5. See
-the [Migration Guide](../migration-0.8.md).
+Legacy v4 `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
+auto-migrates the v4 schema to the canonical v5 spec.
 
 **Source:** `crates/ringgrid/src/target/` (`layout.rs`, `lattice.rs`, `ring.rs`,
 `fiducials.rs`)

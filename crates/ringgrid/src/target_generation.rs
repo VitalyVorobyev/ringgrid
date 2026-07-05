@@ -1212,7 +1212,8 @@ mod tests {
         assert_eq!(probe(4.0, 0.0), 0, "annulus interior is black");
         assert_eq!(probe(6.5, 0.0), 255, "outside the ring is white");
 
-        // Fiducial dot at (161, 161) board mm -> page (166.6, 166.6).
+        // Auto-placed origin dot triad clusters at the board center: one dot
+        // sits in the central gap at (161, 161) board mm -> page (166.6, 166.6).
         let dot = png.get_pixel(167, 167).0[0];
         assert_eq!(dot, 0, "fiducial dot is black");
     }

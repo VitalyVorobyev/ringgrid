@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-05
+
+Ships a published, user-facing `ringgrid` CLI and completes the target matrix:
+all six valid `{hex, rect}` × `{coded, plain}` × `{origin dots, no dots}`
+combinations are now generatable, detectable, and exercised end-to-end
+(including in the interactive WASM demo). Library changes are additive.
+
 ### Added
 
 - **Published `ringgrid` CLI** (built with `--features cli`): `gen`, `detect`,

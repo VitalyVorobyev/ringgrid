@@ -30,12 +30,12 @@ else()
         OUT_SOURCE_PATH SOURCE_PATH
         REPO VitalyVorobyev/ringgrid
         REF "v${VERSION}"
-        # RELEASE STEP: after tagging v${VERSION}, replace the `0` placeholder
-        # with the real tarball SHA512 (run `vcpkg install ringgrid
-        # --overlay-ports=...` once and copy the "Actual hash" it prints, or
-        # `vcpkg hash <downloaded.tar.gz>`). Until then, mode 2 above fails by
-        # design — use RINGGRID_SOURCE_DIR (mode 1) for a source install.
-        SHA512 0
+        # Tarball SHA512 for the tagged release. RELEASE STEP: regenerate on
+        # every version bump — `vcpkg install ringgrid --overlay-ports=...`
+        # prints the "Actual hash", or `shasum -a 512` the
+        # github.com/VitalyVorobyev/ringgrid/archive/v<version>.tar.gz tarball.
+        # (Set to 0 to intentionally break mode 2 and print the expected hash.)
+        SHA512 a9ae42faa46eb04419caff59f8c3c50bf8aed0acbe1e5a7b18daa09a13a36640a81de0786b7c0024113fd11eb5628e42211bfe592eb15ecd36ce1972c50987ad
         HEAD_REF main
     )
 endif()

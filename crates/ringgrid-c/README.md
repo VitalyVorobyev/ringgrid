@@ -70,10 +70,10 @@ target_link_libraries(app PRIVATE ringgrid::ringgrid)
 
 Building the port requires a Rust toolchain (`cargo`) on `PATH`. Without
 `RINGGRID_SOURCE_DIR`, the port instead fetches the released source tarball for
-tag `v<version>` from GitHub — that path activates once a release is tagged and
-its real `SHA512` is committed into `vcpkg/portfile.cmake` (a placeholder until
-then). The overlay port is verified in CI (which sets `RINGGRID_SOURCE_DIR`);
-upstream vcpkg-registry submission is tracked separately.
+tag `v<version>` from GitHub, verified against the `SHA512` committed in
+`vcpkg/portfile.cmake` (kept current for the released version; regenerated on
+each version bump). The overlay port is verified in CI (which sets
+`RINGGRID_SOURCE_DIR`); upstream vcpkg-registry submission is tracked separately.
 
 ### CMake, from source
 

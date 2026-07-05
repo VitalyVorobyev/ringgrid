@@ -272,3 +272,82 @@ jobs:
         run: |
           "${VCPKG_INSTALLATION_ROOT}/vcpkg" install ringgrid \
             --overlay-ports="${GITHUB_WORKSPACE}/crates/ringgrid-c/vcpkg"
+
+  capi-windows:
+    name: C/C++ ABI (windows, shared + vcpkg)
+    runs-on: windows-latest
+    needs: rust-quality
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/ringgrid-c
+
+      - name: Test (unit + marshalling parity)
+        run: cargo test --manifest-path crates/ringgrid-c/Cargo.toml --release
+
+      # Build + install the SHARED library and assert the Windows layout the C++
+      # package is documented to produce: the DLL is a runtime artifact in bin/,
+      # and only the import library belongs in lib/. Regression guard for the fix
+      # that stopped duplicating ringgrid_c.dll into lib/.
+      - name: CMake shared package + install
+        shell: pwsh
+        run: |
+          cmake -S crates/ringgrid-c -B "$env:RUNNER_TEMP/rgc-build" `
+                -DRINGGRID_BUILD_SHARED=ON `
+                -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP/rgc-prefix" `
+                -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_BINDIR=bin
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+          cmake --build "$env:RUNNER_TEMP/rgc-build" --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+          cmake --install "$env:RUNNER_TEMP/rgc-build" --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake install failed" }
+
+      - name: Assert Windows shared install layout
+        shell: pwsh
+        run: |
+          $prefix = "$env:RUNNER_TEMP/rgc-prefix"
+          Write-Host "--- installed tree ---"
+          Get-ChildItem -Recurse -File $prefix | ForEach-Object { $_.FullName }
+          if (-not (Test-Path "$prefix/bin/ringgrid_c.dll"))     { throw "FAIL: ringgrid_c.dll missing from bin/" }
+          if (-not (Test-Path "$prefix/lib/ringgrid_c.dll.lib")) { throw "FAIL: import library missing from lib/" }
+          if (Test-Path "$prefix/lib/ringgrid_c.dll")            { throw "FAIL: DLL must not be duplicated in lib/" }
+          Write-Host "OK: DLL only in bin/, import library only in lib/"
+
+      # find_package must resolve the SHARED imported target (IMPORTED_LOCATION
+      # -> bin/dll, IMPORTED_IMPLIB -> lib/dll.lib) and both consumers must run
+      # with the DLL discovered at runtime from bin/.
+      - name: Build + run find_package consumer (shared)
+        shell: pwsh
+        run: |
+          $prefix = "$env:RUNNER_TEMP/rgc-prefix"
+          cmake -S crates/ringgrid-c/examples/consumer -B "$env:RUNNER_TEMP/rgc-consumer" `
+                -Dringgrid_DIR="$prefix/lib/cmake/ringgrid"
+          if ($LASTEXITCODE -ne 0) { throw "consumer configure failed" }
+          cmake --build "$env:RUNNER_TEMP/rgc-consumer" --config Release
+          if ($LASTEXITCODE -ne 0) { throw "consumer build failed" }
+          $env:PATH = "$prefix/bin;$env:PATH"
+          & "$env:RUNNER_TEMP/rgc-consumer/Release/consumer_c.exe"
+          if ($LASTEXITCODE -ne 0) { throw "consumer_c failed" }
+          & "$env:RUNNER_TEMP/rgc-consumer/Release/consumer_cpp.exe"
+          if ($LASTEXITCODE -ne 0) { throw "consumer_cpp failed" }
+
+      # End-to-end vcpkg overlay install with the dynamic Windows triplet,
+      # building from the local checkout (no published tag / SHA512 needed).
+      - name: vcpkg overlay install (x64-windows, local source)
+        shell: pwsh
+        env:
+          RINGGRID_SOURCE_DIR: ${{ github.workspace }}
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install ringgrid:x64-windows `
+            --overlay-ports="$env:GITHUB_WORKSPACE/crates/ringgrid-c/vcpkg"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }

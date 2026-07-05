@@ -17,6 +17,10 @@ include = ["src/**", "examples/**", "README.md", "LICENSE-*", "Cargo.toml"]
 [features]
 default = ["std"]
 std = ["dep:png"]
+# Build the `ringgrid` command-line tool (target generation + detection).
+# Off by default so library users get a clean dependency graph; enable with
+# `cargo install ringgrid --features cli`.
+cli = ["std", "dep:clap", "dep:toml", "dep:tracing-subscriber"]
 
 [dependencies]
 nalgebra = { workspace = true }
@@ -29,6 +33,15 @@ rand = { workspace = true }
 png = { workspace = true, optional = true }
 projective-grid = { workspace = true }
 radsym = { workspace = true }
+clap = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[[bin]]
+name = "ringgrid"
+path = "src/bin/ringgrid.rs"
+required-features = ["cli"]
+doc = false
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true }

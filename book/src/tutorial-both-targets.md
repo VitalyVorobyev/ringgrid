@@ -1,7 +1,7 @@
 # Tutorial: Both Targets, End to End
 
 This tutorial walks the full arc — **generate → detect → interpret** — for the
-two target families ringgrid supports:
+two headline targets ringgrid supports:
 
 - a **coded hex** target (16-sector rings, decoded to globally unique IDs), and
 - a **plain rect** target (uncoded rings on a rectangular lattice, labeled by
@@ -10,13 +10,19 @@ two target families ringgrid supports:
 Each generation step writes the same four artifacts: the canonical
 `target_spec.json`, a printable `.svg` and `.png`, and a `.dxf` (2D CAD in
 millimeters) for laser/CNC fabrication. See [Target
-Generation](target-generation.md) for every flag and the [Compositional Target
-Model](targets/target-model.md) for the geometry.
+Generation](target-generation.md) for every recipe field and the [Compositional
+Target Model](targets/target-model.md) for the geometry.
 
-Build the CLI once:
+These two targets are `hex_coded` and `rect_plain_dots` — two of the six
+built-in example recipes. All six combinations of `{hex, rect}` × `{coded, plain}`
+× `{origin dots, no dots}` are available (see the
+[target matrix](target-generation.md#the-target-matrix)); origin-dot anchoring
+now works for hex plain targets too.
+
+Install the CLI once:
 
 ```bash
-cargo build -p ringgrid-cli
+cargo install ringgrid --features cli
 ```
 
 ---
@@ -25,15 +31,11 @@ cargo build -p ringgrid-cli
 
 ### 1. Generate
 
-Rust CLI:
+Grab the built-in recipe and render it:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target hex \
-  --out_dir tools/out/hex \
-  --pitch_mm 8 --rows 15 --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 \
-  --marker_ring_width_mm 1.152 \
-  --dpi 600 --margin_mm 5
+ringgrid example --name hex_coded --out hex_coded.toml
+ringgrid gen hex_coded.toml --out ./out/hex
 ```
 
 The equivalent Rust and Python (both write `target_spec.json` + `.svg`/`.png`/`.dxf`):
@@ -41,27 +43,27 @@ The equivalent Rust and Python (both write `target_spec.json` + `.svg`/`.png`/`.
 ```rust
 use ringgrid::TargetLayout;
 let hex = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152)?;
-hex.write_json_file("tools/out/hex/target_spec.json".as_ref())?;
-hex.write_target_svg("tools/out/hex/target_print.svg".as_ref(), &Default::default())?;
-hex.write_target_png("tools/out/hex/target_print.png".as_ref(), &Default::default())?;
-hex.write_target_dxf("tools/out/hex/target_print.dxf".as_ref())?;
+hex.write_json_file("./out/hex/target_spec.json".as_ref())?;
+hex.write_target_svg("./out/hex/target_print.svg".as_ref(), &Default::default())?;
+hex.write_target_png("./out/hex/target_print.png".as_ref(), &Default::default())?;
+hex.write_target_dxf("./out/hex/target_print.dxf".as_ref())?;
 ```
 
 ```python
 import ringgrid
 hex = ringgrid.TargetLayout.coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152)
-hex.write_svg("tools/out/hex/target_print.svg")
-hex.write_png("tools/out/hex/target_print.png", dpi=600.0)
-hex.write_dxf("tools/out/hex/target_print.dxf")
+hex.write_svg("./out/hex/target_print.svg")
+hex.write_png("./out/hex/target_print.png", dpi=600.0)
+hex.write_dxf("./out/hex/target_print.dxf")
 ```
 
 ### 2. Detect
 
 ```bash
-cargo run -- detect \
-  --target tools/out/hex/target_spec.json \
+ringgrid detect \
+  --target ./out/hex/target_spec.json \
   --image path/to/hex_photo.png \
-  --out tools/out/hex/detect.json
+  --out ./out/hex/detect.json
 ```
 
 ### 3. Interpret
@@ -89,22 +91,22 @@ Coded markers decode to a unique `id`; IDs anchor an absolute board frame:
 
 ### 1. Generate
 
-The bundled `rect24x24` preset is a 24×24 plain rect target with three origin
-dots:
+The built-in `rect_plain_dots` recipe is a 24×24 plain rect target with an
+auto-placed origin-dot triad (the same target as the `rect_24x24` preset):
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target preset rect24x24 --out_dir tools/out/rect
+ringgrid example --name rect_plain_dots --out rect_plain_dots.toml
+ringgrid gen rect_plain_dots.toml --out ./out/rect
 ```
 
-Or build a custom plain rect with the `rect` subcommand (add `--dot_mm x,y`
-`--dot_radius_mm r` for origin dots), or in code:
+The equivalent in Python via the bundled preset:
 
 ```python
 import ringgrid
 rect = ringgrid.TargetLayout.rect_24x24()
-rect.write_svg("tools/out/rect/target_print.svg")
-rect.write_png("tools/out/rect/target_print.png")
-rect.write_dxf("tools/out/rect/target_print.dxf")
+rect.write_svg("./out/rect/target_print.svg")
+rect.write_png("./out/rect/target_print.png")
+rect.write_dxf("./out/rect/target_print.dxf")
 ```
 
 ### 2. Detect
@@ -113,10 +115,10 @@ Detection is the same command — the target JSON tells the detector which path 
 run:
 
 ```bash
-cargo run -- detect \
-  --target tools/out/rect/target_spec.json \
+ringgrid detect \
+  --target ./out/rect/target_spec.json \
   --image path/to/rect_photo.png \
-  --out tools/out/rect/detect.json
+  --out ./out/rect/detect.json
 ```
 
 ### 3. Interpret
@@ -140,8 +142,9 @@ Detection](detection-pipeline/plain-target.md)):
   is in board cells and `board_xy_mm` is populated.
 - **`board_frame: relative_canonical`** — no origin was resolved (target has no
   dots, or they were not visible). `grid_coord` is in a canonical *relative*
-  frame and every `board_xy_mm` is `null`. A wrong millimeter position is worse
-  than none.
+  frame and every `board_xy_mm` is `null`. For a plain target without dots
+  (`rect_plain_nodots`), pass `ringgrid detect --strict` to require the complete
+  board. A wrong millimeter position is worse than none.
 
 ---
 
@@ -149,7 +152,8 @@ Detection](detection-pipeline/plain-target.md)):
 
 | Step | Coded hex | Plain rect |
 |---|---|---|
-| Generate | `gen-target hex …` | `gen-target preset rect24x24` |
+| Recipe | `hex_coded` | `rect_plain_dots` |
+| Generate | `ringgrid gen hex_coded.toml …` | `ringgrid gen rect_plain_dots.toml …` |
 | Marker key | `id` (0–892) | `grid_coord` |
 | Frame | always `absolute` | `absolute` (dots resolved) or `relative_canonical` |
 | Artifacts | `.json` `.svg` `.png` `.dxf` | `.json` `.svg` `.png` `.dxf` |

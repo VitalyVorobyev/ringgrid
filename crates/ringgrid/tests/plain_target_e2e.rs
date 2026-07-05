@@ -1,14 +1,24 @@
-//! End-to-end detection tests for the target combinations unlocked by the
-//! pipeline back-half generalization: plain rect (with and without origin
-//! dots), plain hex, and coded rect. Images come from the crate's own PNG
-//! target renderer, so these tests exercise generation and detection against
-//! each other.
+//! End-to-end detection tests spanning the full valid target matrix:
+//! {hex, rect} × {coded, plain} × {origin dots, no dots}, excluding the
+//! redundant coded-with-dots pair. Images come from the crate's own PNG target
+//! renderer, so these tests exercise generation and detection against each
+//! other.
 
 use image::GrayImage;
 use ringgrid::{
-    BoardFrame, CodedRingSpec, DetectionResult, Detector, HexGeometry, LatticeGeometry,
-    MarkerCoding, OriginFiducials, PngTargetOptions, RectGeometry, RingGeometry, TargetLayout,
+    BoardFrame, CodedRingSpec, DetectConfig, DetectError, DetectionResult, Detector, HexGeometry,
+    LatticeGeometry, MarkerCoding, OriginFiducials, PngTargetOptions, RectGeometry, RingGeometry,
+    TargetLayout,
 };
+
+/// Count markers assigned a lattice coordinate.
+fn labeled_count(result: &DetectionResult) -> usize {
+    result
+        .detected_markers
+        .iter()
+        .filter(|m| m.grid_coord.is_some())
+        .count()
+}
 
 /// Compact plain rect target: 8×8 rings at 14 mm pitch with the
 /// L-shaped origin-dot triple near the center.
@@ -31,6 +41,24 @@ fn plain_rect_with_dots() -> TargetLayout {
         }),
     )
     .expect("valid plain rect target")
+}
+
+/// Compact plain hex target with an auto-placed origin-dot triad.
+fn plain_hex_with_dots() -> TargetLayout {
+    TargetLayout::with_auto_fiducials(
+        "e2e_hex_dots",
+        LatticeGeometry::Hex(HexGeometry {
+            rows: 7,
+            long_row_cols: 7,
+            pitch_mm: 8.0,
+        }),
+        RingGeometry {
+            outer_radius_mm: 4.8,
+            inner_radius_mm: 2.4,
+        },
+        MarkerCoding::Plain,
+    )
+    .expect("valid plain hex target with auto dots")
 }
 
 fn plain_rect_no_dots() -> TargetLayout {
@@ -194,6 +222,44 @@ fn plain_rect_without_dots_stays_in_relative_frame() {
 }
 
 #[test]
+fn plain_hex_with_dots_detects_anchored() {
+    // First end-to-end exercise of hex origin-dot anchoring. Auto dots are
+    // ~0.8 mm (0.1×pitch), so render a touch finer than the no-dots hex test
+    // to keep the dots resolvable.
+    let target = plain_hex_with_dots();
+    let dpi = 110.0; // ≈4.3 px/mm → dot radius ≈ 3.5 px, ring outer Ø ≈ 42 px
+    let img = render(&target, dpi);
+    let detector =
+        Detector::with_marker_diameter_hint(target.clone(), diameter_hint_px(&target, dpi));
+
+    let result = detector.detect(&img).expect("detect");
+
+    assert_eq!(
+        result.board_frame,
+        Some(BoardFrame::Absolute),
+        "hex origin dots must anchor the board frame"
+    );
+    assert!(
+        result
+            .detected_markers
+            .iter()
+            .filter(|m| m.grid_coord.is_some())
+            .count()
+            >= 27,
+        "expected a solid labeled patch, got {}",
+        result.detected_markers.len()
+    );
+    assert!(
+        result
+            .detected_markers
+            .iter()
+            .all(|m| m.id.is_none() && m.grid_coord.is_some() && m.board_xy_mm.is_some()),
+        "anchored plain markers carry grid_coord + board_xy_mm, never ids"
+    );
+    assert_h_consistency(&result, 1.5);
+}
+
+#[test]
 fn plain_hex_detects_in_relative_frame() {
     let target = TargetLayout::new(
         "e2e_hex_plain",
@@ -285,4 +351,84 @@ fn coded_rect_detects_absolute_ids() {
             "decoded id must match its lattice cell"
         );
     }
+}
+
+#[test]
+fn coded_hex_detects_absolute_ids() {
+    // Matrix combo: hex + coded + no dots (the classic board, rendered small).
+    let target = TargetLayout::coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).expect("valid coded hex");
+    let dpi = 130.0; // decode needs pixels: ring outer Ø ≈ 49 px
+    let img = render(&target, dpi);
+    let detector =
+        Detector::with_marker_diameter_hint(target.clone(), diameter_hint_px(&target, dpi));
+
+    let result = detector.detect(&img).expect("detect");
+
+    assert_eq!(result.board_frame, Some(BoardFrame::Absolute));
+    let n_decoded = result
+        .detected_markers
+        .iter()
+        .filter(|m| m.id.is_some())
+        .count();
+    assert!(
+        n_decoded >= (target.n_cells() * 4) / 5,
+        "expected most of {} hex cells decoded, got {n_decoded}",
+        target.n_cells()
+    );
+    assert_h_consistency(&result, 1.0);
+}
+
+#[test]
+fn plain_no_dots_reports_board_complete_consistently() {
+    // The board_complete signal must be populated for a labeled plain run and
+    // equal `labeled >= n_cells` — its definition.
+    let target = plain_rect_no_dots();
+    let dpi = 56.0;
+    let img = render(&target, dpi);
+    let detector =
+        Detector::with_marker_diameter_hint(target.clone(), diameter_hint_px(&target, dpi));
+
+    let result = detector.detect(&img).expect("detect");
+
+    let complete = labeled_count(&result) >= target.n_cells();
+    assert_eq!(
+        result.board_complete,
+        Some(complete),
+        "board_complete must reflect labeled({}) >= n_cells({})",
+        labeled_count(&result),
+        target.n_cells()
+    );
+}
+
+#[test]
+fn require_complete_board_errors_on_partial_board() {
+    // Crop the render so the rightmost markers fall off-image: those cells can
+    // never be labeled or completed, so the board is genuinely incomplete and
+    // the strict gate must reject it.
+    let target = plain_rect_no_dots();
+    let dpi = 56.0;
+    let full = render(&target, dpi);
+    let cropped =
+        image::imageops::crop_imm(&full, 0, 0, full.width() * 3 / 4, full.height()).to_image();
+
+    let hint = diameter_hint_px(&target, dpi);
+    let mut config = DetectConfig::from_target_and_marker_diameter(target.clone(), hint);
+    config.require_complete_board = true;
+    let strict = Detector::with_config(config);
+
+    match strict.detect(&cropped) {
+        Err(DetectError::IncompleteBoard { found, expected }) => {
+            assert!(
+                found < expected,
+                "found {found} should be < expected {expected}"
+            );
+            assert_eq!(expected, target.n_cells());
+        }
+        other => panic!("expected IncompleteBoard error, got {other:?}"),
+    }
+
+    // Without the gate, the same detection succeeds with board_complete = false.
+    let lenient = Detector::with_marker_diameter_hint(target, hint);
+    let result = lenient.detect(&cropped).expect("lenient detect");
+    assert_eq!(result.board_complete, Some(false));
 }

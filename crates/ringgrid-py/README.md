@@ -71,7 +71,7 @@ Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v5
 - Python script from the repo: `tools/gen_target.py` with the same arguments
 - Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf`
 
-Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates the v4 schema to v5. (The deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html).)
+Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates the v4 schema to v5. (See [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).)
 
 Load this target in Python:
 

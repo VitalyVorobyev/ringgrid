@@ -198,6 +198,17 @@ pub struct DetectConfig {
     pub circle_refinement: CircleRefinementMethod,
     /// Self-undistort estimation controls.
     pub self_undistort: SelfUndistortConfig,
+    /// Require the full board for detection success.
+    ///
+    /// When `true`, [`Detector::detect`](crate::Detector::detect) returns
+    /// [`DetectError::IncompleteBoard`](crate::DetectError::IncompleteBoard) if
+    /// grid assignment ran but not every target cell was labeled. Default
+    /// `false`: an incomplete board is reported non-fatally via
+    /// [`DetectionResult::board_complete`](crate::DetectionResult::board_complete),
+    /// with the partial marker set still returned. Most meaningful for plain
+    /// (uncoded) targets without origin dots, whose only success criterion is
+    /// full-board detection.
+    pub require_complete_board: bool,
     /// Advanced per-stage tuning parameters.
     pub advanced: AdvancedDetectConfig,
 }
@@ -355,6 +366,7 @@ impl Default for DetectConfig {
             marker_scale: MarkerScalePrior::default(),
             circle_refinement: CircleRefinementMethod::default(),
             self_undistort: SelfUndistortConfig::default(),
+            require_complete_board: false,
             advanced: AdvancedDetectConfig::default(),
         };
         apply_target_geometry_priors(&mut cfg);

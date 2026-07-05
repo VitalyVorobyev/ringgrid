@@ -1,0 +1,24 @@
+# Plain rect target without origin dots.
+#
+# No identity and no anchor: labeled only up to the lattice symmetry, so
+# detection stays in a relative canonical frame. Success requires the COMPLETE
+# board to be detected (pass --strict, or gate on result.board_complete).
+# Combination: rect + plain + no dots.
+name = "rect_plain_nodots"
+coding = "plain"
+fiducials = "none"
+
+[lattice]
+kind = "rect"
+rows = 24
+cols = 24
+pitch_mm = 14.0
+
+[marker]
+outer_radius_mm = 5.6
+inner_radius_mm = 2.8
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

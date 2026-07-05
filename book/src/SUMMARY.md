@@ -3,7 +3,6 @@
 [Introduction](introduction.md)
 [Fast Start](fast-start.md)
 [Tutorial: Both Targets End to End](tutorial-both-targets.md)
-[Migration: 0.7 → 0.8](migration-0.8.md)
 
 # Targets
 

@@ -54,6 +54,9 @@
 #![warn(missing_docs)]
 
 mod api;
+#[cfg(feature = "cli")]
+#[doc(hidden)]
+pub mod cli;
 mod conic;
 mod detector;
 mod homography;

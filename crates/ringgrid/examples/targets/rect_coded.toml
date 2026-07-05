@@ -1,0 +1,24 @@
+# Coded rect target.
+#
+# 16-sector coded rings on a square lattice. The coded path is lattice-agnostic
+# (RANSAC homography + geometric verification), so IDs anchor the board without
+# origin dots. Combination: rect + coded + no dots.
+name = "rect_coded"
+coding = "coded"
+fiducials = "none"
+
+[lattice]
+kind = "rect"
+rows = 20
+cols = 20
+pitch_mm = 14.0
+
+[marker]
+outer_radius_mm = 4.8
+inner_radius_mm = 3.2
+ring_width_mm = 1.152
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

@@ -1,0 +1,24 @@
+# Coded hex target — the classic ringgrid board.
+#
+# 16-sector coded rings on a hex lattice decode to stable IDs, so no origin
+# dots are needed: identity and orientation come from the decoded codewords.
+# Combination: hex + coded + no dots.
+name = "hex_coded"
+coding = "coded"        # coded | plain
+fiducials = "none"      # coded markers must not use origin dots
+
+[lattice]
+kind = "hex"
+rows = 15
+long_row_cols = 14
+pitch_mm = 8.0
+
+[marker]
+outer_radius_mm = 4.8
+inner_radius_mm = 3.2
+ring_width_mm = 1.152   # required for coded markers
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

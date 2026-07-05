@@ -146,6 +146,14 @@ pub enum TargetValidationError {
         /// The rotation angle (degrees) under which the dots are invariant.
         angle_deg: f32,
     },
+    /// Automatic fiducial placement could not fit a dot in the lattice gaps:
+    /// the markers are too large relative to the pitch to leave a usable gap.
+    AutoFiducialsDoNotFit {
+        /// Lattice pitch in mm.
+        pitch_mm: f32,
+        /// Largest dot radius (mm) that would clear the gaps; `<= 0` means none.
+        max_dot_radius_mm: f32,
+    },
 }
 
 impl std::fmt::Display for TargetValidationError {
@@ -270,6 +278,13 @@ impl std::fmt::Display for TargetValidationError {
             Self::FiducialsRotationallySymmetric { angle_deg } => write!(
                 f,
                 "fiducial dots are invariant under a {angle_deg:.0}° lattice rotation and cannot resolve orientation"
+            ),
+            Self::AutoFiducialsDoNotFit {
+                pitch_mm,
+                max_dot_radius_mm,
+            } => write!(
+                f,
+                "automatic fiducial placement cannot fit a dot in the lattice gaps (pitch={pitch_mm:.4}mm, largest fitting dot radius={max_dot_radius_mm:.4}mm); markers are too large relative to pitch"
             ),
         }
     }

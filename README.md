@@ -6,17 +6,18 @@
 
 # ringgrid
 
-`ringgrid` is a pure-Rust detector for dense ring calibration targets on hex or rectangular lattices. It detects markers with subpixel precision, decodes stable baseline IDs for 16-sector coded rings from the shipped 893-codeword profile, estimates homography, and can generate printable target artifacts without OpenCV bindings.
+`ringgrid` is a pure-Rust detector for dense ring calibration targets on hex or
+rectangular lattices. It fits marker ellipses with subpixel precision, optionally
+decodes 16-sector ID codes, estimates the board-to-image homography, and returns
+a small structured result — no OpenCV bindings, all image processing in Rust.
 
 ## At a Glance
 
-- Subpixel ring-marker detection using direct ellipse fitting and projective center correction
-- Stable shipped `base` profile (`893` IDs, minimum cyclic Hamming distance `2`) plus opt-in `extended`
-- Rust library, CLI workflow, and Python bindings in one workspace
-- Compositional `TargetLayout`: hex or rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials (legacy v4 `board_spec.json` files still load via auto-migration; the deprecated `BoardLayout` type was removed in 0.9 — see the [migration guide](https://vitalyvorobyev.github.io/ringgrid/book/migration-0.8.html))
-- Canonical `target_spec.json` (schema v5) plus printable SVG/PNG target generation
-
-Pipeline at a glance: proposals -> local fit/decode -> dedup -> projective center -> `id_correction` -> optional global filter -> optional completion -> final homography refit.
+- Subpixel ring-marker detection via direct ellipse fitting and projective center correction
+- Two ways to identify markers: **coded** 16-sector rings (decode to stable IDs) or **plain** rings anchored by origin dots or a complete-board layout
+- Hex or rectangular lattices, from one compositional `TargetLayout`
+- Optional camera-distortion handling and self-undistort estimation
+- One library, three surfaces: a Rust crate, a Python package, and a CLI
 
 ## Visual Overview
 
@@ -30,163 +31,156 @@ shows the printable target and a detection overlay (green = fitted ellipses).
 | ![Coded hex target print](docs/assets/target_print.png) | ![Plain rect target print](docs/assets/rect_target_print.png) |
 | ![Coded hex detection overlay](docs/assets/det_overlay_0002.png) | ![Plain rect detection overlay](docs/assets/rect_det_overlay.png) |
 
-## Quick Links
+## Install
 
-| I want to... | Start here |
+```bash
+cargo add ringgrid                       # Rust library
+cargo install ringgrid --features cli    # `ringgrid` CLI (target gen + detection)
+pip install ringgrid                     # Python package
+```
+
+The library has a clean dependency graph by default; the CLI is behind the
+`cli` feature so it never bloats library builds. There is also an in-browser
+[WASM demo](https://vitalyvorobyev.github.io/ringgrid/demo/) — no install needed.
+
+## Quick Start (Rust)
+
+Point a `Detector` at a target and hand it a grayscale image:
+
+```rust,no_run
+use ringgrid::{Detector, TargetLayout};
+use std::path::Path;
+
+// Load a target spec (produced by `ringgrid gen`, see below), or build one
+// in code with TargetLayout::coded_hex(...) / ::rect_24x24() / ::new(...).
+let target = TargetLayout::from_json_file(Path::new("target_spec.json")).unwrap();
+let image = image::open("photo.png").unwrap().to_luma8();
+
+let detector = Detector::new(target);
+let result = detector.detect(&image).unwrap();
+
+for m in &result.detected_markers {
+    match m.id {
+        Some(id) => println!("marker {id} at ({:.1}, {:.1})", m.center[0], m.center[1]),
+        None => println!("cell {:?} at ({:.1}, {:.1})", m.grid_coord, m.center[0], m.center[1]),
+    }
+}
+```
+
+When the marker diameter is roughly known, `Detector::with_marker_diameter_hint(target, px)`
+skips scale probing. For scenes with a wide marker-size range, use
+`detector.detect_adaptive(&image)`.
+
+### Detection config
+
+`DetectConfig` holds the durable choices; construct it from a target and tune
+fields as needed:
+
+```rust,no_run
+# use ringgrid::{DetectConfig, Detector, MarkerScalePrior, TargetLayout};
+let mut config = DetectConfig::from_target(TargetLayout::rect_24x24());
+config.marker_scale = MarkerScalePrior::from_nominal_diameter_px(32.0); // scale prior
+config.require_complete_board = true;   // plain targets: fail unless every cell is found
+config.self_undistort.enable = true;    // estimate & correct lens distortion
+let detector = Detector::with_config(config);
+```
+
+The most-used knobs are `marker_scale`, `circle_refinement`, `self_undistort`,
+and `require_complete_board`; per-stage tuning lives under `config.advanced`.
+See the [Configuration guide](https://vitalyvorobyev.github.io/ringgrid/book/configuration/detect-config.html).
+
+### Detection result
+
+`detect` returns a slim [`DetectionResult`]:
+
+| Field | Meaning |
 |---|---|
-| Print a target and run first detection from this repo | [Quick Start](#quick-start-from-the-repo) |
-| Try detection in the browser, no install | [Live Demo](https://vitalyvorobyev.github.io/ringgrid/demo/) |
-| Read the full user guide | [mdBook User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) |
-| Use the CLI | [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html) |
-| Understand `detect.json` | [Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) |
-| Use the Rust crate | [crates/ringgrid/README.md](crates/ringgrid/README.md) |
-| Use the Python package | [crates/ringgrid-py/README.md](crates/ringgrid-py/README.md) |
-| Work on the repo itself | [docs/development.md](docs/development.md) |
-| Inspect scoring and benchmark context | [docs/performance.md](docs/performance.md) |
+| `detected_markers` | each with `center` (image px), `grid_coord`, optional decoded `id`, optional `board_xy_mm`, and inner/outer `ellipse_*` |
+| `homography` | board-to-image 3×3, when enough markers anchor it |
+| `board_frame` | `Absolute` (origin resolved via codes or dots) or `RelativeCanonical` (labeled up to lattice symmetry) |
+| `board_complete` | `Some(true/false)` when a board was labeled — the success signal for plain, no-dots targets |
+| `image_size`, `center_frame`, `homography_frame`, `self_undistort` | frame metadata + optional distortion model |
 
-## Quick Start From the Repo
+Per-marker fit/decode metrics and RANSAC stats are an opt-in channel — call
+`detector.detect_with_diagnostics(&image)`. The result serializes to JSON via
+`serde`; the exact shape is in the [Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
 
-### 1. Generate `target_spec.json` plus printable SVG/PNG/DXF
+## Generate a target
 
-Choose one of the three target-generation paths. `gen-target` is a subcommand
-family (`hex`, `rect`, `preset`, `from-spec`); the classic hex coded board lives
-under `hex`. Every path also emits a DXF (2D CAD, millimeters) for laser/CNC
-fabrication.
-
-Rust CLI:
+Author a small recipe once (TOML or JSON) and render printable artifacts +
+the canonical `target_spec.json` with the CLI:
 
 ```bash
-cargo run -p ringgrid-cli -- gen-target hex \
-  --out_dir tools/out/target_faststart \
-  --pitch_mm 8 \
-  --rows 15 \
-  --long_row_cols 14 \
-  --marker_outer_radius_mm 4.8 \
-  --marker_inner_radius_mm 3.2 \
-  --marker_ring_width_mm 1.152 \
-  --name ringgrid_200mm_hex \
-  --dpi 600 \
-  --margin_mm 5
+ringgrid example --name hex_plain_dots > my_target.toml   # start from a built-in
+ringgrid gen my_target.toml --out ./out                   # writes SVG, PNG, DXF, JSON
 ```
 
-Python (typed `TargetLayout` API — same geometry, same artifact set):
+```toml
+# my_target.toml
+name = "lab_hex_plain"
+coding = "plain"
+fiducials = "auto"     # none | auto | explicit dot table
 
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip maturin
-./.venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release
+[lattice]
+kind = "hex"           # hex | rect
+rows = 15
+long_row_cols = 14
+pitch_mm = 8.0
+
+[marker]
+outer_radius_mm = 4.8
+inner_radius_mm = 3.2
+
+[render]
+dpi = 600
+formats = ["json", "svg", "png", "dxf"]
 ```
 
-```python
-from pathlib import Path
-import ringgrid
+Any recipe field can be overridden on the command line (`--pitch-mm`, `--dpi`, …).
+`ringgrid example --list` shows the built-in recipes — one per valid target
+combination, ready to copy and adapt. Prefer code? Every step is available on
+`TargetLayout` (`with_auto_fiducials`, `write_target_svg/png/dxf`, `write_json_file`).
 
-out = Path("tools/out/target_faststart")
-out.mkdir(parents=True, exist_ok=True)
-target = ringgrid.TargetLayout.coded_hex(
-    pitch_mm=8.0, rows=15, long_row_cols=14,
-    outer_radius_mm=4.8, inner_radius_mm=3.2, ring_width_mm=1.152,
-)
-(out / "target_spec.json").write_text(target.to_spec_json())
-target.write_svg(out / "target_print.svg", margin_mm=5.0)
-target.write_png(out / "target_print.png", dpi=600.0, margin_mm=5.0)
-target.write_dxf(out / "target_print.dxf")
-```
+## The target matrix
 
-Rust API:
+Markers must be identifiable. That comes from **codes**, from **origin dots**, or
+from detecting the **complete board**. All six combinations below are supported;
+only *coded + dots* is excluded, because codes already resolve identity and
+orientation, making dots redundant.
 
-- Use [`TargetLayout::coded_hex(...)`](crates/ringgrid/README.md) (or the compositional `TargetLayout::new(...)`) plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf` when generation is part of your application code.
+| Lattice | Coding | Origin dots | How the board is anchored | Preset / recipe |
+|---|---|---|---|---|
+| hex  | coded | — | decoded IDs → absolute frame | `TargetLayout::default_hex()` / `hex_coded` |
+| rect | coded | — | decoded IDs → absolute frame | `rect_coded` |
+| hex  | plain | ✓ | origin dots → absolute frame | `hex_plain_dots` |
+| hex  | plain | — | complete board → relative frame (`board_complete`) | `hex_plain_nodots` |
+| rect | plain | ✓ | origin dots → absolute frame | `TargetLayout::rect_24x24()` / `rect_plain_dots` |
+| rect | plain | — | complete board → relative frame (`board_complete`) | `rect_plain_nodots` |
 
-Generated files (identical across the Rust CLI, Rust API, and Python paths; all write a v5 `target_spec.json`):
+For plain, no-dots targets there is no way to fix the origin, so a run is
+"successful" only when the **whole board** is detected — gate on
+`result.board_complete` (or set `require_complete_board`). Origin dots are placed
+automatically (`fiducials = "auto"`) so the pattern always resolves orientation.
 
-- `tools/out/target_faststart/target_spec.json`
-- `tools/out/target_faststart/target_print.svg`
-- `tools/out/target_faststart/target_print.png`
-- `tools/out/target_faststart/target_print.dxf`
+## Interfaces
 
-### 2. Run detection
+- **Rust** — the core library. See [`crates/ringgrid/README.md`](crates/ringgrid/README.md) and the [API reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/).
+- **Python** — `pip install ringgrid`. See [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md).
+- **CLI** — `cargo install ringgrid --features cli`; `ringgrid gen | detect | batch | example`. See the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
+- **WASM** — in-browser detection; try the [live demo](https://vitalyvorobyev.github.io/ringgrid/demo/).
 
-```bash
-cargo run -- detect \
-  --target tools/out/target_faststart/target_spec.json \
-  --image path/to/photo.png \
-  --out tools/out/target_faststart/detect.json
-```
+## Documentation
 
-The written `detect.json` contains the final `detected_markers` list plus image
-size, coordinate-frame metadata, optional `homography` / `ransac`, and optional
-diagnostic blocks such as `self_undistort`, CLI `camera`, and proposal data.
-The full schema is documented in [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
+The full user guide — marker design, pipeline stages, math, configuration, and
+target generation — is the [mdBook](https://vitalyvorobyev.github.io/ringgrid/book/).
 
-### 3. Optional synthetic eval loop
-
-Install the extra Python deps used by the synth/eval/viz tools before running this loop:
-
-```bash
-./.venv/bin/python -m pip install numpy matplotlib
-```
-
-```bash
-./.venv/bin/python tools/gen_synth.py --out_dir tools/out/synth_001 --n_images 1 --blur_px 1.0
-
-cargo run -- detect \
-  --image tools/out/synth_001/img_0000.png \
-  --out tools/out/synth_001/det_0000.json
-
-./.venv/bin/python tools/score_detect.py \
-  --gt tools/out/synth_001/gt_0000.json \
-  --pred tools/out/synth_001/det_0000.json \
-  --gate 8.0 \
-  --out tools/out/synth_001/score_0000.json
-```
-
-If you want the full generate -> detect -> score loop in one command, use `./.venv/bin/python tools/run_synth_eval.py --n 10 --blur_px 3.0 --marker_diameter 32.0 --out_dir tools/out/eval_run`.
-
-## Choose an Interface
-
-### CLI
-
-Use `ringgrid gen-target <hex|rect|preset|from-spec>` / `ringgrid detect` or `cargo run -- gen-target ...` / `cargo run -- detect ...` when you want file-oriented workflows over printable targets, images, and JSON outputs. The full flag reference is in the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
-
-### Rust crate
-
-The core detector lives in [`crates/ringgrid/README.md`](crates/ringgrid/README.md). That README covers Rust-library usage, Rust target-generation APIs, adaptive detection modes, and camera-model integration in more detail than this front page should.
-
-### Python package
-
-The Python bindings live in [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md). Use them when you want installed-package target generation, Python-side detector configuration, or plotting helpers.
-
-## Detection Output
-
-The detector output is centered on `detected_markers`. Each marker can contain a
-decoded `id`, its lattice `grid_coord`, `board_xy_mm`, image-space `center`,
-optional `center_mapped`, and ellipse fits. Per-marker fit/decode metrics and
-the detection `source` live in the opt-in `diagnostics` channel.
-
-At the top level, you always get `image_size`, `center_frame`, and
-`homography_frame`, plus `board_frame` for grid-labeled runs. When enough valid
-IDs exist, you also get the board-to-image `homography` (RANSAC stats live in the
-`diagnostics` channel). Self-undistort runs add `self_undistort`. CLI runs with camera input
-echo the top-level `camera`, and `--include-proposals` adds proposal
-diagnostics. Full reference: [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
-
-## Documentation Map
-
-- [Live Demo](https://vitalyvorobyev.github.io/ringgrid/demo/) - in-browser WASM detection over sample and uploaded images, no install required
-- [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) - full mdBook covering marker design, pipeline stages, math, configuration, target generation, and usage
-- [Book: Fast Start](https://vitalyvorobyev.github.io/ringgrid/book/fast-start.html) - repo-oriented first-run path for target generation and detection
-- [Book: Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html) - exact `detect.json` structure, marker fields, and CLI-only wrapper fields
-- [Book: Target Generation](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html) - JSON/SVG/PNG generation details and flags
-- [Book: Proposal Diagnostics](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/proposal-diagnostics.html) - proposal-only API, accumulator heatmap, and tuning workflow
-- [Book: Adaptive Scale Detection](https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html) - multi-scale detection modes and tier selection
-- [Rust API Reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/) - rustdoc for the public Rust surface
-- [Rust crate README](crates/ringgrid/README.md) - crate-level Rust examples and API-oriented guidance
-- [Python package README](crates/ringgrid-py/README.md) - installed-package usage and Python `DetectConfig` field guide
-- [Development Guide](docs/development.md) - repo layout, contributor workflows, generated assets, and validation commands
-- [Performance & Evaluation](docs/performance.md) - scoring semantics, benchmark commands, and published snapshot tables
-- [Proposal Performance Analysis](docs/proposal-performance-analysis.md) - proposal-stage hotspot analysis and alternative algorithms
-- [Tuning Guide](docs/tuning-guide.md) - symptom-to-config tuning notes for difficult image conditions
+Working on ringgrid itself (building from source, synthetic evaluation, generated
+assets, benchmarks)? See [`docs/development.md`](docs/development.md). Pre-1.0
+upgrade notes live in [`docs/migrations/`](docs/migrations/).
 
 ## Diligence Statement
 
-This project is developed with AI coding assistants (`Codex` and `Claude Code`) as implementation tools. Not every code path is manually line-reviewed by a human before merge. The project author validates algorithmic behavior and numerical results and enforces quality gates before release.
+This project is developed with AI coding assistants (`Codex` and `Claude Code`) as
+implementation tools. Not every code path is manually line-reviewed by a human
+before merge. The project author validates algorithmic behavior and numerical
+results and enforces quality gates before release.

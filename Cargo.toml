@@ -21,6 +21,7 @@ imageproc = "0.27"
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }

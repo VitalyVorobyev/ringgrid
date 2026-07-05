@@ -169,9 +169,17 @@ pub(crate) fn resolve_origin(
     })
 }
 
-/// Enumerate all (rotation × translation) maps embedding every labeled
+/// Enumerate all (symmetry × translation) maps embedding every labeled
 /// coordinate into the board cell set. Returns `None` when the count exceeds
 /// [`MAX_CANDIDATES`].
+///
+/// The full dihedral group is used — rotations **and** reflections — because the
+/// relative labeling frame's handedness relative to the board's axial frame is
+/// not guaranteed (hex canonicalization mirrors it). The physical
+/// orientation-preserving constraint is enforced downstream by
+/// [`score_candidate`]'s Jacobian check, which is what actually selects the
+/// correct handedness; pre-filtering to `det > 0` here would wrongly drop the
+/// only valid hex embeddings.
 fn enumerate_candidates(
     entries: &[(Coord, [f64; 2])],
     board_coords: &HashSet<Coord>,
@@ -179,14 +187,10 @@ fn enumerate_candidates(
 ) -> Option<Vec<CoordMap>> {
     let (board_min, board_max) = coord_bbox(board_coords.iter().copied())?;
 
-    let rotations = target
-        .lattice_kind()
-        .symmetry_transforms()
-        .iter()
-        .filter(|t| t.determinant() > 0);
+    let transforms = target.lattice_kind().symmetry_transforms();
 
     let mut candidates: Vec<CoordMap> = Vec::new();
-    for &rot in rotations {
+    for &rot in transforms.iter() {
         let mapped: Vec<Coord> = entries.iter().map(|(c, _)| rot.apply(*c)).collect();
         let Some((min, max)) = coord_bbox(mapped.iter().copied()) else {
             continue;
@@ -244,7 +248,8 @@ fn score_candidate(
     }
     let h = estimate_homography_dlt(&src, &dst).ok()?;
 
-    // Physical filter: the board→image map must preserve orientation.
+    // Physical filter: the board→image map must preserve orientation. This is
+    // also what disambiguates a mirrored candidate frame from the true one.
     let center_mm = [
         src.iter().map(|p| p[0]).sum::<f64>() / src.len() as f64,
         src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,

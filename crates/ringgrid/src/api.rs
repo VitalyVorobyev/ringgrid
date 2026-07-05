@@ -21,11 +21,10 @@ use crate::{DetectionResult, Proposal, ProposalResult};
 
 /// Detection-time failures reported by [`Detector`] methods.
 ///
-/// All built-in lattice × coding combinations currently detect end-to-end, so
-/// no `Detector` method returns an error today; the fallible signatures and
-/// this `#[non_exhaustive]` enum reserve room for future failure modes (and
-/// for target combinations a future release may add before its pipeline
-/// support lands).
+/// All built-in lattice × coding combinations detect end-to-end, so detection
+/// itself is infallible; the only failure a `Detector` reports is the opt-in
+/// [`IncompleteBoard`](Self::IncompleteBoard) gate. This `#[non_exhaustive]`
+/// enum reserves room for future failure modes.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DetectError {
@@ -40,6 +39,17 @@ pub enum DetectError {
         /// Coding kind of the unsupported combination (`"coded16"` or `"plain"`).
         coding: &'static str,
     },
+    /// The board was not fully detected while
+    /// [`DetectConfig::require_complete_board`](crate::DetectConfig::require_complete_board)
+    /// was set. Returned only under the strict gate; otherwise incompleteness is
+    /// reported non-fatally via
+    /// [`DetectionResult::board_complete`](crate::DetectionResult::board_complete).
+    IncompleteBoard {
+        /// Number of target cells that were labeled.
+        found: usize,
+        /// Total number of cells the target defines.
+        expected: usize,
+    },
 }
 
 impl std::fmt::Display for DetectError {
@@ -53,6 +63,11 @@ impl std::fmt::Display for DetectError {
                 f,
                 "target '{target_name}' ({lattice} lattice, {coding} coding) is not supported by \
                  the detection pipeline in this release"
+            ),
+            Self::IncompleteBoard { found, expected } => write!(
+                f,
+                "incomplete board: {found} of {expected} target cells detected \
+                 (require_complete_board is set)"
             ),
         }
     }
@@ -169,6 +184,47 @@ impl Detector {
         }
     }
 
+    /// Convert a finished pipeline result into the public slim result, filling
+    /// the board-completeness signal and enforcing the strict gate.
+    fn finish(&self, pipeline: pipeline::PipelineResult) -> Result<DetectionResult, DetectError> {
+        Ok(self.finish_with_diagnostics(pipeline)?.0)
+    }
+
+    /// [`finish`](Self::finish) that also returns the diagnostics half.
+    fn finish_with_diagnostics(
+        &self,
+        pipeline: pipeline::PipelineResult,
+    ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
+        let (mut result, diagnostics) = pipeline.split();
+        self.apply_completeness(&mut result)?;
+        Ok((result, diagnostics))
+    }
+
+    /// Compute [`DetectionResult::board_complete`] and enforce
+    /// [`DetectConfig::require_complete_board`].
+    ///
+    /// Completeness is defined only when grid assignment ran
+    /// (`board_frame.is_some()`); otherwise the signal stays `None`. Under the
+    /// strict gate, an incomplete board becomes [`DetectError::IncompleteBoard`]
+    /// rather than a low-`board_complete` result.
+    fn apply_completeness(&self, result: &mut DetectionResult) -> Result<(), DetectError> {
+        if result.board_frame.is_none() {
+            return Ok(());
+        }
+        let expected = self.config.target.n_cells();
+        let found = result
+            .detected_markers
+            .iter()
+            .filter(|m| m.grid_coord.is_some())
+            .count();
+        let complete = found >= expected;
+        result.board_complete = Some(complete);
+        if self.config.require_complete_board && !complete {
+            return Err(DetectError::IncompleteBoard { found, expected });
+        }
+        Ok(())
+    }
+
     /// Detect markers in a grayscale image.
     ///
     /// When `config.self_undistort.enable` is `false`, runs single-pass
@@ -187,7 +243,7 @@ impl Detector {
     /// Currently infallible for all built-in targets; the `Result` signature
     /// reserves room for future failure modes (see [`DetectError`]).
     pub fn detect(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        Ok(self.run_detect(image).split().0)
+        self.finish(self.run_detect(image))
     }
 
     /// Detect markers and also return opt-in detection diagnostics.
@@ -203,7 +259,7 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        Ok(self.run_detect(image).split())
+        self.finish_with_diagnostics(self.run_detect(image))
     }
 
     /// Generate pass-1 center proposals in image coordinates.
@@ -244,7 +300,7 @@ impl Detector {
     ///
     /// [`detect_multiscale`]: Self::detect_multiscale
     pub fn detect_adaptive(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        Ok(pipeline::detect_adaptive(image, &self.config).split().0)
+        self.finish(pipeline::detect_adaptive(image, &self.config))
     }
 
     /// Return the scale tiers that adaptive detection would use for this image.
@@ -275,11 +331,11 @@ impl Detector {
         image: &GrayImage,
         nominal_diameter_px: Option<f32>,
     ) -> Result<DetectionResult, DetectError> {
-        Ok(
-            pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px)
-                .split()
-                .0,
-        )
+        self.finish(pipeline::detect_adaptive_with_hint(
+            image,
+            &self.config,
+            nominal_diameter_px,
+        ))
     }
 
     /// Detect markers using an explicit set of scale tiers.
@@ -297,9 +353,7 @@ impl Detector {
         image: &GrayImage,
         tiers: &ScaleTiers,
     ) -> Result<DetectionResult, DetectError> {
-        Ok(pipeline::detect_multiscale(image, &self.config, tiers)
-            .split()
-            .0)
+        self.finish(pipeline::detect_multiscale(image, &self.config, tiers))
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
@@ -319,9 +373,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<DetectionResult, DetectError> {
-        Ok(pipeline::detect_with_mapper(image, &self.config, mapper)
-            .split()
-            .0)
+        self.finish(pipeline::detect_with_mapper(image, &self.config, mapper))
     }
 
     /// Detect with a custom pixel mapper and also return detection diagnostics.
@@ -339,7 +391,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        Ok(pipeline::detect_with_mapper(image, &self.config, mapper).split())
+        self.finish_with_diagnostics(pipeline::detect_with_mapper(image, &self.config, mapper))
     }
 }
 

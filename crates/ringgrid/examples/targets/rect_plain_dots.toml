@@ -1,0 +1,23 @@
+# Plain rect target with origin dots (the rect_24x24 preset).
+#
+# Uncoded rings on a square lattice, anchored by an auto-placed origin-dot
+# triad in the center gaps. Detection reports absolute board-frame coordinates.
+# Combination: rect + plain + dots.
+name = "rect_plain_dots"
+coding = "plain"
+fiducials = "auto"
+
+[lattice]
+kind = "rect"
+rows = 24
+cols = 24
+pitch_mm = 14.0
+
+[marker]
+outer_radius_mm = 5.6
+inner_radius_mm = 2.8
+
+[render]
+dpi = 300
+margin_mm = 5.0
+formats = ["json", "svg", "png", "dxf"]

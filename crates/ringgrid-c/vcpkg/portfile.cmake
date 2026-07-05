@@ -15,11 +15,19 @@
 #      v${VERSION}. This path only works once a release is tagged AND its real
 #      SHA512 is committed below — see the `vcpkg_from_github` block.
 
-find_program(RINGGRID_CARGO NAMES cargo)
+# vcpkg builds ports in a sanitized environment that drops rustup's
+# ~/.cargo/bin from PATH, so probe the standard rustup install locations too.
+# USERPROFILE/HOME are passed through by vcpkg by default; keep CARGO_HOME with
+# `--x-keep-env-vars` / VCPKG_KEEP_ENV_VARS if it lives in a custom location.
+find_program(RINGGRID_CARGO NAMES cargo
+    PATHS
+        "$ENV{CARGO_HOME}/bin"
+        "$ENV{USERPROFILE}/.cargo/bin"
+        "$ENV{HOME}/.cargo/bin")
 if(NOT RINGGRID_CARGO)
     message(FATAL_ERROR
         "cargo not found. The ringgrid port builds from Rust source and needs a "
-        "Rust toolchain on PATH (https://rustup.rs).")
+        "Rust toolchain (https://rustup.rs); install it or set CARGO_HOME.")
 endif()
 
 if(DEFINED ENV{RINGGRID_SOURCE_DIR})
@@ -42,10 +50,14 @@ endif()
 
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "dynamic" RINGGRID_BUILD_SHARED)
 
+# Pass the cargo we already located explicitly: `vcpkg_cmake_configure` spawns
+# CMake in a further-sanitized environment where the package CMakeLists' own
+# `find_program(cargo)` cannot see rustup's ~/.cargo/bin, so hand it the path.
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}/crates/ringgrid-c"
     OPTIONS
         "-DRINGGRID_BUILD_SHARED=${RINGGRID_BUILD_SHARED}"
+        "-DCARGO_EXECUTABLE=${RINGGRID_CARGO}"
 )
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(PACKAGE_NAME ringgrid CONFIG_PATH lib/cmake/ringgrid)

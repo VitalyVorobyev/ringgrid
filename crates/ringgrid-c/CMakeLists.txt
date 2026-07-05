@@ -20,8 +20,15 @@ include(CMakePackageConfigHelpers)
 
 option(RINGGRID_BUILD_SHARED "Build the shared library (else static)" ${BUILD_SHARED_LIBS})
 
-find_program(CARGO_EXECUTABLE cargo REQUIRED
-    DOC "Path to the cargo build tool (a Rust toolchain is required to build ringgrid)")
+# Also probe rustup's standard install dirs: sandboxed builders (notably vcpkg)
+# sanitize PATH and drop ~/.cargo/bin, so a bare PATH lookup misses cargo.
+find_program(CARGO_EXECUTABLE cargo
+    PATHS
+        "$ENV{CARGO_HOME}/bin"
+        "$ENV{USERPROFILE}/.cargo/bin"
+        "$ENV{HOME}/.cargo/bin"
+    DOC "Path to the cargo build tool (a Rust toolchain is required to build ringgrid)"
+    REQUIRED)
 
 # Cargo emits into an isolated target dir so it never pollutes the repo target/.
 set(_rg_cargo_target "${CMAKE_CURRENT_BINARY_DIR}/cargo")

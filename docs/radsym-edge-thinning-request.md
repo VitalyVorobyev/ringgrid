@@ -27,21 +27,23 @@ reachable inside radsym.
 
 ## Why ringgrid cannot do this today
 
-Edge-thinning must run on the gradient field that RSD votes from. With radsym
-0.2's public surface there is no way to inject a thinned gradient:
+Edge-thinning must run on the gradient field that RSD votes from. As of the
+current dependency (**radsym 0.4**, verified against
+`crates/radsym/src/propose/rsd.rs` and `crates/radsym/src/core/gradient.rs`)
+there is still no way to inject a thinned gradient:
 
 - `RsdConfig` (`radii`, `gradient_threshold`, `polarity`, `smoothing_factor`)
   has **no edge-thinning / NMS knob**.
 - `rsd_response_fused(gradient: &GradientField, config: &RsdConfig)` accepts only
   a `&GradientField`.
-- `GradientField`'s `gx` / `gy` are `pub(crate)`; the only accessors
-  (`gx()`, `gy()`, `get()`, `magnitude()`) return **read-only** views, and there
-  is **no public constructor** (only `sobel_gradient` / `scharr_gradient`, which
-  build from an image). So a caller cannot build a `GradientField` from
-  externally-thinned components and pass it back in.
+- `GradientField`'s `gx` / `gy` are private; the only accessors (`gx()`, `gy()`)
+  return **read-only** views, and there is **no public constructor** (only
+  `sobel_gradient` / `scharr_gradient`, which build from an image). So a caller
+  cannot build a `GradientField` from externally-thinned components and pass it
+  back in.
 
 The net effect: the documented 60–80 % voting reduction cannot be applied from
-ringgrid without forking radsym.
+ringgrid without a new radsym API (target: **radsym 0.5**).
 
 ## Proposed solution (any one of these unblocks ringgrid)
 

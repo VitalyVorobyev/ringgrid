@@ -205,3 +205,70 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --all-features
+
+  capi:
+    name: C/C++ ABI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: rust-quality
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/ringgrid-c
+
+      - name: Install cbindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen
+
+      - name: Verify committed header is up to date
+        run: |
+          cbindgen --config crates/ringgrid-c/cbindgen.toml \
+                   --output "${RUNNER_TEMP}/ringgrid.h" crates/ringgrid-c
+          diff -u crates/ringgrid-c/include/ringgrid.h "${RUNNER_TEMP}/ringgrid.h"
+
+      - name: Format & lint
+        run: |
+          cargo fmt --manifest-path crates/ringgrid-c/Cargo.toml --all --check
+          cargo clippy --manifest-path crates/ringgrid-c/Cargo.toml \
+                       --all-targets --release -- -D warnings
+
+      - name: Test (unit + marshalling parity)
+        run: cargo test --manifest-path crates/ringgrid-c/Cargo.toml --release
+
+      - name: CMake package + find_package consumer (C and C++)
+        run: |
+          cmake -S crates/ringgrid-c -B "${RUNNER_TEMP}/rgc-build" \
+                -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/rgc-prefix" \
+                -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${RUNNER_TEMP}/rgc-build"
+          cmake --install "${RUNNER_TEMP}/rgc-build"
+          cmake -S crates/ringgrid-c/examples/consumer -B "${RUNNER_TEMP}/rgc-consumer" \
+                -Dringgrid_DIR="${RUNNER_TEMP}/rgc-prefix/lib/cmake/ringgrid" \
+                -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${RUNNER_TEMP}/rgc-consumer"
+          "${RUNNER_TEMP}/rgc-consumer/consumer_c"
+          "${RUNNER_TEMP}/rgc-consumer/consumer_cpp"
+
+      - name: vcpkg overlay install (local source)
+        if: runner.os == 'Linux'
+        env:
+          RINGGRID_SOURCE_DIR: ${{ github.workspace }}
+        run: |
+          "${VCPKG_INSTALLATION_ROOT}/vcpkg" install ringgrid \
+            --overlay-ports="${GITHUB_WORKSPACE}/crates/ringgrid-c/vcpkg"

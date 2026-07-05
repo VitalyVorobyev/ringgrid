@@ -50,13 +50,15 @@ jobs:
           ringgrid_rust = resolve_version(root / 'crates/ringgrid/Cargo.toml')
           ringgrid_py_cargo = resolve_version(root / 'crates/ringgrid-py/Cargo.toml')
           ringgrid_py_project = tomllib.loads((root / 'crates/ringgrid-py/pyproject.toml').read_text())['project']['version']
+          ringgrid_c_cargo = resolve_version(root / 'crates/ringgrid-c/Cargo.toml')
 
           print(f'tag version:           {tag_version}')
           print(f'ringgrid rust version: {ringgrid_rust}')
           print(f'ringgrid-py cargo:     {ringgrid_py_cargo}')
           print(f'ringgrid-py project:   {ringgrid_py_project}')
+          print(f'ringgrid-c cargo:      {ringgrid_c_cargo}')
 
-          versions = {tag_version, ringgrid_rust, ringgrid_py_cargo, ringgrid_py_project}
+          versions = {tag_version, ringgrid_rust, ringgrid_py_cargo, ringgrid_py_project, ringgrid_c_cargo}
           if len(versions) != 1:
               raise SystemExit('version mismatch between tag and project files')
           PY

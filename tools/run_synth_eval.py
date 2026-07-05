@@ -232,7 +232,7 @@ def main():
 
         if use_cargo_run:
             cmd = [
-                "cargo", "run", "--quiet", "--",
+                "cargo", "run", "--bin", "ringgrid-dev", "--quiet", "--",
                 "detect",
                 "--image", str(img_path),
                 "--out", str(det_path),

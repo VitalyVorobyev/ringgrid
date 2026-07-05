@@ -13,6 +13,7 @@ Cargo workspace (edition 2024, MSRV 1.88) with two crate members plus excluded b
 - `crates/ringgrid-cli/` — CLI binary (`ringgrid`) with clap-based argument parsing
 - `crates/ringgrid-py/` — PyO3 Python bindings (excluded from workspace, built via maturin)
 - `crates/ringgrid-wasm/` — WebAssembly bindings (excluded from workspace, built via wasm-pack)
+- `crates/ringgrid-c/` — C/C++ ABI (excluded from workspace, cbindgen header + C++ RAII wrapper, CMake package + vcpkg overlay port)
 - `tools/` — Python utilities for synthetic data generation, evaluation, scoring, and visualization
 - `py/` — Python scripts for rtv3d benchmarking and overlay visualization
 
@@ -250,15 +251,19 @@ Self-undistort mode estimates a division-model distortion correction from detect
 The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
 `ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
 
-When bumping the version, update **four** locations:
+When bumping the version, update **five** locations:
 1. `Cargo.toml` — `[workspace.package] version` (single source of truth for workspace crates)
 2. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
 3. `crates/ringgrid-py/pyproject.toml` — `project.version` field
 4. `crates/ringgrid-wasm/Cargo.toml` — `version` field + `ringgrid` dependency version
+5. `crates/ringgrid-c/Cargo.toml` — `version` field + `ringgrid` dependency version
 
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
-version consistency between the git tag and these files using `tomllib`. The CI
-scripts resolve `version.workspace = true` by falling back to the workspace root.
+version consistency between the git tag and these files using `tomllib`
+(`publish-crates.yml` guards `ringgrid` + `ringgrid-c`; `release-pypi.yml` guards
+`ringgrid` + both `ringgrid-py` files + `ringgrid-c`; `release-npm.yml` checks the
+wasm crate inline). The CI scripts resolve `version.workspace = true` by falling
+back to the workspace root.
 
 ## Feature Flags (ringgrid crate)
 

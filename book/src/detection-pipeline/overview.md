@@ -142,6 +142,6 @@ The pipeline produces a `DetectionResult` containing:
 For the serialized JSON shape used by the CLI and examples, see
 [Detection Output Format](../output-format.md).
 
-<!-- TODO: Pipeline flow diagram -->
+![ringgrid detection pipeline flow: eleven stages grouped into per-marker and board-level phases](../assets/pipeline-flow.svg)
 
 **Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize/` (`coded.rs`, `plain.rs`, `common.rs`), `pipeline/assign.rs`, `pipeline/anchor.rs`, `pipeline/geometric_verify.rs`

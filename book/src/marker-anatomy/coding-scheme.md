@@ -20,7 +20,7 @@ absolute angular reference of sector 0 is unknown at detection time. The
 codebook matching algorithm handles this by trying all 16 cyclic rotations
 (see below).
 
-<!-- TODO: Diagram showing sector layout and coding example -->
+![A marker's 16-sector code band with a sample codeword and sector indices 0, 4, 8, 12 labelled](../assets/coding-scheme.svg)
 
 ## The codebook
 

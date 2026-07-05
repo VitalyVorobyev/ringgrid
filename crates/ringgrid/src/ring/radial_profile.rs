@@ -176,4 +176,76 @@ mod tests {
         assert!(i_pos < with_nan.len());
         assert!(i_neg < with_nan.len());
     }
+
+    #[test]
+    fn radial_derivative_is_exact_for_a_linear_ramp() {
+        // A linear intensity ramp has a constant slope; central differences
+        // (and the forward/backward boundary differences) recover it exactly.
+        let r_step = 0.5f32;
+        let slope = 4.0f32;
+        let i_vals: Vec<f32> = (0..6).map(|k| 1.0 + slope * k as f32 * r_step).collect();
+        let d = radial_derivative(&i_vals, r_step);
+        assert_eq!(d.len(), i_vals.len());
+        for (k, &v) in d.iter().enumerate() {
+            assert!((v - slope).abs() < 1e-4, "d[{k}] = {v}");
+        }
+    }
+
+    #[test]
+    fn radial_derivative_into_handles_degenerate_lengths() {
+        let mut out = [0.0f32; 1];
+        radial_derivative_into(&[3.0], 1.0, &mut out);
+        assert_eq!(out[0], 0.0, "single sample has zero derivative");
+
+        // Empty input is a no-op.
+        let mut empty: [f32; 0] = [];
+        radial_derivative_into(&[], 1.0, &mut empty);
+    }
+
+    #[test]
+    fn smooth_3point_preserves_constant_and_endpoints() {
+        // A constant curve is unchanged by averaging.
+        let mut constant = [5.0f32; 6];
+        smooth_3point(&mut constant);
+        assert!(constant.iter().all(|&v| (v - 5.0).abs() < 1e-6));
+
+        // A single spike is spread to its neighbors; endpoints stay fixed.
+        let mut spike = [0.0f32, 3.0, 0.0, 0.0, 0.0];
+        smooth_3point(&mut spike);
+        assert_eq!(spike[0], 0.0, "left endpoint unchanged");
+        assert_eq!(spike[4], 0.0, "right endpoint unchanged");
+        assert!((spike[1] - 1.0).abs() < 1e-6, "spike[1] = {}", spike[1]);
+        assert!((spike[2] - 1.0).abs() < 1e-6, "spike[2] = {}", spike[2]);
+    }
+
+    #[test]
+    fn smooth_3point_is_noop_below_five_samples() {
+        let mut short = [1.0f32, 9.0, 1.0, 9.0];
+        smooth_3point(&mut short);
+        assert_eq!(short, [1.0, 9.0, 1.0, 9.0]);
+    }
+
+    #[test]
+    fn theta_consistency_counts_peaks_within_tolerance() {
+        // delta = max(4·r_step, min_delta) = max(0.4, 0.02) = 0.4.
+        // Three peaks lie within 0.4 of 10.0; the outlier at 20 does not.
+        let peaks = [10.0f32, 10.2, 9.8, 20.0];
+        let frac = theta_consistency(&peaks, 10.0, 0.1, 0.02);
+        assert!((frac - 0.75).abs() < 1e-6, "consistency = {frac}");
+    }
+
+    #[test]
+    fn theta_consistency_empty_is_zero() {
+        assert_eq!(theta_consistency(&[], 10.0, 0.1, 0.02), 0.0);
+    }
+
+    #[test]
+    fn per_theta_peak_r_maps_each_curve_to_its_extremum_radius() {
+        let r_samples = [1.0f32, 2.0, 3.0];
+        let curves = vec![vec![0.1f32, 0.9, 0.2], vec![0.5f32, 0.1, 0.8]];
+        let pos = per_theta_peak_r(&curves, &r_samples, Polarity::Pos);
+        assert_eq!(pos, vec![2.0, 3.0]);
+        let neg = per_theta_peak_r(&curves, &r_samples, Polarity::Neg);
+        assert_eq!(neg, vec![1.0, 2.0]);
+    }
 }

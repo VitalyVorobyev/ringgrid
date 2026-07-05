@@ -26,7 +26,7 @@ where binary sector patterns encode the marker's identity. The code band
 occupies the gap between the inner edge of the outer ring and the outer edge of
 the inner ring.
 
-<!-- TODO: Cross-section diagram showing ring structure -->
+![Annotated ringgrid marker: center, inner ring, 16-sector code band, and outer ring with radius callouts](../assets/ring-structure.svg)
 
 ## Ring bands and edge detection
 

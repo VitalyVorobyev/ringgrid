@@ -406,6 +406,8 @@ def main() -> None:
                     detect_cmd = [
                         "cargo",
                         "run",
+                        "--bin",
+                        "ringgrid-dev",
                         "--quiet",
                         "--",
                         "detect",

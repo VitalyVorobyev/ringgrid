@@ -639,6 +639,33 @@ mod tests {
     }
 
     #[test]
+    fn radial_harmonic_radius_and_amplitude_match_closed_form() {
+        let m = RadialHarmonic {
+            c0: 20.0,
+            c1: 3.0,
+            c2: -4.0,
+        };
+        // At theta = 0: 2*theta = 0 → cos = 1, sin = 0 → c0 + c1.
+        assert!((m.radius_at(0.0) - 23.0).abs() < 1e-5);
+        // At theta = PI/4: 2*theta = PI/2 → cos = 0, sin = 1 → c0 + c2.
+        assert!((m.radius_at(std::f32::consts::FRAC_PI_4) - 16.0).abs() < 1e-4);
+        // Amplitude is the L2 norm of (c1, c2) = sqrt(9 + 16) = 5.
+        assert!((m.amplitude() - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn find_local_peaks_reports_interior_maxima() {
+        // Two clear interior maxima at indices 1 and 3.
+        assert_eq!(find_local_peaks(&[0.0, 1.0, 0.0, 2.0, 0.0]), vec![1, 3]);
+        // A plateau: both shoulders qualify (>= comparison on both sides).
+        assert_eq!(find_local_peaks(&[0.0, 1.0, 1.0, 0.0]), vec![1, 2]);
+        // Monotone curves have no interior peak.
+        assert!(find_local_peaks(&[3.0, 2.0, 1.0]).is_empty());
+        // Endpoints are never reported and short curves yield nothing.
+        assert!(find_local_peaks(&[1.0, 2.0]).is_empty());
+    }
+
+    #[test]
     fn outer_estimator_prefers_expected_outer_over_strong_inner_edge() {
         // Synthetic circular marker:
         // - Outer edge at r_outer (weak contrast)

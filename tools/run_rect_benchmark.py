@@ -82,6 +82,8 @@ def main() -> None:
                 [
                     "cargo",
                     "run",
+                    "--bin",
+                    "ringgrid-dev",
                     "--release",
                     "-q",
                     "--",

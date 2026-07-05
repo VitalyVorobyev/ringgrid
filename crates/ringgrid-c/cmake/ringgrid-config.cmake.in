@@ -1,0 +1,31 @@
+@PACKAGE_INIT@
+
+# ringgrid C ABI package config.
+#
+#   find_package(ringgrid CONFIG REQUIRED)
+#   target_link_libraries(app PRIVATE ringgrid::ringgrid)
+
+set_and_check(RINGGRID_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set_and_check(_ringgrid_libdir "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+set(_ringgrid_libfile "@_rg_libfile@")
+
+if(NOT TARGET ringgrid::ringgrid)
+    add_library(ringgrid::ringgrid UNKNOWN IMPORTED)
+    set_target_properties(ringgrid::ringgrid PROPERTIES
+        IMPORTED_LOCATION "${_ringgrid_libdir}/${_ringgrid_libfile}"
+        INTERFACE_INCLUDE_DIRECTORIES "${RINGGRID_INCLUDE_DIR}")
+
+    set(_ringgrid_implib "@_rg_implib_name@")
+    if(_ringgrid_implib AND EXISTS "${_ringgrid_libdir}/${_ringgrid_implib}")
+        set_target_properties(ringgrid::ringgrid PROPERTIES
+            IMPORTED_IMPLIB "${_ringgrid_libdir}/${_ringgrid_implib}")
+    endif()
+
+    set(_ringgrid_system_libs "@RINGGRID_SYSTEM_LIBS@")
+    if(_ringgrid_system_libs)
+        set_target_properties(ringgrid::ringgrid PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${_ringgrid_system_libs}")
+    endif()
+endif()
+
+check_required_components(ringgrid)

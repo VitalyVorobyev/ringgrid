@@ -6,6 +6,10 @@ Since 0.8, targets are described compositionally rather than as a single fixed l
 
 > *No OpenCV bindings — all image processing is implemented in Rust.*
 
+| Printable target | Detection overlay |
+|---|---|
+| ![A coded-hex ringgrid target](assets/intro-target-print.png) | ![Fitted ellipses on a detected board](assets/intro-detection-overlay.png) |
+
 ## The Problem
 
 Camera calibration requires detecting fiducial markers — known patterns printed on a calibration target — with high geometric precision. Traditional approaches use checkerboard corners or square markers (ArUco). These patterns have limitations:
@@ -50,23 +54,28 @@ ringgrid supports four high-level detection modes:
 3. **External pixel mapper** — two-pass detection using a user-provided coordinate mapping (e.g., camera distortion model). Pass-1 finds seed positions, pass-2 refines in the undistorted working frame.
 4. **Self-undistort** — automatic estimation of a single-parameter division distortion model from the detected ellipses, followed by a corrected second pass. No external calibration required.
 
-## Target Audience
+## Who This Is For
 
-This book is for Rust developers working on:
+This book is for engineers integrating high-precision fiducial detection into:
 
 - Camera calibration pipelines
 - Photogrammetry and 3D reconstruction
 - Computer vision applications requiring high-precision fiducial detection
 - Metrology and measurement systems
 
+ringgrid is a Rust library, but you do not have to write Rust to use it: it also
+ships Python, C/C++, and WebAssembly bindings and a command-line tool — see
+[Language Bindings](bindings/overview.md).
+
 ## Book Structure
 
 - **Fast Start** — one-command workflow to generate `target_spec.json` + printable SVG/PNG and run first detection
-- **Migration: 0.7 → 0.8** — breaking changes per interface (Rust, Python, CLI, WASM), with before/after snippets
 - **Targets** — the compositional target model: hex/rect lattices, coded/plain marker rings, optional origin fiducials
 - **Marker Design** — anatomy of the ring marker, coding scheme, and hex lattice layout
-- **Detection Pipeline** — detailed walkthrough of all 10 detection stages
+- **Detection Pipeline** — a walkthrough of every detection stage
 - **Mathematical Foundations** — full derivations of the core algorithms (ellipse fitting, RANSAC, homography, projective center recovery, division model)
 - **Using ringgrid** — configuration, output types, detection modes, and CLI usage
+- **Language Bindings** — Python, C/C++, and WebAssembly/npm
 
-<!-- TODO: Add a figure showing a ringgrid target and detection overlay side by side -->
+Upgrading across a pre-1.0 release? Per-interface migration notes live in
+[`docs/migrations/`](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).

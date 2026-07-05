@@ -71,7 +71,7 @@ across large boards, then truncated to `f32` for the final coordinates.
 After generation, all marker positions are translated so that the first marker
 (top-left corner) sits at the origin `(0, 0)`.
 
-<!-- TODO: Diagram showing hex lattice with coordinate labels -->
+![Hex lattice of ring markers with axial coordinates (q, r) and the two lattice basis directions](../assets/hex-lattice.svg)
 
 ## Nearest-neighbor distance
 

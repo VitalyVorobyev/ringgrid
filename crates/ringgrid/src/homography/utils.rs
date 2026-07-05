@@ -127,7 +127,9 @@ pub(crate) fn compute_h_stats(
         return None;
     }
 
-    let mut inlier_errors: Vec<f64> = errors.iter().copied().filter(|&e| e <= thresh_px).collect();
+    // Use the same strict-`<` inlier test as the RANSAC core (homography/core.rs)
+    // so reported inlier stats match the threshold semantics used during fitting.
+    let mut inlier_errors: Vec<f64> = errors.iter().copied().filter(|&e| e < thresh_px).collect();
     let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
 
     Some(RansacStats {

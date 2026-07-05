@@ -1,0 +1,7 @@
+ringgrid provides CMake targets:
+
+    find_package(ringgrid CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE ringgrid::ringgrid)
+
+Include "ringgrid.h" for the C ABI, or "ringgrid.hpp" for the C++ RAII wrapper.
+Building this port requires a Rust toolchain (cargo) on PATH.

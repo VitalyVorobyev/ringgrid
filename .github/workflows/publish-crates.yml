@@ -52,12 +52,18 @@ jobs:
               return ws["workspace"]["package"]["version"]
 
           package_version = resolve_version(root / "crates/ringgrid/Cargo.toml")
+          # ringgrid-c is unpublished but is the 5th version-sync location; guard
+          # it here so its version can never drift from the published crate/tag.
+          capi_version = resolve_version(root / "crates/ringgrid-c/Cargo.toml")
 
-          print(f"tag version:     {tag_version}")
-          print(f"crate version:   {package_version}")
+          print(f"tag version:      {tag_version}")
+          print(f"crate version:    {package_version}")
+          print(f"ringgrid-c crate: {capi_version}")
 
           if package_version != tag_version:
               raise SystemExit("version mismatch between tag and crates/ringgrid/Cargo.toml")
+          if capi_version != tag_version:
+              raise SystemExit("version mismatch between tag and crates/ringgrid-c/Cargo.toml")
           PY
 
       - name: Guard first release (manual publish required once)

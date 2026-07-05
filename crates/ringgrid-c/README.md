@@ -1,49 +1,121 @@
 # ringgrid-c
 
 C ABI for [ringgrid](https://github.com/VitalyVorobyev/ringgrid) — a pure-Rust
-detector for dense ring calibration targets.
-
-> **Status: scaffold.** This crate currently exposes a minimal, compiling C ABI
-> (version, target presets, a grayscale detect entry, string free). The full
-> surface and the C++/CMake/vcpkg packaging are a tracked follow-up — see
-> [ADR-018](../../docs/decisions/018-c-cpp-vcpkg-api.md).
+detector for dense ring calibration targets. A flat, stable C surface plus a
+header-only C++ convenience wrapper, distributed via CMake and vcpkg.
 
 ## Design
 
-A flat C ABI, following the JSON-at-the-boundary convention of the Python and
-WASM bindings: targets and results cross as JSON strings, pixel buffers as raw
-pointers. Every returned string is heap-owned by the caller and freed with
-`ringgrid_string_free`; a `NULL` return signals an error.
+A flat C ABI following the JSON-at-the-boundary convention of the Python and
+WASM bindings: targets, configs, and results cross as JSON strings, and pixel
+buffers as raw pointers. The surface is isomorphic to the WASM binding — one
+long-lived detector handle, reused across images.
 
-## Current surface
+- **Handle:** create a `RinggridDetector*` from a target JSON (optionally with a
+  config, marker scale, or diameter hint) and release it with
+  `ringgrid_detector_free`.
+- **Errors:** every fallible call returns a `RinggridStatus`
+  (`RINGGRID_STATUS_OK == 0`) and writes its payload to an out-parameter.
+  `ringgrid_status_str` describes a code. Panics are caught at the boundary and
+  reported as `RINGGRID_STATUS_ERR_PANIC` (never unwound across FFI).
+- **Ownership:** every `char*` written to a `char**` out-parameter is heap-owned
+  by the caller — free it with `ringgrid_string_free`. `ringgrid_status_str`
+  returns a static string (never free it). `ringgrid_heatmap_data` returns a
+  pointer borrowed from the handle (never free it; invalidated by the next
+  `propose`/`free`).
+- **ABI guard:** `ringgrid_abi_version()` should match the header's
+  `RINGGRID_ABI_VERSION`; the C++ wrapper checks this automatically.
 
-```c
-char *ringgrid_version(void);
-char *ringgrid_default_target_json(void);
-char *ringgrid_rect_24x24_target_json(void);
-char *ringgrid_detect_gray(const char *target_json,
-                           const uint8_t *pixels, uint32_t width, uint32_t height);
-void  ringgrid_string_free(char *s);
-```
+The C ABI in `include/ringgrid.h` is the source of truth. `include/ringgrid.hpp`
+is a thin, header-only C++17 RAII layer over it (move-only `ringgrid::Detector`,
+`std::string` results, exceptions).
 
-## Building the library
+## Surface
+
+Lifecycle/config: `ringgrid_detector_new` / `_with_marker_scale` /
+`_with_marker_diameter` / `_with_config` / `_config_json` / `_update_config` /
+`_free`.
+
+Detection (each with an `_rgba` variant): `ringgrid_detect`,
+`ringgrid_detect_with_diagnostics`, `ringgrid_detect_adaptive`,
+`ringgrid_detect_adaptive_with_hint`, `ringgrid_detect_multiscale`,
+`ringgrid_detect_with_mapper`, `ringgrid_detect_with_mapper_diagnostics`.
+
+Proposals: `ringgrid_propose_with_heatmap`, `ringgrid_heatmap_data` /
+`_heatmap_width` / `_heatmap_height`.
+
+Introspection: `ringgrid_version`, `ringgrid_abi_version`,
+`ringgrid_default_target_json`, `ringgrid_rect_24x24_target_json`,
+`ringgrid_default_config_json`, `ringgrid_scale_tiers_{four_tier_wide,two_tier_standard}_json`.
+
+## Using it
+
+### vcpkg (overlay port)
 
 ```bash
-# Shared + static library (target/release/{libringgrid_c.dylib,libringgrid_c.a})
-cargo build --release --manifest-path crates/ringgrid-c/Cargo.toml
-
-# Generate the C header (requires cbindgen)
-cbindgen --config crates/ringgrid-c/cbindgen.toml \
-         --output crates/ringgrid-c/include/ringgrid.h \
-         crates/ringgrid-c
+vcpkg install ringgrid --overlay-ports=crates/ringgrid-c/vcpkg
 ```
 
-## Roadmap (deferred)
+Then, in `CMakeLists.txt`:
 
-- Full surface: config, `detect_adaptive` / `detect_multiscale`, diagnostics,
-  camera intrinsics / self-undistort.
-- `ringgrid.hpp` — a thin RAII C++ convenience header over the C ABI.
-- CMake package config (`find_package(ringgrid)`).
-- vcpkg port (build via cargo; install header + lib + CMake config).
-- CI job exercising the cbindgen + CMake build; add this crate to the release
-  version-sync guards (the 5th version location).
+```cmake
+find_package(ringgrid CONFIG REQUIRED)
+target_link_libraries(app PRIVATE ringgrid::ringgrid)
+```
+
+Building the port requires a Rust toolchain (`cargo`) on `PATH`. The overlay
+port is verified in CI; upstream vcpkg-registry submission is tracked
+separately.
+
+### CMake, from source
+
+```bash
+cmake -S crates/ringgrid-c -B build -DCMAKE_INSTALL_PREFIX=/your/prefix
+cmake --build build
+cmake --install build
+# then: find_package(ringgrid CONFIG REQUIRED); link ringgrid::ringgrid
+```
+
+`RINGGRID_BUILD_SHARED=ON` selects the shared library (default is static; vcpkg
+maps `VCPKG_LIBRARY_LINKAGE`). A `pkg-config` file (`ringgrid.pc`) is installed
+for non-CMake consumers.
+
+### C example
+
+```c
+#include "ringgrid.h"
+
+char *target = NULL;
+ringgrid_default_target_json(&target);
+RinggridDetector *det = NULL;
+ringgrid_detector_new(target, &det);
+ringgrid_string_free(target);
+
+char *result = NULL;
+if (ringgrid_detect(det, pixels, width, height, &result) == RINGGRID_STATUS_OK) {
+    /* result is a DetectionResult JSON string */
+    ringgrid_string_free(result);
+}
+ringgrid_detector_free(det);
+```
+
+### C++ example
+
+```cpp
+#include "ringgrid.hpp"
+
+ringgrid::Detector det(ringgrid::default_target_json());
+std::string result = det.detect(pixels, width, height);  // throws ringgrid::Error on failure
+```
+
+See `examples/smoke.c` and `examples/example.cpp` for complete programs.
+
+## Regenerating the header
+
+`include/ringgrid.h` is generated by cbindgen and committed; CI regenerates it
+and fails on any diff.
+
+```bash
+cbindgen --config crates/ringgrid-c/cbindgen.toml \
+         --output crates/ringgrid-c/include/ringgrid.h crates/ringgrid-c
+```

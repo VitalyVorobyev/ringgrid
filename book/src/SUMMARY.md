@@ -61,3 +61,8 @@
 - [ID Assignment Optimization](id-optimization.md)
 - [CLI Guide](cli-guide.md)
 - [Interactive Demo](demo.md)
+
+# Language Bindings
+
+- [Overview](bindings/overview.md)
+- [C & C++](bindings/cpp.md)

@@ -27,6 +27,38 @@ impl Trust {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trust_predicates_partition_states_as_documented() {
+        // Only `Untrusted` is not trusted.
+        assert!(!Trust::Untrusted.is_trusted());
+        for t in [
+            Trust::AnchorWeak,
+            Trust::AnchorStrong,
+            Trust::RecoveredLocal,
+            Trust::RecoveredHomography,
+            Trust::ConfirmedConsistent,
+        ] {
+            assert!(t.is_trusted(), "{t:?} should be trusted");
+        }
+
+        // Anchors are exactly the two bootstrap-seeded states.
+        assert!(Trust::AnchorWeak.is_anchor());
+        assert!(Trust::AnchorStrong.is_anchor());
+        for t in [
+            Trust::Untrusted,
+            Trust::RecoveredLocal,
+            Trust::RecoveredHomography,
+            Trust::ConfirmedConsistent,
+        ] {
+            assert!(!t.is_anchor(), "{t:?} should not be an anchor");
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum RecoverySource {
     Local,

@@ -347,6 +347,10 @@ jobs:
         shell: pwsh
         env:
           RINGGRID_SOURCE_DIR: ${{ github.workspace }}
+          # vcpkg sanitizes the port build env; preserve the rustup vars so the
+          # cargo proxy resolves the toolchain (cargo itself is located by the
+          # portfile's find_program fallback).
+          VCPKG_KEEP_ENV_VARS: "CARGO_HOME;RUSTUP_HOME"
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install ringgrid:x64-windows `
             --overlay-ports="$env:GITHUB_WORKSPACE/crates/ringgrid-c/vcpkg"

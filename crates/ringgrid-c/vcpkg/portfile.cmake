@@ -15,11 +15,19 @@
 #      v${VERSION}. This path only works once a release is tagged AND its real
 #      SHA512 is committed below — see the `vcpkg_from_github` block.
 
-find_program(RINGGRID_CARGO NAMES cargo)
+# vcpkg builds ports in a sanitized environment that drops rustup's
+# ~/.cargo/bin from PATH, so probe the standard rustup install locations too.
+# USERPROFILE/HOME are passed through by vcpkg by default; keep CARGO_HOME with
+# `--x-keep-env-vars` / VCPKG_KEEP_ENV_VARS if it lives in a custom location.
+find_program(RINGGRID_CARGO NAMES cargo
+    PATHS
+        "$ENV{CARGO_HOME}/bin"
+        "$ENV{USERPROFILE}/.cargo/bin"
+        "$ENV{HOME}/.cargo/bin")
 if(NOT RINGGRID_CARGO)
     message(FATAL_ERROR
         "cargo not found. The ringgrid port builds from Rust source and needs a "
-        "Rust toolchain on PATH (https://rustup.rs).")
+        "Rust toolchain (https://rustup.rs); install it or set CARGO_HOME.")
 endif()
 
 if(DEFINED ENV{RINGGRID_SOURCE_DIR})

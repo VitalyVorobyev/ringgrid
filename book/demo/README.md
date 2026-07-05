@@ -18,9 +18,15 @@ GitHub Pages standalone copy (`/demo/`) and the embedded book page
 | `index.html` | Layout and controls |
 | `styles.css` | Visual system |
 | `app.js` | WASM driver + overlay rendering (ellipses, centers, decoded IDs) |
-| `samples/`, `samples.json` | Predefined sample images + captions and suggested params |
+| `samples/`, `samples.json` | Sample images + captions, each carrying its own inline target spec |
 | `favicon.svg` | Browser-tab icon |
 | `pkg/` | Built WASM package (generated, git-ignored) |
+
+Targets are **data-driven**: every entry in `samples.json` carries its own
+`target` spec, so the gallery covers all six valid target combinations —
+`{hex, rect}` × `{coded, plain}` × `{origin dots, no dots}` — without any
+per-target WASM helper. The target `<select>` (used for uploads) is populated
+from those specs at load time.
 
 ## Build & run locally
 
@@ -38,12 +44,14 @@ open http://localhost:8000/demo/index.html
 
 ## What it shows
 
-- **Sample gallery** — bundled images spanning the hex-coded and rectangular
-  plain-marker target families, plus your own uploads.
-- **Detection overlay** — outer/inner ellipse fits, decoded marker IDs, and
-  the recovered board origin/frame, drawn on a pixel-accurate canvas.
-- **JSON result** — the full `DetectionResult` returned by the detector for
-  the current image.
+- **Sample gallery** — one bundled image per valid target combination (coded
+  and plain, hex and rect, with and without origin dots), plus your own uploads.
+- **Detection overlay** — outer/inner ellipse fits, decoded marker IDs or grid
+  coordinates, and the recovered board origin/frame, drawn on a pixel-accurate
+  canvas.
+- **Result chips** — marker count, decoded IDs / labeled cells, homography,
+  resolved origin frame, and the `board_complete` signal (the success criterion
+  for plain, no-dots boards).
 
 ## Notes
 

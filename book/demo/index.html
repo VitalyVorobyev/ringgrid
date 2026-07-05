@@ -6,7 +6,7 @@
     <title>ringgrid — interactive demo</title>
     <meta
       name="description"
-      content="Run the ringgrid ring-marker detector in your browser via WebAssembly: pick a coded-hex or plain-rect target, load a sample or your own image, and inspect centers, ellipses, IDs, grid coordinates and the resolved origin."
+      content="Run the ringgrid ring-marker detector in your browser via WebAssembly: pick any of the six target combinations (hex or rect × coded or plain × with or without origin dots), load a sample or your own image, and inspect centers, ellipses, IDs, grid coordinates and the resolved origin."
     />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
@@ -43,14 +43,15 @@
             <h2 class="section-title">Calibration target</h2>
             <div class="field">
               <label for="target">Target geometry</label>
-              <select id="target">
-                <option value="hex">Hex · 16-sector coded (default)</option>
-                <option value="rect">Rect · plain rings (24×24)</option>
-              </select>
+              <!-- Options are populated from the samples' target specs (all six
+                   {hex,rect}×{coded,plain}×{dots,no dots} combinations). -->
+              <select id="target"></select>
             </div>
             <p class="gallery-caption" style="margin-top:0">
-              Detection runs in adaptive multi-scale mode, so markers are found
-              without knowing their pixel size in advance.
+              Every sample carries its own target spec; picking one here also
+              sets the geometry used when you upload your own image. Detection
+              runs in adaptive multi-scale mode, so markers are found without
+              knowing their pixel size in advance.
             </p>
           </section>
 

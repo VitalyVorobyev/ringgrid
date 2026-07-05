@@ -45,9 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cargo run -p ringgrid-cli --bin ringgrid-dev -- …`), unpublished, freeing the
   `ringgrid` name for the published CLI. Its target writing now delegates to the
   shared library helper.
-- `rect_24x24` origin dots are auto-placed (functionally identical: a Ø2.8 mm
-  triad in the central gaps).
 - Pre-1.0 migration guides moved from the mdBook to `docs/migrations/`.
+- The interactive WASM demo now covers all six target combinations (one bundled
+  sample each) instead of two, is data-driven (each sample carries its own
+  inline target spec — no per-target WASM helpers), and surfaces the
+  `board_complete` signal in the results.
 
 ## [0.9.0] — 2026-07-04
 

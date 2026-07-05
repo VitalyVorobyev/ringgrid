@@ -12,8 +12,6 @@
 
 import init, {
   RinggridDetector,
-  default_board_json,
-  rect_24x24_target_json,
   version,
 } from './pkg/ringgrid_wasm.js';
 
@@ -28,14 +26,15 @@ const els = {};
   'tooltip', 'version',
 ].forEach((id) => (els[id] = $(id)));
 
-// Board JSON + parsed spec, built lazily per target and cached (the spec is
-// re-parsed from the wasm-provided JSON so origin fiducials stay a single
-// source of truth with the Rust preset).
-const BOARD_JSON = { hex: default_board_json, rect: rect_24x24_target_json };
+// Targets are data-driven: every sample carries its own `target` spec, so the
+// demo covers all six {hex,rect}×{coded,plain}×{dots,no dots} combinations with
+// no per-target WASM helpers. Specs are indexed by their `name`; one detector is
+// built and cached per distinct target.
+const targetJson = {};   // name -> target spec JSON string
 
 // ── State ───────────────────────────────────────────────────────────
-let detectors = {};   // targetKey -> RinggridDetector
-let specs = {};       // targetKey -> parsed target spec (for fiducials)
+let detectors = {};   // target name -> RinggridDetector
+let specs = {};       // target name -> parsed target spec (for fiducials)
 let manifest = [];
 let activeSample = null;
 let img = null;       // { rgba: Uint8Array, w, h, imageData }
@@ -49,6 +48,7 @@ async function boot() {
     await init();
     els.version.textContent = 'v' + version();
     manifest = await fetch('./samples.json').then((r) => r.json()).then((d) => d.samples);
+    registerTargets();
     buildGallery();
     wireControls();
     await selectSample(manifest[0]);
@@ -65,13 +65,33 @@ function setStatus(msg, isError = false) {
   els.status.classList.toggle('error', isError);
 }
 
-function getDetector(targetKey) {
-  if (!detectors[targetKey]) {
-    const json = BOARD_JSON[targetKey]();
-    specs[targetKey] = JSON.parse(json);
-    detectors[targetKey] = new RinggridDetector(json);
+// Collect the distinct target specs carried by the samples, index them by name,
+// and populate the target <select> (used when detecting an uploaded image).
+function registerTargets() {
+  const options = new Map(); // name -> label (first sample wins)
+  for (const s of manifest) {
+    const spec = s.target;
+    if (!spec || !spec.name) continue;
+    if (!(spec.name in targetJson)) {
+      targetJson[spec.name] = JSON.stringify(spec);
+      specs[spec.name] = spec;
+    }
+    if (!options.has(spec.name)) options.set(spec.name, s.label || spec.name);
   }
-  return detectors[targetKey];
+  els.target.innerHTML = '';
+  for (const [name, label] of options) {
+    const o = document.createElement('option');
+    o.value = name;
+    o.textContent = label;
+    els.target.appendChild(o);
+  }
+}
+
+function getDetector(name) {
+  if (!detectors[name]) {
+    detectors[name] = new RinggridDetector(targetJson[name]);
+  }
+  return detectors[name];
 }
 
 // ── Gallery & image loading ─────────────────────────────────────────
@@ -113,7 +133,7 @@ async function selectSample(sample) {
   activeSample = sample;
   markActiveThumb(sample.id);
   els.galleryCaption.textContent = sample.caption || '';
-  if (sample.target) els.target.value = sample.target;
+  if (sample.target && sample.target.name) els.target.value = sample.target.name;
   await loadFromURL('./' + sample.file);
   maybeRun(true);
 }
@@ -343,11 +363,19 @@ function renderStats() {
     ? chip(`decoded IDs: <b>${decoded}</b>`, 'good')
     : chip(`labeled cells: <b>${labeled}</b>`, labeled > 0 ? 'good' : '');
 
+  // board_complete is Some(bool) only when a board frame was resolved; it is the
+  // success criterion for plain, no-dots targets (whole board must be found).
+  const bc = result.board_complete;
+  const completeChip = bc == null ? ''
+    : bc ? chip('board: <b>complete</b>', 'good')
+         : chip('board: <b>partial</b>', 'warn');
+
   els.stats.innerHTML =
     chip(`markers: <b>${markers.length}</b>`, markers.length ? 'good' : 'bad') +
     idChip +
     chip(`homography: <b>${hasH ? 'yes' : 'no'}</b>`, hasH ? 'good' : 'warn') +
-    originChip;
+    originChip +
+    completeChip;
 }
 
 // ── Hover inspector ─────────────────────────────────────────────────

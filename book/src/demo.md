@@ -1,10 +1,11 @@
 # Interactive Demo
 
 The interactive demo runs the full ringgrid detection pipeline in your browser
-via WebAssembly — no image ever leaves your device. Choose from bundled
-samples covering both target families (16-sector coded hex markers and plain
-rectangular grids) or upload your own image, then inspect the decoded marker
-IDs, fitted ellipses, and recovered origin overlaid on the source image.
+via WebAssembly — no image ever leaves your device. Choose from bundled samples
+covering all six valid target combinations — `{hex, rect}` lattices × `{coded,
+plain}` rings × `{origin dots, no dots}` — or upload your own image, then inspect
+the decoded marker IDs (or grid coordinates), fitted ellipses, recovered origin,
+and the `board_complete` signal overlaid on the source image.
 
 <iframe
   id="ringgrid-demo"

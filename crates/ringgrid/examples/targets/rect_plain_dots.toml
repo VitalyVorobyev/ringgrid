@@ -1,8 +1,9 @@
-# Plain rect target with origin dots (the rect_24x24 preset).
+# Plain rect target with origin dots (a 24×24 square lattice).
 #
-# Uncoded rings on a square lattice, anchored by an auto-placed origin-dot
-# triad in the center gaps. Detection reports absolute board-frame coordinates.
-# Combination: rect + plain + dots.
+# Uncoded rings on a square lattice, anchored by an auto-placed origin-dot triad
+# in the center gaps. Detection reports absolute board-frame coordinates.
+# Combination: rect + plain + dots. (The `rect_24x24` library preset shares this
+# geometry but keeps its own frozen dot positions for print compatibility.)
 name = "rect_plain_dots"
 coding = "plain"
 fiducials = "auto"

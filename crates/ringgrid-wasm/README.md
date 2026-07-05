@@ -24,10 +24,16 @@ live demo at <https://vitalyvorobyev.github.io/ringgrid/demo/>.
 
 The demo supports:
 
-- **Image loading** — drag-and-drop or file picker, plus a built-in test image
-- **Five detection modes** — `detect`, `detect_adaptive`, `detect_adaptive` with diameter hint, `detect_multiscale` with tier presets, and `propose_with_heatmap`
-- **Config editing** — quick controls for marker scale, completion, center refinement, and proposal downscale, plus a full JSON config editor
-- **Visualization** — outer/inner ellipses (confidence-colored), center dots, ID labels, optional edge point overlay, and proposal heatmap
+- **All six target combinations** — one bundled sample per `{hex, rect}` ×
+  `{coded, plain}` × `{origin dots, no dots}` layout, each carrying its own
+  inline target spec; plus your own uploads via the file picker
+- **Adaptive multi-scale detection** — runs `detect_adaptive`, so markers are
+  found without a known pixel size
+- **Visualization** — confidence-colored outer ellipses, center crosshairs, ID
+  or grid-coordinate labels, and the resolved origin (dots + origin cell)
+- **Result chips** — marker count, decoded IDs / labeled cells, homography,
+  origin frame (absolute vs relative), and the `board_complete` signal
+- **Hover inspector** — per-marker id/grid coord, center, confidence, and axes
 
 ## Usage
 

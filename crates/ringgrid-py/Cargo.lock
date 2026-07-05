@@ -1197,9 +1197,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "radsym"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e61462fa4315df31344873553e96fea0798d19a193c0d8f4ff5b20e95dfa4d52"
+checksum = "ce469f3b840baf11d27950540e664534ef8413b0460eca9cb16cb41c864104c6"
 dependencies = [
  "box-image-pyramid",
  "nalgebra",

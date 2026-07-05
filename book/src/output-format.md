@@ -44,7 +44,7 @@ ringgrid detect --image photo.png --out result.json
 the written JSON contains those same top-level `DetectionResult` fields, plus a
 nested `diagnostics` object, and may additionally include:
 
-- `camera` when detection used `--calibration` or inline `--cam-*` parameters
+- `camera` when detection used `--calibration` or inline `--cam-*` parameters (available via `ringgrid-dev detect`; the published `ringgrid detect` has no such flags)
 - `proposal_frame`, `proposal_count`, and `proposals` when
   `--include-proposals` is enabled
 

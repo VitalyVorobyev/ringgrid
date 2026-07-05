@@ -1,15 +1,24 @@
 # Handoff: Edge-Thinning (Gradient-Direction NMS) for radsym RSD
 
+> **Status: delivered, not adopted.** radsym **0.4.1** shipped this request as
+> option 2 below — the standalone
+> `thin_gradient(&GradientField) -> Result<GradientField>` transform. ringgrid
+> evaluated it and measured a **net ~14 % proposal-stage regression with no
+> accuracy gain**, so it is deliberately **not** enabled (see *Outcome* below).
+> This was always separate from the Gaussian-blur cost, which was the dominant
+> proposal bottleneck and *was* resolved in 0.4.1 (vectorized separable blur +
+> opt-in `unsafe-opt`).
+
 ## Problem
 
-The proposal stage (radsym RSD voting) is the dominant cost in ringgrid
-detection — **~50–54 % of end-to-end time** (per-stage `StageTimings`, Apple
-M4 Pro, release build):
+The proposal stage (radsym RSD voting) is the largest single cost in ringgrid
+detection — **~44–52 % of end-to-end time** on the coded reference scenes
+(per-stage `StageTimings`, Apple M4 Pro, radsym 0.4.1, median of 15):
 
 | image | proposal | total | proposal share |
 |---|---|---|---|
-| real 720×540, 78 markers | 15.2 ms | 28.5 ms | **53 %** |
-| synthetic 1280×960, 203 markers | 32 ms | 65.8 ms | **49 %** |
+| real 720×540, 80 markers | 14.7 ms | 28.4 ms | **52 %** |
+| synthetic 1280×960, 203 markers | 28.3 ms | 64.0 ms | **44 %** |
 
 Every above-threshold gradient pixel votes. Real edges are multi-pixel-wide
 bands (3–5 px after blur), so the same boundary votes several times. A
@@ -25,29 +34,39 @@ the accuracy gate as a default. The larger, orthogonal, *accuracy-preserving*
 win — thinning the *gradient* axis (fewer voting pixels, same radii) — is only
 reachable inside radsym.
 
-## Why ringgrid cannot do this today
+## Outcome (2026-07-05, radsym 0.4.1)
 
-Edge-thinning must run on the gradient field that RSD votes from. As of the
-current dependency (**radsym 0.4**, verified against
-`crates/radsym/src/propose/rsd.rs` and `crates/radsym/src/core/gradient.rs`)
-there is still no way to inject a thinned gradient:
+radsym 0.4.1 delivered **option 2** below: `thin_gradient`, a standalone
+gradient-direction NMS transform (4-direction quantization, integer `mag²`
+comparisons). ringgrid wired it into `proposal/mod.rs`
+(`scharr_gradient → thin_gradient → rsd_response_fused`) and benchmarked it.
 
-- `RsdConfig` (`radii`, `gradient_threshold`, `polarity`, `smoothing_factor`)
-  has **no edge-thinning / NMS knob**.
-- `rsd_response_fused(gradient: &GradientField, config: &RsdConfig)` accepts only
-  a `&GradientField`.
-- `GradientField`'s `gx` / `gy` are private; the only accessors (`gx()`, `gy()`)
-  return **read-only** views, and there is **no public constructor** (only
-  `sobel_gradient` / `scharr_gradient`, which build from an image). So a caller
-  cannot build a `GradientField` from externally-thinned components and pass it
-  back in.
+The premise did **not** hold on the current fused-RSD path. The historical
+60–80 % voting reduction was measured against ringgrid's *pre-radsym*
+per-radius design, which re-blurred once per radius and was pixel-count
+dominated. radsym's fused RSD already does **one** shared blur, so the voting
+loop is no longer the bottleneck thinning targets — and `thin_gradient` adds a
+full-image pass whose cost exceeds the voting pixels it removes.
 
-The net effect: the documented 60–80 % voting reduction cannot be applied from
-ringgrid without a new radsym API (target: **radsym 0.5**).
+Controlled criterion A/B (same machine + thermal state, 3 s warm-up, 100
+samples, `p < 0.05`):
 
-## Proposed solution (any one of these unblocks ringgrid)
+| benchmark | thinning OFF | thinning ON | Δ |
+|---|---:|---:|---:|
+| `proposal_1280x1024` | 24.1 ms | 28.0 ms | **+14 % (slower)** |
+| `proposal_1920x1080` | 36.9 ms | 42.9 ms | **+14 % (slower)** |
 
-In rough order of preference:
+Accuracy is unchanged either way (synthetic reference recall/precision `1.000`,
+mean centre error ≈ 0.081/0.084 px). Net: a ~14 % proposal-stage cost for no
+accuracy benefit, so ringgrid **does not** call `thin_gradient`. `proposal/mod.rs`
+carries a comment recording this. Should a future radsym make thinning cheaper
+than the voting it saves (e.g. fused into the gradient or vote pass), re-run the
+A/B and revisit.
+
+## Historical: proposed solutions
+
+The request offered three shapes; radsym shipped **#2** (`thin_gradient`) in
+0.4.1. Kept here as the original handoff record.
 
 1. **A thinning knob on `RsdConfig`.** Add an opt-in field, e.g.
    `pub edge_thinning: bool` (or an enum for the quantization scheme), so

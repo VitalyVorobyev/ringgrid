@@ -38,6 +38,14 @@ ABI. Also lands review-driven test and doc hardening.
 
 ### Changed
 
+- Bumped the `radsym` proposal backend to **0.4.1** and enabled its new
+  `unsafe-opt` feature. radsym 0.4.1 vectorizes the separable Gaussian blur —
+  the dominant proposal-stage cost — into cache-line-contiguous column strips,
+  and `unsafe-opt` elides the (proven-in-bounds) bounds checks in the voting
+  scatter loops. Both produce **bit-identical output**, so detection accuracy
+  is unchanged, while proposal-stage time drops ~7–27 % (up to −23 % on the
+  `proposal_*` micro-benchmarks). Performance docs and the live dashboard were
+  re-measured.
 - The `ringgrid-c` scaffold's NULL-on-error convention was replaced by the
   status-code + out-parameter model (a deliberate break of the unpublished
   crate) for a lossless error channel.

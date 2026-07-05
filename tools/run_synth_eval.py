@@ -48,6 +48,8 @@ def camera_cli_args_from_gt(gt_data: dict) -> list[str]:
 def find_ringgrid_binary() -> str:
     """Find the ringgrid binary."""
     candidates = [
+        "target/release/ringgrid-dev",
+        "target/debug/ringgrid-dev",
         "target/release/ringgrid",
         "target/debug/ringgrid",
     ]

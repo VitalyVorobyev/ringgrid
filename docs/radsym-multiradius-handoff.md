@@ -1,5 +1,19 @@
 # Handoff: Multi-Radius Fused Voting for radsym (FRST + RSD)
 
+> **Status: Resolved.** radsym shipped the fused multi-radius mode
+> (`rsd_response_fused`, one shared blur instead of one per radius), which
+> ringgrid consumes via `proposal/mod.rs`. radsym **0.4.1** then vectorized the
+> separable Gaussian blur's vertical pass into cache-line-contiguous 16-column
+> strips (bit-identical output) and added the opt-in `unsafe-opt` bounds-check
+> elision — both enabled by ringgrid. Current fused numbers (Apple M4 Pro,
+> rustc 1.95, radsym 0.4.1): `proposal_1280x1024` **22.9 ms**,
+> `proposal_1920x1080` **35.0 ms**, `propose_target_3_split_00` (720×540)
+> **14.8 ms** — versus the pre-fused `142 ms` / `194 ms` / `34 ms` recorded
+> below. The tables below are kept as the original before/after handoff record.
+> (Gradient edge-thinning — see `docs/radsym-edge-thinning-request.md` — is a
+> *separate* request; radsym 0.4.1 delivered it as `thin_gradient`, but ringgrid
+> measured it a net regression on the fused path and does not enable it.)
+
 ## Problem
 
 ringgrid replaced its internal proposal stage with radsym's RSD. The integration

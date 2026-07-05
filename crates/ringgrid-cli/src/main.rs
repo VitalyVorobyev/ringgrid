@@ -316,8 +316,8 @@ struct CliGenFromSpecArgs {
 
 #[derive(Debug, Clone, Args)]
 struct CliDetectArgs {
-    /// Path to a board layout JSON file (target specification).
-    /// When omitted, uses the built-in default board layout.
+    /// Path to a target-layout JSON file (`TargetLayout` specification).
+    /// When omitted, uses the built-in default target layout.
     #[arg(long)]
     target: Option<PathBuf>,
 
@@ -1545,7 +1545,7 @@ fn run_bench(args: &CliBenchArgs) -> CliResult<()> {
 
     let report = BenchReport {
         repeats,
-        source: format!("ringgrid bench --repeats {repeats}"),
+        source: format!("ringgrid-dev bench --repeats {repeats}"),
         images,
     };
     let json = serde_json::to_string_pretty(&report)?;

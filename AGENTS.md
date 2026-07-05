@@ -80,15 +80,17 @@ Outputs in `tools/out/synth_001/`:
 ### 3) Run the detector
 
 ```bash
-cargo run -- detect \
+cargo run -p ringgrid-cli --bin ringgrid-dev -- detect \
   --image tools/out/synth_001/img_0000.png \
+  --target tools/out/synth_001/board_spec.json \
   --out tools/out/synth_001/det_0000.json \
   --marker-diameter 32.0
 ```
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- Refinement runs when a homography is available; disable with `--no-refine`.
+- Center refinement is selected with `--circle-refine-method {none,projective-center}`
+  (default `projective-center`); pass `none` to disable it.
 
 ### 4) Score detections
 
@@ -133,7 +135,7 @@ Notes:
 
 - Reproduce a failing sample:
   - Use `tools/run_synth_eval.py --skip_gen --out_dir <same_dir>` to re-run detection/scoring on an existing dataset.
-  - Or run `ringgrid detect` directly on `img_XXXX.png` while tweaking `--marker-diameter`, `--ransac-thresh-px`, `--no-global-filter`, `--no-refine`.
+  - Or run `ringgrid-dev detect` directly on `img_XXXX.png` while tweaking `--marker-diameter`, `--ransac-thresh-px`, `--no-global-filter`, `--circle-refine-method none`.
 - Inspect artifacts:
   - Ground truth: `tools/out/<run>/synth/gt_XXXX.json`
   - Predictions: `tools/out/<run>/det/det_XXXX.json`

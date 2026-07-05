@@ -52,8 +52,13 @@ Introspection: `ringgrid_version`, `ringgrid_abi_version`,
 
 ### vcpkg (overlay port)
 
+Until ringgrid is in the upstream vcpkg registry, install from a local checkout
+by pointing the port at this repository with `RINGGRID_SOURCE_DIR` (no published
+tag or archive hash required):
+
 ```bash
-vcpkg install ringgrid --overlay-ports=crates/ringgrid-c/vcpkg
+RINGGRID_SOURCE_DIR="$(git rev-parse --show-toplevel)" \
+  vcpkg install ringgrid --overlay-ports=crates/ringgrid-c/vcpkg
 ```
 
 Then, in `CMakeLists.txt`:
@@ -63,9 +68,12 @@ find_package(ringgrid CONFIG REQUIRED)
 target_link_libraries(app PRIVATE ringgrid::ringgrid)
 ```
 
-Building the port requires a Rust toolchain (`cargo`) on `PATH`. The overlay
-port is verified in CI; upstream vcpkg-registry submission is tracked
-separately.
+Building the port requires a Rust toolchain (`cargo`) on `PATH`. Without
+`RINGGRID_SOURCE_DIR`, the port instead fetches the released source tarball for
+tag `v<version>` from GitHub — that path activates once a release is tagged and
+its real `SHA512` is committed into `vcpkg/portfile.cmake` (a placeholder until
+then). The overlay port is verified in CI (which sets `RINGGRID_SOURCE_DIR`);
+upstream vcpkg-registry submission is tracked separately.
 
 ### CMake, from source
 

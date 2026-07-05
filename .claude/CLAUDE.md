@@ -209,7 +209,7 @@ cd crates/ringgrid-py && VIRTUAL_ENV=../../.venv ../../.venv/bin/maturin develop
 wasm-pack build crates/ringgrid-wasm --target web --release
 
 # Run detector
-cargo run -- detect --image <path> --out <path> --marker-diameter 32.0
+cargo run -p ringgrid-cli --bin ringgrid-dev -- detect --image <path> --target <path> --out <path> --marker-diameter 32.0
 
 # End-to-end synthetic eval (generate → detect → score)
 .venv/bin/python tools/run_synth_eval.py --n 3 --blur_px 1.0 --marker_diameter 32.0 --out_dir tools/out/eval_run

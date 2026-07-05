@@ -8,17 +8,27 @@
 set_and_check(RINGGRID_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
 set_and_check(_ringgrid_libdir "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
 set(_ringgrid_libfile "@_rg_libfile@")
+set(_ringgrid_implib "@_rg_implib_name@")
 
 if(NOT TARGET ringgrid::ringgrid)
-    add_library(ringgrid::ringgrid UNKNOWN IMPORTED)
-    set_target_properties(ringgrid::ringgrid PROPERTIES
-        IMPORTED_LOCATION "${_ringgrid_libdir}/${_ringgrid_libfile}"
-        INTERFACE_INCLUDE_DIRECTORIES "${RINGGRID_INCLUDE_DIR}")
-
-    set(_ringgrid_implib "@_rg_implib_name@")
-    if(_ringgrid_implib AND EXISTS "${_ringgrid_libdir}/${_ringgrid_implib}")
+    if(_ringgrid_implib)
+        # Windows shared build: the runtime artifact is the DLL in bin, and the
+        # import library in lib is what consumers link against. Model it as a
+        # SHARED imported target so CMake uses IMPORTED_IMPLIB at link time and
+        # IMPORTED_LOCATION (the DLL) at runtime.
+        set_and_check(_ringgrid_bindir "@PACKAGE_CMAKE_INSTALL_BINDIR@")
+        add_library(ringgrid::ringgrid SHARED IMPORTED)
         set_target_properties(ringgrid::ringgrid PROPERTIES
-            IMPORTED_IMPLIB "${_ringgrid_libdir}/${_ringgrid_implib}")
+            IMPORTED_LOCATION "${_ringgrid_bindir}/${_ringgrid_libfile}"
+            IMPORTED_IMPLIB "${_ringgrid_libdir}/${_ringgrid_implib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${RINGGRID_INCLUDE_DIR}")
+    else()
+        # Static archive, or a non-Windows shared object: a single linkable file
+        # in lib is both the link-time and (for .so/.dylib) runtime artifact.
+        add_library(ringgrid::ringgrid UNKNOWN IMPORTED)
+        set_target_properties(ringgrid::ringgrid PROPERTIES
+            IMPORTED_LOCATION "${_ringgrid_libdir}/${_ringgrid_libfile}"
+            INTERFACE_INCLUDE_DIRECTORIES "${RINGGRID_INCLUDE_DIR}")
     endif()
 
     set(_ringgrid_system_libs "@RINGGRID_SYSTEM_LIBS@")

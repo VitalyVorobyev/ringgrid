@@ -1,7 +1,7 @@
 # Proposal Performance And Alternatives
 
 This note captures the current performance shape of the proposal stage in
-`crates/ringgrid/src/proposal/` on the radsym 0.4 backend, the reasons it
+`crates/ringgrid/src/proposal/` on the radsym 0.4.1 backend, the reasons it
 costs what it costs, the status of the three performance levers under
 consideration (direct `u8` gradients, per-proposal scale narrowing, and a
 coarse-to-fine pyramid), and the most credible remaining alternatives.
@@ -18,11 +18,15 @@ this note rather than duplicated here:
   accumulator once per radius and was 5.7–10x slower than ringgrid's old
   internal implementation; fusing radii into one accumulator + one blur
   closed that gap).
-- `docs/radsym-edge-thinning-request.md` — the still-open ask (now tracked
-  upstream as **radsym issue #16**, filed 2026-07-03) to thin gradient bands
-  to single-pixel ridges before voting, which historically cut strong-edge
-  count 60–80 % in ringgrid's pre-radsym implementation. This capability was
-  lost in the migration to radsym and has not been restored.
+- `docs/radsym-edge-thinning-request.md` — the ask (radsym issue #16) to thin
+  gradient bands to single-pixel ridges before voting, which historically cut
+  strong-edge count 60–80 % in ringgrid's *pre-radsym* implementation.
+  **Delivered but not adopted:** radsym **0.4.1** shipped it as
+  `thin_gradient`, but a controlled A/B measured it a net ~14 % proposal-stage
+  regression on the fused-RSD path (the single shared blur already removed the
+  pixel-count bottleneck thinning targeted), so ringgrid does not enable it.
+  This is **separate** from the Gaussian-blur cost, which *was* the dominant
+  proposal bottleneck and *was* addressed in **radsym 0.4.1** (see below).
 
 ## Current Snapshot
 
@@ -38,33 +42,36 @@ A second, real-image proposal benchmark lives in a separate bench binary:
 cargo bench -p ringgrid --bench detect_fixture propose_ -- --warm-up-time 2 --measurement-time 5 --sample-size 30
 ```
 
-Fresh numbers on `feat/algo-soundness-perf` (2026-07-04, Criterion median
-estimate `[low, median, high]` of the confidence interval):
+Fresh numbers on the radsym **0.4.1** backend (2026-07-05, Apple M4 Pro,
+rustc 1.95, Criterion median estimate `[low, median, high]` of the
+confidence interval):
 
 | Benchmark | Image | Median | 95% CI |
 |---|---|---:|---:|
-| `proposal_1280x1024` | synthetic, 1280×1024 | `29.909 ms` | `[29.829, 29.997] ms` |
-| `proposal_1920x1080` | synthetic, 1920×1080 | `45.040 ms` | `[44.967, 45.122] ms` |
-| `propose_target_3_split_00` | real fixture, 720×540, 78 markers | `14.877 ms` | `[14.850, 14.901] ms` |
+| `proposal_1280x1024` | synthetic, 1280×1024 | `22.910 ms` | `[22.820, 23.007] ms` |
+| `proposal_1920x1080` | synthetic, 1920×1080 | `35.044 ms` | `[34.904, 35.191] ms` |
+| `propose_target_3_split_00` | real fixture, 720×540, 78 markers | `14.766 ms` | `[14.740, 14.792] ms` |
 
 The two synthetic fixtures use a fixed `ProposalConfig` (`r_min=4, r_max=18,
 radius_step=1` → 15 voting radii) over a 14×10 ring grid regardless of image
 size, so the 1920×1080 fixture has both more pixels *and* larger rings (more
 edge pixels) than the 1280×1024 one; area grows ~1.58x (1.31 MP → 2.07 MP)
-and measured time grows ~1.51x (29.9 ms → 45.0 ms), consistent with per-pixel
+and measured time grows ~1.53x (22.9 ms → 35.0 ms), consistent with per-pixel
 gradient and voting cost dominating.
 
-These numbers are **not directly comparable** to the `37.199 ms` /
-`53.121 ms` figures previously recorded in this document — those were
-measured against the pre-radsym internal implementation (with edge-thinning
-enabled) before the migration described in
-`docs/radsym-multiradius-handoff.md`. For an apples-to-apples before/after
-comparison of that migration, see the tables in that handoff doc and in
-`docs/reviews/2026-06-performance-profiling.md` (which recorded
-`32 ms` / `48 ms` for the same two synthetic benchmarks on 2026-06-25 —
-in the same range as the numbers above, modulo normal run-to-run variance).
+The synthetic figures dropped **~23 %** from the radsym 0.4.0 backend
+(`29.909 ms` / `45.040 ms`, recorded 2026-07-04): radsym 0.4.1 vectorized the
+separable Gaussian blur's vertical pass into cache-line-contiguous 16-column
+strips (bit-identical output) and added an opt-in `unsafe-opt` feature —
+enabled here — that elides bounds checks in the voting scatter loops. Detection
+accuracy is unchanged (identical numerical output). These numbers are **not
+directly comparable** to the `37.199 ms` / `53.121 ms` figures previously
+recorded against the pre-radsym internal implementation (with edge-thinning
+enabled); for the before/after of that migration see
+`docs/radsym-multiradius-handoff.md` and
+`docs/reviews/2026-06-performance-profiling.md`.
 
-## Current Architecture (radsym 0.4, fused RSD)
+## Current Architecture (radsym 0.4.1, fused RSD)
 
 The stage does four things, none of them optional:
 
@@ -209,7 +216,7 @@ decomposes them into `ScaleTiers` (several narrow-range full-resolution
 proposal passes, each with a small `radii_count`) or a single
 `ProposalDownscale` factor (one reduced-resolution pass). Given the measured
 numbers above — a synthetic 1280×1024 pass with a 15-radius span costs
-~30 ms end-to-end, and `radius_step` already offers an accuracy-for-speed
+~23 ms end-to-end, and `radius_step` already offers an accuracy-for-speed
 knob on that same axis — a full pyramid's incremental win over the existing
 `ScaleTiers` + `ProposalDownscale` combination is not demonstrated. It stays
 a documented non-goal unless a concrete scenario surfaces where those two

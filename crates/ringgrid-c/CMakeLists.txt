@@ -83,14 +83,19 @@ add_library(ringgrid::ringgrid ALIAS ringgrid_imported)
 
 # ── Install ─────────────────────────────────────────────────────────
 
-install(FILES "${_rg_libpath}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-if(DEFINED _rg_implib)
-    install(FILES "${_rg_implib}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-endif()
 if(RINGGRID_BUILD_SHARED AND WIN32)
-    # The DLL itself belongs on the runtime path on Windows.
+    # Windows shared build: `_rg_libpath` is the DLL — a runtime artifact that
+    # belongs in bin, not lib. Only the import library (`_rg_implib`) goes in lib
+    # so the standard Windows/vcpkg layout holds (lib/ = link-time, bin/ = runtime).
     install(FILES "${_rg_cargo_target}/release/ringgrid_c.dll"
             DESTINATION "${CMAKE_INSTALL_BINDIR}")
+else()
+    # Static archive, or a non-Windows shared object: `_rg_libpath` is the
+    # linkable artifact and belongs in lib.
+    install(FILES "${_rg_libpath}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
+if(DEFINED _rg_implib)
+    install(FILES "${_rg_implib}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 endif()
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/ringgrid.h"
@@ -103,7 +108,7 @@ configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ringgrid-config.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/ringgrid-config.cmake"
     INSTALL_DESTINATION "${RINGGRID_INSTALL_CMAKEDIR}"
-    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR)
+    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_BINDIR CMAKE_INSTALL_INCLUDEDIR)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/ringgrid-config-version.cmake"
     VERSION "${PROJECT_VERSION}"

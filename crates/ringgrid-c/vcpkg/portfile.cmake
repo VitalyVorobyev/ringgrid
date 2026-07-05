@@ -1,13 +1,19 @@
 # vcpkg overlay port for the ringgrid C ABI.
 #
 # ringgrid-c is built by cargo, so a Rust toolchain (cargo on PATH) is required
-# at build time — vcpkg does not provide one. Install with:
+# at build time — vcpkg does not provide one.
 #
-#   vcpkg install ringgrid --overlay-ports=crates/ringgrid-c/vcpkg
+# Two source modes:
 #
-# For local iteration against a working checkout (no published tag needed), set
-# RINGGRID_SOURCE_DIR to the repository root; otherwise the port fetches the
-# released tag from GitHub.
+#   1. Local checkout (the supported path until ringgrid is in the upstream
+#      vcpkg registry — no published tag or archive hash needed):
+#
+#        RINGGRID_SOURCE_DIR=/path/to/ringgrid \
+#          vcpkg install ringgrid --overlay-ports=crates/ringgrid-c/vcpkg
+#
+#   2. Released GitHub tarball (RINGGRID_SOURCE_DIR unset): fetches tag
+#      v${VERSION}. This path only works once a release is tagged AND its real
+#      SHA512 is committed below — see the `vcpkg_from_github` block.
 
 find_program(RINGGRID_CARGO NAMES cargo)
 if(NOT RINGGRID_CARGO)
@@ -24,8 +30,11 @@ else()
         OUT_SOURCE_PATH SOURCE_PATH
         REPO VitalyVorobyev/ringgrid
         REF "v${VERSION}"
-        # Replace with the release tarball SHA512 when tagging (vcpkg prints the
-        # expected value on first fetch with SHA512 0).
+        # RELEASE STEP: after tagging v${VERSION}, replace the `0` placeholder
+        # with the real tarball SHA512 (run `vcpkg install ringgrid
+        # --overlay-ports=...` once and copy the "Actual hash" it prints, or
+        # `vcpkg hash <downloaded.tar.gz>`). Until then, mode 2 above fails by
+        # design — use RINGGRID_SOURCE_DIR (mode 1) for a source install.
         SHA512 0
         HEAD_REF main
     )

@@ -1,7 +1,7 @@
 # ADR-018: C / C++ / vcpkg API
 
-- **Status:** proposed
-- **Date:** 2026-07-04
+- **Status:** accepted
+- **Date:** 2026-07-04 (accepted 2026-07-05)
 - **Author role:** pipeline-architect
 - **Supersedes:** none
 
@@ -43,12 +43,22 @@ version-sync location; the `tomllib` version guards in `publish-crates.yml` /
 `release-pypi.yml` must learn about it, and a CI build job must exercise the
 cbindgen + CMake path.
 
-**Scope of this ADR / current session:** design + a compiling **scaffold** only
-— the crate, `cbindgen.toml`, and a minimal `extern "C"` surface (version,
-target presets, a grayscale detect entry, string free). The full surface
-(config, adaptive/multiscale, diagnostics, camera/undistort), the C++ header,
-the CMake package, the vcpkg port, and CI wiring are a tracked follow-up phase
-(use the `rust-cpp-bindings` skill).
+**Delivered (0.10.1):** the full binding landed on top of the original 0.9
+scaffold. `crates/ringgrid-c` now exposes a WASM-isomorphic surface — an opaque
+`RinggridDetector` handle, a `RinggridStatus` error enum with out-parameters and
+`catch_unwind` panic firewalls, the full detection surface (grayscale/RGBA,
+diagnostics, adaptive, adaptive-with-hint, multiscale, external mapper, proposal
++ borrowed heatmap), config load/dump/overlay, target/scale-tier presets, and an
+`abi_version` guard. The header is cbindgen-generated (`include/ringgrid.h`,
+committed and CI-diff-guarded), with a header-only C++ RAII wrapper
+(`include/ringgrid.hpp`), a CMake package (`find_package(ringgrid)`) + pkg-config,
+and a vcpkg overlay port. A `capi` CI job exercises the cbindgen diff, the crate
+tests + marshalling parity, the `find_package` consumer (C and C++), and the
+vcpkg overlay install. `crates/ringgrid-c/Cargo.toml` is the fifth version-sync
+location and is now guarded in `publish-crates.yml` and `release-pypi.yml`.
+
+The scaffold's original NULL-on-error convention was replaced by the status-code
+model — a deliberate, unpublished-crate break for a lossless error channel.
 
 ## Consequences
 

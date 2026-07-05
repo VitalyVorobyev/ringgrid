@@ -355,6 +355,41 @@ mod tests {
     use crate::detector::id_correction::index::BoardIndex;
     use crate::target::TargetLayout;
 
+    fn neighbor(conf: f64) -> NeighborInfo {
+        NeighborInfo {
+            id: 0,
+            center: [0.0, 0.0],
+            board_xy: [0.0, 0.0],
+            outer_radius_px: 10.0,
+            confidence: conf,
+        }
+    }
+
+    #[test]
+    fn finite_radius_or_falls_back_on_non_positive_or_nan() {
+        assert!((finite_radius_or(5.0, 2.0) - 5.0).abs() < 1e-12);
+        // Non-positive radius uses the fallback (floored at 1.0).
+        assert!((finite_radius_or(0.0, 3.0) - 3.0).abs() < 1e-12);
+        assert!((finite_radius_or(-4.0, 3.0) - 3.0).abs() < 1e-12);
+        // A tiny/degenerate fallback is floored to 1.0.
+        assert!((finite_radius_or(f64::NAN, 0.5) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn local_scale_gate_is_mul_times_mean_radius() {
+        // mul · 0.5 · (r_i + r_j) = 2 · 0.5 · 20 = 20.
+        assert!((local_scale_gate_px(8.0, 12.0, 2.0) - 20.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn median_confidence_handles_odd_even_and_empty() {
+        assert_eq!(median_confidence(&[]), 0.0);
+        let odd = [neighbor(0.2), neighbor(0.8), neighbor(0.5)];
+        assert!((median_confidence(&odd) - 0.5).abs() < 1e-12);
+        let even = [neighbor(0.2), neighbor(0.8)];
+        assert!((median_confidence(&even) - 0.5).abs() < 1e-12);
+    }
+
     #[test]
     fn vote_tie_break_is_deterministic() {
         let board = TargetLayout::default_hex();

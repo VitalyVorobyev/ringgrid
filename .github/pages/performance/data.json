@@ -2,8 +2,8 @@
   "meta": {
     "cpu": "Apple M4 Pro",
     "rustc": "1.95.0",
-    "git_sha": "3872e796",
-    "generated": "2026-07-04",
+    "git_sha": "55e699e5",
+    "generated": "2026-07-05",
     "repeats": 15,
     "source": "tools/gen_pages_perf.py"
   },
@@ -14,12 +14,12 @@
       "file": "target_3_split_00.png",
       "width": 720,
       "height": 540,
-      "markers": 79,
-      "decoded": 79,
+      "markers": 80,
+      "decoded": 80,
       "board_frame": "absolute",
-      "proposal_ms": 15.482332999999999,
-      "fit_decode_ms": 9.614417,
-      "finalize_ms": 4.661625,
+      "proposal_ms": 14.659792,
+      "fit_decode_ms": 9.146833,
+      "finalize_ms": 4.593624999999999,
       "img": "./img/real_hex_input.jpg",
       "overlay": "./img/real_hex_overlay.jpg",
       "note": "Dense hex lattice photographed in the lab; decoded to absolute IDs."
@@ -33,9 +33,9 @@
       "markers": 42,
       "decoded": 42,
       "board_frame": "absolute",
-      "proposal_ms": 20.1025,
-      "fit_decode_ms": 3.941083,
-      "finalize_ms": 2.986916,
+      "proposal_ms": 18.405624999999997,
+      "fit_decode_ms": 3.784958,
+      "finalize_ms": 2.917208,
       "img": "./img/hex_sparse_input.jpg",
       "overlay": "./img/hex_sparse_overlay.jpg",
       "note": "45-cell hex at 0.63 MP \u2014 sparse lattice, larger markers."
@@ -49,9 +49,9 @@
       "markers": 203,
       "decoded": 203,
       "board_frame": "absolute",
-      "proposal_ms": 37.443042000000005,
-      "fit_decode_ms": 26.863458,
-      "finalize_ms": 9.547375,
+      "proposal_ms": 28.343875,
+      "fit_decode_ms": 26.19225,
+      "finalize_ms": 9.448875000000001,
       "img": "./img/hex_dense_input.jpg",
       "overlay": "./img/hex_dense_overlay.jpg",
       "note": "203-cell hex at 1.23 MP \u2014 the standard reference density."
@@ -65,9 +65,9 @@
       "markers": 144,
       "decoded": 0,
       "board_frame": "absolute",
-      "proposal_ms": 23.972667,
-      "fit_decode_ms": 15.283708,
-      "finalize_ms": 4.412208,
+      "proposal_ms": 21.305042,
+      "fit_decode_ms": 14.796541,
+      "finalize_ms": 4.400541,
       "img": "./img/rect_plain_input.jpg",
       "overlay": "./img/rect_plain_overlay.jpg",
       "note": "144-cell plain rect with origin dots \u2014 grid-labeled, anchored to absolute mm (no per-marker IDs)."
@@ -79,22 +79,22 @@
       {
         "file": "target_3_split_00.png",
         "note": "Dense hex lattice photographed in the lab; decoded to absolute IDs.",
-        "ms": 29.81025
+        "ms": 28.415167
       },
       {
         "file": "hex_sparse/img_0000.png",
         "note": "45-cell hex at 0.63 MP \u2014 sparse lattice, larger markers.",
-        "ms": 26.99475
+        "ms": 25.127333
       },
       {
         "file": "hex_dense/img_0000.png",
         "note": "203-cell hex at 1.23 MP \u2014 the standard reference density.",
-        "ms": 74.014083
+        "ms": 64.011167
       },
       {
         "file": "rect_plain/img_0000.png",
         "note": "144-cell plain rect with origin dots \u2014 grid-labeled, anchored to absolute mm (no per-marker IDs).",
-        "ms": 43.738333999999995
+        "ms": 40.48175
       }
     ]
   },

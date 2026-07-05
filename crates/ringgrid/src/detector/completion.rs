@@ -846,6 +846,47 @@ mod tests {
     use crate::detector::marker_build::FitMetrics;
 
     #[test]
+    fn radii_cv_is_zero_for_degenerate_or_uniform_inputs() {
+        // Fewer than 2 samples → 0.
+        assert_eq!(radii_coefficient_of_variation(&[5.0]), 0.0);
+        // Uniform radii → zero scatter.
+        assert_eq!(radii_coefficient_of_variation(&[10.0, 10.0, 10.0]), 0.0);
+        // Sub-pixel mean is treated as degenerate → 0.
+        assert_eq!(radii_coefficient_of_variation(&[0.5, 0.5]), 0.0);
+    }
+
+    #[test]
+    fn radii_cv_matches_std_over_mean() {
+        // mean = 10, variance = 4, std = 2 → cv = 0.2.
+        let cv = radii_coefficient_of_variation(&[8.0, 12.0]);
+        assert!((cv - 0.2).abs() < 1e-6, "cv = {cv}");
+    }
+
+    #[test]
+    fn coord_bbox_spans_all_coordinates() {
+        let coords = [Coord::new(1, 2), Coord::new(3, 1), Coord::new(0, 5)];
+        let (min, max) = coord_bbox(coords.into_iter()).expect("non-empty");
+        assert_eq!((min.u, min.v), (0, 1));
+        assert_eq!((max.u, max.v), (3, 5));
+    }
+
+    #[test]
+    fn coord_bbox_of_empty_is_none() {
+        assert!(coord_bbox(std::iter::empty()).is_none());
+    }
+
+    #[test]
+    fn center_in_bounds_respects_safe_margin() {
+        // Comfortably inside a 100x100 image with a 10 px margin.
+        assert!(is_center_in_bounds([50.0, 50.0], 100.0, 100.0, 10.0));
+        // Too close to the left / bottom edges.
+        assert!(!is_center_in_bounds([5.0, 50.0], 100.0, 100.0, 10.0));
+        assert!(!is_center_in_bounds([50.0, 95.0], 100.0, 100.0, 10.0));
+        // Non-finite centers are always rejected.
+        assert!(!is_center_in_bounds([f64::NAN, 50.0], 100.0, 100.0, 10.0));
+    }
+
+    #[test]
     fn completion_gate_reason_serialization_is_stable() {
         let reason = CompletionGateRejectReason::ScaleOutOfRange;
         assert_eq!(reason.to_string(), "scale_out_of_range");

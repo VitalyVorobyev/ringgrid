@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320" font-family="sans-serif" font-size="14">
+<title>Comparison of calibration marker types: checkerboard corners, ArUco square markers, and ringgrid coded concentric rings</title>
+<rect x="30" y="46" width="200" height="180" rx="8" fill="#888" fill-opacity="0.06" stroke="#888" stroke-opacity="0.5"/>
+<text x="130" y="30" text-anchor="middle" fill="#999" font-size="16">Checkerboard</text>
+<text x="130" y="250" text-anchor="middle" fill="#888" font-size="13">corners only</text>
+<text x="130" y="270" text-anchor="middle" fill="#888" font-size="13">no identity</text>
+<rect x="260" y="46" width="200" height="180" rx="8" fill="#888" fill-opacity="0.06" stroke="#888" stroke-opacity="0.5"/>
+<text x="360" y="30" text-anchor="middle" fill="#999" font-size="16">ArUco / square</text>
+<text x="360" y="250" text-anchor="middle" fill="#888" font-size="13">4 corners / marker</text>
+<text x="360" y="270" text-anchor="middle" fill="#888" font-size="13">50–250 IDs, 4 poses</text>
+<rect x="490" y="46" width="200" height="180" rx="8" fill="#888" fill-opacity="0.06" stroke="#888" stroke-opacity="0.5"/>
+<text x="590" y="30" text-anchor="middle" fill="#999" font-size="16">ringgrid</text>
+<text x="590" y="250" text-anchor="middle" fill="#888" font-size="13">100s of edge points</text>
+<text x="590" y="270" text-anchor="middle" fill="#888" font-size="13">893 IDs, rotation-free</text>
+<rect x="60" y="72" width="64" height="64" fill="#888" fill-opacity="0.55"/>
+<rect x="124" y="72" width="64" height="64" fill="#888" fill-opacity="0.10"/>
+<rect x="60" y="136" width="64" height="64" fill="#888" fill-opacity="0.10"/>
+<rect x="124" y="136" width="64" height="64" fill="#888" fill-opacity="0.55"/>
+<rect x="60" y="72" width="128" height="128" fill="none" stroke="#888" stroke-opacity="0.6"/>
+<circle cx="124" cy="136" r="8" fill="none" stroke="#4c9f70" stroke-width="2.5"/>
+<line x1="110" y1="136" x2="138" y2="136" stroke="#4c9f70" stroke-width="1.2"/>
+<line x1="124" y1="122" x2="124" y2="150" stroke="#4c9f70" stroke-width="1.2"/>
+<text x="124" y="222" text-anchor="middle" fill="#888" font-size="12">corner feature</text>
+<rect x="294" y="70" width="132" height="132" fill="#888" fill-opacity="0.55"/>
+<rect x="312.0" y="88.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="336.0" y="88.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="360.0" y="88.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="384.0" y="88.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="312.0" y="112.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="336.0" y="112.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="360.0" y="112.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="384.0" y="112.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="312.0" y="136.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="336.0" y="136.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="360.0" y="136.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="384.0" y="136.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="312.0" y="160.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="336.0" y="160.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<rect x="360.0" y="160.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.05"/>
+<rect x="384.0" y="160.0" width="24.0" height="24.0" fill="#888" fill-opacity="0.6"/>
+<circle cx="294" cy="70" r="5" fill="none" stroke="#4c9f70" stroke-width="2.2"/>
+<circle cx="426" cy="70" r="5" fill="none" stroke="#4c9f70" stroke-width="2.2"/>
+<circle cx="294" cy="202" r="5" fill="none" stroke="#4c9f70" stroke-width="2.2"/>
+<circle cx="426" cy="202" r="5" fill="none" stroke="#4c9f70" stroke-width="2.2"/>
+<text x="360" y="224" text-anchor="middle" fill="#888" font-size="12">binary grid + border</text>
+<circle cx="590.0" cy="130.0" r="72" fill="none" stroke="#4c9f70" stroke-width="8" stroke-opacity="0.85"/>
+<path d="M 650 130 A 60 60 0 0 0 645.43 107.04 L 626.96 114.69 A 40 40 0 0 1 630 130 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 645.43 107.04 A 60 60 0 0 0 632.43 87.57 L 618.28 101.72 A 40 40 0 0 1 626.96 114.69 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 632.43 87.57 A 60 60 0 0 0 612.96 74.57 L 605.31 93.04 A 40 40 0 0 1 618.28 101.72 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 612.96 74.57 A 60 60 0 0 0 590 70 L 590 90 A 40 40 0 0 1 605.31 93.04 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 590 70 A 60 60 0 0 0 567.04 74.57 L 574.69 93.04 A 40 40 0 0 1 590 90 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 567.04 74.57 A 60 60 0 0 0 547.57 87.57 L 561.72 101.72 A 40 40 0 0 1 574.69 93.04 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 547.57 87.57 A 60 60 0 0 0 534.57 107.04 L 553.04 114.69 A 40 40 0 0 1 561.72 101.72 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 534.57 107.04 A 60 60 0 0 0 530 130 L 550 130 A 40 40 0 0 1 553.04 114.69 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 530 130 A 60 60 0 0 0 534.57 152.96 L 553.04 145.31 A 40 40 0 0 1 550 130 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 534.57 152.96 A 60 60 0 0 0 547.57 172.43 L 561.72 158.28 A 40 40 0 0 1 553.04 145.31 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 547.57 172.43 A 60 60 0 0 0 567.04 185.43 L 574.69 166.96 A 40 40 0 0 1 561.72 158.28 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 567.04 185.43 A 60 60 0 0 0 590 190 L 590 170 A 40 40 0 0 1 574.69 166.96 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 590 190 A 60 60 0 0 0 612.96 185.43 L 605.31 166.96 A 40 40 0 0 1 590 170 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 612.96 185.43 A 60 60 0 0 0 632.43 172.43 L 618.28 158.28 A 40 40 0 0 1 605.31 166.96 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 632.43 172.43 A 60 60 0 0 0 645.43 152.96 L 626.96 145.31 A 40 40 0 0 1 618.28 158.28 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<path d="M 645.43 152.96 A 60 60 0 0 0 650 130 L 630 130 A 40 40 0 0 1 626.96 145.31 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-opacity="0.35" stroke-width="0.6"/>
+<circle cx="590.0" cy="130.0" r="26" fill="none" stroke="#4c9f70" stroke-width="6" stroke-opacity="0.85"/>
+<circle cx="590.0" cy="130.0" r="2.5" fill="#888"/>
+<text x="590" y="212" text-anchor="middle" fill="#888" font-size="12">rings + coded ID</text>
+</svg>

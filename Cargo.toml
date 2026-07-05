@@ -7,7 +7,7 @@ members = [
 exclude = ["crates/ringgrid-py", "crates/ringgrid-wasm", "crates/ringgrid-c"]
 
 [workspace.package]
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
@@ -30,5 +30,5 @@ rand = "0.10"
 tiny-solver = "0.18"
 png = "0.18"
 projective-grid = "0.10.1"
-radsym = "0.4"
+radsym = { version = "0.4.1", features = ["unsafe-opt"] }
 web-time = "1"

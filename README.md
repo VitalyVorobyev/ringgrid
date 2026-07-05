@@ -17,7 +17,7 @@ a small structured result — no OpenCV bindings, all image processing in Rust.
 - Two ways to identify markers: **coded** 16-sector rings (decode to stable IDs) or **plain** rings anchored by origin dots or a complete-board layout
 - Hex or rectangular lattices, from one compositional `TargetLayout`
 - Optional camera-distortion handling and self-undistort estimation
-- One library, three surfaces: a Rust crate, a Python package, and a CLI
+- One library, many surfaces: a Rust crate, a Python package, C/C++ bindings, a WebAssembly package, and a CLI
 
 ## Visual Overview
 
@@ -37,6 +37,8 @@ shows the printable target and a detection overlay (green = fitted ellipses).
 cargo add ringgrid                       # Rust library
 cargo install ringgrid --features cli    # `ringgrid` CLI (target gen + detection)
 pip install ringgrid                     # Python package
+npm install @vitavision/ringgrid         # JavaScript / WebAssembly
+vcpkg install ringgrid                   # C / C++ (or CMake from source)
 ```
 
 The library has a clean dependency graph by default; the CLI is behind the
@@ -166,8 +168,9 @@ automatically (`fiducials = "auto"`) so the pattern always resolves orientation.
 
 - **Rust** — the core library. See [`crates/ringgrid/README.md`](crates/ringgrid/README.md) and the [API reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/).
 - **Python** — `pip install ringgrid`. See [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md).
+- **C / C++** — `vcpkg install ringgrid` (or CMake from source); a stable C ABI + header-only C++ wrapper. See [`crates/ringgrid-c/README.md`](crates/ringgrid-c/README.md).
 - **CLI** — `cargo install ringgrid --features cli`; `ringgrid gen | detect | batch | example`. See the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
-- **WASM** — in-browser detection; try the [live demo](https://vitalyvorobyev.github.io/ringgrid/demo/).
+- **WASM / npm** — `npm install @vitavision/ringgrid`; in-browser detection. Try the [live demo](https://vitalyvorobyev.github.io/ringgrid/demo/).
 
 ## Documentation
 

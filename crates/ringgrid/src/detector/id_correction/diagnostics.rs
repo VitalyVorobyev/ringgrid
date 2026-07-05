@@ -110,3 +110,86 @@ pub(super) fn count_inconsistent_remaining(ws: &IdCorrectionWorkspace<'_>) -> us
     }
     n
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::config::IdCorrectionConfig;
+    use crate::detector::id_correction::index::BoardIndex;
+    use crate::detector::marker_build::MarkerRecord;
+    use crate::marker::codec::Codebook;
+    use crate::target::TargetLayout;
+
+    fn marker(id: Option<usize>, center: [f64; 2]) -> MarkerRecord {
+        MarkerRecord {
+            id,
+            center,
+            confidence: 0.9,
+            ..MarkerRecord::default()
+        }
+    }
+
+    fn min_cyclic() -> usize {
+        Codebook::default().min_cyclic_dist()
+    }
+
+    /// A board-adjacent id pair from the default hex layout (deterministic).
+    fn adjacent_pair(board_index: &BoardIndex) -> (usize, usize) {
+        let (&id_a, nbrs) = board_index
+            .board_neighbors
+            .iter()
+            .find(|(_, nbrs)| !nbrs.is_empty())
+            .expect("hex board has an adjacent pair");
+        (id_a, nbrs[0])
+    }
+
+    #[test]
+    fn adjacent_spacing_is_the_pair_center_distance() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        let board_index = BoardIndex::build(&board);
+        let (id_a, id_b) = adjacent_pair(&board_index);
+
+        // Two board-adjacent markers 40 px apart: the median (single) adjacent
+        // spacing must be exactly that separation.
+        let mut markers = vec![
+            marker(Some(id_a), [10.0, 10.0]),
+            marker(Some(id_b), [50.0, 10.0]),
+        ];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+
+        let spacing = estimate_adjacent_spacing_px(&ws).expect("adjacent pair yields a spacing");
+        assert!((spacing - 40.0).abs() < 1e-9, "spacing = {spacing}");
+    }
+
+    #[test]
+    fn adjacent_spacing_is_none_without_adjacent_pairs() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        // A single decoded marker has no adjacent partner → no spacing sample.
+        let mut markers = vec![marker(Some(0), [10.0, 10.0])];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        assert!(estimate_adjacent_spacing_px(&ws).is_none());
+    }
+
+    #[test]
+    fn count_inconsistent_flags_off_board_ids() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        let off_board = board.n_cells() + 100_000;
+        let mut markers = vec![marker(Some(off_board), [10.0, 10.0])];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        assert_eq!(count_inconsistent_remaining(&ws), 1);
+    }
+
+    #[test]
+    fn count_inconsistent_ignores_isolated_valid_marker() {
+        let board = TargetLayout::default_hex();
+        let cfg = IdCorrectionConfig::default();
+        // A valid on-board id with no neighbors: below min_neighbors, so it is
+        // never counted as inconsistent (avoids clearing isolated-but-correct).
+        let mut markers = vec![marker(Some(0), [10.0, 10.0])];
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        assert_eq!(count_inconsistent_remaining(&ws), 0);
+    }
+}

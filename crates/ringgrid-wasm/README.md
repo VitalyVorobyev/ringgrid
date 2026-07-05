@@ -2,7 +2,24 @@
 
 WebAssembly bindings for [ringgrid](https://github.com/VitalyVorobyev/ringgrid) — a pure-Rust detector for dense ring calibration targets on hex or rectangular lattices (coded 16-sector or plain rings).
 
-## Building
+## Install
+
+The published package is [`@vitavision/ringgrid`](https://www.npmjs.com/package/@vitavision/ringgrid):
+
+```bash
+npm install @vitavision/ringgrid
+```
+
+```js
+import init, { RinggridDetector, default_board_json } from "@vitavision/ringgrid";
+
+await init();                                   // load the wasm module
+const detector = new RinggridDetector(default_board_json());
+const json = detector.detect_rgba(imageData.data, imageData.width, imageData.height);
+const result = JSON.parse(json);                // a DetectionResult
+```
+
+## Building from source
 
 ```bash
 wasm-pack build crates/ringgrid-wasm --target web --release

@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-07-05
+
+Completes the **C / C++ / vcpkg** binding (ADR-018) — C and C++ integrations now
+have a first-class, package-manager-distributable path. Library changes are
+additive; the only breaking change is to the unpublished `ringgrid-c` scaffold
+ABI. Also lands review-driven test and doc hardening.
+
+### Added
+
+- **Full C ABI** (`crates/ringgrid-c`), isomorphic to the WASM binding: an
+  opaque `RinggridDetector` handle, a `RinggridStatus` error enum with
+  out-parameters and `catch_unwind` panic firewalls, the full detection surface
+  (grayscale/RGBA; single-pass, diagnostics, adaptive, adaptive-with-hint,
+  multiscale, external mapper, proposal + borrowed heatmap), config
+  load/dump/overlay, target and scale-tier presets, and an `abi_version` guard.
+  Targets, configs, and results cross as JSON strings.
+- **cbindgen-generated C header** (`include/ringgrid.h`, committed and
+  CI-diff-guarded) and a header-only **C++ RAII wrapper** (`include/ringgrid.hpp`):
+  a move-only `ringgrid::Detector`, `std::string` results, and exceptions.
+- **CMake package** (`find_package(ringgrid)` → `ringgrid::ringgrid`) with
+  static/shared selection and a `pkg-config` file, plus a **vcpkg overlay port**.
+- A `capi` CI job (cbindgen diff, crate tests + marshalling parity, `find_package`
+  C/C++ consumer, vcpkg overlay install) and `ringgrid-c` version-sync guards in
+  the crates.io and PyPI release workflows.
+- Unit-test coverage for previously thin modules (ID-correction internals, ring
+  estimators, completion) and runnable library doctests.
+
+### Changed
+
+- Bumped the `radsym` proposal backend to **0.4.1** and enabled its new
+  `unsafe-opt` feature. radsym 0.4.1 vectorizes the separable Gaussian blur —
+  the dominant proposal-stage cost — into cache-line-contiguous column strips,
+  and `unsafe-opt` elides the (proven-in-bounds) bounds checks in the voting
+  scatter loops. Both produce **bit-identical output**, so detection accuracy
+  is unchanged, while proposal-stage time drops ~7–27 % (up to −23 % on the
+  `proposal_*` micro-benchmarks). Performance docs and the live dashboard were
+  re-measured.
+- The `ringgrid-c` scaffold's NULL-on-error convention was replaced by the
+  status-code + out-parameter model (a deliberate break of the unpublished
+  crate) for a lossless error channel.
+
 ## [0.10.0] — 2026-07-05
 
 Ships a published, user-facing `ringgrid` CLI and completes the target matrix:

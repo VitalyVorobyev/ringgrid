@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="380" viewBox="0 0 640 380" font-family="sans-serif" font-size="14">
+<title>Annotated ringgrid marker structure: center, inner ring, 16-sector code band, and outer ring with outer and inner radius callouts</title>
+<defs><marker id="rr" markerWidth="8" markerHeight="8" refX="6.5" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#888"/></marker></defs>
+<circle cx="190" cy="190" r="140" fill="none" stroke="#888" stroke-width="10"/>
+<path d="M 302 190 A 112 112 0 0 0 293.47 147.14 L 258.37 161.68 A 74 74 0 0 1 264 190 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 293.47 147.14 A 112 112 0 0 0 269.2 110.8 L 242.33 137.67 A 74 74 0 0 1 258.37 161.68 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 269.2 110.8 A 112 112 0 0 0 232.86 86.53 L 218.32 121.63 A 74 74 0 0 1 242.33 137.67 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 232.86 86.53 A 112 112 0 0 0 190 78 L 190 116 A 74 74 0 0 1 218.32 121.63 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 190 78 A 112 112 0 0 0 147.14 86.53 L 161.68 121.63 A 74 74 0 0 1 190 116 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 147.14 86.53 A 112 112 0 0 0 110.8 110.8 L 137.67 137.67 A 74 74 0 0 1 161.68 121.63 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 110.8 110.8 A 112 112 0 0 0 86.53 147.14 L 121.63 161.68 A 74 74 0 0 1 137.67 137.67 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 86.53 147.14 A 112 112 0 0 0 78 190 L 116 190 A 74 74 0 0 1 121.63 161.68 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 78 190 A 112 112 0 0 0 86.53 232.86 L 121.63 218.32 A 74 74 0 0 1 116 190 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 86.53 232.86 A 112 112 0 0 0 110.8 269.2 L 137.67 242.33 A 74 74 0 0 1 121.63 218.32 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 110.8 269.2 A 112 112 0 0 0 147.14 293.47 L 161.68 258.37 A 74 74 0 0 1 137.67 242.33 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 147.14 293.47 A 112 112 0 0 0 190 302 L 190 264 A 74 74 0 0 1 161.68 258.37 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 190 302 A 112 112 0 0 0 232.86 293.47 L 218.32 258.37 A 74 74 0 0 1 190 264 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 232.86 293.47 A 112 112 0 0 0 269.2 269.2 L 242.33 242.33 A 74 74 0 0 1 218.32 258.37 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<path d="M 269.2 269.2 A 112 112 0 0 0 293.47 232.86 L 258.37 218.32 A 74 74 0 0 1 242.33 242.33 Z" fill="#4c9f70" fill-opacity="0.5" stroke="#888" stroke-width="0.8"/>
+<path d="M 293.47 232.86 A 112 112 0 0 0 302 190 L 264 190 A 74 74 0 0 1 258.37 218.32 Z" fill="#888" fill-opacity="0.1" stroke="#888" stroke-width="0.8"/>
+<circle cx="190" cy="190" r="54" fill="none" stroke="#888" stroke-width="9"/>
+<circle cx="190" cy="190" r="3.5" fill="#888"/>
+<line x1="190" y1="190" x2="316.9" y2="130.8" stroke="#888" stroke-width="1.5" marker-end="url(#rr)"/>
+<line x1="190" y1="190" x2="238.9" y2="212.8" stroke="#888" stroke-width="1.5" marker-end="url(#rr)"/>
+<line x1="434" y1="70" x2="239.3" y2="111.1" stroke="#888" stroke-opacity="0.5" stroke-width="1"/><text x="438" y="74" fill="#999" font-size="14">code band</text>
+<line x1="434" y1="114" x2="316.9" y2="130.8" stroke="#888" stroke-opacity="0.5" stroke-width="1"/><text x="438" y="118" fill="#999" font-size="14">outer radius</text>
+<line x1="434" y1="228" x2="238.9" y2="212.8" stroke="#888" stroke-opacity="0.5" stroke-width="1"/><text x="438" y="232" fill="#999" font-size="14">inner radius</text>
+<line x1="106" y1="322" x2="190" y2="190" stroke="#888" stroke-opacity="0.5" stroke-width="1"/>
+<text x="60" y="330" fill="#999" font-size="14">center</text>
+</svg>

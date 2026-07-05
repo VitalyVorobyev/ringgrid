@@ -38,6 +38,20 @@
 //! }
 //! ```
 //!
+//! Targets can also be built in code (no files needed):
+//!
+//! ```
+//! use ringgrid::{Detector, TargetLayout};
+//!
+//! let target = TargetLayout::default_hex();
+//! let detector = Detector::new(target);
+//!
+//! // An empty image yields a valid result with no detections.
+//! let image = image::GrayImage::new(64, 48);
+//! let result = detector.detect(&image).unwrap();
+//! assert!(result.detected_markers.is_empty());
+//! ```
+//!
 //! ## Coordinate Frames
 //!
 //! Marker centers ([`DetectedMarker::center`]) are always in image-pixel
@@ -112,6 +126,22 @@ pub use marker::{AngularAggregator, CodebookProfile, DecodeConfig, GradPolarity}
 pub use ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 /// Inspection helpers for the embedded 16-sector codebook profiles.
+///
+/// ```
+/// use ringgrid::CodebookProfile;
+/// use ringgrid::codebook::{codebook_info, decode_word};
+///
+/// // The shipped baseline profile: 893 sixteen-bit codewords.
+/// let info = codebook_info(CodebookProfile::Base);
+/// assert_eq!(info.bits, 16);
+/// assert_eq!(info.len, 893);
+///
+/// // Decoding the exact codeword for marker ID 0 is a perfect match.
+/// let word = info.first_codeword.unwrap();
+/// let m = decode_word(word, CodebookProfile::Base);
+/// assert_eq!(m.id, 0);
+/// assert_eq!(m.dist, 0);
+/// ```
 pub mod codebook {
     pub use crate::marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 }

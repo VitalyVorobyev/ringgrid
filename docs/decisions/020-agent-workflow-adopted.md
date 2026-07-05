@@ -1,4 +1,4 @@
-# ADR-001: Adopt 3-Role Agent Development Workflow
+# ADR-020: Adopt 3-Role Agent Development Workflow
 
 - **Status:** accepted
 - **Date:** 2026-02-15

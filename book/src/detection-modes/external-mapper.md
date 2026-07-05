@@ -49,7 +49,7 @@ OpenCV and most calibration toolboxes:
 - **k1, k2, k3** -- radial distortion coefficients.
 - **p1, p2** -- tangential (decentering) distortion coefficients.
 
-The CLI accepts the same camera model via `ringgrid detect --calibration camera_model.json`.
+The CLI accepts the same camera model via `ringgrid-dev detect --calibration camera_model.json`.
 The JSON can be either the direct serde shape:
 
 ```json

@@ -82,4 +82,4 @@ Concentric circle targets (e.g., Huo et al. 2020) share some advantages with rin
 - A hex lattice layout for maximum marker density
 - A large codebook (893 IDs) enabling scalable target designs
 
-<!-- TODO: Side-by-side comparison figure: checkerboard vs ArUco vs ringgrid -->
+![Comparison of calibration marker types: checkerboard corners, ArUco square markers, and ringgrid coded concentric rings](assets/why-rings.svg)

@@ -141,6 +141,13 @@ fn compute_via_radsym(
         }
     };
 
+    // Note: radsym 0.4.1 offers `thin_gradient` (Canny-style gradient-direction
+    // NMS before voting). Measured on this fused-RSD path it is a net ~14 %
+    // proposal-stage *regression* with no accuracy gain — the fused single-blur
+    // voting is no longer pixel-count-dominated, so the extra full-image thinning
+    // pass costs more than the voting pixels it removes. Deliberately not used;
+    // see docs/radsym-edge-thinning-request.md for the A/B evidence.
+
     // Translate relative gradient threshold to absolute
     let max_mag = gradient.max_magnitude();
     if max_mag < 1e-6 {

@@ -139,4 +139,47 @@ mod tests {
         assert_eq!(idx.nearest_within([0.5, 0.0], 1.0), Some(1));
         assert_eq!(idx.nearest_within([5.0, 0.0], 1.0), None);
     }
+
+    #[test]
+    fn nearest_k_ids_ranks_by_distance_then_id() {
+        let idx = index_with(&[(7, [0.0, 0.0]), (3, [2.0, 0.0]), (42, [9.0, 9.0])]);
+        let ranked = idx.nearest_k_ids([0.0, 0.0], 2);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].0, 7);
+        assert!((ranked[0].1 - 0.0).abs() < 1e-9);
+        assert_eq!(ranked[1].0, 3);
+        assert!((ranked[1].1 - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nearest_k_ids_empty_for_k_zero() {
+        let idx = index_with(&[(1, [0.0, 0.0])]);
+        assert!(idx.nearest_k_ids([0.0, 0.0], 0).is_empty());
+    }
+
+    #[test]
+    fn are_neighbors_reflects_adjacency_list() {
+        let mut board_neighbors = HashMap::new();
+        board_neighbors.insert(1usize, vec![2usize, 3usize]);
+        board_neighbors.insert(2usize, vec![1usize]);
+        let idx = BoardIndex {
+            id_to_xy: HashMap::new(),
+            board_neighbors,
+            pitch_mm: 1.0,
+            neighbor_spacing_mm: 1.0,
+        };
+        assert!(idx.are_neighbors(1, 2));
+        assert!(idx.are_neighbors(1, 3));
+        assert!(
+            !idx.are_neighbors(2, 3),
+            "adjacency is looked up per source id"
+        );
+        assert!(!idx.are_neighbors(9, 1), "unknown id has no neighbors");
+    }
+
+    #[test]
+    fn dist2_is_squared_euclidean() {
+        assert!((dist2([0.0, 0.0], [3.0, 4.0]) - 25.0).abs() < 1e-12);
+        assert_eq!(dist2([1.5, -2.0], [1.5, -2.0]), 0.0);
+    }
 }

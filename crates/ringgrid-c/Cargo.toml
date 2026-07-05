@@ -5,11 +5,11 @@
 
 [package]
 name = "ringgrid-c"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-description = "C ABI for the ringgrid ring-target detector (scaffold)."
+description = "C ABI for the ringgrid ring-target detector."
 repository = "https://github.com/VitalyVorobyev/ringgrid"
 publish = false
 
@@ -19,9 +19,15 @@ name = "ringgrid_c"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.10.0" }
+ringgrid = { path = "../ringgrid", version = "0.10.1" }
 image = { version = "0.25", default-features = false }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# Full-featured image (PNG decoder) for the marshalling parity test, which
+# decodes a fixture the runtime `default-features = false` dependency cannot.
+image = "0.25"
 
 [profile.release]
 lto = true

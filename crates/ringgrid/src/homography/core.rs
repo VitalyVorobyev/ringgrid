@@ -132,11 +132,17 @@ pub struct RansacHomographyResult {
     pub inlier_mask: Vec<bool>,
     /// Number of inliers.
     pub n_inliers: usize,
-    /// Per-inlier reprojection errors (only for inliers; others are 0).
+    /// Per-point reprojection errors under the refined homography, one entry
+    /// per input correspondence (populated for all points, inlier or not).
     pub errors: Vec<f64>,
 }
 
 /// Sample 4 distinct random indices from `[0, n)`.
+///
+/// This is a fixed-4 rejection sampler, intentionally kept separate from the
+/// generic Fisher–Yates `sample_indices` in `conic::ransac`: its exact RNG draw
+/// sequence is part of this seeded RANSAC's regression-certified behavior, so it
+/// is behavior-locked rather than unified with the conic sampler.
 fn sample_4_distinct(n: usize, rng: &mut rand::rngs::StdRng) -> [usize; 4] {
     use rand::RngExt;
     let mut indices = [0usize; 4];

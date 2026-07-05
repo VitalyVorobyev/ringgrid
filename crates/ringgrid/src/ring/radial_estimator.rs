@@ -236,6 +236,22 @@ mod tests {
     }
 
     #[test]
+    fn radial_grid_samples_are_uniform_and_span_the_window() {
+        let grid = RadialSampleGrid::from_window([2.0, 10.0], 5).expect("valid window");
+        assert_eq!(grid.r_samples, vec![2.0, 4.0, 6.0, 8.0, 10.0]);
+        assert!((grid.r_step - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn radial_grid_rejects_degenerate_windows() {
+        // Fewer than 2 samples cannot define a step.
+        assert!(RadialSampleGrid::from_window([2.0, 10.0], 1).is_none());
+        // Zero-width and inverted windows are rejected.
+        assert!(RadialSampleGrid::from_window([5.0, 5.0], 8).is_none());
+        assert!(RadialSampleGrid::from_window([10.0, 2.0], 8).is_none());
+    }
+
+    #[test]
     fn shared_scan_circular_path_recovers_outer_edge_with_unit_tolerance() {
         let center = [72.0f32, 66.0f32];
         let r_outer = 27.35f32;

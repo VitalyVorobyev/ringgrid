@@ -85,7 +85,7 @@ def render_summary(summary_modes: dict[str, dict], summary_path: Path) -> None:
 
 
 def find_ringgrid_binary() -> str | None:
-    for candidate in ("target/release/ringgrid", "target/debug/ringgrid"):
+    for candidate in ("target/release/ringgrid-dev", "target/debug/ringgrid-dev", "target/release/ringgrid", "target/debug/ringgrid"):
         if os.path.isfile(candidate):
             return candidate
     return None
@@ -406,6 +406,8 @@ def main() -> None:
                     detect_cmd = [
                         "cargo",
                         "run",
+                        "--bin",
+                        "ringgrid-dev",
                         "--quiet",
                         "--",
                         "detect",

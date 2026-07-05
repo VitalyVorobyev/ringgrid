@@ -6,10 +6,10 @@ This is the *performance test* behind the GitHub Pages performance dashboard
 **varied** scenes — a real capture, a sparse and a dense coded hex board, and a
 plain rect board — it measures:
 
-  * **Detection result + overlay** — one ``ringgrid detect`` run per scene
+  * **Detection result + overlay** — one ``ringgrid-dev detect`` run per scene
     supplies the marker count and a rendered detection overlay (so the page
     shows *what was actually detected*, not just the input).
-  * **Timing** — the ``ringgrid bench`` subcommand: single-pass detection with
+  * **Timing** — the ``ringgrid-dev bench`` subcommand: single-pass detection with
     warmup + repeats, median per stage (proposal / fit+decode / finalize) and
     end-to-end wall-clock.
   * **Accuracy** — the synthetic reference benchmark
@@ -40,7 +40,7 @@ from PIL import Image, ImageDraw
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / ".github/pages/performance/data.json"
 DEFAULT_IMG_DIR = REPO_ROOT / ".github/pages/performance/img"
-RELEASE_BIN = REPO_ROOT / "target/release/ringgrid"
+RELEASE_BIN = REPO_ROOT / "target/release/ringgrid-dev"
 REFERENCE_OUT_DIR = REPO_ROOT / "tools/out/reference_benchmark_post_pipeline"
 SCENES_DIR = REPO_ROOT / "tools/out/perf_scenes"
 PYTHON = sys.executable
@@ -57,7 +57,7 @@ SCENES = [
         "label": "Coded hex — real capture",
         "kind": "real",
         "image": "testdata/target_3_split_00.png",
-        "target": None,
+        "target": "testdata/board_ringgrid.json",
         "marker_diameter": None,
         "gen": None,
         "note": "Dense hex lattice photographed in the lab; decoded to absolute IDs.",
@@ -140,7 +140,8 @@ def today() -> str:
 def generate_scene(scene: dict, reuse: bool) -> tuple[Path, Path | None]:
     """Return (image_path, target_spec_path) for a scene, generating if needed."""
     if scene["gen"] is None:
-        return REPO_ROOT / scene["image"], None
+        target = REPO_ROOT / scene["target"] if scene.get("target") else None
+        return REPO_ROOT / scene["image"], target
 
     kind, params = scene["gen"]
     out_dir = SCENES_DIR / scene["key"]

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="580" height="400" viewBox="0 0 580 400" font-family="sans-serif" font-size="14">
+<title>A ringgrid marker: outer ring, a 16-sector binary code band encoding a sample codeword, and inner ring, with sector indices labelled</title>
+<circle cx="200" cy="200" r="135" fill="none" stroke="#888" stroke-width="9"/>
+<path d="M 308 200 A 108 108 0 0 0 299.78 158.67 L 264.67 173.21 A 70 70 0 0 1 270 200 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 299.78 158.67 A 108 108 0 0 0 276.37 123.63 L 249.5 150.5 A 70 70 0 0 1 264.67 173.21 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 276.37 123.63 A 108 108 0 0 0 241.33 100.22 L 226.79 135.33 A 70 70 0 0 1 249.5 150.5 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 241.33 100.22 A 108 108 0 0 0 200 92 L 200 130 A 70 70 0 0 1 226.79 135.33 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 200 92 A 108 108 0 0 0 158.67 100.22 L 173.21 135.33 A 70 70 0 0 1 200 130 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 158.67 100.22 A 108 108 0 0 0 123.63 123.63 L 150.5 150.5 A 70 70 0 0 1 173.21 135.33 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 123.63 123.63 A 108 108 0 0 0 100.22 158.67 L 135.33 173.21 A 70 70 0 0 1 150.5 150.5 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 100.22 158.67 A 108 108 0 0 0 92 200 L 130 200 A 70 70 0 0 1 135.33 173.21 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 92 200 A 108 108 0 0 0 100.22 241.33 L 135.33 226.79 A 70 70 0 0 1 130 200 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 100.22 241.33 A 108 108 0 0 0 123.63 276.37 L 150.5 249.5 A 70 70 0 0 1 135.33 226.79 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 123.63 276.37 A 108 108 0 0 0 158.67 299.78 L 173.21 264.67 A 70 70 0 0 1 150.5 249.5 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 158.67 299.78 A 108 108 0 0 0 200 308 L 200 270 A 70 70 0 0 1 173.21 264.67 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 200 308 A 108 108 0 0 0 241.33 299.78 L 226.79 264.67 A 70 70 0 0 1 200 270 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 241.33 299.78 A 108 108 0 0 0 276.37 276.37 L 249.5 249.5 A 70 70 0 0 1 226.79 264.67 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<path d="M 276.37 276.37 A 108 108 0 0 0 299.78 241.33 L 264.67 226.79 A 70 70 0 0 1 249.5 249.5 Z" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-width="1"/>
+<path d="M 299.78 241.33 A 108 108 0 0 0 308 200 L 270 200 A 70 70 0 0 1 264.67 226.79 Z" fill="#888" fill-opacity="0.10" stroke="#888" stroke-width="1"/>
+<circle cx="200" cy="200" r="52" fill="none" stroke="#888" stroke-width="8"/>
+<circle cx="200" cy="200" r="3" fill="#888"/>
+<text x="317" y="181" text-anchor="middle" fill="#999" font-size="13">0</text>
+<text x="177" y="87" text-anchor="middle" fill="#999" font-size="13">4</text>
+<text x="83" y="227" text-anchor="middle" fill="#999" font-size="13">8</text>
+<text x="223" y="321" text-anchor="middle" fill="#999" font-size="13">12</text>
+<text x="200" y="30" text-anchor="middle" fill="#999" font-size="14">outer ring</text>
+<line x1="200" y1="34" x2="200" y2="65" stroke="#888" stroke-opacity="0.55" stroke-width="1"/>
+<text x="200" y="386" text-anchor="middle" fill="#999" font-size="14">inner ring</text>
+<line x1="200" y1="370" x2="200" y2="252" stroke="#888" stroke-opacity="0.55" stroke-width="1"/>
+<text x="418" y="120" fill="#999" font-size="14">16-sector code band</text>
+<rect x="418" y="140" width="20" height="14" rx="2" fill="#4c9f70" fill-opacity="0.55" stroke="#888" stroke-opacity="0.6"/><text x="446" y="152" fill="#888" font-size="13">bit = 1 (bright)</text>
+<rect x="418" y="166" width="20" height="14" rx="2" fill="#888" fill-opacity="0.1" stroke="#888" stroke-opacity="0.6"/><text x="446" y="178" fill="#888" font-size="13">bit = 0 (dark)</text>
+<text x="418" y="212" fill="#888" font-size="12">16 sectors, 22.5° each</text>
+<text x="418" y="230" fill="#888" font-size="12">numbered 0–15 (CCW)</text>
+</svg>

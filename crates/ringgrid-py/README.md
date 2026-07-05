@@ -67,8 +67,8 @@ Outputs:
 Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v5
 `target_spec.json`):
 
-- Rust CLI: `ringgrid gen-target hex --out_dir ... --pitch_mm 8 --rows 15 --long_row_cols 14 --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 --marker_ring_width_mm 1.152 --name ringgrid_200mm_hex --dpi 600 --margin_mm 5`
-- Python script from the repo: `tools/gen_target.py` with the same arguments
+- Rust CLI: `ringgrid gen <recipe.toml> --out <dir>` — a small TOML/JSON target recipe (start from `ringgrid example --name hex_coded`) renders the same `target_spec.json` + SVG/PNG/DXF
+- Python script from the repo: `tools/gen_target.py` for the same geometry
 - Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf`
 
 Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates the v4 schema to v5. (See [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).)

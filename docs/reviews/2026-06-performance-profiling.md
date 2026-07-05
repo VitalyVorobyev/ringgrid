@@ -1,8 +1,27 @@
 # ringgrid performance profiling — 2026-06-25
 
+> **Superseded (2026-07-05, radsym 0.4.1).** radsym 0.4.1 vectorized the
+> separable Gaussian blur (bit-identical output) and added the opt-in
+> `unsafe-opt` bounds-check elision — now enabled — cutting proposal-stage cost
+> **~23 %** with unchanged detection accuracy. The re-measured stage split
+> (Apple M4 Pro, rustc 1.95, median of 15) is:
+>
+> | image | proposal | fit + decode | finalize | total |
+> |---|---|---|---|---|
+> | real 720×540, 80 markers | 14.7 ms (**52 %**) | 9.1 ms (32 %) | 4.6 ms (16 %) | 28.4 ms |
+> | synthetic 1280×960, 203 markers | 28.3 ms (**44 %**) | 26.2 ms (41 %) | 9.4 ms (15 %) | 64.0 ms |
+>
+> Updated Criterion primitives: `proposal_1280x1024` / `proposal_1920x1080`
+> **22.9 / 35.0 ms**, `propose_target_3_split_00` **14.8 ms**,
+> `detect_target_3_split_00` **28.9 ms**. The proposal stage is still the
+> largest single stage but no longer clearly dominant on dense boards. The
+> June-25 numbers below are kept as the historical record; the
+> [live dashboard](https://vitalyvorobyev.github.io/ringgrid/performance/) and
+> `docs/proposal-performance-analysis.md` are the current reference.
+
 Method: Criterion micro-benchmarks (`crates/ringgrid/benches/`), the per-stage
-`StageTimings` now exposed on the diagnostics channel, and the `ringgrid bench`
-subcommand (median of N repeats). Machine: Apple M4 Pro, release build.
+`StageTimings` now exposed on the diagnostics channel, and the `ringgrid-dev
+bench` subcommand (median of N repeats). Machine: Apple M4 Pro, release build.
 
 > Headline: **the proposal stage (radsym RSD voting) is ~50–54 % of detection
 > time** and is the only real bottleneck; per-marker primitives are already

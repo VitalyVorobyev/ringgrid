@@ -1,7 +1,7 @@
-# ADR-001: Inner-as-Outer Recovery — Relaxed-Gate Re-Estimation
+# ADR-019: Inner-as-Outer Recovery — Relaxed-Gate Re-Estimation
 
-- **Status:** proposed
-- **Date:** 2026-02-22
+- **Status:** accepted
+- **Date:** 2026-02-22 (renumbered from ADR-001; accepted 2026-07-05)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 

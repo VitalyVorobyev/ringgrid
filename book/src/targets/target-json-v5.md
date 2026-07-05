@@ -141,30 +141,32 @@ schema tag is rejected with `TargetValidationError::UnsupportedSchema`.
 
 ## Generating target JSON from the CLI
 
-`gen-target` writes `target_spec.json` (v5) alongside printable SVG/PNG. It is a
-subcommand family:
+The maintainer-only `ringgrid-dev gen-target` writes `target_spec.json` (v5)
+alongside printable SVG/PNG. (The published `ringgrid` CLI generates targets
+with the recipe-driven `ringgrid gen <recipe>` instead — see
+[Target Generation](../target-generation.md).) It is a subcommand family:
 
 ```bash
 # Classic hex coded target
-ringgrid gen-target hex \
+ringgrid-dev gen-target hex \
   --pitch_mm 8 --rows 15 --long_row_cols 14 \
   --marker_outer_radius_mm 4.8 --marker_inner_radius_mm 3.2 \
   --marker_ring_width_mm 1.152 \
   --out_dir tools/out/target
 
 # Rect plain target with origin dots
-ringgrid gen-target rect \
+ringgrid-dev gen-target rect \
   --pitch_mm 14 --rows 24 --cols 24 \
   --marker_outer_radius_mm 5.6 --marker_inner_radius_mm 2.8 \
   --dot_radius_mm 1.4 --dot_mm 161,161 --dot_mm 147,161 --dot_mm 161,175 \
   --out_dir tools/out/target
 
 # A built-in preset
-ringgrid gen-target preset default-hex --out_dir tools/out/target
-ringgrid gen-target preset rect24x24   --out_dir tools/out/target
+ringgrid-dev gen-target preset default-hex --out_dir tools/out/target
+ringgrid-dev gen-target preset rect24x24   --out_dir tools/out/target
 
 # Re-render (and upgrade) an existing spec, v5 or legacy v4
-ringgrid gen-target from-spec --spec path/to/target_spec.json --out_dir tools/out/target
+ringgrid-dev gen-target from-spec --spec path/to/target_spec.json --out_dir tools/out/target
 ```
 
 See [Target Generation](../target-generation.md) for the full flag reference and

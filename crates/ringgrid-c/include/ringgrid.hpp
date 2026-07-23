@@ -68,7 +68,7 @@ inline std::string version() {
 /// Runtime ABI version of the linked library.
 inline std::uint32_t abi_version() { return ringgrid_abi_version(); }
 
-/// The default coded-hex target as `ringgrid.target.v5` JSON.
+/// The default coded-hex target as `ringgrid.target.v6` JSON.
 inline std::string default_target_json() {
     return detail::owned_string([](char** out) { return ringgrid_default_target_json(out); });
 }

@@ -79,7 +79,7 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
     }
 }
 
-/// Parse a target spec (compositional `ringgrid.target.v5`, or legacy
+/// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
 /// `ringgrid.target.v4` auto-migrated).
 fn target_from_spec_json(spec_json: &str) -> PyResult<ringgrid::TargetLayout> {
     ringgrid::TargetLayout::from_json_str(spec_json).map_err(py_value_error)
@@ -568,7 +568,7 @@ fn package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Canonical `ringgrid.target.v5` JSON for a named [`ringgrid::TargetLayout`]
+/// Canonical `ringgrid.target.v6` JSON for a named [`ringgrid::TargetLayout`]
 /// preset. Presets are the single source of truth for their geometry — the
 /// typed Python `TargetLayout` constructors read this JSON rather than
 /// duplicating constants.
@@ -586,7 +586,7 @@ fn target_preset_json(name: &str) -> PyResult<String> {
     Ok(target.to_json_string())
 }
 
-/// Canonical `ringgrid.target.v5` JSON for a 16-sector coded hex target built
+/// Canonical `ringgrid.target.v6` JSON for a 16-sector coded hex target built
 /// from direct geometry arguments (mirrors [`ringgrid::TargetLayout::coded_hex`]).
 #[pyfunction]
 #[pyo3(signature = (
@@ -617,7 +617,101 @@ fn coded_hex_target_json(
     Ok(target.to_json_string())
 }
 
-/// Validate a target spec (`ringgrid.target.v5`, or legacy `v4` auto-migrated)
+/// Canonical `ringgrid.target.v6` JSON for a 16-sector coded rect target built
+/// from direct geometry arguments (mirrors [`ringgrid::TargetLayout::coded_rect`]).
+#[pyfunction]
+#[pyo3(signature = (pitch_mm, rows, cols, outer_radius_mm, inner_radius_mm, ring_width_mm))]
+fn coded_rect_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    ring_width_mm: f32,
+) -> PyResult<String> {
+    let target = ringgrid::TargetLayout::coded_rect(
+        pitch_mm,
+        rows,
+        cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        ring_width_mm,
+    )
+    .map_err(py_value_error)?;
+    Ok(target.to_json_string())
+}
+
+/// Canonical `ringgrid.target.v6` JSON for a plain hex target built from direct
+/// geometry arguments (mirrors [`ringgrid::TargetLayout::plain_hex`]).
+///
+/// `dots` selects auto-placed origin fiducials — the placement math (lattice
+/// gaps + rotational-symmetry validation) lives in the native library, so
+/// Python callers never hand-author dot coordinates.
+#[pyfunction]
+#[pyo3(signature = (pitch_mm, rows, long_row_cols, outer_radius_mm, inner_radius_mm, dots=true))]
+fn plain_hex_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    dots: bool,
+) -> PyResult<String> {
+    let target = ringgrid::TargetLayout::plain_hex(
+        pitch_mm,
+        rows,
+        long_row_cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        origin_dots(dots),
+    )
+    .map_err(py_value_error)?;
+    Ok(target.to_json_string())
+}
+
+/// Canonical `ringgrid.target.v6` JSON for a plain rect target built from direct
+/// geometry arguments (mirrors [`ringgrid::TargetLayout::plain_rect`]).
+#[pyfunction]
+#[pyo3(signature = (pitch_mm, rows, cols, outer_radius_mm, inner_radius_mm, dots=true))]
+fn plain_rect_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    dots: bool,
+) -> PyResult<String> {
+    let target = ringgrid::TargetLayout::plain_rect(
+        pitch_mm,
+        rows,
+        cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        origin_dots(dots),
+    )
+    .map_err(py_value_error)?;
+    Ok(target.to_json_string())
+}
+
+/// Origin-dot centers of a target spec, in board millimeters.
+///
+/// Positions are derived from the lattice rather than stored in the spec, so
+/// callers drawing an overlay must ask the library instead of reading the JSON.
+#[pyfunction]
+fn target_fiducial_dots_mm(spec_json: &str) -> PyResult<Vec<[f32; 2]>> {
+    Ok(target_from_spec_json(spec_json)?.fiducial_dots_mm().to_vec())
+}
+
+/// Python exposes the two-state `OriginDots` selector as a plain `bool`.
+fn origin_dots(dots: bool) -> ringgrid::OriginDots {
+    if dots {
+        ringgrid::OriginDots::Auto
+    } else {
+        ringgrid::OriginDots::None
+    }
+}
+
+/// Validate a target spec (`ringgrid.target.v6`, or legacy `v5` / `v4`, auto-migrated)
 /// and return its canonical `v5` JSON. Validation failures surface as
 /// `ValueError` carrying the Rust error message.
 #[pyfunction]
@@ -828,6 +922,10 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(package_version, m)?)?;
     m.add_function(wrap_pyfunction!(target_preset_json, m)?)?;
     m.add_function(wrap_pyfunction!(coded_hex_target_json, m)?)?;
+    m.add_function(wrap_pyfunction!(coded_rect_target_json, m)?)?;
+    m.add_function(wrap_pyfunction!(plain_hex_target_json, m)?)?;
+    m.add_function(wrap_pyfunction!(plain_rect_target_json, m)?)?;
+    m.add_function(wrap_pyfunction!(target_fiducial_dots_mm, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_target_spec_json, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_png, m)?)?;

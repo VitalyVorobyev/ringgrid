@@ -24,7 +24,7 @@ pub extern "C" fn ringgrid_abi_version() -> u32 {
     RINGGRID_ABI_VERSION
 }
 
-/// The default coded-hex target as `ringgrid.target.v5` JSON.
+/// The default coded-hex target as `ringgrid.target.v6` JSON.
 ///
 /// # Safety
 /// `out` must point to a writable `char*` slot.
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn ringgrid_default_target_json(out: *mut *mut c_char) -> 
     guard(|| unsafe { write_out(out, ringgrid::TargetLayout::default_hex().to_json_string()) })
 }
 
-/// The 24×24 plain-rect target (with origin dots) as `ringgrid.target.v5` JSON.
+/// The 24×24 plain-rect target (with origin dots) as `ringgrid.target.v6` JSON.
 ///
 /// # Safety
 /// `out` must point to a writable `char*` slot.

@@ -12,6 +12,7 @@
 
 import init, {
   RinggridDetector,
+  target_fiducial_dots_mm,
   version,
 } from './pkg/ringgrid_wasm.js';
 
@@ -34,7 +35,8 @@ const targetJson = {};   // name -> target spec JSON string
 
 // ── State ───────────────────────────────────────────────────────────
 let detectors = {};   // target name -> RinggridDetector
-let specs = {};       // target name -> parsed target spec (for fiducials)
+let specs = {};       // target name -> parsed target spec
+let fiducialDots = {}; // target name -> derived origin dots [[x_mm, y_mm], ...]
 let manifest = [];
 let activeSample = null;
 let img = null;       // { rgba: Uint8Array, w, h, imageData }
@@ -75,6 +77,13 @@ function registerTargets() {
     if (!(spec.name in targetJson)) {
       targetJson[spec.name] = JSON.stringify(spec);
       specs[spec.name] = spec;
+      // Dot positions are derived from the lattice, not stored in the spec —
+      // ask the library rather than duplicating the placement rule here.
+      try {
+        fiducialDots[spec.name] = JSON.parse(target_fiducial_dots_mm(targetJson[spec.name]));
+      } catch {
+        fiducialDots[spec.name] = [];
+      }
     }
     if (!options.has(spec.name)) options.set(spec.name, s.label || spec.name);
   }
@@ -294,19 +303,21 @@ function drawLabel(ctx, x, y, text, color) {
   ctx.textAlign = 'start';
 }
 
-// Origin overlay for plain targets: project the fiducial dots (board mm) with
-// the resolved homography and mark the origin cell (grid coord [0,0]). Only
-// meaningful when the origin actually resolved (board_frame === "absolute").
+// Origin overlay for plain targets: project the derived fiducial dots (board mm)
+// with the resolved homography and mark cell (0, 0), the central cell the dots
+// surround. Only meaningful when the origin actually resolved
+// (board_frame === "absolute").
 function renderOrigin(ctx) {
   const spec = specs[els.target.value];
   const fid = spec && spec.fiducials;
+  const dots = fiducialDots[els.target.value] || [];
   const resolved = result.board_frame === 'absolute';
 
-  if (fid && Array.isArray(fid.dots_mm) && result.homography && resolved) {
+  if (fid && dots.length && result.homography && resolved) {
     const H = result.homography;
     const r = fid.dot_radius_mm || 1.4;
     ctx.fillStyle = ORIGIN_COLOR;
-    for (const [mx, my] of fid.dots_mm) {
+    for (const [mx, my] of dots) {
       const c = applyH(H, mx, my);
       const edge = applyH(H, mx + r, my);
       const pr = Math.max(3, Math.hypot(edge[0] - c[0], edge[1] - c[1]) * displayScale);
@@ -316,6 +327,8 @@ function renderOrigin(ctx) {
     }
   }
 
+  // Cell (0, 0) is central on both lattices — it is the cell the origin-dot
+  // triad surrounds, not a board corner.
   if (resolved) {
     const origin = result.detected_markers.find(
       (m) => m.grid_coord && m.grid_coord[0] === 0 && m.grid_coord[1] === 0,
@@ -328,7 +341,7 @@ function renderOrigin(ctx) {
       ctx.beginPath();
       ctx.arc(TX(ox), TY(oy), rr, 0, Math.PI * 2);
       ctx.stroke();
-      drawLabel(ctx, TX(ox), TY(oy) - rr + 4, 'origin', ORIGIN_COLOR);
+      drawLabel(ctx, TX(ox), TY(oy) - rr + 4, 'cell (0,0)', ORIGIN_COLOR);
     }
   }
 }

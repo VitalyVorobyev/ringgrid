@@ -28,7 +28,7 @@ TOML or JSON file describing the target. The CLI lowers the recipe to a
 ```toml
 name = "lab_hex_coded"
 coding = "coded"          # "coded" | "plain"
-fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .., dots_mm = [..] }
+fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .. }
 
 [lattice]
 kind = "hex"              # "hex" (rows, long_row_cols, pitch_mm)

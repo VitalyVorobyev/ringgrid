@@ -160,7 +160,7 @@ detector.update_config(JSON.stringify({ completion: { enable: true } }));
 Detection results are returned as JSON strings matching the Rust `DetectionResult` type.
 Key fields:
 - `detected_markers[].id` — codebook index (0-892) on coded targets; `null` on plain targets
-- `detected_markers[].grid_coord` — lattice coordinate (`[q, r]` hex, `[col, row]` rect); the marker key on plain targets
+- `detected_markers[].grid_coord` — lattice coordinate (`[q, r]` hex, `[col, row]` rect), centered on cell `(0, 0)`; the marker key on plain targets
 - `board_frame` — `absolute` (origin-anchored) or `relative_canonical` (plain target with no resolved origin)
 - `detected_markers[].center` — `[x, y]` pixel coordinates
 - `detected_markers[].confidence` — detection confidence (0-1)

@@ -79,7 +79,7 @@ post-processing:
 | Field | Meaning |
 |---|---|
 | `id` | Decoded codebook index. Omitted when decoding was rejected or cleared; always omitted for plain (uncoded) targets. |
-| `grid_coord` | `[u, v]` lattice cell coordinate, omitted until grid assignment succeeds. Coded targets: the cell of the decoded `id`. Plain targets: frame given by top-level `board_frame` (absolute cell when `"absolute"`, canonical relative-frame coordinate when `"relative_canonical"`). See [Origin Fiducials](targets/origin-fiducials.md). |
+| `grid_coord` | `[u, v]` lattice cell coordinate, omitted until grid assignment succeeds. Centered on cell `(0, 0)` for both lattices (a 24-wide rect board runs `-11..=12`). Coded targets: the cell of the decoded `id`. Plain targets: frame given by top-level `board_frame` (absolute cell when `"absolute"`, canonical relative-frame coordinate when `"relative_canonical"`). See [Origin Fiducials](targets/origin-fiducials.md). |
 | `board_xy_mm` | Board-space marker location in millimeters. Coded targets: present for valid decoded IDs. Plain targets: present only when top-level `board_frame` is `"absolute"`; omitted when `"relative_canonical"`. |
 | `confidence` | Combined fit/decode confidence in `[0, 1]`. |
 | `center` | Marker center in raw image pixels. Always safe to overlay on the original image. |

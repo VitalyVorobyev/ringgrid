@@ -4,34 +4,62 @@ Plain (uncoded) markers carry no identity, so a plain target's labeling is only
 known up to the lattice's rotational symmetry and a lattice translation. Origin
 fiducials — small dark filled dots printed in the gaps between markers — pin the
 board origin and orientation so outputs can be reported in absolute board
-millimeters. This page covers how the dot pattern is validated at construction
-time and how the detector resolves the origin from it.
+millimeters. This page covers where the dots go, what is validated at
+construction time, and how the detector resolves the origin from them.
 
-## The dots
+## Where the dots go
 
-`OriginFiducials { dot_radius_mm, dots_mm }` lists dark disks in board-frame
-millimeters (the same frame as cell centers). The rect_24x24 preset uses three dots in
-an L near the board center. Dots serve two jobs:
+`OriginFiducials { dot_radius_mm }` stores the dot **size and nothing else**.
+Positions are *derived* from the lattice — an asymmetric **L of three lattice
+gaps anchored at cell `(0, 0)`**, which both lattices place near the board
+center:
 
-1. **Break the lattice symmetry** so exactly one orientation is consistent with
-   them.
-2. **Be verifiable in the image** — dark against the white background at a
-   predictable place.
+| Lattice | Triad |
+|---|---|
+| **rect** | the gap at `(+pitch/2, +pitch/2)` from cell `(0, 0)`, plus that gap's neighbours one pitch in `-x` and one pitch in `+y` |
+| **hex** | the three adjacent triangle holes around cell `(0, 0)` at 30°, 90° and 150° (clearance `pitch`) |
 
-## Symmetry validation (construction time)
+Rect coordinates are centered (a 24-wide board runs `-11..=12`), so cell
+`(0, 0)` exists and is central on every board — the same convention the hex
+axial lattice already used. Read the resulting positions back with
+`TargetLayout::fiducial_dots_mm()`.
 
-`TargetLayout::new` rejects a fiducial set that does not break **every**
-rotational symmetry of the cell lattice. Candidate symmetries come from the
-lattice family (90° steps for square, 60° steps for hex) and each is verified
-numerically against the actual finite cell positions — so finite-patch effects
-are handled exactly (a non-square rect patch only admits a 180° half-turn, a
-square patch admits all of 90/180/270). If the dot pattern maps onto itself
-under any surviving rotation, construction fails with
-`FiducialsRotationallySymmetric`.
+**Why derived rather than stored.** Absolute coordinates go stale: change the
+board's rows, columns, or pitch and a stored triad silently describes points
+that no longer sit in the lattice gaps — or lie off the marker field entirely,
+where the anchoring homography must extrapolate to reach them. Deriving them
+makes that unrepresentable. (Schema v5 stored `dots_mm`; see
+[Target JSON](target-json-v6.md#migrating-from-v5).)
 
-Validation also enforces **clearance**: no dot may fall within
-`outer_draw_radius_mm + dot_radius_mm` of any marker center, otherwise both
-rendering and dot detection would be ill-defined (`DotOverlapsMarker`).
+Two properties make this placement the right one:
+
+1. **Anchorable** — the dots sit inside the densely-labeled interior, so the
+   board→image homography *interpolates* to them rather than extrapolating to a
+   corner it may not have labeled (hex grid labeling in particular has limited
+   boundary recall).
+2. **Orientation-resolving** — an L of three gaps is not invariant under any
+   lattice rotation, so exactly one orientation is consistent with it.
+
+## Validation (construction time)
+
+Because the triad is derived, whole classes of bad input are unrepresentable: no
+missing dots, no non-finite coordinates, no rotationally symmetric pattern. What
+`TargetLayout::new` still checks is the part you choose, plus the board:
+
+- **Clearance** — no dot may fall within `outer_draw_radius_mm + dot_radius_mm`
+  of any marker center, otherwise both rendering and dot detection are
+  ill-defined (`DotOverlapsMarker`). This is what bounds the dot size.
+- **Board size** — a board too small to hold the triad inside its marker field
+  is rejected (`OriginDotsOutsideBoard`); rect boards need at least 3 columns
+  and 4 rows.
+- **Symmetry** — the derived pattern is re-checked against every rotational
+  symmetry of the actual finite cell set (90° steps for square, 60° for hex,
+  each verified numerically, so a non-square rect patch admitting only a 180°
+  half-turn is handled exactly). Structurally guaranteed by the L, but asserted
+  so a future placement change cannot silently ship an unanchorable target.
+
+`fiducials = "auto"` derives the dot size too, targeting a legible `~0.1 × pitch`
+shrunk to fit tight gaps — the path that requires no choices at all.
 
 ### Why only rotations, not reflections
 

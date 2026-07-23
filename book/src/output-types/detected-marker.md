@@ -20,7 +20,7 @@ fields, rather than with a struct literal.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `Option<usize>` | Codebook index in the active profile. `None` if decoding was rejected due to insufficient confidence or Hamming distance, or (always) for plain (uncoded) targets. |
-| `grid_coord` | `Option<[i32; 2]>` | Lattice cell coordinate `[u, v]` assigned to this marker, when grid assignment succeeded (hex targets use axial coordinates). Coded targets: the board-frame cell of the decoded `id`. Plain targets: the frame is given by [`DetectionResult::board_frame`](detection-result.md) -- board-frame cell when `Absolute`, canonical relative-frame coordinate when `RelativeCanonical`. See [Origin Fiducials](../targets/origin-fiducials.md). |
+| `grid_coord` | `Option<[i32; 2]>` | Lattice cell coordinate `[u, v]` assigned to this marker, when grid assignment succeeded. **Both lattices are centered on cell `(0, 0)`** — hex uses axial coordinates, and rect runs `-(n-1)/2 ..= n-1-(n-1)/2` per axis (a 24-wide board is `-11..=12`). Coded targets: the board-frame cell of the decoded `id`. Plain targets: the frame is given by [`DetectionResult::board_frame`](detection-result.md) -- board-frame cell when `Absolute`, canonical relative-frame coordinate when `RelativeCanonical`. See [Origin Fiducials](../targets/origin-fiducials.md). |
 | `confidence` | `f32` | Combined detection and decode confidence in `[0, 1]`. |
 | `center` | `[f64; 2]` | Marker center in raw image pixel coordinates `[x, y]`. |
 | `center_mapped` | `Option<[f64; 2]>` | Marker center in working-frame coordinates. Present only when a `PixelMapper` is active. |

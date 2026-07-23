@@ -59,11 +59,15 @@ more cells than that is rejected for `Coded16` but valid as `Plain`.
 
 ## Fiducials
 
-`OriginFiducials { dot_radius_mm, dots_mm }` are dark filled dots printed in the
-lattice gaps. They exist to resolve the board origin and orientation for
-**plain** targets, whose markers carry no identity. Coded targets do not need
-them — decoded IDs already anchor every marker to a physical cell. See
-[Origin Fiducials](origin-fiducials.md) for the validation and anchoring rules.
+`OriginFiducials { dot_radius_mm }` are dark filled dots printed in the lattice
+gaps. They resolve the board origin and orientation for **plain** targets, whose
+markers carry no identity. Coded targets do not need them — decoded IDs already
+anchor every marker to a physical cell, and coded-with-fiducials is rejected.
+
+Only the dot **size** is stored: positions are an L of three lattice gaps around
+cell `(0, 0)`, derived from the lattice and read back via
+`TargetLayout::fiducial_dots_mm()`. See [Origin Fiducials](origin-fiducials.md)
+for the placement rule, validation, and anchoring.
 
 ## Composition matrix — how each combination detects
 
@@ -120,16 +124,17 @@ use ringgrid::{
 let hex = TargetLayout::default_hex();
 let rect = TargetLayout::rect_24x24();
 
-// A custom plain rect target with origin dots
+// A custom plain rect target with origin dots — one call, dots derived
+let target = TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::Auto)
+    .expect("valid target");
+
+// The compositional form, for a dot size you pick yourself
 let target = TargetLayout::new(
     "my_rect",
     LatticeGeometry::Rect(RectGeometry { rows: 12, cols: 12, pitch_mm: 14.0 }),
     RingGeometry { outer_radius_mm: 5.6, inner_radius_mm: 2.8 },
     MarkerCoding::Plain,
-    Some(OriginFiducials {
-        dot_radius_mm: 1.4,
-        dots_mm: vec![[77.0, 77.0], [63.0, 77.0]],
-    }),
+    Some(OriginFiducials { dot_radius_mm: 1.4 }),
 ).expect("valid target");
 ```
 
@@ -147,12 +152,13 @@ a `TargetLayout` (or anything convertible into one) can be passed directly.
   (markers would touch);
 - more cells than the codebook can encode, or an out-of-range / duplicate entry
   in `id_assignment` (coded targets);
-- fiducial dots that overlap a marker's drawn extent, or a dot pattern that
-  fails to break every rotational symmetry of the lattice
+- coded markers combined with origin fiducials (the excluded matrix cell);
+- a fiducial dot radius large enough to overlap a marker's drawn extent, or a
+  board too small to hold the dot triad inside its marker field
   (see [Origin Fiducials](origin-fiducials.md)).
 
-Legacy v4 `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
-auto-migrates the v4 schema to the canonical v5 spec.
+Legacy `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
+auto-migrates the v4 and v5 schemas to the canonical v6 spec.
 
 **Source:** `crates/ringgrid/src/target/` (`layout.rs`, `lattice.rs`, `ring.rs`,
 `fiducials.rs`)

@@ -2,7 +2,7 @@
 
 This chapter documents the complete workflow for generating:
 
-- the canonical target spec JSON (`target_spec.json`, schema `ringgrid.target.v5`)
+- the canonical target spec JSON (`target_spec.json`, schema `ringgrid.target.v6`)
 - a printable vector target (`.svg`)
 - a printable raster target (`.png`)
 - a 2D CAD target for laser/CNC fabrication (`.dxf`, millimeters)
@@ -47,7 +47,7 @@ small TOML file (JSON is also accepted):
 ```toml
 name = "lab_hex_coded"
 coding = "coded"          # "coded" | "plain"
-fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .., dots_mm = [..] }
+fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .. }
 
 [lattice]
 kind = "hex"              # "hex" (rows, long_row_cols, pitch_mm)
@@ -83,10 +83,11 @@ Recipes cover the six valid combinations of `{hex, rect}` × `{coded, plain}` ×
 | hex | plain | none | `hex_plain_nodots` | detecting the **complete** board (relative frame) |
 | rect | plain | none | `rect_plain_nodots` | detecting the **complete** board (relative frame) |
 
-The one excluded combination is `coding = "coded"` with `fiducials = "auto"` or
-an explicit dot table — it is rejected, because coded markers already carry
-identity and cannot use origin dots. `fiducials = "auto"` auto-places a valid,
-rotation-asymmetric origin-dot triad near the board center.
+The one excluded combination is `coding = "coded"` with any fiducials — it is
+rejected, because coded markers already carry identity and cannot use origin
+dots. `fiducials = "auto"` derives both the placement and a legible dot size;
+`{ dot_radius_mm = .. }` keeps the derived placement with a size you choose.
+Dot *positions* are never authored — see [Origin Fiducials](targets/origin-fiducials.md).
 
 Plain targets **without** dots (`hex_plain_nodots`, `rect_plain_nodots`) are
 labeled only up to the lattice symmetry, so they report success via
@@ -143,7 +144,7 @@ several print runs at different pitches or DPIs.
 
 ## Rust API: `TargetLayout`
 
-Construct a `TargetLayout`, then call the writers. `write_json_file` emits v5
+Construct a `TargetLayout`, then call the writers. `write_json_file` emits v6
 JSON; `write_target_svg` / `write_target_png` take `SvgTargetOptions` /
 `PngTargetOptions`; `write_target_dxf` writes millimeter CAD geometry.
 
@@ -180,19 +181,13 @@ Plain rect target with **auto-placed** origin dots — the same triad the
 `fiducials = "auto"` recipe field produces:
 
 ```rust,no_run
-use ringgrid::{
-    TargetLayout, LatticeGeometry, RectGeometry, RingGeometry, MarkerCoding,
-    SvgTargetOptions,
-};
+use ringgrid::{OriginDots, SvgTargetOptions, TargetLayout};
 use std::path::Path;
 
-let target = TargetLayout::with_auto_fiducials(
-    "my_rect_12x12",
-    LatticeGeometry::Rect(RectGeometry { rows: 12, cols: 12, pitch_mm: 14.0 }),
-    RingGeometry { outer_radius_mm: 5.6, inner_radius_mm: 2.8 },
-    MarkerCoding::Plain,
-)
-.unwrap();
+let target = TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::Auto)
+    .unwrap()
+    .with_name("my_rect_12x12")
+    .unwrap();
 
 target
     .write_target_svg(
@@ -202,10 +197,34 @@ target
     .unwrap();
 ```
 
-To place dots at explicit coordinates instead, use `TargetLayout::new` with an
-`Some(OriginFiducials { dot_radius_mm, dots_mm })`.
+### One constructor per matrix row
 
-The presets are one call each:
+Each row of [the target matrix](#the-target-matrix) is a single call taking
+plain scalars — millimeters and counts, no geometry types to import:
+
+| Combination | Call |
+|---|---|
+| hex + coded | `TargetLayout::coded_hex(pitch_mm, rows, long_row_cols, outer_r_mm, inner_r_mm, ring_width_mm)` |
+| rect + coded | `TargetLayout::coded_rect(pitch_mm, rows, cols, outer_r_mm, inner_r_mm, ring_width_mm)` |
+| hex + plain + dots | `TargetLayout::plain_hex(pitch_mm, rows, long_row_cols, outer_r_mm, inner_r_mm, OriginDots::Auto)` |
+| hex + plain + no dots | `TargetLayout::plain_hex(…, OriginDots::None)` |
+| rect + plain + dots | `TargetLayout::plain_rect(pitch_mm, rows, cols, outer_r_mm, inner_r_mm, OriginDots::Auto)` |
+| rect + plain + no dots | `TargetLayout::plain_rect(…, OriginDots::None)` |
+
+Each derives a deterministic geometry-based name, so identical geometry always
+yields an identical spec; `with_name` attaches a human-readable one. All six
+return `Result<TargetLayout, TargetValidationError>` — invalid geometry (markers
+larger than the pitch, or packed too tightly to leave a gap for a dot) fails at
+construction, not at print time. Coded targets take no `OriginDots` argument at
+all: decoded IDs already anchor the board, and coded-plus-dots is rejected.
+
+For a lattice or coding combination the four constructors don't cover, use
+`TargetLayout::with_auto_fiducials` (auto dots) or `TargetLayout::new` with
+`Some(OriginFiducials { dot_radius_mm })` to pick the dot size yourself. Dot
+positions are derived either way — see
+[Origin Fiducials](targets/origin-fiducials.md).
+
+The two frozen presets are one call each:
 
 ```rust
 use ringgrid::TargetLayout;
@@ -214,6 +233,9 @@ let hex = TargetLayout::default_hex();  // classic coded hex
 let rect = TargetLayout::rect_24x24();  // plain rect target with origin dots
 ```
 
+A complete, runnable program that renders all six combinations is
+[`examples/generate_targets.rs`](https://github.com/VitalyVorobyev/ringgrid/blob/main/crates/ringgrid/examples/generate_targets.rs).
+
 See the [Compositional Target Model](targets/target-model.md) for the full
 construction and validation rules.
 
@@ -221,17 +243,17 @@ construction and validation rules.
 
 Plain (uncoded) targets carry no per-marker identity, so they use dark filled
 dots to resolve the board origin and orientation. In a recipe these are the
-`fiducials` field (`"auto"`, or an explicit `{ dot_radius_mm, dots_mm }` table);
-in the Rust API they are `OriginFiducials { dot_radius_mm, dots_mm }` (dot
-centers in board millimeters).
+`fiducials` field (`"auto"`, or `{ dot_radius_mm = .. }` for a chosen size);
+in the Rust API they are `OriginFiducials { dot_radius_mm }` — the size, and
+nothing else. Positions are an L of three lattice gaps around cell `(0, 0)`,
+derived from the lattice, so they track the geometry and can never be copied
+onto a board they do not fit. Read them back with
+`TargetLayout::fiducial_dots_mm()`.
 
-Two rules are validated at construction time:
-
-- dots must not overlap any marker's drawn extent, and
-- the dot pattern must break **every** rotational symmetry of the lattice, so a
-  detector can recover the board orientation uniquely.
-
-`fiducials = "auto"` satisfies both automatically. Coded targets do not need
+The derived pattern breaks every rotational symmetry of the lattice by
+construction; validation additionally rejects a dot radius large enough to
+overlap a marker, and a board too small to hold the triad inside its marker
+field. Coded targets do not need
 fiducials — decoded IDs already anchor every marker to a physical cell, and
 `coding = "coded"` with fiducials is rejected. See
 [Origin Fiducials](targets/origin-fiducials.md) for the anchoring and validation
@@ -254,21 +276,36 @@ against a recipe without generating the spec first.
 
 ## Target JSON schema
 
-The canonical schema is [`ringgrid.target.v5`](targets/target-json-v5.md), a
+The canonical schema is [`ringgrid.target.v6`](targets/target-json-v6.md), a
 compositional document with `lattice`, `marker`, `coding`, and optional
-`fiducials` sections. The pre-0.8 flat `ringgrid.target.v4` schema is still
-accepted on input and migrated on load; writers always emit v5. The full field
+`fiducials` sections. The `v5` schema (absolute fiducial
+coordinates) and the pre-0.8 flat `ringgrid.target.v4` schema are still accepted
+on input and migrated on load; writers always emit v6. The full field
 reference, both annotated examples (coded hex and plain rect), and the v4
-auto-migration rules live in [Target JSON (schema v5)](targets/target-json-v5.md)
+auto-migration rules live in [Target JSON (schema v6)](targets/target-json-v6.md)
 — this page does not duplicate them.
 
-## Practical Print Guidance
+## Printing
 
-- Prefer SVG for final print jobs; it is resolution-independent.
-- Keep printer scaling at 100% (no fit-to-page).
-- Use a print margin if your printer clips near page edges.
-- Archive the exact `target_spec.json` that was printed and use that same JSON
-  during detection.
+`gen` reports the board's physical size and whether it fits a standard paper
+size — worth reading before a print run, since the default 24×24 rect target is
+**343 mm square**, larger than A3:
+
+```console
+target: rect_plain_dots — rect 24x24, pitch 14.0 mm, plain, 3 origin dots
+markers: 576
+print size: 343.2 x 343.2 mm (exceeds A3 297x420 mm — use a plotter or tile the print)
+png: 4054 x 4054 px @ 300 dpi
+```
+
+From code, `TargetLayout::print_side_mm(margin_mm)` returns the same figure
+(the page is square) before anything is rendered.
+
+Printing at anything other than 100 % scale silently corrupts every millimeter
+the detector reports, and nothing downstream can detect it. Sizing the target
+for your camera, printing at true scale, checking the printed scale bar with a
+ruler, mounting flat, and archiving the spec are covered in
+[Print & Verify](targets/print-and-verify.md).
 
 > **Developing ringgrid.** Coded targets assign codebook IDs sequentially. A
 > maintainer-only optimizer (`tools/optimize_id_assignment.py`) reassigns IDs so
@@ -281,8 +318,9 @@ auto-migration rules live in [Target JSON (schema v5)](targets/target-json-v5.md
 ## Related Chapters
 
 - [The Compositional Target Model](targets/target-model.md)
-- [Target JSON (schema v5)](targets/target-json-v5.md)
+- [Target JSON (schema v6)](targets/target-json-v6.md)
 - [Origin Fiducials](targets/origin-fiducials.md)
+- [Print & Verify](targets/print-and-verify.md)
 - [Fast Start](fast-start.md)
 - [CLI Guide](cli-guide.md)
 - [Adaptive Scale Detection](detection-modes/adaptive-scale.md)

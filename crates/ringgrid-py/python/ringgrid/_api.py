@@ -29,6 +29,10 @@ from ._ringgrid import (
     DetectorCore as _DetectorCore,
     canonical_target_spec_json as _canonical_target_spec_json,
     coded_hex_target_json as _coded_hex_target_json,
+    coded_rect_target_json as _coded_rect_target_json,
+    plain_hex_target_json as _plain_hex_target_json,
+    plain_rect_target_json as _plain_rect_target_json,
+    target_fiducial_dots_mm as _target_fiducial_dots_mm,
     target_preset_json as _target_preset_json,
     package_version as _package_version,
     proposal_result_payload_array as _proposal_result_payload_array,
@@ -113,7 +117,7 @@ class CircleRefinementMethod(str, Enum):
 
 @dataclass(slots=True)
 class HexGeometry:
-    """Hex-lattice geometry (`ringgrid.target.v5` ``lattice.kind == "hex"``).
+    """Hex-lattice geometry (`ringgrid.target.v6` ``lattice.kind == "hex"``).
 
     Axial rows alternate between ``long_row_cols`` and ``long_row_cols - 1``
     markers at ``pitch_mm`` axial spacing.
@@ -144,7 +148,7 @@ class HexGeometry:
 
 @dataclass(slots=True)
 class RectGeometry:
-    """Rectangular-lattice geometry (`ringgrid.target.v5` ``lattice.kind == "rect"``).
+    """Rectangular-lattice geometry (`ringgrid.target.v6` ``lattice.kind == "rect"``).
 
     A ``rows × cols`` grid of markers at uniform ``pitch_mm`` center spacing.
     """
@@ -210,7 +214,7 @@ class RingGeometry:
 
 @dataclass(slots=True)
 class Coded16:
-    """16-sector coded ring style (`ringgrid.target.v5` ``coding.kind == "coded16"``).
+    """16-sector coded ring style (`ringgrid.target.v6` ``coding.kind == "coded16"``).
 
     ``id_assignment[i]`` is the codebook ID for the i-th cell in generation
     order; ``None`` assigns IDs sequentially (0, 1, 2, ...).
@@ -241,7 +245,7 @@ class Coded16:
 
 @dataclass(slots=True)
 class Plain:
-    """Plain uncoded annulus style (`ringgrid.target.v5` ``coding.kind == "plain"``).
+    """Plain uncoded annulus style (`ringgrid.target.v6` ``coding.kind == "plain"``).
 
     Markers carry no identity and are labeled by lattice position instead.
     """
@@ -273,31 +277,31 @@ def _coding_from_dict(data: Mapping[str, Any]) -> MarkerCoding:
 
 @dataclass(slots=True)
 class OriginFiducials:
-    """Filled circular dots that anchor the target origin and orientation."""
+    """Filled circular dots that anchor the target origin and orientation.
+
+    Only the dot **size** is stored: positions are derived from the lattice as
+    an L of three gaps around cell ``(0, 0)``, so they track the geometry
+    instead of going stale when the board's dimensions change. Prefer
+    :meth:`TargetLayout.plain_rect` / :meth:`TargetLayout.plain_hex` with
+    ``dots=True``, which derives the size too.
+    """
 
     dot_radius_mm: float
-    dots_mm: list[list[float]]
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "OriginFiducials":
         data = _require_mapping(data, name="fiducials")
-        return cls(
-            dot_radius_mm=float(data["dot_radius_mm"]),
-            dots_mm=[[float(dot[0]), float(dot[1])] for dot in data["dots_mm"]],
-        )
+        return cls(dot_radius_mm=float(data["dot_radius_mm"]))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "dot_radius_mm": float(self.dot_radius_mm),
-            "dots_mm": [[float(dot[0]), float(dot[1])] for dot in self.dots_mm],
-        }
+        return {"dot_radius_mm": float(self.dot_radius_mm)}
 
 
 @dataclass(slots=True)
 class TargetLayout:
     """Compositional calibration target: lattice × ring × coding × fiducials.
 
-    The typed Python mirror of the Rust `ringgrid.target.v5` model. It composes
+    The typed Python mirror of the Rust `ringgrid.target.v6` model. It composes
     four orthogonal aspects:
 
     - :data:`LatticeGeometry` (:class:`HexGeometry` | :class:`RectGeometry`) —
@@ -305,12 +309,16 @@ class TargetLayout:
     - :class:`RingGeometry` — the ring radii shared by every marker;
     - :data:`MarkerCoding` (:class:`Coded16` | :class:`Plain`) — whether markers
       encode a 16-sector identity or are plain annuli;
-    - :class:`OriginFiducials` — optional dots anchoring origin and orientation.
+    - :class:`OriginFiducials` — optional origin dots (size only; positions are
+      derived from the lattice).
 
-    Build via a preset (:meth:`default_hex`, :meth:`coded_hex`,
-    :meth:`rect_24x24`), :meth:`from_json`, or :meth:`from_dict`.
-    :meth:`to_dict` / :meth:`from_dict` round-trip the v5 schema verbatim.
-    Pass a `TargetLayout` straight to :class:`DetectConfig` or :class:`Detector`.
+    Every row of the target matrix has a one-call constructor —
+    :meth:`coded_hex`, :meth:`coded_rect`, :meth:`plain_hex`, :meth:`plain_rect`
+    (the last two take ``dots=`` to place origin fiducials). Presets
+    (:meth:`default_hex`, :meth:`rect_24x24`), :meth:`from_json`, and
+    :meth:`from_dict` are the other entry points; :meth:`to_dict` /
+    :meth:`from_dict` round-trip the v5 schema verbatim. Pass a `TargetLayout`
+    straight to :class:`DetectConfig` or :class:`Detector`.
     """
 
     name: str
@@ -318,7 +326,7 @@ class TargetLayout:
     marker: RingGeometry
     coding: MarkerCoding
     fiducials: OriginFiducials | None = None
-    schema: ClassVar[str] = "ringgrid.target.v5"
+    schema: ClassVar[str] = "ringgrid.target.v6"
 
     @classmethod
     def default_hex(cls) -> "TargetLayout":
@@ -356,8 +364,96 @@ class TargetLayout:
         return cls.from_dict(json.loads(spec_json))
 
     @classmethod
+    def coded_rect(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        ring_width_mm: float,
+    ) -> "TargetLayout":
+        """Build a 16-sector coded rect target from direct geometry arguments.
+
+        The rect counterpart of :meth:`coded_hex`. Coded targets never carry
+        origin dots — decoded IDs anchor the board directly.
+        Raises :class:`ValueError` if the geometry is invalid.
+        """
+        spec_json = _coded_rect_target_json(
+            float(pitch_mm),
+            int(rows),
+            int(cols),
+            float(outer_radius_mm),
+            float(inner_radius_mm),
+            float(ring_width_mm),
+        )
+        return cls.from_dict(json.loads(spec_json))
+
+    @classmethod
+    def plain_hex(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        long_row_cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        *,
+        dots: bool = True,
+    ) -> "TargetLayout":
+        """Build a plain (uncoded) hex target from direct geometry arguments.
+
+        With ``dots=True`` the native library places a rotation-asymmetric
+        origin-dot triad in the lattice gaps near the board center, so detection
+        resolves an absolute board frame. With ``dots=False`` the board is
+        labeled only up to its lattice symmetry and success is gated on the
+        complete board being detected.
+
+        Raises :class:`ValueError` if the geometry is invalid or the markers are
+        packed too tightly to leave room for a dot.
+        """
+        spec_json = _plain_hex_target_json(
+            float(pitch_mm),
+            int(rows),
+            int(long_row_cols),
+            float(outer_radius_mm),
+            float(inner_radius_mm),
+            bool(dots),
+        )
+        return cls.from_dict(json.loads(spec_json))
+
+    @classmethod
+    def plain_rect(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        *,
+        dots: bool = True,
+    ) -> "TargetLayout":
+        """Build a plain (uncoded) rect target from direct geometry arguments.
+
+        The rect counterpart of :meth:`plain_hex`; see there for how ``dots``
+        anchors the board.
+
+        >>> target = TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=True)
+        >>> target.fiducials.dot_radius_mm
+        1.4
+        """
+        spec_json = _plain_rect_target_json(
+            float(pitch_mm),
+            int(rows),
+            int(cols),
+            float(outer_radius_mm),
+            float(inner_radius_mm),
+            bool(dots),
+        )
+        return cls.from_dict(json.loads(spec_json))
+
+    @classmethod
     def from_json(cls, path_or_json: str | Path) -> "TargetLayout":
-        """Load from v5 (or legacy v4, auto-migrated) JSON text or a file path.
+        """Load from v6 (or legacy v5 / v4, auto-migrated) JSON text or a file path.
 
         Validates through the native loader, so malformed geometry raises
         :class:`ValueError` with the Rust error message.
@@ -368,7 +464,7 @@ class TargetLayout:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TargetLayout":
-        """Construct from a `ringgrid.target.v5` mapping (as :meth:`to_dict` emits)."""
+        """Construct from a `ringgrid.target.v6` mapping (as :meth:`to_dict` emits)."""
         data = _require_mapping(data, name="data")
         fiducials = data.get("fiducials")
         return cls(
@@ -380,7 +476,7 @@ class TargetLayout:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a canonical `ringgrid.target.v5` mapping."""
+        """Serialize to a canonical `ringgrid.target.v6` mapping."""
         out: dict[str, Any] = {
             "schema": self.schema,
             "name": str(self.name),
@@ -393,7 +489,7 @@ class TargetLayout:
         return out
 
     def to_spec_json(self) -> str:
-        """Return canonical, validated `ringgrid.target.v5` JSON text.
+        """Return canonical, validated `ringgrid.target.v6` JSON text.
 
         Round-trips through the native validator, so invalid geometry surfaces
         as :class:`ValueError` carrying the Rust error message.
@@ -435,6 +531,18 @@ class TargetLayout:
             float(margin_mm),
             bool(include_scale_bar),
         )
+
+    def fiducial_dots_mm(self) -> list[list[float]]:
+        """Origin-dot centers in board millimeters; empty without fiducials.
+
+        Derived from the lattice (an L of three gaps around cell ``(0, 0)``),
+        not stored in the spec — so drawing an overlay means asking here rather
+        than reading ``fiducials`` for coordinates that no longer exist.
+
+        >>> TargetLayout.rect_24x24().fiducial_dots_mm()
+        [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
+        """
+        return [list(dot) for dot in _target_fiducial_dots_mm(self._spec_json_str())]
 
     def write_dxf(self, path: str | Path) -> None:
         """Write a 2D DXF target (millimeters) for laser/CNC fabrication."""

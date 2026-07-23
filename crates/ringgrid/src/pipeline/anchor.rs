@@ -259,7 +259,7 @@ fn score_candidate(
     }
 
     let mut min_contrast = f32::INFINITY;
-    for dot in &fiducials.dots_mm {
+    for dot in target.fiducial_dots_mm() {
         let contrast = dot_contrast(
             sampler,
             &h,
@@ -384,7 +384,7 @@ mod tests {
             .collect();
         if let Some(fid) = target.fiducials() {
             let r_dot = f64::from(fid.dot_radius_mm) * scale;
-            for dot in &fid.dots_mm {
+            for dot in target.fiducial_dots_mm() {
                 let p = homography_project(&h_mat, f64::from(dot[0]), f64::from(dot[1]));
                 disks.push((p, r_dot, 0.0));
             }
@@ -452,10 +452,8 @@ mod tests {
                 inner_radius_mm: 2.8,
             },
             MarkerCoding::Plain,
-            Some(OriginFiducials {
-                dot_radius_mm: 1.4,
-                dots_mm: vec![[49.0, 49.0], [35.0, 49.0], [49.0, 63.0]],
-            }),
+            // Derived triad for an 8x8 board: [49,49], [35,49], [49,63].
+            Some(OriginFiducials { dot_radius_mm: 1.4 }),
         )
         .expect("valid test target")
     }

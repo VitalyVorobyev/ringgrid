@@ -1187,7 +1187,7 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "ringgrid"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "approx",
  "image",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "ringgrid-c"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "image",
  "ringgrid",

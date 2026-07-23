@@ -171,6 +171,34 @@ impl ScaleBarParams {
 }
 
 impl TargetLayout {
+    /// Side length in millimeters of the printed page this target renders onto,
+    /// including `margin_mm` on every edge.
+    ///
+    /// The page is square: markers and fiducial dots are fitted into a square
+    /// content box, so one number describes both dimensions. Use it to check a
+    /// target against a paper size before committing to a print run — this is
+    /// the same figure `render_target_svg` writes into the SVG `width`/`height`,
+    /// so the two can never disagree.
+    ///
+    /// A negative or non-finite `margin_mm` is clamped to `0`.
+    ///
+    /// ```
+    /// # use ringgrid::TargetLayout;
+    /// // 24x24 cells at 14 mm pitch, Ø11.2 mm markers, 5 mm margin.
+    /// let side = TargetLayout::rect_24x24().print_side_mm(5.0);
+    /// assert!((side - 343.2).abs() < 1e-3);
+    /// ```
+    pub fn print_side_mm(&self, margin_mm: f32) -> f32 {
+        let margin = f64::from(margin_mm);
+        let margin = if margin.is_finite() {
+            margin.max(0.0)
+        } else {
+            0.0
+        };
+        let geometry = render_geometry(self);
+        canvas_layout(self, geometry.outer_draw_extent_mm, margin).canvas_side_mm as f32
+    }
+
     /// Render a printable SVG target.
     ///
     /// Input marker centers stay in normalized board millimeters with the
@@ -226,7 +254,7 @@ impl TargetLayout {
 
         if let Some(fiducials) = self.fiducials() {
             lines.push("<g id=\"fiducials\">".to_string());
-            for dot in &fiducials.dots_mm {
+            for dot in self.fiducial_dots_mm() {
                 lines.push(format!(
                     "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"black\"/>",
                     svg_fmt(f64::from(dot[0]) + canvas.offset_x_mm),
@@ -353,7 +381,7 @@ impl TargetLayout {
 
         if let Some(fiducials) = self.fiducials() {
             let dot_radius_px = f64::from(fiducials.dot_radius_mm) * pixels_per_mm;
-            for dot in &fiducials.dots_mm {
+            for dot in self.fiducial_dots_mm() {
                 let cx = (f64::from(dot[0]) + canvas.offset_x_mm) * pixels_per_mm;
                 let cy = (f64::from(dot[1]) + canvas.offset_y_mm) * pixels_per_mm;
                 draw_disk(&mut image, cx, cy, dot_radius_px, 0);
@@ -440,7 +468,7 @@ impl TargetLayout {
 
         if let Some(fiducials) = self.fiducials() {
             let r = f64::from(fiducials.dot_radius_mm);
-            for dot in &fiducials.dots_mm {
+            for dot in self.fiducial_dots_mm() {
                 dxf_circle(
                     &mut lines,
                     DXF_LAYER_FIDUCIALS,
@@ -752,7 +780,7 @@ fn content_bounds_mm(target: &TargetLayout, outer_draw_extent_mm: f64) -> (f64, 
     let mut max_y = f64::from(max_xy[1]) + outer_draw_extent_mm;
     if let Some(fiducials) = target.fiducials() {
         let r = f64::from(fiducials.dot_radius_mm);
-        for dot in &fiducials.dots_mm {
+        for dot in target.fiducial_dots_mm() {
             min_x = min_x.min(f64::from(dot[0]) - r);
             min_y = min_y.min(f64::from(dot[1]) - r);
             max_x = max_x.max(f64::from(dot[0]) + r);
@@ -1107,7 +1135,7 @@ fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::target::CodedRingSpec;
+    use crate::target::{CodedRingSpec, OriginDots};
 
     #[test]
     fn rejects_invalid_svg_margin() {
@@ -1219,30 +1247,16 @@ mod tests {
     }
 
     #[test]
-    fn fiducials_outside_marker_bounds_stay_on_canvas() {
-        use crate::target::{LatticeGeometry, OriginFiducials, RectGeometry, RingGeometry};
-
-        // Dots left of the ring array: canvas bounds must grow to include
-        // them (regression: layout derived from marker bounds only, so
-        // out-of-bbox dots were drawn off-canvas and clipped).
-        let target = TargetLayout::new(
-            "rect_side_dots",
-            LatticeGeometry::Rect(RectGeometry {
-                rows: 3,
-                cols: 3,
-                pitch_mm: 14.0,
-            }),
-            RingGeometry {
-                outer_radius_mm: 5.6,
-                inner_radius_mm: 2.8,
-            },
-            MarkerCoding::Plain,
-            Some(OriginFiducials {
-                dot_radius_mm: 1.4,
-                dots_mm: vec![[-14.0, 0.0], [-28.0, 0.0], [-14.0, 14.0]],
-            }),
-        )
-        .expect("side-dot target is valid");
+    fn derived_fiducial_dots_render_inside_the_canvas() {
+        // Dot positions are derived from the lattice and validated to sit
+        // inside the marker field, so they can no longer be clipped off the
+        // page. Render at 1 px/mm and check each dot is actually inked.
+        let target = TargetLayout::plain_rect(14.0, 8, 8, 5.6, 2.8, OriginDots::Auto)
+            .expect("valid plain rect");
+        assert_eq!(
+            target.fiducial_dots_mm(),
+            [[49.0, 49.0], [35.0, 49.0], [49.0, 63.0]]
+        );
 
         let png = target
             .render_target_png(&PngTargetOptions {
@@ -1252,12 +1266,14 @@ mod tests {
             })
             .expect("render png");
 
-        // Content x-span: dots reach -29.4 mm, markers reach 33.6 mm -> 63 mm
-        // wide; y-span 39.2 mm is centered. Leftmost dot (-28, 0) lands at
-        // page (1.4, 17.5) mm; first ring center (0, 0) at (29.4, 17.5).
-        assert!(png.width() >= 63, "canvas must cover the dots");
-        assert_eq!(png.get_pixel(1, 17).0[0], 0, "out-of-bbox dot is drawn");
-        assert_eq!(png.get_pixel(29, 17).0[0], 255, "ring center is white");
+        // Content box: cell centers 0..98 mm padded by the 5.6 mm draw extent,
+        // so board mm map to page px with a +5.6 mm offset.
+        for dot in target.fiducial_dots_mm() {
+            let x = (dot[0] + 5.6).round() as u32;
+            let y = (dot[1] + 5.6).round() as u32;
+            assert!(x < png.width() && y < png.height(), "dot {dot:?} on canvas");
+            assert_eq!(png.get_pixel(x, y).0[0], 0, "dot {dot:?} is drawn");
+        }
     }
 
     #[test]

@@ -113,35 +113,53 @@ Author a small recipe once (TOML or JSON) and render printable artifacts +
 the canonical `target_spec.json` with the CLI:
 
 ```bash
-ringgrid example --name hex_plain_dots > my_target.toml   # start from a built-in
+ringgrid example --name rect_plain_dots > my_target.toml  # start from a built-in
 ringgrid gen my_target.toml --out ./out                   # writes SVG, PNG, DXF, JSON
 ```
 
 ```toml
-# my_target.toml
-name = "lab_hex_plain"
-coding = "plain"
+# my_target.toml — plain rings on a square lattice, anchored by origin dots
+name = "lab_rect"
+coding = "plain"       # coded | plain
 fiducials = "auto"     # none | auto | explicit dot table
 
 [lattice]
-kind = "hex"           # hex | rect
-rows = 15
-long_row_cols = 14
-pitch_mm = 8.0
+kind = "rect"          # rect | hex
+rows = 24
+cols = 24
+pitch_mm = 14.0
 
 [marker]
-outer_radius_mm = 4.8
-inner_radius_mm = 3.2
+outer_radius_mm = 5.6
+inner_radius_mm = 2.8
 
 [render]
 dpi = 600
 formats = ["json", "svg", "png", "dxf"]
 ```
 
-Any recipe field can be overridden on the command line (`--pitch-mm`, `--dpi`, …).
-`ringgrid example --list` shows the built-in recipes — one per valid target
-combination, ready to copy and adapt. Prefer code? Every step is available on
-`TargetLayout` (`with_auto_fiducials`, `write_target_svg/png/dxf`, `write_json_file`).
+`gen` reports the board's physical size and whether it fits a paper size, so you
+find out before the print run that the defaults above make a 343 mm square board.
+Any recipe field can be overridden on the command line (`--pitch-mm`, `--dpi`, …),
+and `ringgrid example --list` shows the built-in recipes — one per valid target
+combination, ready to copy and adapt.
+
+Prefer code? The same target is one call, then the writers:
+
+```rust,no_run
+use ringgrid::{OriginDots, TargetLayout};
+use std::path::Path;
+
+let target = TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::Auto)?
+    .with_name("lab_rect")?;
+target.write_json_file(Path::new("./out/target_spec.json"))?;
+target.write_target_svg(Path::new("./out/target_print.svg"), &Default::default())?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Then [print and verify it](https://vitalyvorobyev.github.io/ringgrid/book/targets/print-and-verify.html)
+— printing at anything other than 100 % scale is the quiet way to get wrong
+millimeters out of a correct detector.
 
 ## The target matrix
 
@@ -150,14 +168,19 @@ from detecting the **complete board**. All six combinations below are supported;
 only *coded + dots* is excluded, because codes already resolve identity and
 orientation, making dots redundant.
 
-| Lattice | Coding | Origin dots | How the board is anchored | Preset / recipe |
-|---|---|---|---|---|
-| hex  | coded | — | decoded IDs → absolute frame | `TargetLayout::default_hex()` / `hex_coded` |
-| rect | coded | — | decoded IDs → absolute frame | `rect_coded` |
-| hex  | plain | ✓ | origin dots → absolute frame | `hex_plain_dots` |
-| hex  | plain | — | complete board → relative frame (`board_complete`) | `hex_plain_nodots` |
-| rect | plain | ✓ | origin dots → absolute frame | `TargetLayout::rect_24x24()` / `rect_plain_dots` |
-| rect | plain | — | complete board → relative frame (`board_complete`) | `rect_plain_nodots` |
+| Lattice | Coding | Origin dots | How the board is anchored | One call | Recipe |
+|---|---|---|---|---|---|
+| hex  | coded | — | decoded IDs → absolute frame | `TargetLayout::coded_hex(pitch, rows, long_row_cols, outer_r, inner_r, ring_w)` | `hex_coded` |
+| rect | coded | — | decoded IDs → absolute frame | `TargetLayout::coded_rect(pitch, rows, cols, outer_r, inner_r, ring_w)` | `rect_coded` |
+| hex  | plain | ✓ | origin dots → absolute frame | `TargetLayout::plain_hex(pitch, rows, long_row_cols, outer_r, inner_r, OriginDots::Auto)` | `hex_plain_dots` |
+| hex  | plain | — | complete board → relative frame (`board_complete`) | `TargetLayout::plain_hex(…, OriginDots::None)` | `hex_plain_nodots` |
+| rect | plain | ✓ | origin dots → absolute frame | `TargetLayout::plain_rect(pitch, rows, cols, outer_r, inner_r, OriginDots::Auto)` | `rect_plain_dots` |
+| rect | plain | — | complete board → relative frame (`board_complete`) | `TargetLayout::plain_rect(…, OriginDots::None)` | `rect_plain_nodots` |
+
+Every constructor derives a deterministic geometry-based name; add your own with
+`.with_name("lab_bench")`. `TargetLayout::default_hex()` and
+`TargetLayout::rect_24x24()` are frozen presets of rows 1 and 5. Python mirrors
+all four constructors (`TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=True)`).
 
 For plain, no-dots targets there is no way to fix the origin, so a run is
 "successful" only when the **whole board** is detected — gate on

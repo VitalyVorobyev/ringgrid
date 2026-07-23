@@ -349,7 +349,7 @@ RinggridStatus ringgrid_version(char **out);
 uint32_t ringgrid_abi_version(void);
 
 /**
- * The default coded-hex target as `ringgrid.target.v5` JSON.
+ * The default coded-hex target as `ringgrid.target.v6` JSON.
  *
  * # Safety
  * `out` must point to a writable `char*` slot.
@@ -357,7 +357,7 @@ uint32_t ringgrid_abi_version(void);
 RinggridStatus ringgrid_default_target_json(char **out);
 
 /**
- * The 24×24 plain-rect target (with origin dots) as `ringgrid.target.v5` JSON.
+ * The 24×24 plain-rect target (with origin dots) as `ringgrid.target.v6` JSON.
  *
  * # Safety
  * `out` must point to a writable `char*` slot.

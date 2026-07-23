@@ -45,6 +45,23 @@ pub struct DetectionResult {
 | Self-undistort (applied) | `Image` | `Working` | Yes |
 | Self-undistort (not applied) | `Image` | `Image` | No |
 
+## Lattice Coordinates
+
+Separate from the pixel/millimeter frames above, `DetectedMarker.grid_coord` is
+an **integer lattice cell coordinate** `[u, v]`. Both lattices are **centered on
+cell `(0, 0)`**:
+
+- **Hex** — axial coordinates; `(0, 0)` is the central cell.
+- **Rect** — each axis runs `-(n-1)/2 ..= n-1-(n-1)/2`, so a 24-wide board is
+  `-11..=12` and `(0, 0)` is the central cell.
+
+Cell `(0, 0)` therefore always exists and always sits near the board center,
+which is what lets [origin fiducials](targets/origin-fiducials.md) be positioned
+relative to it rather than in absolute millimeters. Board millimeters are
+independent of this: they are normalized so the *first generated* cell (the
+physical top-left) is at `[0, 0]` mm, which is why cell `(0, 0)` has a non-zero
+`board_xy_mm` (for `rect_24x24`, `[154, 154]` mm).
+
 ## Homography Frame
 
 The `homography` field in `DetectionResult` maps from **board coordinates** (millimeters, as defined in `TargetLayout`) to whichever frame `homography_frame` indicates:

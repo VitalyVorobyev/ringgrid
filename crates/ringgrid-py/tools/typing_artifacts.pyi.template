@@ -63,8 +63,7 @@ MarkerCoding = Coded16 | Plain
 
 class OriginFiducials:
     dot_radius_mm: float
-    dots_mm: list[list[float]]
-    def __init__(self, dot_radius_mm: float, dots_mm: list[list[float]]) -> None: ...
+    def __init__(self, dot_radius_mm: float) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> OriginFiducials: ...
     def to_dict(self) -> dict[str, Any]: ...
@@ -99,6 +98,38 @@ class TargetLayout:
         ring_width_mm: float,
     ) -> TargetLayout: ...
     @classmethod
+    def coded_rect(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        ring_width_mm: float,
+    ) -> TargetLayout: ...
+    @classmethod
+    def plain_hex(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        long_row_cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        *,
+        dots: bool = ...,
+    ) -> TargetLayout: ...
+    @classmethod
+    def plain_rect(
+        cls,
+        pitch_mm: float,
+        rows: int,
+        cols: int,
+        outer_radius_mm: float,
+        inner_radius_mm: float,
+        *,
+        dots: bool = ...,
+    ) -> TargetLayout: ...
+    @classmethod
     def from_json(cls, path_or_json: str | Path) -> TargetLayout: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TargetLayout: ...
@@ -119,6 +150,7 @@ class TargetLayout:
         margin_mm: float = ...,
         include_scale_bar: bool = ...,
     ) -> None: ...
+    def fiducial_dots_mm(self) -> list[list[float]]: ...
     def write_dxf(self, path: str | Path) -> None: ...
 
 class MarkerScalePrior:

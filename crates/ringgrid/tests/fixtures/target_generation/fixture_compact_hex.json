@@ -1,5 +1,5 @@
 {
-  "schema": "ringgrid.target.v5",
+  "schema": "ringgrid.target.v6",
   "name": "fixture_compact_hex",
   "lattice": {
     "kind": "hex",

@@ -154,12 +154,7 @@ impl TargetSpecV5 {
             None => None,
             Some(legacy) => {
                 let derived = origin_dot_positions_mm(&self.lattice)?;
-                let matches = legacy.dots_mm.len() == derived.len()
-                    && legacy.dots_mm.iter().zip(&derived).all(|(a, b)| {
-                        (a[0] - b[0]).abs() <= LEGACY_DOT_TOL_MM
-                            && (a[1] - b[1]).abs() <= LEGACY_DOT_TOL_MM
-                    });
-                if !matches {
+                if !same_point_set(&legacy.dots_mm, &derived) {
                     return Err(TargetValidationError::LegacyDotsMismatch {
                         stored_mm: legacy.dots_mm,
                         derived_mm: derived,
@@ -172,6 +167,37 @@ impl TargetSpecV5 {
         };
         TargetLayout::new(self.name, self.lattice, self.marker, self.coding, fiducials)
     }
+}
+
+/// Whether two dot lists describe the same points, ignoring order.
+///
+/// Dot order carries no geometric meaning — the renderers draw each dot and the
+/// origin resolver scores the weakest of them — so a v5 file listing the same
+/// triad in a different order describes the same physical board and must
+/// migrate cleanly.
+///
+/// Greedy matching is exact here: derived dots are a full pitch apart, orders of
+/// magnitude beyond [`LEGACY_DOT_TOL_MM`], so no stored dot can be within
+/// tolerance of two derived dots.
+fn same_point_set(stored: &[[f32; 2]], derived: &[[f32; 2]]) -> bool {
+    if stored.len() != derived.len() {
+        return false;
+    }
+    let mut claimed = vec![false; derived.len()];
+    stored.iter().all(|s| {
+        let hit = derived.iter().enumerate().position(|(i, d)| {
+            !claimed[i]
+                && (s[0] - d[0]).abs() <= LEGACY_DOT_TOL_MM
+                && (s[1] - d[1]).abs() <= LEGACY_DOT_TOL_MM
+        });
+        match hit {
+            Some(i) => {
+                claimed[i] = true;
+                true
+            }
+            None => false,
+        }
+    })
 }
 
 impl TargetLayout {
@@ -338,6 +364,45 @@ mod tests {
             [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
         );
         assert!(target.to_json_string().contains("ringgrid.target.v6"));
+    }
+
+    /// Dot order is not geometry: the renderers draw each dot and the origin
+    /// resolver scores the weakest, so a v5 file listing the same triad in a
+    /// different order describes the same physical board and must migrate.
+    #[test]
+    fn v5_migrates_when_stored_dots_are_reordered() {
+        let raw = r#"{
+            "schema":"ringgrid.target.v5",
+            "name":"legacy_rect",
+            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
+            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
+            "coding":{"kind":"plain"},
+            "fiducials":{"dot_radius_mm":1.4,
+                         "dots_mm":[[161.0,175.0],[161.0,161.0],[147.0,161.0]]}
+        }"#;
+        let target = TargetLayout::from_json_str(raw).expect("order must not matter");
+        assert_eq!(
+            target.fiducial_dots_mm(),
+            [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
+        );
+    }
+
+    /// Duplicates must not satisfy the check by matching one derived dot twice.
+    #[test]
+    fn v5_rejects_duplicate_dots_masquerading_as_the_triad() {
+        let raw = r#"{
+            "schema":"ringgrid.target.v5",
+            "name":"legacy_rect",
+            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
+            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
+            "coding":{"kind":"plain"},
+            "fiducials":{"dot_radius_mm":1.4,
+                         "dots_mm":[[161.0,161.0],[161.0,161.0],[147.0,161.0]]}
+        }"#;
+        assert!(matches!(
+            TargetLayout::from_json_str(raw).expect_err("duplicate dot"),
+            TargetLoadError::Validation(TargetValidationError::LegacyDotsMismatch { .. })
+        ));
     }
 
     /// A v5 spec whose dots sit somewhere else describes a board this build

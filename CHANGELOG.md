@@ -9,6 +9,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-23
+
+Makes every row of the target matrix reachable in one call, and stops storing
+origin-dot coordinates that could go stale. Two breaking changes need attention
+when upgrading — centered rect `grid_coord` values and target schema v6; see the
+[0.10 → 0.11 migration notes][migration].
+
+Previously only `coded_hex` had a scalar constructor; the other five
+combinations — including plain rect with origin dots — required composing
+`LatticeGeometry`, `RingGeometry`, `MarkerCoding`, and an invented name through
+`with_auto_fiducials`, and Python could not express them at all. Origin dots
+were stored as absolute board millimeters, so a triad copied onto a board of
+different dimensions validated cleanly while sitting off the marker field.
+
+### Added
+
+- **A constructor per target-matrix row** on `TargetLayout`, all taking plain
+  scalars: `coded_rect`, `plain_hex`, `plain_rect` (joining the existing
+  `coded_hex`). Plain constructors take an `OriginDots` selector (`Auto` places
+  the validated dot triad, `None` omits it); coded constructors take none.
+  Each derives a deterministic geometry-based name, and the new
+  `TargetLayout::with_name` attaches a human-readable one.
+- **`OriginDots`** — new root-tier enum, the two-state origin-dot selector.
+- **Python parity**: `TargetLayout.coded_rect`, `.plain_hex`, `.plain_rect`
+  (with `dots: bool = True`). Python callers no longer need to hand-author dot
+  coordinates — auto placement was previously Rust-only, so the docs had them
+  copying the frozen `rect_24x24` triad onto boards it did not fit.
+- **`TargetLayout::print_side_mm(margin_mm)`** — the printed page side in
+  millimeters (the page is square), computed from the same canvas layout the
+  renderers use.
+- **`ringgrid gen` now summarizes what it built**: geometry, marker and dot
+  counts, physical print size with a paper-fit note, and PNG pixel size. The
+  default 24×24 rect target is 343 mm square — larger than A3 — which nothing
+  previously surfaced.
+- **New book chapter, [Print & Verify]** covering the previously undocumented
+  middle third of generate → print → detect: sizing a target for a camera,
+  paper fit, printing at 100 % scale, verifying with the printed scale bar,
+  mounting, and archiving the spec.
+- **`examples/generate_targets.rs`** — all six combinations, one call each.
+
+- **`OriginDots` addressing rework** — origin-dot *positions* are now derived
+  from the lattice instead of stored (see [ADR-021]). `OriginFiducials` carries
+  only `dot_radius_mm`; read positions back with
+  `TargetLayout::fiducial_dots_mm()` (Rust), `TargetLayout.fiducial_dots_mm()`
+  (Python), or `target_fiducial_dots_mm()` (WASM). Placement is an L of three
+  lattice gaps around cell `(0, 0)`, which reproduces the frozen `rect_24x24`
+  triad exactly, so boards printed from that preset keep anchoring.
+
+### Changed
+
+- **Breaking:** rect lattice coordinates are **centered** — each axis runs
+  `-(n-1)/2 ..= n-1-(n-1)/2`, so a 24-wide board is `-11..=12` and cell `(0, 0)`
+  is central, matching the hex axial convention. Board millimeters, printed
+  geometry, and `board_xy_mm` are unchanged; only integer `grid_coord` labels
+  move. Stored rect ground truth must be regenerated.
+- **Breaking:** target JSON is **schema v6** (`fiducials` = `dot_radius_mm`
+  only). v5 and v4 still load; a v5 file whose stored `dots_mm` disagree with
+  the derived positions fails with `LegacyDotsMismatch` rather than silently
+  detecting against dots the board does not have. Only rect targets generated
+  with `fiducials = "auto"` by 0.10.x are affected.
+- **Breaking:** `TargetLayout::new` now rejects coded targets that carry origin
+  fiducials with `TargetValidationError::CodedWithFiducials`. This was already
+  the documented "one excluded combination" and was already rejected by the CLI
+  recipe; the rule now lives in one place and applies to every construction
+  path, including the JSON loaders. `RecipeError::CodedWithFiducials` is removed
+  — it surfaces as `RecipeError::Validation` instead.
+- Doc comments referenced a recipe key `dots: auto` that never existed; the
+  field is `fiducials = "auto"`.
+
+- The dev CLI's `gen-target rect --dot_mm x,y` flag is replaced by `--dots`
+  (with an optional `--dot_radius_mm` size override).
+- `TargetValidationError::EmptyFiducialDots` and `NonFiniteDot` are removed —
+  derived positions make those states unrepresentable. New:
+  `OriginDotsOutsideBoard` (board too small for the triad) and
+  `LegacyDotsMismatch` (v5 migration guard).
+
+[migration]: https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/migrations/0.10-to-0.11.md
+[Print & Verify]: https://vitalyvorobyev.github.io/ringgrid/book/targets/print-and-verify.html
+[ADR-021]: https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/decisions/021-derived-origin-fiducials.md
+
 ## [0.10.1] — 2026-07-05
 
 Completes the **C / C++ / vcpkg** binding (ADR-018) — C and C++ integrations now

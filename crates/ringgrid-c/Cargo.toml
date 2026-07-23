@@ -5,7 +5,7 @@
 
 [package]
 name = "ringgrid-c"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -19,7 +19,7 @@ name = "ringgrid_c"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.10.1" }
+ringgrid = { path = "../ringgrid", version = "0.11.0" }
 image = { version = "0.25", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

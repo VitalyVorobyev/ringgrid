@@ -1,9 +1,9 @@
 //! Friendly TOML/JSON target *recipe*: the high-level authoring schema the
 //! `ringgrid` CLI lowers into a canonical [`TargetLayout`].
 //!
-//! The recipe owns *authoring* defaults (dpi, formats, `dots: auto`); the
-//! library owns *geometry* defaults and validation. A recipe is the source, the
-//! v5 `target_spec.json` is the emitted canonical form.
+//! The recipe owns *authoring* defaults (dpi, formats, `fiducials = "auto"`);
+//! the library owns *geometry* defaults and validation. A recipe is the source,
+//! the v6 `target_spec.json` is the emitted canonical form.
 
 use serde::{Deserialize, Serialize};
 
@@ -92,13 +92,16 @@ pub enum FiducialMode {
     Auto,
 }
 
-/// Origin fiducials in a recipe: `"none"`, `"auto"`, or an explicit dot table.
+/// Origin fiducials in a recipe: `"none"`, `"auto"`, or `{ dot_radius_mm }`.
+///
+/// Dot *positions* are derived from the lattice, so the only thing left to
+/// author is the size — and `"auto"` derives that too.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FiducialsRecipe {
     /// `"none"` or `"auto"`.
     Mode(FiducialMode),
-    /// Explicit `{ dot_radius_mm, dots_mm }`.
+    /// `{ dot_radius_mm }` — auto placement with an explicit dot size.
     Explicit(OriginFiducials),
 }
 
@@ -151,7 +154,7 @@ fn default_formats() -> Vec<Format> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
-    /// Canonical v5 `target_spec.json`.
+    /// Canonical v6 `target_spec.json`.
     Json,
     /// Printable SVG.
     Svg,
@@ -166,10 +169,10 @@ pub enum Format {
 pub enum RecipeError {
     /// Coded markers require `marker.ring_width_mm`.
     MissingRingWidth,
-    /// Coded markers cannot use origin dots (redundant with decoded IDs); this
-    /// is the one excluded combination of the target matrix.
-    CodedWithFiducials,
-    /// The lowered geometry failed target validation.
+    /// The lowered geometry failed target validation. Coded markers combined
+    /// with origin dots — the one excluded combination of the target matrix —
+    /// surface here as [`TargetValidationError::CodedWithFiducials`], which the
+    /// library enforces for every construction path.
     Validation(TargetValidationError),
 }
 
@@ -179,9 +182,6 @@ impl std::fmt::Display for RecipeError {
             Self::MissingRingWidth => {
                 f.write_str("coded markers require marker.ring_width_mm in the recipe")
             }
-            Self::CodedWithFiducials => f.write_str(
-                "coded markers cannot use origin dots — set coding = \"plain\" or fiducials = \"none\"",
-            ),
             Self::Validation(e) => write!(f, "{e}"),
         }
     }
@@ -246,30 +246,22 @@ impl TargetRecipe {
             MarkerCoding::Plain
         };
 
+        // Coded-with-dots is rejected inside `TargetLayout`, so the recipe just
+        // lowers and lets validation speak.
         match &self.fiducials {
             FiducialsRecipe::Mode(FiducialMode::None) => Ok(TargetLayout::new(
                 &self.name, lattice, marker, coding, None,
             )?),
-            FiducialsRecipe::Mode(FiducialMode::Auto) => {
-                if coded {
-                    return Err(RecipeError::CodedWithFiducials);
-                }
-                Ok(TargetLayout::with_auto_fiducials(
-                    &self.name, lattice, marker, coding,
-                )?)
-            }
-            FiducialsRecipe::Explicit(dots) => {
-                if coded {
-                    return Err(RecipeError::CodedWithFiducials);
-                }
-                Ok(TargetLayout::new(
-                    &self.name,
-                    lattice,
-                    marker,
-                    coding,
-                    Some(dots.clone()),
-                )?)
-            }
+            FiducialsRecipe::Mode(FiducialMode::Auto) => Ok(TargetLayout::with_auto_fiducials(
+                &self.name, lattice, marker, coding,
+            )?),
+            FiducialsRecipe::Explicit(dots) => Ok(TargetLayout::new(
+                &self.name,
+                lattice,
+                marker,
+                coding,
+                Some(*dots),
+            )?),
         }
     }
 
@@ -295,6 +287,62 @@ mod tests {
             recipe
                 .to_target()
                 .unwrap_or_else(|e| panic!("{name} lower: {e}"));
+        }
+    }
+
+    /// Every built-in recipe must lower to exactly what the matching scalar
+    /// `TargetLayout` constructor produces. Two authoring surfaces, one
+    /// geometry: this is the guard that keeps the CLI and the Rust API from
+    /// drifting apart as either side is edited.
+    #[test]
+    fn every_example_recipe_matches_its_scalar_constructor() {
+        use crate::target::OriginDots;
+
+        let cases: [(&str, TargetLayout); 6] = [
+            (
+                "hex_coded",
+                TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).expect("coded hex"),
+            ),
+            (
+                "rect_coded",
+                TargetLayout::coded_rect(14.0, 20, 20, 4.8, 3.2, 1.152).expect("coded rect"),
+            ),
+            (
+                "hex_plain_dots",
+                TargetLayout::plain_hex(8.0, 15, 14, 4.8, 3.2, OriginDots::Auto)
+                    .expect("plain hex + dots"),
+            ),
+            (
+                "hex_plain_nodots",
+                TargetLayout::plain_hex(8.0, 15, 14, 4.8, 3.2, OriginDots::None)
+                    .expect("plain hex"),
+            ),
+            (
+                "rect_plain_dots",
+                TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::Auto)
+                    .expect("plain rect + dots"),
+            ),
+            (
+                "rect_plain_nodots",
+                TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::None)
+                    .expect("plain rect"),
+            ),
+        ];
+
+        for (name, from_api) in cases {
+            let from_recipe =
+                TargetRecipe::parse_toml(super::super::example_recipe(name).expect("example"))
+                    .unwrap_or_else(|e| panic!("{name} parse: {e}"))
+                    .to_target()
+                    .unwrap_or_else(|e| panic!("{name} lower: {e}"));
+            // Names differ by design (the recipe carries an authored one, the
+            // constructor derives a deterministic one); compare the geometry.
+            let from_api = from_api.with_name(name).expect("non-empty name");
+            assert_eq!(
+                from_recipe.to_json_string(),
+                from_api.to_json_string(),
+                "recipe '{name}' and its scalar constructor disagree"
+            );
         }
     }
 
@@ -329,7 +377,9 @@ mod tests {
         let recipe = TargetRecipe::parse_toml(text).expect("parse");
         assert!(matches!(
             recipe.to_target(),
-            Err(RecipeError::CodedWithFiducials)
+            Err(RecipeError::Validation(
+                TargetValidationError::CodedWithFiducials
+            ))
         ));
     }
 

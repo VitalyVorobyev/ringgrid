@@ -2,11 +2,11 @@
   "samples": [
     {
       "id": "hex-coded",
-      "label": "Hex \u00b7 coded",
+      "label": "Hex · coded",
       "file": "samples/hex-coded.png",
-      "caption": "203 coded 16-sector rings on a hex lattice \u2014 the classic ringgrid board. Every ring decodes to a stable ID against the 893-word codebook, so the RANSAC homography anchors an absolute board frame with no origin dots.",
+      "caption": "203 coded 16-sector rings on a hex lattice — the classic ringgrid board. Every ring decodes to a stable ID against the 893-word codebook, so the RANSAC homography anchors an absolute board frame with no origin dots.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "hex_coded",
         "lattice": {
           "kind": "hex",
@@ -26,11 +26,11 @@
     },
     {
       "id": "rect-coded",
-      "label": "Rect \u00b7 coded",
+      "label": "Rect · coded",
       "file": "samples/rect-coded.png",
-      "caption": "400 coded rings on a 20\u00d720 square lattice. The coded detection path is lattice-agnostic, so decoded IDs anchor an absolute board frame on a rect grid exactly as on hex \u2014 again without origin dots.",
+      "caption": "400 coded rings on a 20×20 square lattice. The coded detection path is lattice-agnostic, so decoded IDs anchor an absolute board frame on a rect grid exactly as on hex — again without origin dots.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "rect_coded",
         "lattice": {
           "kind": "rect",
@@ -50,11 +50,11 @@
     },
     {
       "id": "hex-plain-dots",
-      "label": "Hex \u00b7 plain + dots",
+      "label": "Hex · plain + dots",
       "file": "samples/hex-plain-dots.png",
       "caption": "203 plain rings on a hex lattice with an auto-placed asymmetric origin-dot triad (violet). Plain rings carry no ID, so markers are labeled by lattice coordinate; the dots break every lattice rotation to resolve an absolute board frame and orientation.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "hex_plain_dots",
         "lattice": {
           "kind": "hex",
@@ -70,31 +70,17 @@
           "kind": "plain"
         },
         "fiducials": {
-          "dot_radius_mm": 0.8,
-          "dots_mm": [
-            [
-              96.99484,
-              88.0
-            ],
-            [
-              90.06664,
-              92.0
-            ],
-            [
-              83.13844,
-              88.0
-            ]
-          ]
+          "dot_radius_mm": 0.8
         }
       }
     },
     {
       "id": "rect-plain-dots",
-      "label": "Rect \u00b7 plain + dots",
+      "label": "Rect · plain + dots",
       "file": "samples/rect-plain-dots.png",
-      "caption": "576 plain rings on a 24\u00d724 square lattice anchored by a three-dot origin triad (violet) auto-placed in the center gaps. The dots recover an absolute board frame from an otherwise symmetric grid.",
+      "caption": "576 plain rings on a 24×24 square lattice anchored by a three-dot origin triad (violet) auto-placed in the center gaps. The dots recover an absolute board frame from an otherwise symmetric grid.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "rect_plain_dots",
         "lattice": {
           "kind": "rect",
@@ -110,31 +96,17 @@
           "kind": "plain"
         },
         "fiducials": {
-          "dot_radius_mm": 1.4,
-          "dots_mm": [
-            [
-              161.0,
-              161.0
-            ],
-            [
-              147.0,
-              161.0
-            ],
-            [
-              161.0,
-              147.0
-            ]
-          ]
+          "dot_radius_mm": 1.4
         }
       }
     },
     {
       "id": "hex-plain-nodots",
-      "label": "Hex \u00b7 plain, no dots",
+      "label": "Hex · plain, no dots",
       "file": "samples/hex-plain-nodots.png",
-      "caption": "203 plain rings on a hex lattice with no origin dots. Without IDs or dots the board is labeled only up to its lattice symmetry (a relative frame); recovering the complete board is the success criterion \u2014 board_complete is true here.",
+      "caption": "203 plain rings on a hex lattice with no origin dots. Without IDs or dots the board is labeled only up to its lattice symmetry (a relative frame); recovering the complete board is the success criterion — board_complete is true here.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "hex_plain_nodots",
         "lattice": {
           "kind": "hex",
@@ -153,11 +125,11 @@
     },
     {
       "id": "rect-plain-nodots",
-      "label": "Rect \u00b7 plain, no dots",
+      "label": "Rect · plain, no dots",
       "file": "samples/rect-plain-nodots.png",
-      "caption": "576 plain rings on a 24\u00d724 square lattice, no origin dots. Labeled up to the lattice symmetry (relative frame); success means the whole board was recovered \u2014 board_complete is true here.",
+      "caption": "576 plain rings on a 24×24 square lattice, no origin dots. Labeled up to the lattice symmetry (relative frame); success means the whole board was recovered — board_complete is true here.",
       "target": {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "rect_plain_nodots",
         "lattice": {
           "kind": "rect",

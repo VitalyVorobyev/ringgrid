@@ -127,17 +127,22 @@ pub enum TargetValidationError {
         /// The invalid dot radius value.
         dot_radius_mm: f32,
     },
-    /// Validation failed: fiducials are present but contain no dots.
-    EmptyFiducialDots,
-    /// Validation failed: a fiducial dot has a non-finite coordinate.
-    NonFiniteDot {
-        /// Index of the problematic dot in `dots_mm`.
-        index: usize,
-    },
+    /// Validation failed: the board is too small to hold the origin-dot triad
+    /// inside its marker field. Rect boards need at least 3 columns and 4 rows.
+    OriginDotsOutsideBoard,
     /// Validation failed: a fiducial dot disk overlaps a marker's drawn extent.
     DotOverlapsMarker {
-        /// Index of the problematic dot in `dots_mm`.
+        /// Index of the problematic dot in the derived triad.
         index: usize,
+    },
+    /// Validation failed: a loaded `v5` spec's stored `dots_mm` disagree with
+    /// the positions derived from its lattice, so the printed board and the
+    /// detector would look for dots in different places.
+    LegacyDotsMismatch {
+        /// Dot positions stored in the v5 file.
+        stored_mm: Vec<[f32; 2]>,
+        /// Positions the current placement rule derives.
+        derived_mm: Vec<[f32; 2]>,
     },
     /// Validation failed: the fiducial dot pattern is invariant under a
     /// rotational symmetry of the cell lattice, so it cannot resolve the
@@ -146,6 +151,10 @@ pub enum TargetValidationError {
         /// The rotation angle (degrees) under which the dots are invariant.
         angle_deg: f32,
     },
+    /// Validation failed: a coded target carries origin fiducials. Decoded IDs
+    /// already anchor every marker to a physical cell, so dots are redundant —
+    /// this is the one excluded combination of the target matrix.
+    CodedWithFiducials,
     /// Automatic fiducial placement could not fit a dot in the lattice gaps:
     /// the markers are too large relative to the pitch to leave a usable gap.
     AutoFiducialsDoNotFit {
@@ -266,18 +275,25 @@ impl std::fmt::Display for TargetValidationError {
                     "dot_radius_mm must be finite and > 0 (got {dot_radius_mm})"
                 )
             }
-            Self::EmptyFiducialDots => {
-                f.write_str("fiducials present but dots_mm is empty (omit fiducials instead)")
-            }
-            Self::NonFiniteDot { index } => {
-                write!(f, "fiducial dot {index} has a non-finite coordinate")
-            }
+            Self::OriginDotsOutsideBoard => f.write_str(
+                "board is too small for an origin-dot triad inside the marker field (rect boards need at least 3 columns and 4 rows)",
+            ),
             Self::DotOverlapsMarker { index } => {
                 write!(f, "fiducial dot {index} overlaps a marker's drawn extent")
             }
+            Self::LegacyDotsMismatch {
+                stored_mm,
+                derived_mm,
+            } => write!(
+                f,
+                "this v5 spec stores origin dots at {stored_mm:?} but the lattice derives {derived_mm:?}; the file predates schema v6 and was generated with the pre-0.11 rect placement. Regenerate the target (and re-print it) rather than detecting against dots that are not where the board has them"
+            ),
             Self::FiducialsRotationallySymmetric { angle_deg } => write!(
                 f,
                 "fiducial dots are invariant under a {angle_deg:.0}° lattice rotation and cannot resolve orientation"
+            ),
+            Self::CodedWithFiducials => f.write_str(
+                "coded markers cannot carry origin fiducials — decoded IDs already anchor the board; use plain coding or drop the fiducials",
             ),
             Self::AutoFiducialsDoNotFit {
                 pitch_mm,

@@ -163,7 +163,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// Parse a target spec (compositional `ringgrid.target.v5`, or legacy
+/// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
 /// `ringgrid.target.v4` auto-migrated).
 fn parse_target(target_json: &str) -> Result<ringgrid::TargetLayout, JsValue> {
     ringgrid::TargetLayout::from_json_str(target_json)
@@ -515,7 +515,7 @@ impl RinggridDetector {
 
 // ── Free functions ──────────────────────────────────────────────────
 
-/// Default target layout as a JSON string (`ringgrid.target.v5` schema).
+/// Default target layout as a JSON string (`ringgrid.target.v6` schema).
 ///
 /// The classic coded hex target: a 15-row hex lattice of 16-sector coded rings.
 #[wasm_bindgen]
@@ -523,7 +523,7 @@ pub fn default_board_json() -> String {
     ringgrid::TargetLayout::default_hex().to_json_string()
 }
 
-/// 24×24 plain rect target as a JSON string (`ringgrid.target.v5` schema).
+/// 24×24 plain rect target as a JSON string (`ringgrid.target.v6` schema).
 ///
 /// A 24×24 square lattice of plain (uncoded) rings with three origin fiducial
 /// dots. Grid-coordinate labeling replaces ID decoding; the origin resolves to
@@ -531,6 +531,20 @@ pub fn default_board_json() -> String {
 #[wasm_bindgen]
 pub fn rect_24x24_target_json() -> String {
     ringgrid::TargetLayout::rect_24x24().to_json_string()
+}
+
+/// Origin-dot centers of a target, in board millimeters, as a JSON array of
+/// `[x, y]` pairs (empty when the target has no fiducials).
+///
+/// Dot positions are derived from the lattice rather than stored in the spec,
+/// so callers that want to draw them — an overlay projecting dots through the
+/// board→image homography, say — must ask the library instead of reading the
+/// target JSON.
+#[wasm_bindgen]
+pub fn target_fiducial_dots_mm(target_json: &str) -> Result<String, JsValue> {
+    let target = parse_target(target_json)?;
+    serde_json::to_string(target.fiducial_dots_mm())
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Default detection config for a given target layout, as a JSON string.

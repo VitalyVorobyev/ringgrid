@@ -179,7 +179,58 @@ fn run_gen(args: GenArgs) -> Result<(), String> {
     for path in &written {
         println!("wrote {}", path.display());
     }
+    print_target_summary(&target, &recipe.render);
     Ok(())
+}
+
+/// Paper sizes a target might be printed on, smallest first (mm, portrait).
+const PAPER_SIZES: &[(&str, f32, f32)] = &[
+    ("A4", 210.0, 297.0),
+    ("Letter", 215.9, 279.4),
+    ("A3", 297.0, 420.0),
+];
+
+/// Describe what `gen` just produced: geometry, marker/dot counts, and the
+/// physical print size — the facts you need before sending a target to a
+/// printer, none of which are obvious from the four output paths alone.
+fn print_target_summary(target: &ringgrid::TargetLayout, render: &cli::RenderRecipe) {
+    let lattice = match target.lattice() {
+        ringgrid::LatticeGeometry::Hex(hex) => {
+            format!("hex {} rows x {} cols", hex.rows, hex.long_row_cols)
+        }
+        ringgrid::LatticeGeometry::Rect(rect) => {
+            format!("rect {}x{}", rect.rows, rect.cols)
+        }
+    };
+    let coding = if target.is_coded() { "coded" } else { "plain" };
+    let dots = match target.fiducials() {
+        Some(_) => format!("{} origin dots", target.fiducial_dots_mm().len()),
+        None => "no origin dots".to_string(),
+    };
+    eprintln!(
+        "target: {} — {lattice}, pitch {:.1} mm, {coding}, {dots}",
+        target.name(),
+        target.pitch_mm()
+    );
+    eprintln!("markers: {}", target.n_cells());
+
+    let side_mm = target.print_side_mm(render.margin_mm);
+    let fits = PAPER_SIZES
+        .iter()
+        .find(|(_, w, h)| side_mm <= *w && side_mm <= *h);
+    let note = match fits {
+        Some((name, _, _)) => format!("fits {name}"),
+        None => "exceeds A3 297x420 mm — use a plotter or tile the print".to_string(),
+    };
+    eprintln!("print size: {side_mm:.1} x {side_mm:.1} mm ({note})");
+
+    if render.formats.contains(&cli::Format::Png) {
+        let px = (f64::from(side_mm) * f64::from(render.dpi) / 25.4)
+            .round()
+            .max(1.0) as u32;
+        eprintln!("png: {px} x {px} px @ {:.0} dpi", render.dpi);
+    }
+    eprintln!("print at 100% scale, then verify the printed scale bar with a ruler");
 }
 
 fn run_detect(args: DetectArgs) -> Result<(), String> {

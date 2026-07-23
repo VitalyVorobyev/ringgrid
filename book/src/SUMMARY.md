@@ -7,8 +7,9 @@
 # Targets
 
 - [The Compositional Target Model](targets/target-model.md)
-- [Target JSON (schema v5)](targets/target-json-v5.md)
+- [Target JSON (schema v6)](targets/target-json-v6.md)
 - [Origin Fiducials](targets/origin-fiducials.md)
+- [Print & Verify](targets/print-and-verify.md)
 
 # Marker Design
 

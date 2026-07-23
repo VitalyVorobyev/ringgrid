@@ -67,7 +67,7 @@ def _markdown_section(text: str, heading: str) -> str:
     return text[start:end]
 
 
-def test_target_layout_default_hex_roundtrips_and_matches_native_v5() -> None:
+def test_target_layout_default_hex_roundtrips_and_matches_native_v6() -> None:
     from ringgrid._ringgrid import target_preset_json
 
     target = ringgrid.TargetLayout.default_hex()
@@ -76,13 +76,13 @@ def test_target_layout_default_hex_roundtrips_and_matches_native_v5() -> None:
     assert target.coding.id_assignment is None
     assert target.fiducials is None
 
-    # v5 verbatim round-trip through the typed dataclasses.
+    # v6 verbatim round-trip through the typed dataclasses.
     assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
 
     # Parity with the native preset JSON (compare parsed dicts, not strings).
     native = json.loads(target_preset_json("default_hex"))
     assert target.to_dict() == native
-    assert native["schema"] == "ringgrid.target.v5"
+    assert native["schema"] == "ringgrid.target.v6"
     assert native["lattice"]["kind"] == "hex"
     assert native["coding"]["kind"] == "coded16"
     assert "fiducials" not in native
@@ -95,13 +95,14 @@ def test_target_layout_rect_preset_roundtrips_and_has_expected_shape() -> None:
     assert target.lattice.rows == 24
     assert target.lattice.cols == 24
     assert isinstance(target.coding, ringgrid.Plain)
+    # Fiducials carry size only; positions are derived by the native library.
     assert target.fiducials is not None
-    assert len(target.fiducials.dots_mm) == 3
+    assert target.fiducials.dot_radius_mm == 1.4
 
     data = target.to_dict()
     assert data["lattice"]["kind"] == "rect"
     assert data["coding"] == {"kind": "plain"}
-    assert all(len(dot) == 2 for dot in data["fiducials"]["dots_mm"])
+    assert data["fiducials"] == {"dot_radius_mm": 1.4}
 
     assert ringgrid.TargetLayout.from_dict(data) == target
 
@@ -118,6 +119,49 @@ def test_target_layout_coded_hex_matches_board_geometry_and_name() -> None:
     assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
 
 
+def test_target_layout_plain_constructors_place_origin_dots() -> None:
+    """The gap this closes: before 0.11, Python could only reach a plain target
+    with dots through the frozen ``rect_24x24`` preset or by hand-authoring dot
+    coordinates, because auto placement lived only in Rust."""
+    with_dots = ringgrid.TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=True)
+
+    assert isinstance(with_dots.lattice, ringgrid.RectGeometry)
+    assert with_dots.lattice.rows == 24
+    assert isinstance(with_dots.coding, ringgrid.Plain)
+    # Positions are no longer stored at all — only the size is a choice, so a
+    # triad can never be copied onto a board it does not fit.
+    assert with_dots.fiducials is not None
+    assert with_dots.fiducials.dot_radius_mm == 1.4
+    assert with_dots.to_dict()["fiducials"] == {"dot_radius_mm": 1.4}
+    # Round-trips through the native validator.
+    assert ringgrid.TargetLayout.from_dict(with_dots.to_dict()) == with_dots
+    assert with_dots.to_spec_json()
+
+    without = ringgrid.TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=False)
+    assert without.fiducials is None
+
+    hex_dots = ringgrid.TargetLayout.plain_hex(8.0, 15, 14, 4.8, 3.2)
+    assert isinstance(hex_dots.lattice, ringgrid.HexGeometry)
+    assert hex_dots.fiducials is not None and hex_dots.fiducials.dot_radius_mm > 0.0
+
+
+def test_target_layout_coded_rect_has_no_fiducials() -> None:
+    target = ringgrid.TargetLayout.coded_rect(14.0, 20, 20, 4.8, 3.2, 1.152)
+
+    assert isinstance(target.lattice, ringgrid.RectGeometry)
+    assert isinstance(target.coding, ringgrid.Coded16)
+    # Decoded IDs anchor the board, so coded targets never carry dots.
+    assert target.fiducials is None
+    assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
+
+
+def test_plain_constructor_reports_when_dots_do_not_fit() -> None:
+    # Markers near the packing limit leave no gap for a dot; the native error
+    # must surface rather than silently producing a dot-free target.
+    with pytest.raises(ValueError, match="cannot fit a dot"):
+        ringgrid.TargetLayout.plain_rect(10.0, 4, 4, 6.9, 2.0, dots=True)
+
+
 def test_target_layout_from_json_migrates_v4_board_spec() -> None:
     target = ringgrid.TargetLayout.from_json(BOARD_JSON)
 
@@ -125,8 +169,8 @@ def test_target_layout_from_json_migrates_v4_board_spec() -> None:
     assert target.lattice.rows == 15
     assert target.lattice.long_row_cols == 14
     assert isinstance(target.coding, ringgrid.Coded16)
-    # The migrated target is emitted as canonical v5 and round-trips.
-    assert target.to_dict()["schema"] == "ringgrid.target.v5"
+    # The migrated target is emitted as canonical v6 and round-trips.
+    assert target.to_dict()["schema"] == "ringgrid.target.v6"
     assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
 
 

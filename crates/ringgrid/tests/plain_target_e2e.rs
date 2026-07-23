@@ -35,10 +35,8 @@ fn plain_rect_with_dots() -> TargetLayout {
             inner_radius_mm: 2.8,
         },
         MarkerCoding::Plain,
-        Some(OriginFiducials {
-            dot_radius_mm: 1.4,
-            dots_mm: vec![[49.0, 49.0], [35.0, 49.0], [49.0, 63.0]],
-        }),
+        // Derived triad for an 8x8 board: [49,49], [35,49], [49,63].
+        Some(OriginFiducials { dot_radius_mm: 1.4 }),
     )
     .expect("valid plain rect target")
 }
@@ -143,19 +141,27 @@ fn plain_rect_with_dots_detects_anchored() {
     );
     assert_h_consistency(&result, 1.0);
 
-    // Absolute orientation: the render is axis-aligned, so cell (0, 0) — the
-    // board origin — must be the top-left-most detected marker.
-    let origin = result
+    // Absolute orientation: the render is axis-aligned, so the minimum cell
+    // coordinate must be the top-left-most detected marker. Rect coordinates
+    // are centered, so an 8x8 board runs -3..=4 and the corner is (-3, -3).
+    let corner = result
+        .detected_markers
+        .iter()
+        .find(|m| m.grid_coord == Some([-3, -3]))
+        .expect("corner cell (-3,-3) detected");
+    for m in &result.detected_markers {
+        assert!(
+            m.center[0] >= corner.center[0] - 1.0 && m.center[1] >= corner.center[1] - 1.0,
+            "cell (-3,-3) must be the top-left corner"
+        );
+    }
+    // Cell (0, 0) is the central one the origin dots surround.
+    let center = result
         .detected_markers
         .iter()
         .find(|m| m.grid_coord == Some([0, 0]))
         .expect("cell (0,0) detected");
-    for m in &result.detected_markers {
-        assert!(
-            m.center[0] >= origin.center[0] - 1.0 && m.center[1] >= origin.center[1] - 1.0,
-            "cell (0,0) must be the top-left corner"
-        );
-    }
+    assert_eq!(center.board_xy_mm, Some([42.0, 42.0]));
 }
 
 #[test]
@@ -175,15 +181,15 @@ fn plain_rect_with_dots_anchors_under_image_rotation() {
     assert!(result.detected_markers.len() >= 60);
     assert_h_consistency(&result, 1.0);
 
-    let origin = result
+    let corner = result
         .detected_markers
         .iter()
-        .find(|m| m.grid_coord == Some([0, 0]))
-        .expect("cell (0,0) detected");
+        .find(|m| m.grid_coord == Some([-3, -3]))
+        .expect("corner cell (-3,-3) detected");
     for m in &result.detected_markers {
         assert!(
-            m.center[0] <= origin.center[0] + 1.0 && m.center[1] >= origin.center[1] - 1.0,
-            "after 90° CW rotation cell (0,0) must be the top-right corner"
+            m.center[0] <= corner.center[0] + 1.0 && m.center[1] >= corner.center[1] - 1.0,
+            "after 90° CW rotation cell (-3,-3) must be the top-right corner"
         );
     }
 }
@@ -340,14 +346,15 @@ fn coded_rect_detects_absolute_ids() {
     assert!(n_decoded >= 30, "expected ≥30 decoded ids, got {n_decoded}");
     assert_h_consistency(&result, 1.0);
 
-    // IDs anchor absolutely: sequential assignment means id == row*6 + col.
+    // IDs anchor absolutely: sequential assignment in generation order, with
+    // centered coordinates a 6x6 board runs -2..=3, so id == (row+2)*6 + col+2.
     for m in &result.detected_markers {
         let (Some(id), Some(coord)) = (m.id, m.grid_coord) else {
             continue;
         };
         assert_eq!(
             id as i32,
-            coord[1] * 6 + coord[0],
+            (coord[1] + 2) * 6 + (coord[0] + 2),
             "decoded id must match its lattice cell"
         );
     }

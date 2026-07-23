@@ -162,17 +162,41 @@ fn generate_hex_cells(
     Ok(cells)
 }
 
+/// Generate rect cells row by row, top-left first.
+///
+/// Coordinates are **centered**: index `0` is the middle cell on each axis, so
+/// a 24-wide board runs `-11..=12` and cell `(0, 0)` always exists near the
+/// board center — matching the hex lattice's centered axial convention, and
+/// giving [`origin fiducials`](super::fiducials) a lattice-relative anchor that
+/// survives a change of dimensions.
+///
+/// Generation *order* is unchanged (row-major from the physical top-left), so
+/// the `[0, 0]` mm anchor and sequential coded-ID assignment are unaffected.
 fn generate_rect_cells(rows: usize, cols: usize, pitch_mm: f32) -> Vec<(Coord, [f32; 2])> {
     let pitch = f64::from(pitch_mm);
+    let (col_mid, row_mid) = (center_index(cols), center_index(rows));
     let mut cells = Vec::with_capacity(rows * cols);
     for row in 0..rows {
         for col in 0..cols {
             let x = (pitch * col as f64) as f32;
             let y = (pitch * row as f64) as f32;
-            cells.push((Coord::new(col as i32, row as i32), [x, y]));
+            cells.push((
+                Coord::new(col as i32 - col_mid, row as i32 - row_mid),
+                [x, y],
+            ));
         }
     }
     cells
+}
+
+/// Index of the center cell along an axis of `n` cells.
+///
+/// `(n - 1) / 2`, so even-sized axes put the extra cell on the positive side
+/// (24 cells → `-11..=12`). Applied to both rect axes, which is what makes the
+/// fiducial anchor at cell `(0, 0)` land on the same physical cell regardless
+/// of board size.
+fn center_index(n: usize) -> i32 {
+    (n as i32 - 1) / 2
 }
 
 fn hex_axial_to_xy_mm(q: i32, r: i32, pitch_mm: f32) -> [f32; 2] {
@@ -283,8 +307,11 @@ pub(crate) fn point_set_invariant_under(
 mod tests {
     use super::*;
 
+    /// Generation order stays row-major from the physical top-left (the `[0, 0]`
+    /// mm anchor and sequential coded IDs depend on it); only the coordinate
+    /// labels are centered.
     #[test]
-    fn rect_cells_are_row_major_from_origin() {
+    fn rect_cells_are_row_major_with_centered_coords() {
         let lattice = LatticeGeometry::Rect(RectGeometry {
             rows: 2,
             cols: 3,
@@ -292,10 +319,34 @@ mod tests {
         });
         let cells = lattice.generate_cells().expect("valid geometry");
         assert_eq!(cells.len(), 6);
-        assert_eq!(cells[0], (Coord::new(0, 0), [0.0, 0.0]));
-        assert_eq!(cells[1], (Coord::new(1, 0), [14.0, 0.0]));
-        assert_eq!(cells[3], (Coord::new(0, 1), [0.0, 14.0]));
-        assert_eq!(cells[5], (Coord::new(2, 1), [28.0, 14.0]));
+        // cols=3 -> col_mid 1 (indices -1..=1); rows=2 -> row_mid 0 (0..=1).
+        assert_eq!(cells[0], (Coord::new(-1, 0), [0.0, 0.0]));
+        assert_eq!(cells[1], (Coord::new(0, 0), [14.0, 0.0]));
+        assert_eq!(cells[3], (Coord::new(-1, 1), [0.0, 14.0]));
+        assert_eq!(cells[5], (Coord::new(1, 1), [28.0, 14.0]));
+    }
+
+    /// Cell `(0, 0)` must exist on every rect board — the origin fiducial
+    /// anchor depends on it.
+    #[test]
+    fn rect_origin_cell_always_exists_and_is_central() {
+        for (rows, cols) in [(1, 1), (2, 3), (4, 4), (5, 7), (24, 24), (23, 24)] {
+            let lattice = LatticeGeometry::Rect(RectGeometry {
+                rows,
+                cols,
+                pitch_mm: 14.0,
+            });
+            let cells = lattice.generate_cells().expect("valid geometry");
+            let origin = cells
+                .iter()
+                .find(|(c, _)| *c == Coord::new(0, 0))
+                .unwrap_or_else(|| panic!("{rows}x{cols} has no (0,0) cell"));
+            // Within half a pitch of the board's bounding-box center.
+            let max_x = 14.0 * (cols - 1) as f32;
+            let max_y = 14.0 * (rows - 1) as f32;
+            assert!((origin.1[0] - 0.5 * max_x).abs() <= 7.0);
+            assert!((origin.1[1] - 0.5 * max_y).abs() <= 7.0);
+        }
     }
 
     #[test]

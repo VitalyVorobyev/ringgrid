@@ -178,6 +178,6 @@ unique.
 This optimizer's input/output remains the legacy flat `ringgrid.target.v4`
 schema; loading it through `TargetLayout::from_json_file` (Rust), the CLI's
 `--target`, or `ringgrid.TargetLayout.from_json` (Python) auto-migrates it
-to the canonical `ringgrid.target.v5` schema, carrying `id_assignment` over
-unchanged. See [Target JSON (schema v5)](targets/target-json-v5.md) for the
+to the canonical `ringgrid.target.v6` schema, carrying `id_assignment` over
+unchanged. See [Target JSON (schema v6)](targets/target-json-v6.md) for the
 migration rules.

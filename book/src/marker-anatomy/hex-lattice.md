@@ -161,7 +161,7 @@ in that order unless the target carries an explicit `id_assignment`.
 ## JSON schema
 
 Targets are specified in JSON. The canonical schema is
-[`ringgrid.target.v5`](../targets/target-json-v5.md), whose `lattice` section is
+[`ringgrid.target.v6`](../targets/target-json-v6.md), whose `lattice` section is
 tagged `"kind": "hex"` for a hex board. The pre-0.8 flat `ringgrid.target.v4`
 schema (top-level `pitch_mm`, `rows`, `long_row_cols`, `marker_*_mm`) is still
 accepted on input and migrated on load; writers always emit v5.
@@ -178,7 +178,7 @@ A minimal v5 hex spec:
 }
 ```
 
-See [Target JSON (schema v5)](../targets/target-json-v5.md) for the full field
+See [Target JSON (schema v6)](../targets/target-json-v6.md) for the full field
 reference and v4 auto-migration.
 
 ## Validation rules

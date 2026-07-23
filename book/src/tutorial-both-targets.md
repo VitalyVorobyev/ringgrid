@@ -99,15 +99,42 @@ ringgrid example --name rect_plain_dots --out rect_plain_dots.toml
 ringgrid gen rect_plain_dots.toml --out ./out/rect
 ```
 
-The equivalent in Python via the bundled preset:
+`gen` reports what it built — note the board is **343 mm square**, larger than
+A3, so plan the print accordingly (see [Print & Verify](targets/print-and-verify.md)):
+
+```text
+target: rect_plain_dots — rect 24x24, pitch 14.0 mm, plain, 3 origin dots
+markers: 576
+print size: 343.2 x 343.2 mm (exceeds A3 297x420 mm — use a plotter or tile the print)
+png: 4054 x 4054 px @ 300 dpi
+```
+
+The equivalent Rust and Python. `OriginDots::Auto` / `dots=True` place the
+origin-dot triad in the lattice gaps for you — dot positions are computed from
+the lattice and validated (clear of every marker, breaking every rotational
+symmetry), so you never write dot coordinates by hand:
+
+```rust
+use ringgrid::{OriginDots, TargetLayout};
+let rect = TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::Auto)?
+    .with_name("rect_plain_dots")?;
+rect.write_json_file("./out/rect/target_spec.json".as_ref())?;
+rect.write_target_svg("./out/rect/target_print.svg".as_ref(), &Default::default())?;
+rect.write_target_png("./out/rect/target_print.png".as_ref(), &Default::default())?;
+rect.write_target_dxf("./out/rect/target_print.dxf".as_ref())?;
+```
 
 ```python
 import ringgrid
-rect = ringgrid.TargetLayout.rect_24x24()
+rect = ringgrid.TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=True)
 rect.write_svg("./out/rect/target_print.svg")
 rect.write_png("./out/rect/target_print.png")
 rect.write_dxf("./out/rect/target_print.dxf")
 ```
+
+For a target *without* dots, pass `OriginDots::None` / `dots=False` — then the
+board is labeled only up to lattice symmetry and you must detect all of it
+(`--strict`, or gate on `board_complete`).
 
 ### 2. Detect
 
@@ -153,10 +180,14 @@ Detection](detection-pipeline/plain-target.md)):
 | Step | Coded hex | Plain rect |
 |---|---|---|
 | Recipe | `hex_coded` | `rect_plain_dots` |
-| Generate | `ringgrid gen hex_coded.toml …` | `ringgrid gen rect_plain_dots.toml …` |
+| Generate (CLI) | `ringgrid gen hex_coded.toml …` | `ringgrid gen rect_plain_dots.toml …` |
+| Generate (Rust) | `TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152)` | `TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::Auto)` |
 | Marker key | `id` (0–892) | `grid_coord` |
 | Frame | always `absolute` | `absolute` (dots resolved) or `relative_canonical` |
 | Artifacts | `.json` `.svg` `.png` `.dxf` | `.json` `.svg` `.png` `.dxf` |
+
+Between generating and detecting comes the step that most often goes wrong
+silently: [Print & Verify](targets/print-and-verify.md).
 
 Where to go next: the full result schema in [Detection Output
 Format](output-format.md), the plain-path algorithm in [Plain / Rect Target

@@ -1,10 +1,15 @@
-# Target JSON (schema v5)
+# Target JSON (schema v6)
 
-`ringgrid.target.v5` is the canonical, compositional target schema. It mirrors
+`ringgrid.target.v6` is the canonical, compositional target schema. It mirrors
 the [target model](target-model.md) one-to-one: a top-level object with
 `lattice`, `marker`, `coding`, and optional `fiducials` sections. Loaders also
-accept the legacy flat `ringgrid.target.v4` schema and migrate it on the fly;
-writers always emit v5.
+accept `ringgrid.target.v6` and the legacy flat `ringgrid.target.v4` schema and
+migrate them on the fly; writers always emit v6.
+
+**What changed in v6:** `fiducials` no longer stores dot *coordinates*. Only
+`dot_radius_mm` is written; positions are derived from the lattice, so they
+cannot fall out of step when the board's dimensions change. See
+[migration](#migrating-from-v5) below.
 
 ## Annotated example — plain rect with origin dots
 
@@ -13,7 +18,7 @@ two dots so the shape is easy to read):
 
 ```jsonc
 {
-  "schema": "ringgrid.target.v5",         // schema tag; dispatched before full parse
+  "schema": "ringgrid.target.v6",         // schema tag; dispatched before full parse
   "name": "ringgrid_rect_r4_c4_p14.000_o5.600_i2.800",  // human-readable name
   "lattice": {
     "kind": "rect",                       // "rect" | "hex"
@@ -29,11 +34,7 @@ two dots so the shape is easy to read):
     "kind": "plain"                       // plain annulus, no identity code
   },
   "fiducials": {                          // optional; present only when defined
-    "dot_radius_mm": 1.4,
-    "dots_mm": [                          // dark dots in board mm, break lattice symmetry
-      [21.0, 21.0],
-      [7.0, 21.0]
-    ]
+    "dot_radius_mm": 1.4                  // size only — positions derive from the lattice
   }
 }
 ```
@@ -44,7 +45,7 @@ Produced by `TargetLayout::default_hex()` (shown here for a small 3-row lattice)
 
 ```jsonc
 {
-  "schema": "ringgrid.target.v5",
+  "schema": "ringgrid.target.v6",
   "name": "ringgrid_hex_r3_c4_p8.000_o4.800_i3.200_w1.152",
   "lattice": {
     "kind": "hex",
@@ -71,7 +72,7 @@ Produced by `TargetLayout::default_hex()` (shown here for a small 3-row lattice)
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema` | string | `"ringgrid.target.v5"` (or legacy `"ringgrid.target.v4"` on input). |
+| `schema` | string | `"ringgrid.target.v6"` (or legacy `"ringgrid.target.v4"` on input). |
 | `name` | string | Non-empty. Presets and CLI use a deterministic geometry-derived name. |
 | `lattice` | object | Tagged by `kind`. |
 | `marker` | object | Ring radii. |
@@ -103,8 +104,24 @@ form and omitted on write.
 
 ### `fiducials`
 
-`dot_radius_mm`, `dots_mm` (array of `[x_mm, y_mm]` dot centers). See
-[Origin Fiducials](origin-fiducials.md).
+`dot_radius_mm` — the printed dot radius, and the only fiducial field. Dot
+*positions* are an L of three lattice gaps around cell `(0, 0)`, derived from
+`lattice` at load time and exposed through `TargetLayout::fiducial_dots_mm()`.
+See [Origin Fiducials](origin-fiducials.md).
+
+## Migrating from v5
+
+A v5 file differs only in the schema tag and a `fiducials.dots_mm` array.
+Loading one is automatic, with one guard: the stored coordinates are **compared
+against** the derived ones, and a mismatch is an error rather than a silent
+override. If they differed, the file describes a board whose dots are printed
+somewhere this build would not look for them — regenerating the target (and
+re-printing it) is the only correct fix.
+
+In practice only rect targets generated with `fiducials = "auto"` by ringgrid
+0.10.x are affected; their third dot moved by one pitch. Hex targets, the
+`rect_24x24` preset, and every hand-authored L are unchanged and migrate
+silently.
 
 ## v4 auto-migration
 
@@ -158,7 +175,7 @@ ringgrid-dev gen-target hex \
 ringgrid-dev gen-target rect \
   --pitch_mm 14 --rows 24 --cols 24 \
   --marker_outer_radius_mm 5.6 --marker_inner_radius_mm 2.8 \
-  --dot_radius_mm 1.4 --dot_mm 161,161 --dot_mm 147,161 --dot_mm 161,175 \
+  --dots --dot_radius_mm 1.4 \
   --out_dir tools/out/target
 
 # A built-in preset

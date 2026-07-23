@@ -8,7 +8,7 @@ pipeline; only the lattice, the annulus rendering, and the coordinate-keyed
 ground truth are specific to this generator.
 
 Ground truth is keyed by lattice coordinate (u, v) — plain rings carry no IDs.
-The board frame matches ringgrid's TargetLayout: cell (0, 0) at (0, 0) mm,
+The board frame matches ringgrid's TargetLayout: centred cell coordinates,
 +u toward +x, +v toward +y.
 
 Usage:
@@ -41,13 +41,37 @@ DEFAULT_PITCH_MM = 14.0
 DEFAULT_OUTER_RADIUS_MM = 5.6
 DEFAULT_INNER_RADIUS_MM = 2.8
 DEFAULT_DOT_RADIUS_MM = 1.4
-DEFAULT_DOTS_MM = [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
+
+
+def center_index(n: int) -> int:
+    """Index of the centre cell along an axis of ``n`` cells (mirrors Rust)."""
+    return (n - 1) // 2
+
+
+def origin_dots_mm(rows: int, cols: int, pitch_mm: float):
+    """The derived origin-dot triad: an L of three lattice gaps around cell (0, 0).
+
+    Mirrors ``ringgrid::target::fiducials::origin_dot_positions_mm`` for the rect
+    lattice. Kept in step by ``test_gen_synth_rect_dots_match_library``.
+    """
+    ox = pitch_mm * center_index(cols)
+    oy = pitch_mm * center_index(rows)
+    h = 0.5 * pitch_mm
+    ax, ay = ox + h, oy + h
+    return [[ax, ay], [ax - pitch_mm, ay], [ax, ay + pitch_mm]]
 
 
 def generate_rect_lattice(rows: int, cols: int, pitch_mm: float):
-    """Cells as (u, v, x_mm, y_mm), row-major, cell (0, 0) at the origin."""
+    """Cells as (u, v, x_mm, y_mm), row-major.
+
+    Coordinates are centred to match ringgrid's rect lattice: cell (0, 0) is the
+    central cell, so a 24-wide board runs -11..=12.
+    """
+    cu, cv = center_index(cols), center_index(rows)
     return [
-        (u, v, u * pitch_mm, v * pitch_mm) for v in range(rows) for u in range(cols)
+        (u - cu, v - cv, u * pitch_mm, v * pitch_mm)
+        for v in range(rows)
+        for u in range(cols)
     ]
 
 
@@ -92,10 +116,10 @@ def render_rect_board(
     return img_flat.reshape(img_h, img_w)
 
 
-def target_spec_v5(args, dots_mm) -> dict:
-    """Emit the ringgrid.target.v5 spec matching this synthetic board."""
+def target_spec_v6(args, dots_mm) -> dict:
+    """Emit the ringgrid.target.v6 spec matching this synthetic board."""
     spec = {
-        "schema": "ringgrid.target.v5",
+        "schema": "ringgrid.target.v6",
         "name": "synth_rect_plain",
         "lattice": {
             "kind": "rect",
@@ -110,10 +134,8 @@ def target_spec_v5(args, dots_mm) -> dict:
         "coding": {"kind": "plain"},
     }
     if dots_mm:
-        spec["fiducials"] = {
-            "dot_radius_mm": args.dot_radius_mm,
-            "dots_mm": dots_mm,
-        }
+        # v6 stores only the size; positions derive from the lattice.
+        spec["fiducials"] = {"dot_radius_mm": args.dot_radius_mm}
     return spec
 
 
@@ -246,24 +268,15 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
 
-    dots_mm = [] if args.no_dots else [list(d) for d in DEFAULT_DOTS_MM]
-    if dots_mm and (args.rows, args.cols, args.pitch_mm) != (24, 24, 14.0):
-        # Keep the L-shape at the board center for non-default dimensions.
-        cu = (args.cols - 1) // 2
-        cv = (args.rows - 1) // 2
-        gx = (cu + 0.5) * args.pitch_mm
-        gy = (cv + 0.5) * args.pitch_mm
-        dots_mm = [
-            [gx, gy],
-            [gx - args.pitch_mm, gy],
-            [gx, gy + args.pitch_mm],
-        ]
+    dots_mm = (
+        [] if args.no_dots else origin_dots_mm(args.rows, args.cols, args.pitch_mm)
+    )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with open(out_dir / "target_spec.json", "w") as f:
-        json.dump(target_spec_v5(args, dots_mm), f, indent=2)
+        json.dump(target_spec_v6(args, dots_mm), f, indent=2)
 
     rng = np.random.RandomState(args.seed)
     for idx in range(args.n_images):

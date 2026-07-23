@@ -37,8 +37,15 @@ The library can generate canonical target JSON plus printable SVG/PNG directly:
 use ringgrid::{PngTargetOptions, SvgTargetOptions, TargetLayout};
 use std::path::Path;
 
-// `coded_hex` uses a deterministic geometry-derived name; use `TargetLayout::new`
-// for full control over lattice, ring geometry, coding, and origin fiducials.
+// One constructor per target-matrix row — `coded_hex`, `coded_rect`,
+// `plain_hex`, `plain_rect` — each taking plain scalars and deriving a
+// deterministic geometry-based name (`with_name` overrides it). Plain targets
+// take an `OriginDots` argument: `Auto` places the origin-dot triad for you.
+//
+//   TargetLayout::plain_rect(14.0, 24, 24, 5.6, 2.8, OriginDots::Auto)
+//
+// `TargetLayout::new` gives full control over lattice, ring geometry, coding,
+// and explicit origin fiducials.
 let target = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
 
 target.write_json_file(Path::new("target.json")).unwrap();

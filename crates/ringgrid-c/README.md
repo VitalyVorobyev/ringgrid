@@ -48,6 +48,13 @@ Introspection: `ringgrid_version`, `ringgrid_abi_version`,
 `ringgrid_default_target_json`, `ringgrid_rect_24x24_target_json`,
 `ringgrid_default_config_json`, `ringgrid_scale_tiers_{four_tier_wide,two_tier_standard}_json`.
 
+**Targets are consumed, not authored, through this ABI.** Every detector
+constructor takes target JSON, and the two preset accessors above cover the
+common cases; there is deliberately no C entry point for composing a custom
+target. Author targets with the `ringgrid` CLI (`ringgrid gen <recipe.toml>`) or
+the Rust/Python `TargetLayout` constructors, then ship the emitted
+`target_spec.json` alongside your application and pass its contents here.
+
 ## Using it
 
 ### vcpkg (overlay port)

@@ -7,7 +7,7 @@ type CliError = Box<dyn std::error::Error>;
 type CliResult<T> = Result<T, CliError>;
 const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
 const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
-const TARGET_SPEC_SCHEMA_V5: &str = "ringgrid.target.v5";
+const TARGET_SPEC_SCHEMA: &str = "ringgrid.target.v6";
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
@@ -171,25 +171,6 @@ impl CliGenHexArgs {
     }
 }
 
-/// Origin fiducial dot center in board millimeters.
-#[derive(Debug, Clone, Copy)]
-struct DotMmArg([f32; 2]);
-
-fn parse_dot_mm(raw: &str) -> Result<DotMmArg, String> {
-    let (x, y) = raw
-        .split_once(',')
-        .ok_or_else(|| format!("expected \"x,y\" millimeters, got '{raw}'"))?;
-    let x: f32 = x
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid x '{x}': {e}"))?;
-    let y: f32 = y
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid y '{y}': {e}"))?;
-    Ok(DotMmArg([x, y]))
-}
-
 #[derive(Debug, Clone, Args)]
 struct CliGenRectArgs {
     /// Marker center spacing in millimeters.
@@ -218,17 +199,16 @@ struct CliGenRectArgs {
     )]
     marker_inner_radius_mm: f32,
 
-    /// Origin fiducial dot center in board millimeters, as "x,y".
-    /// Repeat for each dot; requires --dot_radius_mm. The dot pattern must
-    /// break every rotational symmetry of the lattice.
-    #[arg(long = "dot_mm", visible_alias = "dot-mm", value_parser = parse_dot_mm, requires = "dot_radius_mm")]
-    dot_mm: Vec<DotMmArg>,
+    /// Place an origin-dot triad in the lattice gaps around cell (0, 0).
+    /// Positions are derived from the lattice; only the size is a choice.
+    #[arg(long = "dots")]
+    dots: bool,
 
-    /// Origin fiducial dot radius in millimeters.
+    /// Override the automatically-derived origin dot radius (mm).
     #[arg(
         long = "dot_radius_mm",
         visible_alias = "dot-radius-mm",
-        requires = "dot_mm"
+        requires = "dots"
     )]
     dot_radius_mm: Option<f32>,
 
@@ -252,12 +232,31 @@ impl CliGenRectArgs {
                 self.marker_inner_radius_mm
             )
         });
-        let fiducials = self
-            .dot_radius_mm
-            .map(|dot_radius_mm| ringgrid::OriginFiducials {
-                dot_radius_mm,
-                dots_mm: self.dot_mm.iter().map(|d| d.0).collect(),
-            });
+        // Dot positions are derived from the lattice; `--dot_radius_mm` only
+        // overrides the size the automatic placement would have picked.
+        let fiducials = self.dots.then(|| {
+            self.dot_radius_mm
+                .map(|dot_radius_mm| ringgrid::OriginFiducials { dot_radius_mm })
+        });
+        let fiducials = match fiducials {
+            None => None,
+            Some(Some(explicit)) => Some(explicit),
+            Some(None) => Some(
+                ringgrid::OriginFiducials::auto(
+                    &ringgrid::LatticeGeometry::Rect(ringgrid::RectGeometry {
+                        rows: self.rows,
+                        cols: self.cols,
+                        pitch_mm: self.pitch_mm,
+                    }),
+                    ringgrid::RingGeometry {
+                        outer_radius_mm: self.marker_outer_radius_mm,
+                        inner_radius_mm: self.marker_inner_radius_mm,
+                    },
+                    &ringgrid::MarkerCoding::Plain,
+                )
+                .map_err(|e| -> CliError { format!("invalid origin dots: {e}").into() })?,
+            ),
+        };
         ringgrid::TargetLayout::new(
             name,
             ringgrid::LatticeGeometry::Rect(ringgrid::RectGeometry {
@@ -1093,7 +1092,7 @@ fn run_board_info() -> CliResult<()> {
 
     println!("ringgrid default target specification");
     println!("  name:           {}", target.name());
-    println!("  schema:         {}", TARGET_SPEC_SCHEMA_V5);
+    println!("  schema:         {}", TARGET_SPEC_SCHEMA);
     match target.lattice() {
         ringgrid::LatticeGeometry::Hex(h) => {
             println!("  lattice:        hex");
@@ -1192,12 +1191,12 @@ fn write_target_outputs(
     println!(
         "Target: {}, schema={}, {}, coding={}, cells={}, pitch={}mm, fiducial dots={}",
         target.name(),
-        TARGET_SPEC_SCHEMA_V5,
+        TARGET_SPEC_SCHEMA,
         lattice,
         coding,
         target.n_cells(),
         target.pitch_mm(),
-        target.fiducials().map_or(0, |f| f.dots_mm.len())
+        target.fiducial_dots_mm().len()
     );
     Ok(())
 }
@@ -1561,7 +1560,7 @@ mod tests {
     use image::load_from_memory;
 
     const EXPECTED_TARGET_JSON: &str =
-        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex_v5.json");
+        include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.json");
     const EXPECTED_TARGET_SVG: &str =
         include_str!("../../ringgrid/tests/fixtures/target_generation/fixture_compact_hex.svg");
     const EXPECTED_TARGET_PNG: &[u8] =
@@ -1974,10 +1973,7 @@ mod tests {
             "5.6",
             "--marker_inner_radius_mm",
             "2.8",
-            "--dot_mm",
-            "21,21",
-            "--dot_mm",
-            "7,21",
+            "--dots",
             "--dot_radius_mm",
             "1.4",
         ])
@@ -1991,15 +1987,14 @@ mod tests {
         let target = args.to_target().expect("valid rect target");
         assert!(!target.is_coded());
         assert_eq!(target.n_cells(), 16);
-        assert_eq!(
-            target.fiducials().map(|f| f.dots_mm.len()),
-            Some(2),
-            "both dots parsed"
-        );
+        // Positions are derived from the lattice, so the triad is always
+        // complete — the flag only chooses whether dots exist and how big.
+        assert_eq!(target.fiducial_dots_mm().len(), 3);
+        assert_eq!(target.fiducials().map(|f| f.dot_radius_mm), Some(1.4));
     }
 
     #[test]
-    fn gen_target_rect_rejects_dots_without_radius() {
+    fn gen_target_rect_rejects_radius_without_dots() {
         let result = Cli::try_parse_from([
             "ringgrid",
             "gen-target",
@@ -2014,10 +2009,42 @@ mod tests {
             "5.6",
             "--marker_inner_radius_mm",
             "2.8",
-            "--dot_mm",
-            "21,21",
+            "--dot_radius_mm",
+            "1.4",
         ]);
-        assert!(result.is_err(), "--dot_mm requires --dot_radius_mm");
+        assert!(result.is_err(), "--dot_radius_mm requires --dots");
+    }
+
+    /// Without an explicit radius, `--dots` takes the automatically derived
+    /// size — the path a user should normally take.
+    #[test]
+    fn gen_target_rect_dots_default_to_auto_size() {
+        let cli = Cli::try_parse_from([
+            "ringgrid",
+            "gen-target",
+            "rect",
+            "--pitch_mm",
+            "14.0",
+            "--rows",
+            "8",
+            "--cols",
+            "8",
+            "--marker_outer_radius_mm",
+            "5.6",
+            "--marker_inner_radius_mm",
+            "2.8",
+            "--dots",
+        ])
+        .expect("parse gen-target rect cli");
+        let Commands::GenTarget {
+            command: GenTargetCommands::Rect(args),
+        } = cli.command
+        else {
+            panic!("unexpected command variant");
+        };
+        let target = args.to_target().expect("valid rect target");
+        assert_eq!(target.fiducial_dots_mm().len(), 3);
+        assert_eq!(target.fiducials().map(|f| f.dot_radius_mm), Some(1.4));
     }
 
     #[test]

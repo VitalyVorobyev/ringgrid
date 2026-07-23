@@ -150,8 +150,8 @@ pub mod codebook {
 // via `TargetLayout::from_json_*` (schema auto-migration); the deprecated
 // `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
 pub use target::{
-    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
-    RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginDots, OriginFiducials,
+    RectGeometry, RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
 };
 
 pub use conic::Ellipse;

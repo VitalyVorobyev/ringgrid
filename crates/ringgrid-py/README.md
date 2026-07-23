@@ -51,27 +51,28 @@ Key knobs:
 
 | API | What it controls | Typical value |
 |---|---|---|
-| `TargetLayout.coded_hex(...)` | Hex geometry (`pitch_mm`, `rows`, `long_row_cols`, radii, ring width) | `8.0`, `15`, `14`, `4.8`, `3.2`, `1.152` |
-| `TargetLayout.rect_24x24()` / `TargetLayout(...)` | Presets and the full compositional constructor (hex/rect × coded/plain × fiducials) | — |
+| `TargetLayout.coded_hex(...)` / `.coded_rect(...)` | Lattice geometry (`pitch_mm`, dims, radii, ring width) | `8.0`, `15`, `14`, `4.8`, `3.2`, `1.152` |
+| `TargetLayout.plain_hex(...)` / `.plain_rect(...)` | Lattice geometry plus `dots=` (auto origin fiducials) | `14.0`, `24`, `24`, `5.6`, `2.8`, `dots=True` |
+| `TargetLayout.default_hex()` / `.rect_24x24()` / `TargetLayout(...)` | Frozen presets and the full compositional constructor | — |
 | `write_svg(..., margin_mm=...)` | Extra white border around the printable page | `3-10` |
 | `write_png(..., dpi=...)` | PNG raster resolution and embedded print metadata | `300` or `600` |
 | `write_png(..., include_scale_bar=...)` | Include or omit the default scale bar | `True` |
 
 Outputs:
 
-- `target_spec.json` (schema v5)
+- `target_spec.json` (schema v6)
 - `target_print.svg`
 - `target_print.png`
 - `target_print.dxf` (2D CAD, millimeters — for laser/CNC fabrication)
 
-Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v5
+Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v6
 `target_spec.json`):
 
 - Rust CLI: `ringgrid gen <recipe.toml> --out <dir>` — a small TOML/JSON target recipe (start from `ringgrid example --name hex_coded`) renders the same `target_spec.json` + SVG/PNG/DXF
 - Python script from the repo: `tools/gen_target.py` for the same geometry
 - Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf`
 
-Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates the v4 schema to v5. (See [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).)
+Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates v4 and v5 to v6. (See [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).)
 
 Load this target in Python:
 
@@ -97,7 +98,7 @@ Complete target-generation tutorial and full flag reference:
 ## Target layouts
 
 `TargetLayout` is the typed, first-class target model — the Python mirror of the
-Rust `ringgrid.target.v5` schema. It expresses hex **and** rectangular lattices,
+Rust `ringgrid.target.v6` schema. It expresses hex **and** rectangular lattices,
 coded **and** plain (uncoded) markers, and optional origin fiducials.
 
 ```python
@@ -107,22 +108,27 @@ import ringgrid
 hex_target = ringgrid.TargetLayout.default_hex()        # 15-row coded hex, 203 markers
 rect_target = ringgrid.TargetLayout.rect_24x24()   # 24x24 plain rect + origin dots
 
-# Coded hex from direct geometry (deterministic, geometry-derived name):
-custom = ringgrid.TargetLayout.coded_hex(
+# One constructor per target-matrix row, all taking plain scalars:
+coded_hex = ringgrid.TargetLayout.coded_hex(
     pitch_mm=8.0, rows=15, long_row_cols=14,
     outer_radius_mm=4.8, inner_radius_mm=3.2, ring_width_mm=1.152,
 )
+coded_rect = ringgrid.TargetLayout.coded_rect(14.0, 20, 20, 4.8, 3.2, 1.152)
 
-# Compose one explicitly — a tagged union mirrors the v5 schema verbatim:
-rect_plain = ringgrid.TargetLayout(
+# Plain targets take `dots=`: True auto-places a rotation-asymmetric origin-dot
+# triad in the lattice gaps (absolute board frame); False omits it (the board is
+# then labeled up to lattice symmetry and must be detected completely).
+rect_plain = ringgrid.TargetLayout.plain_rect(14.0, 24, 24, 5.6, 2.8, dots=True)
+hex_plain = ringgrid.TargetLayout.plain_hex(8.0, 15, 14, 4.8, 3.2, dots=False)
+
+# Dot placement (lattice gaps + rotational-symmetry validation) is computed
+# natively — you never hand-author dot coordinates. The full compositional
+# constructor mirrors the v6 schema verbatim if you need it:
+explicit = ringgrid.TargetLayout(
     name="my_rect",
     lattice=ringgrid.RectGeometry(rows=24, cols=24, pitch_mm=14.0),
     marker=ringgrid.RingGeometry(outer_radius_mm=5.6, inner_radius_mm=2.8),
     coding=ringgrid.Plain(),
-    fiducials=ringgrid.OriginFiducials(
-        dot_radius_mm=1.4,
-        dots_mm=[[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]],
-    ),
 )
 
 # Detector / DetectConfig accept a TargetLayout directly:
@@ -130,9 +136,9 @@ detector = ringgrid.Detector.from_target(hex_target)
 # ...or: ringgrid.Detector(ringgrid.DetectConfig(hex_target))
 ```
 
-`to_dict()` / `from_dict()` round-trip the v5 schema verbatim; `from_json(...)`
-loads v5 (or legacy v4, auto-migrated) text or a file path; `to_spec_json()`
-returns canonical, validated v5 JSON. Invalid geometry raises `ValueError` with
+`to_dict()` / `from_dict()` round-trip the v6 schema verbatim; `from_json(...)`
+loads v6 (or legacy v5 / v4, auto-migrated) text or a file path; `to_spec_json()`
+returns canonical, validated v6 JSON. Invalid geometry raises `ValueError` with
 the native error message:
 
 ```python
@@ -145,7 +151,7 @@ assert ringgrid.TargetLayout.from_dict(restored.to_dict()) == restored
 
 ## Features
 
-- Typed `TargetLayout` (`ringgrid.target.v5`) — hex/rect lattices, coded/plain markers, origin fiducials
+- Typed `TargetLayout` (`ringgrid.target.v6`) — hex/rect lattices, coded/plain markers, origin fiducials
 - Native `TargetLayout` target generation for canonical spec JSON + printable SVG/PNG/DXF
 - Native `Detector` API with NumPy input support
 - Slim `DetectionResult` model objects with JSON round-trips

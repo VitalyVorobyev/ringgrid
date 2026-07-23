@@ -14,7 +14,7 @@ homography. No OpenCV dependency.
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
-- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v4 `board_spec.json` files still load via `TargetLayout::from_json_*` auto-migration (see [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations))
+- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v5 and v4 files still load via `TargetLayout::from_json_*` auto-migration (see [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations))
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 
 ## Pipeline Stages
@@ -26,7 +26,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.10"
+ringgrid = "0.11"
 ```
 
 ## Rust Target Generation
@@ -76,8 +76,8 @@ ringgrid example --name hex_coded --out hex_coded.toml   # start from a recipe
 ringgrid gen hex_coded.toml --out ./out/target           # SVG + PNG + DXF + JSON
 ```
 
-Both paths write a v5 `target_spec.json`. Legacy v4 `board_spec.json` files still
-load in detection — `TargetLayout::from_json_*` auto-migrates the v4 schema. See
+Both paths write a v6 `target_spec.json`. Legacy v5 and v4 files still load in
+detection — `TargetLayout::from_json_*` auto-migrates them. See
 the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html)
 for the recipe format and every flag.
 
@@ -294,7 +294,7 @@ Then use it with `detector.detect_with_mapper(&image, &mapper)`.
 
 - `DetectedMarker.center` — always raw image pixel coordinates
 - `DetectedMarker.center_mapped` — working-frame (undistorted) coordinates when a mapper is active
-- `DetectedMarker.grid_coord` — lattice cell (`[q, r]` for hex, `[col, row]` for rect); the only marker key on plain targets
+- `DetectedMarker.grid_coord` — lattice cell (`[q, r]` axial for hex, `[col, row]` for rect); both are centered on cell `(0, 0)`, and it is the only marker key on plain targets
 - `DetectedMarker.board_xy_mm` — board-space marker coordinates in millimeters for valid decoded IDs
 - `DetectionResult.center_frame` / `homography_frame` / `board_frame` — explicit frame metadata
 

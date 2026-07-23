@@ -10,8 +10,9 @@ use super::ring::{MarkerCoding, RingGeometry};
 ///
 /// Dots are printed dark on the white background, in the gaps of the marker
 /// lattice around cell `(0, 0)`. **Only the dot size is stored** — the
-/// positions are derived from the lattice by [`origin_dot_positions_mm`], so
-/// they cannot go stale when the target's dimensions change. (Before schema
+/// positions are derived from the lattice and read back via
+/// [`TargetLayout::fiducial_dots_mm`](crate::TargetLayout::fiducial_dots_mm),
+/// so they cannot go stale when the target's dimensions change. (Before schema
 /// v6 this type carried absolute `dots_mm` coordinates, which silently
 /// remained "valid" when copied onto a board they no longer fit.)
 ///
@@ -31,7 +32,8 @@ impl OriginFiducials {
     ///
     /// The radius is derived from the gap clearance and the printed marker
     /// extent (targeting a legible `~0.1 × pitch`, shrunk to fit tight gaps).
-    /// Positions come from [`origin_dot_positions_mm`] and need no input.
+    /// Positions are derived from the lattice and need no input; read them back
+    /// with [`TargetLayout::fiducial_dots_mm`](crate::TargetLayout::fiducial_dots_mm).
     ///
     /// This is the single source of truth for automatic fiducials: the
     /// [`plain_rect`](crate::TargetLayout::plain_rect) /

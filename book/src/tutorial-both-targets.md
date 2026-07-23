@@ -158,13 +158,16 @@ Detection](detection-pipeline/plain-target.md)):
 {
   "board_frame": "absolute",
   "detected_markers": [
-    { "id": null, "grid_coord": [0, 0], "center": [120.3, 133.7], "board_xy_mm": [0.0, 0.0] },
-    { "id": null, "grid_coord": [1, 0], "center": [176.9, 133.5], "board_xy_mm": [14.0, 0.0] }
+    { "id": null, "grid_coord": [-11, -11], "center": [120.3, 133.7], "board_xy_mm": [0.0, 0.0] },
+    { "id": null, "grid_coord": [-10, -11], "center": [176.9, 133.5], "board_xy_mm": [14.0, 0.0] }
   ]
 }
 ```
 
-- `id` is `null`; use `grid_coord` (`[col, row]` for rect) as the marker key.
+- `id` is `null`; use `grid_coord` as the marker key. Rect coordinates are
+  centered, so this 24×24 board runs `-11..=12` per axis: `[-11, -11]` is the
+  corner cell at `[0, 0]` mm, and `[0, 0]` is the central cell the origin dots
+  surround.
 - **`board_frame: absolute`** — the origin dots were resolved, so `grid_coord`
   is in board cells and `board_xy_mm` is populated.
 - **`board_frame: relative_canonical`** — no origin was resolved (target has no

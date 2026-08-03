@@ -39,12 +39,12 @@ jobs:
           cache-on-failure: true
 
       - name: Install mdbook
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: mdbook
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: wasm-pack
 

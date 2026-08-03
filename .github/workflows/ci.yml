@@ -133,7 +133,7 @@ jobs:
         run: python3 tools/ci/maintainability_guardrails.py --check rustdoc
 
       - name: Install mdbook
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: mdbook
 
@@ -232,7 +232,7 @@ jobs:
           workspaces: crates/ringgrid-c
 
       - name: Install cbindgen
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: cbindgen
 

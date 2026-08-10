@@ -21,3 +21,6 @@ docs/rectring.pdf
 
 # Claude Code harness worktrees (ephemeral agent sandboxes)
 .claude/worktrees/
+
+# CodeGraph local index (per-machine)
+.codegraph/

@@ -12,16 +12,16 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
 homepage = "https://github.com/VitalyVorobyev/ringgrid"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
-nalgebra = { version = "0.34", features = ["serde-serialize"] }
+nalgebra = { version = "0.35", features = ["serde-serialize"] }
 image = "0.25"
 imageproc = "0.27"
-rayon = "1.10"
+rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
@@ -29,6 +29,6 @@ approx = "0.5"
 rand = "0.10"
 tiny-solver = "0.18"
 png = "0.18"
-projective-grid = "0.10.1"
+projective-grid = "0.12"
 radsym = { version = "0.4.1", features = ["unsafe-opt"] }
 web-time = "1"

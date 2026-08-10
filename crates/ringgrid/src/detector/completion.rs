@@ -7,7 +7,7 @@ const EXPECTED_RADIUS_K_NEIGHBORS: usize = 12;
 
 use image::GrayImage;
 use nalgebra::Point2;
-use projective_grid::{Coord, predict_grid_position};
+use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;

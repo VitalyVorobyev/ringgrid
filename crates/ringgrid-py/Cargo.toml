@@ -6,7 +6,7 @@ description = "Python bindings for ringgrid"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
 homepage = "https://github.com/VitalyVorobyev/ringgrid"
-rust-version = "1.88"
+rust-version = "1.91"
 publish = false
 
 [lib]

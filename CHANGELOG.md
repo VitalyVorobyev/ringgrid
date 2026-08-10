@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the Rust dependency graph, including `projective-grid` 0.10.1 → 0.12,
+  `nalgebra` 0.34 → 0.35, `rayon` 1.10 → 1.12, and `toml` 0.8 → 1.1. The
+  projective-grid adapter now uses its facade/builders and curated `expert`
+  namespace while preserving ringgrid's existing square and hex label frames.
+- Raised the workspace and binding-crate MSRV from Rust 1.88 to 1.91, required
+  by `projective-grid` 0.12.
+
 ## [0.11.0] — 2026-07-23
 
 Makes every row of the target matrix reachable in one call, and stops storing

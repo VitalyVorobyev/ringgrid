@@ -11,7 +11,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
 homepage = "https://github.com/VitalyVorobyev/ringgrid"
-rust-version = "1.88"
+rust-version = "1.91"
 description = "WebAssembly bindings for ringgrid ring marker detector"
 publish = false
 

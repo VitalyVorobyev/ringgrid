@@ -352,9 +352,13 @@ jobs:
           # path, but the rustup proxy still needs CARGO_HOME/RUSTUP_HOME to resolve
           # the toolchain at build time. Set them to rustup's defaults if unset and
           # keep them (plus USERPROFILE) across vcpkg's env sanitization.
+          # RINGGRID_SOURCE_DIR must be kept too, or the portfile cannot see it and
+          # silently falls back to downloading the released v${VERSION} tarball —
+          # which passes only while that tag happens to exist, and never exercises
+          # the local-source path this step is here to test.
           if (-not $env:CARGO_HOME)  { $env:CARGO_HOME  = "$env:USERPROFILE\.cargo" }
           if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = "$env:USERPROFILE\.rustup" }
-          $env:VCPKG_KEEP_ENV_VARS = "CARGO_HOME;RUSTUP_HOME;USERPROFILE"
+          $env:VCPKG_KEEP_ENV_VARS = "CARGO_HOME;RUSTUP_HOME;USERPROFILE;RINGGRID_SOURCE_DIR"
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install ringgrid:x64-windows `
             --overlay-ports="$env:GITHUB_WORKSPACE/crates/ringgrid-c/vcpkg"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }

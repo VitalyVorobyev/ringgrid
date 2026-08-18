@@ -1,12 +1,15 @@
+# Excluded from the root workspace, so `*.workspace = true` inheritance is
+# unavailable here: these literals must be kept in sync with
+# `[workspace.package]` / `[workspace.dependencies]` in the root Cargo.toml.
 [package]
 name = "ringgrid-py"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
-description = "Python bindings for ringgrid"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
 homepage = "https://github.com/VitalyVorobyev/ringgrid"
-rust-version = "1.88"
+rust-version = "1.91"
+description = "Python bindings for ringgrid"
 publish = false
 
 [lib]
@@ -20,7 +23,7 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.11.0" }
+ringgrid = { path = "../ringgrid", version = "0.12" }
 pyo3 = { version = "0.29", features = ["extension-module"] }
 numpy = "0.29"
 image = "0.25"

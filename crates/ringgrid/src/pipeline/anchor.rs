@@ -21,7 +21,7 @@ use std::collections::HashSet;
 
 use image::GrayImage;
 use nalgebra::Matrix3;
-use projective_grid::{Coord, GridTransform};
+use projective_grid::{Coord, expert::lattice::GridTransform};
 
 use crate::detector::MarkerRecord;
 use crate::homography::{estimate_homography_dlt, homography_project};

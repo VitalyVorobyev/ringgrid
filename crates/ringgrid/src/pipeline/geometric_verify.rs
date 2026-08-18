@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use nalgebra::{Matrix3, Point2};
-use projective_grid::{Coord, predict_grid_position};
+use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;

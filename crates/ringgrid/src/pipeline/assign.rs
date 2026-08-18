@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use nalgebra::{Matrix3, Point2};
 use projective_grid::{
-    Coord, DetectionParams, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind,
-    PointFeature, detect_grid,
+    Coord, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind, PointFeature,
+    detect_grid, expert::lattice::GridTransform,
 };
 
 use crate::conic::RansacConfig;
@@ -71,20 +71,19 @@ pub(crate) fn assign_plain_grid(
         return None;
     }
 
-    let dimensions = match target.lattice() {
-        LatticeGeometry::Rect(r) => Some(GridDimensions::new(r.cols, r.rows)),
+    let request = match target.lattice() {
+        LatticeGeometry::Rect(r) => {
+            DetectionRequest::new(target.lattice_kind(), Evidence::Positions(&features))
+                .with_dimensions(GridDimensions::new(r.cols, r.rows))
+        }
         // Hex axial extents do not map onto GridDimensions' width/height
         // semantics; let the finder work unconstrained.
-        LatticeGeometry::Hex(_) => None,
+        LatticeGeometry::Hex(_) => {
+            DetectionRequest::new(target.lattice_kind(), Evidence::Positions(&features))
+        }
     };
 
-    let request = DetectionRequest::new(
-        target.lattice_kind(),
-        Evidence::Positions(&features),
-        dimensions,
-        DetectionParams::default(),
-    );
-    let mut solution = match detect_grid(request) {
+    let solution = match detect_grid(request) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, "plain grid labeling failed");
@@ -92,22 +91,22 @@ pub(crate) fn assign_plain_grid(
         }
     };
 
+    let mut entries = solution.grid().entries().to_vec();
     match target.lattice_kind() {
-        LatticeKind::Square => solution.grid.normalize(),
+        // projective-grid 0.12 normalizes square labels before publishing the
+        // GridDetection, so no adapter-side normalization is needed.
+        LatticeKind::Square => {}
         // `LabelledGrid::normalize` sign-flips axes independently, which is not
         // a hex-lattice automorphism; canonicalize hex labels with a rotation
         // from the lattice symmetry group instead.
-        _ => canonicalize_hex_entries(&mut solution.grid.entries),
+        _ => canonicalize_hex_entries(&mut entries),
     }
 
-    let labeled: Vec<(usize, Coord)> = solution
-        .grid
-        .entries
-        .iter()
-        .map(|e| (e.source_index, e.coord))
-        .collect();
+    let labeled: Vec<(usize, Coord)> = entries.iter().map(|e| (e.source_index, e.coord)).collect();
     let n_labeled = labeled.len();
-    let n_rejected = solution.rejected.len();
+    // Rejection details moved to projective-grid's opt-in diagnostics API in
+    // 0.12. The aggregate count remains derivable from our unique input list.
+    let n_rejected = n_input.saturating_sub(n_labeled);
     if n_labeled < 4 {
         tracing::warn!(
             n_labeled,
@@ -202,7 +201,7 @@ fn canonicalize_hex_entries(entries: &mut [GridEntry]) {
         .iter()
         .filter(|t| t.determinant() > 0);
 
-    let mut best: Option<(f32, projective_grid::GridTransform)> = None;
+    let mut best: Option<(f32, GridTransform)> = None;
     for &rot in rotations {
         let pos_by_coord: HashMap<(i32, i32), (f32, f32)> = entries
             .iter()

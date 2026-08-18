@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0]
+
+Dependency-graph refresh. Released as a minor bump rather than a patch because
+the MSRV raise below is a breaking change for downstream consumers.
+
+### Changed
+
+- Updated the Rust dependency graph, including `projective-grid` 0.10.1 → 0.12,
+  `nalgebra` 0.34 → 0.35, `rayon` 1.10 → 1.12, and `toml` 0.8 → 1.1. The
+  projective-grid adapter now uses its facade/builders and curated `expert`
+  namespace while preserving ringgrid's existing square and hex label frames.
+- **Breaking:** raised the workspace and binding-crate MSRV from Rust 1.88 to
+  1.91, required by `projective-grid` 0.12.
+
+### Fixed
+
+- Pinned the transitive `exr` dependency to 1.74.0 in all four lockfiles.
+  `exr` 1.74.2 pulls in `pulp` (and `raw-cpuid` on x86 Windows), whose SIMD
+  multiversioning emits a corrupt `.drectve` section under the `ringgrid-c`
+  release profile's fat LTO, failing the MSVC link with `LNK1276: invalid
+  directive`. Unpin once that is fixed upstream — `exr` reaches us only through
+  `image`'s default codec set and nothing here uses OpenEXR.
+- The Windows vcpkg CI job now keeps `RINGGRID_SOURCE_DIR` across vcpkg's port
+  env sanitization. Without it the portfile could not see the variable and fell
+  back to downloading the released `v${VERSION}` tarball, so the step passed
+  only while that tag existed and never exercised the local-source path it was
+  written to test.
+
 ## [0.11.0] — 2026-07-23
 
 Makes every row of the target matrix reachable in one call, and stops storing

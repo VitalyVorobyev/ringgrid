@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1]
+
 ### Changed
 
 - Updated the Rust dependency graph, including `projective-grid` 0.10.1 → 0.12,

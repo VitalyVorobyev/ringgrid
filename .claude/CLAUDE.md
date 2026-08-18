@@ -268,6 +268,13 @@ When bumping the version, update **seven** locations:
    `vcpkg/vcpkg.json` `version` — neither is covered by a CI guard, so they
    silently drift (they sat at 0.10.1 through the 0.11.0 release)
 
+**Release step for the vcpkg port:** `vcpkg.json`'s version is what the
+portfile's released-tarball mode fetches as `v${VERSION}`, so between the bump
+and the git tag that mode is broken for external users (404). After tagging,
+regenerate the `SHA512` in `crates/ringgrid-c/vcpkg/portfile.cmake` for the new
+tarball. CI is unaffected either way — both vcpkg jobs build from the local
+checkout via `RINGGRID_SOURCE_DIR`.
+
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
 version consistency between the git tag and the Cargo/pyproject files using
 `tomllib` (`publish-crates.yml` guards `ringgrid` + `ringgrid-c`;

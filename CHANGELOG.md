@@ -31,6 +31,11 @@ the MSRV raise below is a breaking change for downstream consumers.
   release profile's fat LTO, failing the MSVC link with `LNK1276: invalid
   directive`. Unpin once that is fixed upstream — `exr` reaches us only through
   `image`'s default codec set and nothing here uses OpenEXR.
+- The Windows vcpkg CI job now keeps `RINGGRID_SOURCE_DIR` across vcpkg's port
+  env sanitization. Without it the portfile could not see the variable and fell
+  back to downloading the released `v${VERSION}` tarball, so the step passed
+  only while that tag existed and never exercised the local-source path it was
+  written to test.
 
 ## [0.11.0] — 2026-07-23
 

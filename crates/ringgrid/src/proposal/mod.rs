@@ -146,7 +146,7 @@ fn compute_via_radsym(
     // proposal-stage *regression* with no accuracy gain — the fused single-blur
     // voting is no longer pixel-count-dominated, so the extra full-image thinning
     // pass costs more than the voting pixels it removes. Deliberately not used;
-    // see docs/radsym-edge-thinning-request.md for the A/B evidence.
+    // see docs/proposal-performance-analysis.md for the A/B evidence.
 
     // Translate relative gradient threshold to absolute
     let max_mag = gradient.max_magnitude();

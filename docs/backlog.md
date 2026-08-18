@@ -14,7 +14,6 @@
 
 ## ID Model
 - Backlog ids (`INFRA-011`, `ALGO-014`, `DOCS-003`) are the stable planning ids used in this file.
-- Handoff reports should record both ids when the work came from the backlog.
 
 ---
 

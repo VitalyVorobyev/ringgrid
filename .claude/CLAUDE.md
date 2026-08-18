@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Structure
 
-Cargo workspace (edition 2024, MSRV 1.88) with two crate members plus excluded bindings:
+Cargo workspace (edition 2024, MSRV 1.91) with two crate members plus excluded bindings:
 - `crates/ringgrid/` — detection algorithms, math primitives, result types
 - `crates/ringgrid-cli/` — CLI binary (`ringgrid`) with clap-based argument parsing
 - `crates/ringgrid-py/` — PyO3 Python bindings (excluded from workspace, built via maturin)
@@ -251,19 +251,33 @@ Self-undistort mode estimates a division-model distortion correction from detect
 The workspace version is defined once in `Cargo.toml` under `[workspace.package]`.
 `ringgrid` and `ringgrid-cli` inherit it via `version.workspace = true`.
 
-When bumping the version, update **five** locations:
+The three binding crates (`ringgrid-py`, `ringgrid-wasm`, `ringgrid-c`) are
+`exclude`d from the workspace and each declares its own `[workspace]` table, so
+they **cannot** use `version.workspace = true` — cargo inheritance is only
+available to workspace members, and rewriting them to inherit breaks
+`cargo metadata` outright. Their package fields are deliberate literals.
+
+When bumping the version, update **seven** locations:
 1. `Cargo.toml` — `[workspace.package] version` (single source of truth for workspace crates)
-2. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
-3. `crates/ringgrid-py/pyproject.toml` — `project.version` field
-4. `crates/ringgrid-wasm/Cargo.toml` — `version` field + `ringgrid` dependency version
-5. `crates/ringgrid-c/Cargo.toml` — `version` field + `ringgrid` dependency version
+2. `crates/ringgrid-cli/Cargo.toml` — `ringgrid` dependency version
+3. `crates/ringgrid-py/Cargo.toml` — `version` field + `ringgrid` dependency version
+4. `crates/ringgrid-py/pyproject.toml` — `project.version` field
+5. `crates/ringgrid-wasm/Cargo.toml` — `version` field + `ringgrid` dependency version
+6. `crates/ringgrid-c/Cargo.toml` — `version` field + `ringgrid` dependency version
+7. `crates/ringgrid-c/` packaging: `CMakeLists.txt` `project(... VERSION ...)` **and**
+   `vcpkg/vcpkg.json` `version` — neither is covered by a CI guard, so they
+   silently drift (they sat at 0.10.1 through the 0.11.0 release)
 
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
-version consistency between the git tag and these files using `tomllib`
-(`publish-crates.yml` guards `ringgrid` + `ringgrid-c`; `release-pypi.yml` guards
-`ringgrid` + both `ringgrid-py` files + `ringgrid-c`; `release-npm.yml` checks the
-wasm crate inline). The CI scripts resolve `version.workspace = true` by falling
-back to the workspace root.
+version consistency between the git tag and the Cargo/pyproject files using
+`tomllib` (`publish-crates.yml` guards `ringgrid` + `ringgrid-c`;
+`release-pypi.yml` guards `ringgrid` + both `ringgrid-py` files + `ringgrid-c`;
+`release-npm.yml` checks the wasm crate inline). The CI scripts also resolve
+`version.workspace = true` by falling back to the workspace root, for the two
+workspace member crates that do inherit.
+
+After bumping, run `cargo update --workspace` at the root **and** for each of
+the three binding crates so their sibling `Cargo.lock` files stay in sync.
 
 ## Feature Flags (ringgrid crate)
 

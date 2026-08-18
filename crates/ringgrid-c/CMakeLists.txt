@@ -11,7 +11,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ringgrid
-    VERSION 0.10.1
+    VERSION 0.12.0
     DESCRIPTION "C ABI for the ringgrid ring-target detector"
     LANGUAGES C)
 

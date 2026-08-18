@@ -4,14 +4,17 @@
 # enclosing workspace, e.g. a git worktree nested under the main checkout).
 [workspace]
 
+# Excluded from the root workspace, so `*.workspace = true` inheritance is
+# unavailable here: these literals must be kept in sync with
+# `[workspace.package]` / `[workspace.dependencies]` in the root Cargo.toml.
 [package]
 name = "ringgrid-wasm"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-rust-version.workspace = true
+version = "0.12.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/VitalyVorobyev/ringgrid"
+homepage = "https://github.com/VitalyVorobyev/ringgrid"
+rust-version = "1.91"
 description = "WebAssembly bindings for ringgrid ring marker detector"
 publish = false
 
@@ -19,10 +22,12 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.11", default-features = false }
-image.workspace = true
-serde_json.workspace = true
-serde.workspace = true
+ringgrid = { path = "../ringgrid", version = "0.12", default-features = false }
+# `default-features = false` is load-bearing: the full image codec stack (and
+# rayon) must not be linked into the wasm cdylib.
+image = { version = "0.25", default-features = false }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 js-sys = "0.3"
 getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
@@ -31,7 +36,8 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
-image.workspace = true
+# Full-featured image (PNG decoder) for tests only.
+image = "0.25"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O3"]

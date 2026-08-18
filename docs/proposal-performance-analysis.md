@@ -10,23 +10,21 @@ The proposal stage no longer contains its own image-processing code. It is a
 thin adapter (`proposal/mod.rs::compute_via_radsym`) over the external
 `radsym` crate: `scharr_gradient` → `rsd_response_fused` (fused multi-radius
 voting) → `extract_proposals` (NMS) → `suppress_proposals_by_distance`. Two
-prior handoffs document how this backend evolved and should be read alongside
-this note rather than duplicated here:
+upstream asks shaped this backend, both now closed:
 
-- `docs/radsym-multiradius-handoff.md` — why radsym gained a *fused*
-  multi-radius mode (the original per-radius `rsd_response` re-blurred the
-  accumulator once per radius and was 5.7–10x slower than ringgrid's old
-  internal implementation; fusing radii into one accumulator + one blur
-  closed that gap).
-- `docs/radsym-edge-thinning-request.md` — the ask (radsym issue #16) to thin
-  gradient bands to single-pixel ridges before voting, which historically cut
-  strong-edge count 60–80 % in ringgrid's *pre-radsym* implementation.
-  **Delivered but not adopted:** radsym **0.4.1** shipped it as
-  `thin_gradient`, but a controlled A/B measured it a net ~14 % proposal-stage
-  regression on the fused-RSD path (the single shared blur already removed the
-  pixel-count bottleneck thinning targeted), so ringgrid does not enable it.
-  This is **separate** from the Gaussian-blur cost, which *was* the dominant
-  proposal bottleneck and *was* addressed in **radsym 0.4.1** (see below).
+- **Fused multi-radius voting** — the original per-radius `rsd_response`
+  re-blurred the accumulator once per radius and ran 5.7–10x slower than
+  ringgrid's old internal implementation. radsym 0.4 fused the radii into one
+  accumulator + one blur, closing that gap. **Adopted.**
+- **Edge thinning** (radsym issue #16) — thinning gradient bands to
+  single-pixel ridges before voting, which historically cut strong-edge count
+  60–80 % in ringgrid's *pre-radsym* implementation. **Delivered but not
+  adopted:** radsym 0.4.1 shipped it as `thin_gradient`, but a controlled A/B
+  measured it a net ~14 % proposal-stage regression on the fused-RSD path (the
+  single shared blur already removed the pixel-count bottleneck thinning
+  targeted), so ringgrid does not enable it. This is **separate** from the
+  Gaussian-blur cost, which *was* the dominant proposal bottleneck and *was*
+  addressed in radsym 0.4.1 (see below).
 
 ## Current Snapshot
 
@@ -67,9 +65,7 @@ enabled here — that elides bounds checks in the voting scatter loops. Detectio
 accuracy is unchanged (identical numerical output). These numbers are **not
 directly comparable** to the `37.199 ms` / `53.121 ms` figures previously
 recorded against the pre-radsym internal implementation (with edge-thinning
-enabled); for the before/after of that migration see
-`docs/radsym-multiradius-handoff.md` and
-`docs/reviews/2026-06-performance-profiling.md`.
+enabled), which predate the fused-RSD migration entirely.
 
 ## Current Architecture (radsym 0.4.1, fused RSD)
 
@@ -263,19 +259,18 @@ reasons as before (weaker fit for ringgrid's robustness goals, scale
 explosion, or a poor match to the pure-Rust deterministic design) — see prior
 revisions of this document in git history for the full writeups if needed.
 
-### Edge-thinning (radsym#16) — the main pending upstream lever
+### Edge-thinning (radsym#16) — closed, rejected on measurement
 
 Canny-style gradient-direction NMS, thinning multi-pixel edge bands to
-single-pixel ridges before voting. This is not a new idea to evaluate — it
-is a capability ringgrid's pre-radsym implementation already had and lost in
-the migration. Per the pre-migration measurements
-(`docs/radsym-edge-thinning-request.md`), it cut strong-edge count 60–80 %
-and reduced voting cost proportionally, with no accuracy trade-off (unlike
-`radius_step`). It requires a radsym-side change (`RsdConfig` knob, a
-standalone `thin_gradient` transform, or a public `GradientField`
-constructor — see that doc for the three concrete proposals) because
-`GradientField`'s `gx`/`gy` are `pub(crate)` with no public constructor, so
-ringgrid cannot inject a thinned gradient today without forking radsym.
+single-pixel ridges before voting. ringgrid's pre-radsym implementation had
+this and lost it in the migration; pre-migration it cut strong-edge count
+60–80 % and reduced voting cost proportionally, with no accuracy trade-off
+(unlike `radius_step`). radsym 0.4.1 shipped it upstream as `thin_gradient`,
+so it is available today — but a controlled A/B on the current fused-RSD path
+measured a net ~14 % proposal-stage **regression** with no accuracy gain. The
+premise no longer holds: fused single-blur voting is not pixel-count-dominated,
+so a full-image thinning pass costs more than the voting pixels it removes.
+Deliberately not enabled; see `proposal/mod.rs::compute_via_radsym`.
 
 ### FRST / Normalized Radial Symmetry
 
@@ -305,13 +300,13 @@ default.
 
 Status of prior mitigations:
 
-1. **Fused multi-radius voting** (radsym 0.4, `docs/radsym-multiradius-handoff.md`):
+1. **Fused multi-radius voting** (radsym 0.4):
    shipped. Closed the per-radius-blur regression from the initial radsym
    migration.
 2. **Edge thinning** (ALGO-016, historically 60–80 % strong-edge reduction):
-   lost in the radsym migration, not yet restored. Tracked upstream as
-   **radsym issue #16** (filed 2026-07-03). This is the highest-value pending
-   lever — accuracy-preserving, unlike `radius_step`.
+   **closed.** Delivered upstream in radsym 0.4.1 as `thin_gradient` (radsym
+   issue #16, filed 2026-07-03), then rejected here on measurement — a net
+   ~14 % regression on the fused-RSD path with no accuracy gain.
 3. **Optional downscaling** (PERF-006): `ProposalDownscale` on
    `DetectConfig` remains available and unchanged; still the right tool for
    large images with a known coarse marker-scale floor.
@@ -320,12 +315,9 @@ Status of prior mitigations:
 
 Near-term actions:
 
-1. Track and, once available, adopt radsym#16 (edge-thinning) behind the
-   existing regression gate (`tools/ci/regression_baseline.json`) before
-   flipping any default.
-2. Treat per-proposal scale hints (Lever b) as blocked on the same upstream
+1. Treat per-proposal scale hints (Lever b) as blocked on the same upstream
    surface — no local workaround exists once fusion is in place.
-3. Do not build a ringgrid-side coarse-to-fine pyramid (Lever c) without a
+2. Do not build a ringgrid-side coarse-to-fine pyramid (Lever c) without a
    concrete case where `ScaleTiers` + `ProposalDownscale` demonstrably
    underperform it.
 

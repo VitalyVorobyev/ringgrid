@@ -279,6 +279,13 @@ workspace member crates that do inherit.
 After bumping, run `cargo update --workspace` at the root **and** for each of
 the three binding crates so their sibling `Cargo.lock` files stay in sync.
 
+**Pinned transitive dependency:** all four lockfiles hold `exr` at 1.74.0.
+1.74.2 pulls `pulp` in, which breaks the MSVC link of `ringgrid-c`'s test
+binary under fat LTO (`LNK1276: invalid directive`). A bare `cargo update`
+will undo this and turn the Windows C/C++ ABI job red; re-pin with
+`cargo update -p exr --precise 1.74.0` (root and each binding crate) until
+the upstream issue is resolved.
+
 ## Feature Flags (ringgrid crate)
 
 - `std` (default) — enables file I/O (`from_json_file`, `write_json_file`, `write_target_svg`, `write_target_png`) and the `png` dependency. Disable for WASM targets.

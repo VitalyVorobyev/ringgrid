@@ -44,13 +44,12 @@ else()
         # github.com/VitalyVorobyev/ringgrid/archive/v<version>.tar.gz tarball.
         #
         # 0 means "not yet filled for this version": mode 2 then fails and
-        # prints the expected hash. It is deliberately left at 0 between a
-        # version bump and its git tag, because the tarball does not exist yet.
-        # A stale hash from an older release would fail just as hard while
-        # looking like tampering — this hash sat at v0.10.1's through the
-        # 0.11.0 and 0.12.0 releases. CI is unaffected either way: both vcpkg
-        # jobs build from the local checkout via RINGGRID_SOURCE_DIR.
-        SHA512 0
+        # prints the expected hash. Leave it at 0 between a version bump and its
+        # git tag, because the tarball does not exist yet — a stale hash from an
+        # older release fails just as hard while looking like tampering. CI is
+        # unaffected either way: both vcpkg jobs build from the local checkout
+        # via RINGGRID_SOURCE_DIR.
+        SHA512 366678fbe5afa41a800f1fc6ba7458132444e148d9402d730b6de8fc54a52a51ee2575bdd357a733d8e6574fce5cf181fb84dfb6f8946825f754cc73ead04cca
         HEAD_REF main
     )
 endif()

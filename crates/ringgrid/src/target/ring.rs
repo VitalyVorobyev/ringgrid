@@ -1,7 +1,8 @@
 //! Ring geometry and marker coding style.
 
 use super::error::TargetValidationError;
-use crate::marker::codebook::CODEBOOK_N;
+use crate::marker::CodebookProfile;
+use crate::marker::codec::Codebook;
 
 /// Ring radii shared by every marker on the target, in millimeters.
 ///
@@ -43,11 +44,27 @@ impl RingGeometry {
 pub struct CodedRingSpec {
     /// Stroke width of the inner and outer rings in millimeters.
     pub ring_width_mm: f32,
+    /// Embedded codeword table these markers are drawn from.
+    ///
+    /// A property of the printed target, not of a rendering or a detector run:
+    /// a target printed from one profile can only be decoded against the same
+    /// one. Detection derives its profile from here, so the two cannot drift.
+    ///
+    /// Defaults to [`CodebookProfile::Base`], the 893-word table, which is what
+    /// every target predating this field used. Omitted from serialized specs
+    /// when it is `Base`, so targets written before this field existed keep
+    /// their exact JSON.
+    #[serde(default, skip_serializing_if = "is_base_profile")]
+    pub codebook_profile: CodebookProfile,
     /// Optional optimized codebook-ID assignment. When present,
     /// `id_assignment[i]` is the codebook ID for the i-th cell (in generation
     /// order). When absent, IDs are assigned sequentially (0, 1, 2, ...).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_assignment: Option<Vec<usize>>,
+}
+
+fn is_base_profile(profile: &CodebookProfile) -> bool {
+    matches!(profile, CodebookProfile::Base)
 }
 
 /// Marker coding style: how (and whether) markers encode their identity.
@@ -115,10 +132,11 @@ impl MarkerCoding {
                     });
                 }
 
-                if n_cells > CODEBOOK_N {
+                let codebook_len = Codebook::from_profile(spec.codebook_profile).len();
+                if n_cells > codebook_len {
                     return Err(TargetValidationError::CodebookCapacityExceeded {
                         n_cells,
-                        codebook_len: CODEBOOK_N,
+                        codebook_len,
                     });
                 }
 
@@ -131,11 +149,11 @@ impl MarkerCoding {
                     }
                     let mut seen = std::collections::HashSet::new();
                     for (position, &id) in assignment.iter().enumerate() {
-                        if id >= CODEBOOK_N {
+                        if id >= codebook_len {
                             return Err(TargetValidationError::IdAssignmentOutOfRange {
                                 id,
                                 position,
-                                codebook_len: CODEBOOK_N,
+                                codebook_len,
                             });
                         }
                         if !seen.insert(id) {

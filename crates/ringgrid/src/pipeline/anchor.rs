@@ -56,7 +56,7 @@ pub(crate) struct CoordMap {
 impl CoordMap {
     fn new(rotation: GridTransform, offset: [i32; 2]) -> Self {
         Self {
-            matrix: rotation.matrix,
+            matrix: rotation.matrix(),
             offset,
         }
     }

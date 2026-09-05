@@ -8,7 +8,7 @@
 # `[workspace.package]` / `[workspace.dependencies]` in the root Cargo.toml.
 [package]
 name = "ringgrid-c"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
@@ -22,15 +22,15 @@ name = "ringgrid_c"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.12" }
+ringgrid = { path = "../ringgrid", version = "0.13" }
 image = { version = "0.25", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
-# Full-featured image (PNG decoder) for the marshalling parity test, which
-# decodes a fixture the runtime `default-features = false` dependency cannot.
-image = "0.25"
+# PNG decoder for the marshalling parity test, which decodes a fixture the
+# runtime `default-features = false` dependency cannot.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.release]
 lto = true

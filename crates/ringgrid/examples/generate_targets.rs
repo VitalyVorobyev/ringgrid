@@ -9,7 +9,7 @@
 //! `target_spec.json` the detector reads, plus a printable `.svg` / `.png` and a
 //! `.dxf` for laser/CNC fabrication.
 
-use ringgrid::{OriginDots, PngTargetOptions, SvgTargetOptions, TargetLayout};
+use ringgrid::{OriginDots, PageSpec, TargetLayout, TargetRenderOptions};
 use std::error::Error;
 use std::path::Path;
 
@@ -55,30 +55,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let target = target.with_name(name)?;
         let dir = out_dir.join(name);
 
+        let options =
+            TargetRenderOptions::default().with_page(PageSpec::default().with_margin_mm(margin_mm));
+
         target.write_json_file(&dir.join("target_spec.json"))?;
-        target.write_target_svg(
-            &dir.join("target_print.svg"),
-            &SvgTargetOptions {
-                margin_mm,
-                include_scale_bar: true,
-            },
-        )?;
-        target.write_target_png(
-            &dir.join("target_print.png"),
-            &PngTargetOptions {
-                dpi: 300.0,
-                margin_mm,
-                include_scale_bar: true,
-            },
-        )?;
+        target.write_target_svg(&dir.join("target_print.svg"), &options)?;
+        target.write_target_png(&dir.join("target_print.png"), &options)?;
         target.write_target_dxf(&dir.join("target_print.dxf"))?;
 
         // Check the physical size before committing to a print run — the plain
         // rect defaults above make a board larger than A3.
-        let side_mm = target.print_side_mm(margin_mm);
+        let [width_mm, height_mm] = target.page_size_mm(&options)?;
         let dots = target.fiducial_dots_mm().len();
         println!(
-            "{name}: {} markers, {dots} origin dots, {side_mm:.1} x {side_mm:.1} mm -> {}",
+            "{name}: {} markers, {dots} origin dots, {width_mm:.1} x {height_mm:.1} mm -> {}",
             target.n_cells(),
             dir.display()
         );

@@ -8,6 +8,7 @@ use super::error::TargetValidationError;
 use super::fiducials::{OriginFiducials, origin_dot_positions_mm};
 use super::lattice::{HexGeometry, LatticeGeometry, RectGeometry};
 use super::ring::{CodedRingSpec, MarkerCoding, RingGeometry};
+use crate::marker::CodebookProfile;
 
 const DEFAULT_HEX_NAME: &str = "ringgrid_200mm_hex";
 const DEFAULT_HEX_PITCH_MM: f32 = 8.0;
@@ -242,6 +243,7 @@ impl TargetLayout {
             },
             MarkerCoding::Coded16(CodedRingSpec {
                 ring_width_mm,
+                codebook_profile: CodebookProfile::Base,
                 id_assignment: None,
             }),
             None,
@@ -278,6 +280,7 @@ impl TargetLayout {
         };
         let coding = MarkerCoding::Coded16(CodedRingSpec {
             ring_width_mm,
+            codebook_profile: CodebookProfile::Base,
             id_assignment: None,
         });
         Self::new(
@@ -424,6 +427,7 @@ impl TargetLayout {
             },
             MarkerCoding::Coded16(CodedRingSpec {
                 ring_width_mm: DEFAULT_RING_WIDTH_MM,
+                codebook_profile: CodebookProfile::Base,
                 id_assignment: None,
             }),
             None,
@@ -661,6 +665,7 @@ mod tests {
     fn coded(ring_width_mm: f32) -> MarkerCoding {
         MarkerCoding::Coded16(CodedRingSpec {
             ring_width_mm,
+            codebook_profile: CodebookProfile::Base,
             id_assignment: None,
         })
     }

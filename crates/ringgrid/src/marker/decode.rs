@@ -55,9 +55,15 @@ pub struct DecodeMetrics {
 pub struct DecodeConfig {
     /// Embedded codebook profile to match against.
     ///
-    /// Default: [`CodebookProfile::Base`], which preserves the shipped stable
-    /// IDs `0..892`. `extended` is explicit opt-in and expands the codebook at
-    /// the cost of a weaker minimum cyclic Hamming distance.
+    /// **Derived from the target**, not set by hand: attaching a target with
+    /// [`DetectConfig::with_target`](crate::DetectConfig::with_target) copies
+    /// the profile from its `CodedRingSpec`, so a target printed from one table
+    /// is never decoded against another. Set `codebook_profile` on the target's
+    /// coding to change it.
+    ///
+    /// Defaults to [`CodebookProfile::Base`], which preserves the shipped stable
+    /// IDs `0..892`. `extended` expands the codebook at the cost of a weaker
+    /// minimum cyclic Hamming distance.
     pub codebook_profile: CodebookProfile,
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the

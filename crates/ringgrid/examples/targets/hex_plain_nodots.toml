@@ -5,7 +5,7 @@
 # the COMPLETE board to be detected (pass --strict, or gate on
 # result.board_complete). Combination: hex + plain + no dots.
 name = "hex_plain_nodots"
-coding = "plain"
+coding = { kind = "plain" }
 fiducials = "none"
 
 [lattice]
@@ -20,5 +20,9 @@ inner_radius_mm = 3.2
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+# Sheet the target prints on. Omit for a square page fitted to the content;
+# set `size` to place it on real paper, e.g. `size = { kind = "a4" }`.
+[render.page]
+margin_mm = 5.0

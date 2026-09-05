@@ -64,7 +64,7 @@ impl std::error::Error for DetectRunError {}
 /// Load a target from a v5/v4 JSON spec **or** a TOML/JSON recipe.
 ///
 /// `.toml` files are always recipes; `.json` files are tried as a canonical
-/// spec first (v5/v4 auto-migration), then as a recipe.
+/// spec first (canonical v6, with v5/v4 auto-migration), then as a recipe.
 pub fn load_target(path: &Path) -> Result<TargetLayout, DetectRunError> {
     let text = std::fs::read_to_string(path).map_err(|source| DetectRunError::Io {
         path: path.to_path_buf(),

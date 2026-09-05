@@ -7,10 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::marker::CodebookProfile;
 use crate::target::{
-    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
-    RingGeometry, TargetLayout, TargetValidationError,
+    CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, PageSpec,
+    RectGeometry, RingGeometry, TargetLayout, TargetValidationError,
 };
+use crate::target_generation::TargetRenderOptions;
 
 /// A hand-authored target description, lowered to a [`TargetLayout`] via
 /// [`TargetRecipe::to_target`]. CLI flags override fields before lowering.
@@ -72,11 +74,26 @@ pub struct MarkerRecipe {
 }
 
 /// Coding style: coded 16-sector rings, or plain annuli.
+///
+/// Tagged like [`LatticeRecipe`] so the codebook profile — which only means
+/// anything for coded markers — cannot be written on a plain target at all.
+///
+/// ```toml
+/// coding = { kind = "plain" }
+/// # or
+/// [coding]
+/// kind = "coded"
+/// codebook_profile = "extended"   # optional, defaults to "base"
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CodingRecipe {
     /// 16-sector coded rings.
-    Coded,
+    Coded {
+        /// Embedded codeword table the markers are drawn from.
+        #[serde(default)]
+        codebook_profile: CodebookProfile,
+    },
     /// Plain (uncoded) annuli.
     #[default]
     Plain,
@@ -112,17 +129,24 @@ impl Default for FiducialsRecipe {
 }
 
 /// Rendering options for the emitted artifacts.
+///
+/// A thin authoring mirror of [`TargetRenderOptions`] plus `formats` — which
+/// files to write, a CLI concern the library has no opinion on. It is spelled
+/// out rather than flattened so the recipe can keep `deny_unknown_fields`: a
+/// stale `margin_mm` at this level must fail loudly, not be ignored and print
+/// at the wrong size. [`TargetRenderOptions`] owns every default; this only
+/// forwards them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderRecipe {
+    /// Sheet the target is printed on (size, orientation, margin).
+    #[serde(default)]
+    pub page: PageSpec,
     /// PNG raster resolution (dots per inch).
     #[serde(default = "default_dpi")]
     pub dpi: f32,
-    /// White margin around the target (mm).
-    #[serde(default)]
-    pub margin_mm: f32,
     /// Draw a printed scale bar.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_scale_bar")]
     pub scale_bar: bool,
     /// Artifact formats to emit.
     #[serde(default = "default_formats")]
@@ -132,19 +156,31 @@ pub struct RenderRecipe {
 impl Default for RenderRecipe {
     fn default() -> Self {
         Self {
+            page: PageSpec::default(),
             dpi: default_dpi(),
-            margin_mm: 0.0,
-            scale_bar: true,
+            scale_bar: default_scale_bar(),
             formats: default_formats(),
         }
     }
 }
 
-fn default_dpi() -> f32 {
-    300.0
+impl RenderRecipe {
+    /// Lower to the library's render options. The single place the authoring
+    /// vocabulary is translated into the rendering one.
+    pub fn to_render_options(&self) -> TargetRenderOptions {
+        TargetRenderOptions {
+            page: self.page,
+            include_scale_bar: self.scale_bar,
+            png_dpi: self.dpi,
+        }
+    }
 }
-fn default_true() -> bool {
-    true
+
+fn default_dpi() -> f32 {
+    TargetRenderOptions::default().png_dpi
+}
+fn default_scale_bar() -> bool {
+    TargetRenderOptions::default().include_scale_bar
 }
 fn default_formats() -> Vec<Format> {
     vec![Format::Json, Format::Svg, Format::Png, Format::Dxf]
@@ -232,18 +268,19 @@ impl TargetRecipe {
             outer_radius_mm: self.marker.outer_radius_mm,
             inner_radius_mm: self.marker.inner_radius_mm,
         };
-        let coded = self.coding == CodingRecipe::Coded;
-        let coding = if coded {
-            let ring_width_mm = self
-                .marker
-                .ring_width_mm
-                .ok_or(RecipeError::MissingRingWidth)?;
-            MarkerCoding::Coded16(CodedRingSpec {
-                ring_width_mm,
-                id_assignment: None,
-            })
-        } else {
-            MarkerCoding::Plain
+        let coding = match self.coding {
+            CodingRecipe::Coded { codebook_profile } => {
+                let ring_width_mm = self
+                    .marker
+                    .ring_width_mm
+                    .ok_or(RecipeError::MissingRingWidth)?;
+                MarkerCoding::Coded16(CodedRingSpec {
+                    ring_width_mm,
+                    codebook_profile,
+                    id_assignment: None,
+                })
+            }
+            CodingRecipe::Plain => MarkerCoding::Plain,
         };
 
         // Coded-with-dots is rejected inside `TargetLayout`, so the recipe just
@@ -362,7 +399,7 @@ mod tests {
     fn coded_with_auto_dots_is_rejected() {
         let text = r#"
             name = "bad"
-            coding = "coded"
+            coding = { kind = "coded" }
             fiducials = "auto"
             [lattice]
             kind = "hex"
@@ -387,7 +424,7 @@ mod tests {
     fn coded_without_ring_width_is_rejected() {
         let text = r#"
             name = "bad"
-            coding = "coded"
+            coding = { kind = "coded" }
             [lattice]
             kind = "rect"
             rows = 5

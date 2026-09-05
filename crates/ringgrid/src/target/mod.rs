@@ -17,6 +17,7 @@ mod error;
 mod fiducials;
 mod lattice;
 pub(crate) mod layout;
+mod page;
 mod ring;
 mod schema;
 
@@ -24,4 +25,6 @@ pub use error::{TargetLoadError, TargetValidationError};
 pub use fiducials::OriginFiducials;
 pub use lattice::{HexGeometry, LatticeGeometry, RectGeometry};
 pub use layout::{OriginDots, TargetCell, TargetLayout};
+pub use page::{PageOrientation, PageSize, PageSpec};
 pub use ring::{CodedRingSpec, MarkerCoding, RingGeometry};
+pub use schema::TARGET_SCHEMA_VERSION;

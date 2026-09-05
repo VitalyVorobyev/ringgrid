@@ -54,7 +54,10 @@ use ringgrid::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, RectGeometry,
     RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
 };
-use ringgrid::{MarkerSpecConfig, PngTargetOptions, SvgTargetOptions, TargetGenerationError};
+use ringgrid::{
+    MarkerSpecConfig, PageOrientation, PageSize, PageSpec, TargetArtifacts, TargetGenerationError,
+    TargetRenderOptions,
+};
 
 // ── Camera / distortion ─────────────────────────────────────────────────────
 use ringgrid::{
@@ -122,8 +125,11 @@ fn facade_names_resolve() {
     _assert_named::<Ellipse>();
     _assert_named::<RansacConfig>();
     _assert_named::<MarkerSpecConfig>();
-    _assert_named::<PngTargetOptions>();
-    _assert_named::<SvgTargetOptions>();
+    _assert_named::<TargetRenderOptions>();
+    _assert_named::<TargetArtifacts>();
+    _assert_named::<PageSpec>();
+    _assert_named::<PageSize>();
+    _assert_named::<PageOrientation>();
     _assert_named::<TargetGenerationError>();
     _assert_named::<CameraIntrinsics>();
     _assert_named::<CameraModel>();

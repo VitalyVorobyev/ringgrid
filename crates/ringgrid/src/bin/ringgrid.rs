@@ -166,7 +166,7 @@ fn run_gen(args: GenArgs) -> Result<(), String> {
         recipe.render.dpi = dpi;
     }
     if let Some(margin) = args.margin_mm {
-        recipe.render.margin_mm = margin;
+        recipe.render.page.margin_mm = margin;
     }
     if let Some(formats) = args.formats {
         recipe.render.formats = formats;
@@ -214,21 +214,34 @@ fn print_target_summary(target: &ringgrid::TargetLayout, render: &cli::RenderRec
     );
     eprintln!("markers: {}", target.n_cells());
 
-    let side_mm = target.print_side_mm(render.margin_mm);
+    let [width_mm, height_mm] = match target.page_size_mm(&render.to_render_options()) {
+        Ok(size) => size,
+        Err(err) => {
+            eprintln!("print size: unavailable — {err}");
+            return;
+        }
+    };
     let fits = PAPER_SIZES
         .iter()
-        .find(|(_, w, h)| side_mm <= *w && side_mm <= *h);
+        .find(|(_, w, h)| width_mm <= *w && height_mm <= *h);
     let note = match fits {
         Some((name, _, _)) => format!("fits {name}"),
         None => "exceeds A3 297x420 mm — use a plotter or tile the print".to_string(),
     };
-    eprintln!("print size: {side_mm:.1} x {side_mm:.1} mm ({note})");
+    eprintln!("print size: {width_mm:.1} x {height_mm:.1} mm ({note})");
 
     if render.formats.contains(&cli::Format::Png) {
-        let px = (f64::from(side_mm) * f64::from(render.dpi) / 25.4)
-            .round()
-            .max(1.0) as u32;
-        eprintln!("png: {px} x {px} px @ {:.0} dpi", render.dpi);
+        let px = |mm: f32| {
+            (f64::from(mm) * f64::from(render.dpi) / 25.4)
+                .round()
+                .max(1.0) as u32
+        };
+        eprintln!(
+            "png: {} x {} px @ {:.0} dpi",
+            px(width_mm),
+            px(height_mm),
+            render.dpi
+        );
     }
     eprintln!("print at 100% scale, then verify the printed scale bar with a ruler");
 }

@@ -4,7 +4,7 @@
 # (RANSAC homography + geometric verification), so IDs anchor the board without
 # origin dots. Combination: rect + coded + no dots.
 name = "rect_coded"
-coding = "coded"
+coding = { kind = "coded" }
 fiducials = "none"
 
 [lattice]
@@ -20,5 +20,9 @@ ring_width_mm = 1.152
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+# Sheet the target prints on. Omit for a square page fitted to the content;
+# set `size` to place it on real paper, e.g. `size = { kind = "a4" }`.
+[render.page]
+margin_mm = 5.0

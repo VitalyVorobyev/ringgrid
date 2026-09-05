@@ -16,8 +16,15 @@ use super::fiducials::{OriginFiducials, origin_dot_positions_mm};
 use super::lattice::{HexGeometry, LatticeGeometry};
 use super::layout::TargetLayout;
 use super::ring::{CodedRingSpec, MarkerCoding, RingGeometry};
+use crate::marker::CodebookProfile;
 
-pub(crate) const TARGET_SCHEMA_V6: &str = "ringgrid.target.v6";
+/// Schema string every target spec is written with.
+///
+/// Readers additionally accept the legacy `v5` and flat `v4` schemas and
+/// migrate them on load; writers always emit this one.
+pub const TARGET_SCHEMA_VERSION: &str = "ringgrid.target.v6";
+
+pub(crate) const TARGET_SCHEMA_V6: &str = TARGET_SCHEMA_VERSION;
 pub(crate) const TARGET_SCHEMA_V5: &str = "ringgrid.target.v5";
 pub(crate) const TARGET_SCHEMA_V4: &str = "ringgrid.target.v4";
 const EXPECTED_SCHEMAS: &str = "'ringgrid.target.v6', 'ringgrid.target.v5' or 'ringgrid.target.v4'";
@@ -107,6 +114,9 @@ impl BoardSpecV4 {
             },
             MarkerCoding::Coded16(CodedRingSpec {
                 ring_width_mm: self.marker_ring_width_mm,
+                // The v4 schema predates profile selection: it is always the
+                // baseline table.
+                codebook_profile: CodebookProfile::Base,
                 id_assignment: self.id_assignment,
             }),
             None,
@@ -260,6 +270,7 @@ impl TargetLayout {
                     .is_none_or(|ids| ids.iter().enumerate().all(|(i, &id)| id == i));
                 MarkerCoding::Coded16(CodedRingSpec {
                     ring_width_mm: spec.ring_width_mm,
+                    codebook_profile: spec.codebook_profile,
                     id_assignment: if is_sequential {
                         None
                     } else {
@@ -285,7 +296,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v5_round_trip_preserves_all_aspects() {
+    fn v6_round_trip_preserves_all_aspects() {
         let target = TargetLayout::rect_24x24();
         let json = target.to_json_string();
         let reloaded = TargetLayout::from_json_str(&json).expect("round-trip");
@@ -299,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn v5_json_shape_is_compositional() {
+    fn v6_json_shape_is_compositional() {
         let json = TargetLayout::rect_24x24().to_json_string();
         let val: serde_json::Value = serde_json::from_str(&json).expect("valid json");
         assert_eq!(val["schema"], "ringgrid.target.v6");

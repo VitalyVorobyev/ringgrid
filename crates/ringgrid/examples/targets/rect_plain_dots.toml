@@ -5,7 +5,7 @@
 # Combination: rect + plain + dots. (The `rect_24x24` library preset shares this
 # geometry but keeps its own frozen dot positions for print compatibility.)
 name = "rect_plain_dots"
-coding = "plain"
+coding = { kind = "plain" }
 fiducials = "auto"
 
 [lattice]
@@ -20,5 +20,9 @@ inner_radius_mm = 2.8
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+# Sheet the target prints on. Omit for a square page fitted to the content;
+# set `size` to place it on real paper, e.g. `size = { kind = "a4" }`.
+[render.page]
+margin_mm = 5.0

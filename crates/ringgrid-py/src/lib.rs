@@ -3,6 +3,8 @@ use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict};
+use ringgrid::TargetRenderOptions;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,8 +69,12 @@ fn py_value_error<E: std::fmt::Display>(err: E) -> PyErr {
 
 fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
     match err {
+        // Every bad-input case, page placement included, is a ValueError.
         ringgrid::TargetGenerationError::InvalidMargin { .. }
-        | ringgrid::TargetGenerationError::InvalidDpi { .. } => {
+        | ringgrid::TargetGenerationError::InvalidDpi { .. }
+        | ringgrid::TargetGenerationError::InvalidPageSize { .. }
+        | ringgrid::TargetGenerationError::EmptyPrintableArea { .. }
+        | ringgrid::TargetGenerationError::ContentExceedsPage { .. } => {
             PyValueError::new_err(err.to_string())
         }
         ringgrid::TargetGenerationError::Io(io) => PyOSError::new_err(io.to_string()),
@@ -80,7 +86,7 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
 }
 
 /// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
-/// `ringgrid.target.v4` auto-migrated).
+/// legacy `ringgrid.target.v5` / `v4` auto-migrated).
 fn target_from_spec_json(spec_json: &str) -> PyResult<ringgrid::TargetLayout> {
     ringgrid::TargetLayout::from_json_str(spec_json).map_err(py_value_error)
 }
@@ -157,7 +163,10 @@ fn detect_with_core_mapper_diagnostics(
     detector: &ringgrid::Detector,
     gray: &GrayImage,
     mapper_spec: &MapperSpec,
-) -> PyResult<(ringgrid::DetectionResult, ringgrid::diagnostics::DetectionDiagnostics)> {
+) -> PyResult<(
+    ringgrid::DetectionResult,
+    ringgrid::diagnostics::DetectionDiagnostics,
+)> {
     match mapper_spec {
         MapperSpec::Camera {
             intrinsics,
@@ -699,7 +708,9 @@ fn plain_rect_target_json(
 /// callers drawing an overlay must ask the library instead of reading the JSON.
 #[pyfunction]
 fn target_fiducial_dots_mm(spec_json: &str) -> PyResult<Vec<[f32; 2]>> {
-    Ok(target_from_spec_json(spec_json)?.fiducial_dots_mm().to_vec())
+    Ok(target_from_spec_json(spec_json)?
+        .fiducial_dots_mm()
+        .to_vec())
 }
 
 /// Python exposes the two-state `OriginDots` selector as a plain `bool`.
@@ -720,6 +731,18 @@ fn canonical_target_spec_json(spec_json: &str) -> PyResult<String> {
     Ok(target.to_json_string())
 }
 
+/// Build render options from the writers' keyword arguments.
+///
+/// The writers keep their flat `dpi` / `margin_mm` / `include_scale_bar`
+/// signature; anything richer (paper sizes, orientation) goes through
+/// `render_target_bundle`'s `options_json`.
+fn render_options(dpi: f32, margin_mm: f32, include_scale_bar: bool) -> TargetRenderOptions {
+    TargetRenderOptions::default()
+        .with_page(ringgrid::PageSpec::default().with_margin_mm(margin_mm))
+        .with_scale_bar(include_scale_bar)
+        .with_png_dpi(dpi)
+}
+
 #[pyfunction]
 #[pyo3(signature = (spec_json, path, margin_mm=0.0, include_scale_bar=true))]
 fn write_target_svg(
@@ -729,14 +752,13 @@ fn write_target_svg(
     include_scale_bar: bool,
 ) -> PyResult<()> {
     let target = target_from_spec_json(spec_json)?;
+    let options = render_options(
+        TargetRenderOptions::default().png_dpi,
+        margin_mm,
+        include_scale_bar,
+    );
     target
-        .write_target_svg(
-            std::path::Path::new(path),
-            &ringgrid::SvgTargetOptions {
-                margin_mm,
-                include_scale_bar,
-            },
-        )
+        .write_target_svg(std::path::Path::new(path), &options)
         .map_err(py_target_generation_error)
 }
 
@@ -750,15 +772,9 @@ fn write_target_png(
     include_scale_bar: bool,
 ) -> PyResult<()> {
     let target = target_from_spec_json(spec_json)?;
+    let options = render_options(dpi, margin_mm, include_scale_bar);
     target
-        .write_target_png(
-            std::path::Path::new(path),
-            &ringgrid::PngTargetOptions {
-                dpi,
-                margin_mm,
-                include_scale_bar,
-            },
-        )
+        .write_target_png(std::path::Path::new(path), &options)
         .map_err(py_target_generation_error)
 }
 
@@ -768,6 +784,47 @@ fn write_target_dxf(spec_json: &str, path: &str) -> PyResult<()> {
     target
         .write_target_dxf(std::path::Path::new(path))
         .map_err(py_target_generation_error)
+}
+
+/// Render every printable form of a target in one call.
+///
+/// `options_json` is a `TargetRenderOptions` object (pass `"{}"` for the
+/// defaults). Returns a dict with `json_text` / `svg_text` / `dxf_text` as
+/// `str` and `png_bytes` as `bytes` — the same four fields the WASM binding
+/// hands JavaScript.
+#[pyfunction]
+#[pyo3(signature = (spec_json, options_json="{}"))]
+fn render_target_bundle<'py>(
+    py: Python<'py>,
+    spec_json: &str,
+    options_json: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let target = target_from_spec_json(spec_json)?;
+    let options: TargetRenderOptions = serde_json::from_str(options_json)
+        .map_err(|e| PyValueError::new_err(format!("invalid render options: {e}")))?;
+    let bundle = target
+        .render_target_artifacts(&options)
+        .map_err(py_target_generation_error)?;
+
+    let dict = PyDict::new(py);
+    dict.set_item("json_text", bundle.json_text)?;
+    dict.set_item("svg_text", bundle.svg_text)?;
+    dict.set_item("png_bytes", PyBytes::new(py, &bundle.png_bytes))?;
+    dict.set_item("dxf_text", bundle.dxf_text)?;
+    Ok(dict)
+}
+
+/// Printed page size of a target as a `(width_mm, height_mm)` tuple.
+#[pyfunction]
+#[pyo3(signature = (spec_json, options_json="{}"))]
+fn target_page_size_mm(spec_json: &str, options_json: &str) -> PyResult<(f32, f32)> {
+    let target = target_from_spec_json(spec_json)?;
+    let options: TargetRenderOptions = serde_json::from_str(options_json)
+        .map_err(|e| PyValueError::new_err(format!("invalid render options: {e}")))?;
+    let [width_mm, height_mm] = target
+        .page_size_mm(&options)
+        .map_err(py_target_generation_error)?;
+    Ok((width_mm, height_mm))
 }
 
 #[pyfunction]
@@ -930,6 +987,8 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_target_svg, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_png, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_dxf, m)?)?;
+    m.add_function(wrap_pyfunction!(render_target_bundle, m)?)?;
+    m.add_function(wrap_pyfunction!(target_page_size_mm, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_path, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_array, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_result_payload_path, m)?)?;

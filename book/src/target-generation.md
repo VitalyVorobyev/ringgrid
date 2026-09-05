@@ -298,8 +298,8 @@ print size: 343.2 x 343.2 mm (exceeds A3 297x420 mm — use a plotter or tile th
 png: 4054 x 4054 px @ 300 dpi
 ```
 
-From code, `TargetLayout::print_side_mm(margin_mm)` returns the same figure
-(the page is square) before anything is rendered.
+From code, `TargetLayout::page_size_mm(&options)` returns the same figure as
+`[width_mm, height_mm]` before anything is rendered.
 
 Printing at anything other than 100 % scale silently corrupts every millimeter
 the detector reports, and nothing downstream can detect it. Sizing the target

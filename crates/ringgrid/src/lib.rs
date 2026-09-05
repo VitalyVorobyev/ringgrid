@@ -151,12 +151,13 @@ pub mod codebook {
 // `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
 pub use target::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginDots, OriginFiducials,
-    RectGeometry, RingGeometry, TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
+    PageOrientation, PageSize, PageSpec, RectGeometry, RingGeometry, TARGET_SCHEMA_VERSION,
+    TargetCell, TargetLayout, TargetLoadError, TargetValidationError,
 };
 
 pub use conic::Ellipse;
 pub use marker::MarkerSpecConfig;
-pub use target_generation::{PngTargetOptions, SvgTargetOptions, TargetGenerationError};
+pub use target_generation::{TargetArtifacts, TargetGenerationError, TargetRenderOptions};
 
 // Camera / distortion
 pub use pixelmap::{

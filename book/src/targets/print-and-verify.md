@@ -58,14 +58,37 @@ Your choices are a plotter or print shop, a smaller board (fewer rows/cols, or a
 smaller `pitch_mm`), or tiling — and tiling is the worst of the three, because
 every seam is a place the board stops being flat and planar.
 
-The page is always **square**: markers and dots are fitted into a square content
-box, so one number describes both dimensions. From code, ask before you render:
+By default the page is **square**: markers and dots are fitted into a square
+content box, so a printed sheet can be turned without changing which markers
+fit. From code, ask before you render:
 
 ```rust
-# use ringgrid::TargetLayout;
+# use ringgrid::{TargetLayout, TargetRenderOptions, PageSpec};
 let target = TargetLayout::rect_24x24();
-let side_mm = target.print_side_mm(5.0);   // margin_mm, as passed to the writers
-assert!((side_mm - 343.2).abs() < 1e-3);
+let options = TargetRenderOptions::default()
+    .with_page(PageSpec::default().with_margin_mm(5.0));
+let [width_mm, height_mm] = target.page_size_mm(&options).unwrap();
+assert!((width_mm - 343.2).abs() < 1e-3);
+assert!((height_mm - width_mm).abs() < 1e-6);
+```
+
+To place the target on real paper instead, set a page size. The content is
+centered in what the margin leaves, and rendering fails with
+`ContentExceedsPage` rather than silently cropping:
+
+```rust
+# use ringgrid::{TargetLayout, TargetRenderOptions, PageSpec, PageSize, PageOrientation};
+let options = TargetRenderOptions::default().with_page(
+    PageSpec::new(PageSize::A4)
+        .with_orientation(PageOrientation::Landscape)
+        .with_margin_mm(10.0),
+);
+let [width_mm, height_mm] = TargetLayout::coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152)
+    .unwrap()
+    .page_size_mm(&options)
+    .unwrap();
+assert!((width_mm - 297.0).abs() < 1e-3);
+assert!((height_mm - 210.0).abs() < 1e-3);
 ```
 
 To shrink a board, reduce `rows`/`cols` first. Reducing `pitch_mm` alone forces

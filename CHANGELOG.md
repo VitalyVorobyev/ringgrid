@@ -9,6 +9,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0]
+
+Target rendering is now reachable from every binding, and can place a target on
+real paper. Closes [#71].
+
+[#71]: https://github.com/VitalyVorobyev/ringgrid/issues/71
+
+### Added
+
+- **`TargetLayout::render_target_artifacts`** returns the canonical spec JSON,
+  the SVG, the PNG bytes and the DXF in one call. It needs no `std`, so the
+  WASM binding gets the same bundle as native callers, and `ringgrid::cli`'s
+  file writer now renders through it instead of mapping options itself.
+- **A page model.** `PageSpec` (`PageSize::{FitContent, A4, Letter, Custom}`,
+  `PageOrientation`, `margin_mm`) places a target on real paper: the content is
+  centered in what the margin leaves, and a target that does not fit is
+  rejected with `ContentExceedsPage` rather than cropped. `FitContent` is the
+  default and reproduces the previous square, content-sized page byte for byte.
+  The JSON shape matches `calib-targets`' page model so an application driving
+  both target families handles one contract.
+- **`TargetLayout::page_size_mm`** reports the printed page as
+  `[width_mm, height_mm]` before anything is rendered.
+- **A selectable codeword table on the target.** `CodedRingSpec` gains
+  `codebook_profile` (`base`, 893 words, or `extended`, 2180). It is a property
+  of the printed target: the renderers draw from it and
+  `DetectConfig::with_target` derives `advanced.decode.codebook_profile` from
+  it, so a target cannot be printed from one table and decoded against another.
+  `extended` is what lifts the 893-cell cap on coded targets. The field is
+  omitted from serialized specs when it is `base`, so existing target files
+  keep their exact JSON and the schema stays at `ringgrid.target.v6`.
+- **WASM: target rendering and construction.** `render_target_bundle_json`
+  returns `{ json_text, svg_text, png_bytes, dxf_text }` (PNG as a
+  `Uint8Array`, with a declared `TargetBundle` TypeScript type), alongside
+  `target_page_size_mm`, `target_preset_json`, `coded_hex_target_json`,
+  `coded_rect_target_json`, `plain_hex_target_json`, `plain_rect_target_json`
+  and `canonical_target_spec_json`.
+- **Python: `TargetLayout.render_artifacts()` and `page_size_mm()`**, returning
+  the same four fields as a `TargetArtifacts` dataclass. The path-based
+  `write_svg` / `write_png` / `write_dxf` are unchanged.
+- **CLI page and profile flags.** `ringgrid-dev gen-target` gains `--page`
+  (`fit-content`, `a4`, `letter`), `--orientation`, and `--codebook-profile`
+  for hex targets.
+- **`ringgrid::TARGET_SCHEMA_VERSION`** — the emitted schema string, previously
+  duplicated as a literal in the dev CLI.
+
+### Changed
+
+- **Breaking:** `SvgTargetOptions` and `PngTargetOptions` are replaced by a
+  single `TargetRenderOptions { page, include_scale_bar, png_dpi }`. The two
+  carried the same fields with the same defaults and could not express a page.
+- **Breaking:** `TargetLayout::print_side_mm(margin_mm) -> f32` is replaced by
+  `page_size_mm(&TargetRenderOptions) -> Result<[f32; 2], _>`; one number
+  cannot describe a rectangular page.
+- **Breaking:** the `[render]` section of a target recipe takes the page as
+  `[render.page]` (`margin_mm` moved there), and `coding` is tagged —
+  `coding = { kind = "coded" }` rather than `coding = "coded"` — so
+  `codebook_profile` cannot be written on a plain target. Both old spellings
+  now fail to parse rather than being silently ignored.
+- **Breaking:** `advanced.decode.codebook_profile` is derived from the target
+  and no longer settable through a config overlay; set it on the target's
+  coding instead.
+- **Breaking:** the CLI and Python bindings decode PNG, JPEG, TIFF and BMP
+  inputs only. `image` is now declared with `default-features = false` and an
+  explicit codec set, which keeps the AVIF encoder (`ravif`/`rav1e`) and
+  OpenEXR out of the published library, the wasm cdylib and the C shared
+  library — the `default-features = false` those two crates already declared
+  had no effect, because the core crate re-enabled everything. `imageproc` is
+  likewise pinned to `default-features = false`, since its `default` feature
+  pulls `image/default` straight back in. The `exr` pin is gone from all four
+  lockfiles and nothing compiles `exr` any more, so the MSVC `LNK1276` fat-LTO
+  failure it guarded cannot recur. (The root lockfile still *lists* `exr` and
+  `ravif`, because a lockfile records the union of the graph over all possible
+  feature selections and `imageproc` declares an optional `image/default` path;
+  no build enables it — `cargo tree --edges normal -i exr` prints nothing.)
+- **Breaking:** the `std` feature now gates file I/O only. PNG encoding, and
+  therefore `render_target_artifacts`, works with it off; `png` became a plain
+  dependency, which costs nothing because `image`'s png codec already links it.
+- Updated `projective-grid` 0.12 → 0.14. `detect_grid` is now deterministic for
+  a fixed input — it could previously return different labellings across
+  processes, dropping a whole component of a 24×24 grid in roughly one run in
+  thirty — and rejects labels whose local basis orientation is flipped. Both
+  affect ringgrid's plain-target path.
+
+### Fixed
+
+- The vcpkg overlay port's tarball `SHA512` was still v0.10.1's, so the
+  released-tarball mode had been broken for external users since 0.11.0. It is
+  now `0` between a version bump and its tag (failing with the expected hash
+  rather than a stale one), and `publish-crates.yml` guards
+  `ringgrid-c/CMakeLists.txt` and `vcpkg/vcpkg.json` against the tag so neither
+  can drift silently again.
+- CI now runs `cargo fmt`, `clippy` and `cargo test` for `ringgrid-wasm`. The
+  crate is excluded from the workspace, so `--workspace` never reached it and
+  its native parity tests had never run in CI.
+- Documentation that still described `ringgrid.target.v5` as the emitted schema,
+  and module paths that moved (`marker/codebook.rs`, `pipeline/finalize/`,
+  `pipeline/result.rs`).
+
 ## [0.12.0]
 
 Dependency-graph refresh. Released as a minor bump rather than a patch because

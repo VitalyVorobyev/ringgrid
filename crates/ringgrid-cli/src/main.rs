@@ -7,7 +7,6 @@ type CliError = Box<dyn std::error::Error>;
 type CliResult<T> = Result<T, CliError>;
 const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
 const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
-const TARGET_SPEC_SCHEMA: &str = "ringgrid.target.v6";
 
 #[derive(Parser)]
 #[command(name = "ringgrid")]
@@ -65,7 +64,7 @@ enum GenTargetCommands {
     Rect(CliGenRectArgs),
     /// A built-in target preset.
     Preset(CliGenPresetArgs),
-    /// Render from an existing target spec JSON (v5, or legacy v4).
+    /// Render from an existing target spec JSON (v6, or legacy v5/v4).
     FromSpec(CliGenFromSpecArgs),
 }
 
@@ -94,6 +93,52 @@ struct CliGenOutputArgs {
     /// Omit the default scale bar from SVG/PNG outputs.
     #[arg(long)]
     no_scale_bar: bool,
+
+    /// Page the target is placed on. `fit-content` sizes a square page to the
+    /// target; the named sizes center it on real paper and fail if it does not
+    /// fit.
+    #[arg(long, value_enum, default_value_t = PageSizeArg::FitContent)]
+    page: PageSizeArg,
+
+    /// Page orientation. Ignored by `--page fit-content`, whose page is square.
+    #[arg(long, value_enum, default_value_t = PageOrientationArg::Portrait)]
+    orientation: PageOrientationArg,
+}
+
+/// CLI spelling of [`ringgrid::PageSize`]'s non-custom variants.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PageSizeArg {
+    /// Square page sized to the drawn content.
+    FitContent,
+    /// ISO A4.
+    A4,
+    /// US Letter.
+    Letter,
+}
+
+/// CLI spelling of [`ringgrid::PageOrientation`].
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PageOrientationArg {
+    Portrait,
+    Landscape,
+}
+
+impl CliGenOutputArgs {
+    /// Lower the page flags into a [`ringgrid::PageSpec`].
+    fn page_spec(&self) -> ringgrid::PageSpec {
+        let size = match self.page {
+            PageSizeArg::FitContent => ringgrid::PageSize::FitContent,
+            PageSizeArg::A4 => ringgrid::PageSize::A4,
+            PageSizeArg::Letter => ringgrid::PageSize::Letter,
+        };
+        let orientation = match self.orientation {
+            PageOrientationArg::Portrait => ringgrid::PageOrientation::Portrait,
+            PageOrientationArg::Landscape => ringgrid::PageOrientation::Landscape,
+        };
+        ringgrid::PageSpec::new(size)
+            .with_orientation(orientation)
+            .with_margin_mm(self.margin_mm)
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -132,12 +177,23 @@ struct CliGenHexArgs {
     #[arg(long)]
     name: Option<String>,
 
+    /// Embedded codeword table the markers are drawn from. `extended` allows
+    /// more than 893 cells at a weaker minimum cyclic Hamming distance, and is
+    /// recorded in the target spec so detection decodes against the same table.
+    #[arg(long = "codebook_profile", visible_alias = "codebook-profile", value_enum, default_value_t = CodebookProfileArg::Base)]
+    codebook_profile: CodebookProfileArg,
+
     #[command(flatten)]
     output: CliGenOutputArgs,
 }
 
 impl CliGenHexArgs {
     fn to_target(&self) -> CliResult<ringgrid::TargetLayout> {
+        let coding = ringgrid::MarkerCoding::Coded16(ringgrid::CodedRingSpec {
+            ring_width_mm: self.marker_ring_width_mm,
+            codebook_profile: self.codebook_profile.to_core(),
+            id_assignment: None,
+        });
         let target = if let Some(name) = &self.name {
             ringgrid::TargetLayout::new(
                 name.clone(),
@@ -150,14 +206,13 @@ impl CliGenHexArgs {
                     outer_radius_mm: self.marker_outer_radius_mm,
                     inner_radius_mm: self.marker_inner_radius_mm,
                 },
-                ringgrid::MarkerCoding::Coded16(ringgrid::CodedRingSpec {
-                    ring_width_mm: self.marker_ring_width_mm,
-                    id_assignment: None,
-                }),
+                coding,
                 None,
             )
         } else {
-            // coded_hex generates the deterministic geometry-derived name.
+            // coded_hex generates the deterministic geometry-derived name, but
+            // is baseline-only. Take the name from it, then rebuild with the
+            // requested profile so the two paths stay in step.
             ringgrid::TargetLayout::coded_hex(
                 self.pitch_mm,
                 self.rows,
@@ -166,6 +221,15 @@ impl CliGenHexArgs {
                 self.marker_inner_radius_mm,
                 self.marker_ring_width_mm,
             )
+            .and_then(|derived| {
+                ringgrid::TargetLayout::new(
+                    derived.name().to_string(),
+                    *derived.lattice(),
+                    derived.ring(),
+                    coding,
+                    None,
+                )
+            })
         };
         target.map_err(|e| -> CliError { format!("invalid target geometry: {e}").into() })
     }
@@ -305,7 +369,7 @@ impl CliGenPresetArgs {
 
 #[derive(Debug, Clone, Args)]
 struct CliGenFromSpecArgs {
-    /// Path to a target spec JSON file (v5, or legacy v4).
+    /// Path to a target spec JSON file (v6, or legacy v5/v4).
     #[arg(long)]
     spec: PathBuf,
 
@@ -1092,7 +1156,7 @@ fn run_board_info() -> CliResult<()> {
 
     println!("ringgrid default target specification");
     println!("  name:           {}", target.name());
-    println!("  schema:         {}", TARGET_SPEC_SCHEMA);
+    println!("  schema:         {}", ringgrid::TARGET_SCHEMA_VERSION);
     match target.lattice() {
         ringgrid::LatticeGeometry::Hex(h) => {
             println!("  lattice:        hex");
@@ -1162,7 +1226,7 @@ fn write_target_outputs(
     // artifact writing, reused by the published `ringgrid` CLI).
     let render = ringgrid::cli::RenderRecipe {
         dpi: output.dpi,
-        margin_mm: output.margin_mm,
+        page: output.page_spec(),
         scale_bar: !output.no_scale_bar,
         formats: vec![
             ringgrid::cli::Format::Json,
@@ -1191,7 +1255,7 @@ fn write_target_outputs(
     println!(
         "Target: {}, schema={}, {}, coding={}, cells={}, pitch={}mm, fiducial dots={}",
         target.name(),
-        TARGET_SPEC_SCHEMA,
+        ringgrid::TARGET_SCHEMA_VERSION,
         lattice,
         coding,
         target.n_cells(),
@@ -1615,12 +1679,15 @@ mod tests {
             marker_inner_radius_mm: 3.2,
             marker_ring_width_mm: 1.152,
             name: Some("fixture_compact_hex".to_string()),
+            codebook_profile: CodebookProfileArg::Base,
             output: CliGenOutputArgs {
                 out_dir,
                 basename: "fixture_compact_hex".to_string(),
                 dpi: 96.0,
                 margin_mm: 0.0,
                 no_scale_bar: false,
+                page: PageSizeArg::FitContent,
+                orientation: PageOrientationArg::Portrait,
             },
         }
     }

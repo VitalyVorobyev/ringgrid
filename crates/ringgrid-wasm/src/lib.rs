@@ -164,7 +164,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
 }
 
 /// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
-/// `ringgrid.target.v4` auto-migrated).
+/// legacy `ringgrid.target.v5` / `v4` auto-migrated).
 fn parse_target(target_json: &str) -> Result<ringgrid::TargetLayout, JsValue> {
     ringgrid::TargetLayout::from_json_str(target_json)
         .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -543,8 +543,7 @@ pub fn rect_24x24_target_json() -> String {
 #[wasm_bindgen]
 pub fn target_fiducial_dots_mm(target_json: &str) -> Result<String, JsValue> {
     let target = parse_target(target_json)?;
-    serde_json::to_string(target.fiducial_dots_mm())
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_json::to_string(target.fiducial_dots_mm()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Default detection config for a given target layout, as a JSON string.
@@ -573,6 +572,199 @@ pub fn scale_tiers_two_tier_standard_json() -> String {
     .expect("serialization cannot fail")
 }
 
+// ── Target construction ─────────────────────────────────────────────
+
+/// Look up a built-in preset by name.
+///
+/// Split out of [`target_preset_json`] so the name check is reachable from a
+/// native test: constructing a `JsValue` aborts off-wasm.
+fn preset_target(preset: &str) -> Result<ringgrid::TargetLayout, String> {
+    match preset {
+        "default_hex" => Ok(ringgrid::TargetLayout::default_hex()),
+        "rect_24x24" => Ok(ringgrid::TargetLayout::rect_24x24()),
+        other => Err(format!(
+            "unknown preset {other:?}; expected \"default_hex\" or \"rect_24x24\""
+        )),
+    }
+}
+
+/// Built-in target preset as a JSON string: `"default_hex"` or `"rect_24x24"`.
+#[wasm_bindgen]
+pub fn target_preset_json(preset: &str) -> Result<String, JsValue> {
+    preset_target(preset)
+        .map(|t| t.to_json_string())
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Coded hex target as a JSON string. All lengths in millimeters.
+#[wasm_bindgen]
+pub fn coded_hex_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    ring_width_mm: f32,
+) -> Result<String, JsValue> {
+    ringgrid::TargetLayout::coded_hex(
+        pitch_mm,
+        rows,
+        long_row_cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        ring_width_mm,
+    )
+    .map(|t| t.to_json_string())
+    .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Coded rect target as a JSON string. All lengths in millimeters.
+#[wasm_bindgen]
+pub fn coded_rect_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    ring_width_mm: f32,
+) -> Result<String, JsValue> {
+    ringgrid::TargetLayout::coded_rect(
+        pitch_mm,
+        rows,
+        cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        ring_width_mm,
+    )
+    .map(|t| t.to_json_string())
+    .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Plain hex target as a JSON string. `origin_dots` places the validated dot
+/// triad when `true`, and omits it when `false`.
+#[wasm_bindgen]
+pub fn plain_hex_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    long_row_cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    origin_dots: bool,
+) -> Result<String, JsValue> {
+    ringgrid::TargetLayout::plain_hex(
+        pitch_mm,
+        rows,
+        long_row_cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        origin_dots_of(origin_dots),
+    )
+    .map(|t| t.to_json_string())
+    .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Plain rect target as a JSON string. `origin_dots` places the validated dot
+/// triad when `true`, and omits it when `false`.
+#[wasm_bindgen]
+pub fn plain_rect_target_json(
+    pitch_mm: f32,
+    rows: usize,
+    cols: usize,
+    outer_radius_mm: f32,
+    inner_radius_mm: f32,
+    origin_dots: bool,
+) -> Result<String, JsValue> {
+    ringgrid::TargetLayout::plain_rect(
+        pitch_mm,
+        rows,
+        cols,
+        outer_radius_mm,
+        inner_radius_mm,
+        origin_dots_of(origin_dots),
+    )
+    .map(|t| t.to_json_string())
+    .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Re-serialize any accepted target JSON into the canonical `v6` form.
+///
+/// Legacy `v4` and `v5` specs are migrated on the way through, so this is how a
+/// consumer upgrades a stored target file.
+#[wasm_bindgen]
+pub fn canonical_target_spec_json(target_json: &str) -> Result<String, JsValue> {
+    Ok(parse_target(target_json)?.to_json_string())
+}
+
+// ── Target rendering ────────────────────────────────────────────────
+
+/// `render_target_bundle_json` returns a plain object, which wasm-bindgen types
+/// as `any`. Declare its shape so npm consumers get a real type.
+#[wasm_bindgen(typescript_custom_section)]
+const TARGET_BUNDLE_TS: &'static str = r#"
+export interface TargetBundle {
+    /** The canonical `ringgrid.target.v6` spec, newline-terminated. */
+    json_text: string;
+    /** Printable SVG document. */
+    svg_text: string;
+    /** Printable PNG raster, carrying the requested DPI as `pHYs`. */
+    png_bytes: Uint8Array;
+    /** Fabrication DXF, in board-frame millimeters. */
+    dxf_text: string;
+}
+"#;
+
+/// Render every printable form of a target in one call.
+///
+/// `options_json` is a [`ringgrid::TargetRenderOptions`] object; pass `"{}"`
+/// for the defaults (a square page fitted to the target, a scale bar, 300 dpi).
+/// To place the target on real paper:
+///
+/// ```js
+/// const bundle = render_target_bundle_json(targetJson, JSON.stringify({
+///   page: { size: { kind: "a4" }, orientation: "portrait", margin_mm: 10 },
+///   include_scale_bar: true,
+///   png_dpi: 300,
+/// }));
+/// ```
+///
+/// Returns `{ json_text, svg_text, png_bytes, dxf_text }`, where `png_bytes` is
+/// a `Uint8Array` and the rest are strings. Throws when the target JSON is
+/// invalid, or when the target does not fit the requested page.
+///
+/// **Scale bar ownership:** with `include_scale_bar` (the default) ringgrid
+/// draws the bar into the SVG and PNG. A consumer that draws its own scale line
+/// must pass `false`, or the print carries two. The DXF never carries a scale
+/// bar or any other page furniture — it is board-frame millimeters for
+/// fabrication — so there the consumer's own line is the only one.
+#[wasm_bindgen(unchecked_return_type = "TargetBundle")]
+pub fn render_target_bundle_json(
+    target_json: &str,
+    options_json: &str,
+) -> Result<JsValue, JsValue> {
+    let target = parse_target(target_json)?;
+    let options: ringgrid::TargetRenderOptions = serde_json::from_str(options_json)
+        .map_err(|e| JsValue::from_str(&format!("invalid render options: {e}")))?;
+    let bundle = target
+        .render_target_artifacts(&options)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    bundle_to_js(&bundle)
+}
+
+/// Printed page size of a target as a JSON `[width_mm, height_mm]` pair.
+///
+/// The companion to [`render_target_bundle_json`] for a "will this fit?" check
+/// before rendering. Takes the same `options_json`.
+#[wasm_bindgen]
+pub fn target_page_size_mm(target_json: &str, options_json: &str) -> Result<String, JsValue> {
+    let target = parse_target(target_json)?;
+    let options: ringgrid::TargetRenderOptions = serde_json::from_str(options_json)
+        .map_err(|e| JsValue::from_str(&format!("invalid render options: {e}")))?;
+    let size = target
+        .page_size_mm(&options)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    serde_json::to_string(&size).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Package version string.
 #[wasm_bindgen]
 pub fn version() -> String {
@@ -580,6 +772,36 @@ pub fn version() -> String {
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
+
+fn origin_dots_of(place: bool) -> ringgrid::OriginDots {
+    if place {
+        ringgrid::OriginDots::Auto
+    } else {
+        ringgrid::OriginDots::None
+    }
+}
+
+/// Marshal a rendered bundle into a plain JS object.
+///
+/// `png_bytes` crosses as a `Uint8Array` rather than a JSON array so binary
+/// data is a single buffer copy — the same reason `heatmap_f32` returns a
+/// `Float32Array`.
+fn bundle_to_js(bundle: &ringgrid::TargetArtifacts) -> Result<JsValue, JsValue> {
+    let obj = js_sys::Object::new();
+    let png = js_sys::Uint8Array::new_with_length(bundle.png_bytes.len() as u32);
+    png.copy_from(&bundle.png_bytes);
+    let fields: [(&str, JsValue); 4] = [
+        ("json_text", JsValue::from_str(&bundle.json_text)),
+        ("svg_text", JsValue::from_str(&bundle.svg_text)),
+        ("png_bytes", png.into()),
+        ("dxf_text", JsValue::from_str(&bundle.dxf_text)),
+    ];
+    for (key, value) in fields {
+        js_sys::Reflect::set(&obj, &JsValue::from_str(key), &value)
+            .map_err(|_| JsValue::from_str(&format!("failed to set {key} on the bundle object")))?;
+    }
+    Ok(obj.into())
+}
 
 #[derive(serde::Serialize)]
 struct ProposalPayload<'a> {
@@ -1173,5 +1395,83 @@ mod tests {
         // Diagnostics align 1:1 with detected markers.
         assert_eq!(diagnostics.markers.len(), result.detected_markers.len());
         assert!(!result.detected_markers.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod target_render_tests {
+    use ringgrid::{PageSize, PageSpec, TargetLayout, TargetRenderOptions};
+
+    /// The wrapper must hand JS exactly what the library produces. `JsValue`
+    /// aborts off-wasm, so this checks the layer underneath the marshalling —
+    /// option parsing and the library call — which is where drift would appear.
+    #[test]
+    fn options_json_round_trips_into_the_library_options() {
+        let parsed: TargetRenderOptions = serde_json::from_str(
+            r#"{"page":{"size":{"kind":"a4"},"orientation":"landscape","margin_mm":10.0},
+                "include_scale_bar":false,"png_dpi":150.0}"#,
+        )
+        .expect("options parse");
+        assert_eq!(
+            parsed,
+            TargetRenderOptions::default()
+                .with_page(
+                    PageSpec::new(PageSize::A4)
+                        .with_orientation(ringgrid::PageOrientation::Landscape)
+                        .with_margin_mm(10.0)
+                )
+                .with_scale_bar(false)
+                .with_png_dpi(150.0)
+        );
+    }
+
+    #[test]
+    fn empty_options_json_is_the_default() {
+        let parsed: TargetRenderOptions = serde_json::from_str("{}").expect("defaults");
+        assert_eq!(parsed, TargetRenderOptions::default());
+    }
+
+    #[test]
+    fn bundle_fields_match_the_individual_renderers() {
+        let target = TargetLayout::default_hex();
+        let options = TargetRenderOptions::default().with_png_dpi(96.0);
+        let bundle = target
+            .render_target_artifacts(&options)
+            .expect("render bundle");
+
+        assert_eq!(bundle.svg_text, target.render_target_svg(&options).unwrap());
+        assert_eq!(bundle.dxf_text, target.render_target_dxf());
+        assert!(bundle.png_bytes.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn target_constructors_produce_loadable_specs() {
+        for json in [
+            super::default_board_json(),
+            super::rect_24x24_target_json(),
+            super::preset_target("default_hex")
+                .expect("preset")
+                .to_json_string(),
+            super::coded_hex_target_json(8.0, 5, 5, 4.8, 3.2, 1.152).expect("coded hex"),
+            super::coded_rect_target_json(14.0, 5, 5, 4.8, 3.2, 1.152).expect("coded rect"),
+            super::plain_hex_target_json(8.0, 5, 5, 4.8, 3.2, true).expect("plain hex"),
+            super::plain_rect_target_json(14.0, 5, 5, 5.6, 2.8, false).expect("plain rect"),
+        ] {
+            let target = TargetLayout::from_json_str(&json).expect("spec loads");
+            assert!(target.n_cells() > 0);
+        }
+    }
+
+    #[test]
+    fn unknown_preset_names_are_rejected() {
+        let err = super::preset_target("nope").expect_err("unknown preset");
+        assert!(err.contains("default_hex"), "{err}");
+    }
+
+    #[test]
+    fn canonical_spec_migrates_and_is_idempotent() {
+        let once = super::canonical_target_spec_json(&super::default_board_json()).expect("once");
+        let twice = super::canonical_target_spec_json(&once).expect("twice");
+        assert_eq!(once, twice);
     }
 }

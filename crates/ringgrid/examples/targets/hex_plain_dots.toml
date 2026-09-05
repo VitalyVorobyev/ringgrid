@@ -5,7 +5,7 @@
 # Detection reports absolute board-frame coordinates. Combination:
 # hex + plain + dots.
 name = "hex_plain_dots"
-coding = "plain"
+coding = { kind = "plain" }
 fiducials = "auto"      # "none" | "auto" | an explicit { dot_radius_mm, dots_mm } table
 
 [lattice]
@@ -20,5 +20,9 @@ inner_radius_mm = 3.2
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+# Sheet the target prints on. Omit for a square page fitted to the content;
+# set `size` to place it on real paper, e.g. `size = { kind = "a4" }`.
+[render.page]
+margin_mm = 5.0

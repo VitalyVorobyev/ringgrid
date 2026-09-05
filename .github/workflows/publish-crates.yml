@@ -36,6 +36,8 @@ jobs:
           python3 - <<'PY'
           import os
           import pathlib
+          import json
+          import re
           import tomllib
 
           root = pathlib.Path(".")
@@ -56,14 +58,33 @@ jobs:
           # it here so its version can never drift from the published crate/tag.
           capi_version = resolve_version(root / "crates/ringgrid-c/Cargo.toml")
 
+          # The C package ships two more version literals that no other guard
+          # covers, so they drift silently — both sat at 0.10.1 through the
+          # 0.11.0 release.
+          cmake_text = (root / "crates/ringgrid-c/CMakeLists.txt").read_text()
+          m = re.search(r"project\(\s*ringgrid\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)", cmake_text)
+          if m is None:
+              raise SystemExit("could not find project(ringgrid VERSION ...) in ringgrid-c/CMakeLists.txt")
+          cmake_version = m.group(1)
+
+          vcpkg_version = json.loads(
+              (root / "crates/ringgrid-c/vcpkg/vcpkg.json").read_text()
+          )["version"]
+
           print(f"tag version:      {tag_version}")
           print(f"crate version:    {package_version}")
           print(f"ringgrid-c crate: {capi_version}")
+          print(f"ringgrid-c cmake: {cmake_version}")
+          print(f"ringgrid-c vcpkg: {vcpkg_version}")
 
           if package_version != tag_version:
               raise SystemExit("version mismatch between tag and crates/ringgrid/Cargo.toml")
           if capi_version != tag_version:
               raise SystemExit("version mismatch between tag and crates/ringgrid-c/Cargo.toml")
+          if cmake_version != tag_version:
+              raise SystemExit("version mismatch between tag and crates/ringgrid-c/CMakeLists.txt")
+          if vcpkg_version != tag_version:
+              raise SystemExit("version mismatch between tag and crates/ringgrid-c/vcpkg/vcpkg.json")
           PY
 
       - name: Guard first release (manual publish required once)

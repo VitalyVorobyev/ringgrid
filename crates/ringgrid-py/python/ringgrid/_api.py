@@ -43,8 +43,10 @@ from ._ringgrid import (
     proposal_json_path as _proposal_json_path,
     proposal_with_scale_json_array as _proposal_with_scale_json_array,
     proposal_with_scale_json_path as _proposal_with_scale_json_path,
+    render_target_bundle as _render_target_bundle,
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
+    target_page_size_mm as _target_page_size_mm,
     write_target_dxf as _write_target_dxf,
     write_target_png as _write_target_png,
     write_target_svg as _write_target_svg,
@@ -218,10 +220,16 @@ class Coded16:
 
     ``id_assignment[i]`` is the codebook ID for the i-th cell in generation
     order; ``None`` assigns IDs sequentially (0, 1, 2, ...).
+
+    ``codebook_profile`` names the embedded codeword table the markers are drawn
+    from — ``"base"`` (893 words) or ``"extended"`` (2180, at a weaker minimum
+    cyclic Hamming distance). It is a property of the printed target: rendering
+    draws from it and detection decodes against it, so the two cannot drift.
     """
 
     ring_width_mm: float
     id_assignment: list[int] | None = None
+    codebook_profile: str = "base"
     kind: ClassVar[str] = "coded16"
 
     @classmethod
@@ -231,6 +239,7 @@ class Coded16:
         return cls(
             ring_width_mm=float(data["ring_width_mm"]),
             id_assignment=None if assignment is None else [int(v) for v in assignment],
+            codebook_profile=str(data.get("codebook_profile", "base")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -240,6 +249,10 @@ class Coded16:
         }
         if self.id_assignment is not None:
             out["id_assignment"] = [int(v) for v in self.id_assignment]
+        # Omitted when baseline, matching the Rust spec writer, so targets
+        # predating this field keep their exact JSON.
+        if self.codebook_profile != "base":
+            out["codebook_profile"] = self.codebook_profile
         return out
 
 
@@ -497,7 +510,7 @@ class TargetLayout:
         return _canonical_target_spec_json(self._spec_json_str())
 
     def _spec_json_str(self) -> str:
-        """v5 JSON handed to the native detector loaders at the boundary."""
+        """v6 JSON handed to the native detector loaders at the boundary."""
         return json.dumps(self.to_dict())
 
     def write_svg(
@@ -547,6 +560,60 @@ class TargetLayout:
     def write_dxf(self, path: str | Path) -> None:
         """Write a 2D DXF target (millimeters) for laser/CNC fabrication."""
         _write_target_dxf(self.to_spec_json(), _coerce_path(path))
+
+    def render_artifacts(self, options: Mapping[str, Any] | None = None) -> TargetArtifacts:
+        """Render the spec JSON, SVG, PNG and DXF in one pass, in memory.
+
+        ``options`` is a ``TargetRenderOptions`` mapping; omit it for the
+        defaults (a square page fitted to the target, a scale bar, 300 dpi).
+        To place the target on real paper::
+
+            target.render_artifacts({
+                "page": {"size": {"kind": "a4"}, "orientation": "landscape",
+                         "margin_mm": 10.0},
+            })
+
+        Raises :class:`ValueError` when the target does not fit the page.
+
+        >>> art = TargetLayout.coded_hex().render_artifacts()
+        >>> art.png_bytes[:4]
+        b'\x89PNG'
+        """
+        raw = _render_target_bundle(self.to_spec_json(), json.dumps(options or {}))
+        return TargetArtifacts(
+            json_text=raw["json_text"],
+            svg_text=raw["svg_text"],
+            png_bytes=raw["png_bytes"],
+            dxf_text=raw["dxf_text"],
+        )
+
+    def page_size_mm(self, options: Mapping[str, Any] | None = None) -> tuple[float, float]:
+        """Printed page size as ``(width_mm, height_mm)``.
+
+        The "will this fit?" check to run before committing to a print run.
+
+        >>> w, h = TargetLayout.rect_24x24().page_size_mm({"page": {"margin_mm": 5.0}})
+        >>> round(w, 1), round(h, 1)
+        (343.2, 343.2)
+        """
+        return _target_page_size_mm(self.to_spec_json(), json.dumps(options or {}))
+
+
+@dataclass(frozen=True, slots=True)
+class TargetArtifacts:
+    """Every rendered form of one target, held in memory.
+
+    Returned by :meth:`TargetLayout.render_artifacts`.
+    """
+
+    json_text: str
+    """The canonical ``ringgrid.target.v6`` spec, newline-terminated."""
+    svg_text: str
+    """Printable SVG document."""
+    png_bytes: bytes
+    """Printable PNG raster, carrying the requested DPI as ``pHYs``."""
+    dxf_text: str
+    """Fabrication DXF, in board-frame millimeters."""
 
 
 @dataclass(slots=True)

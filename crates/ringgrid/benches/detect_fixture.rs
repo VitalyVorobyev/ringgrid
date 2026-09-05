@@ -27,7 +27,7 @@ fn load_fixture_image() -> image::GrayImage {
 fn load_fixture_target() -> TargetLayout {
     let path = fixture_target_path();
     let raw = std::fs::read_to_string(&path).expect("read fixture target json");
-    // v4 board_spec.json files auto-migrate to the v5 model on load.
+    // v4 board_spec.json files auto-migrate to the v6 model on load.
     TargetLayout::from_json_str(&raw).expect("fixture target json must parse (v4/v5)")
 }
 

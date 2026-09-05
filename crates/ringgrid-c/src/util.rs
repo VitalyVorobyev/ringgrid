@@ -62,7 +62,7 @@ pub(crate) fn to_json<T: serde::Serialize>(value: &T) -> Result<String, Ringgrid
 }
 
 /// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
-/// `ringgrid.target.v4` auto-migrated).
+/// legacy `ringgrid.target.v5` / `v4` auto-migrated).
 pub(crate) fn parse_target(json: &str) -> Result<ringgrid::TargetLayout, RinggridStatus> {
     ringgrid::TargetLayout::from_json_str(json).map_err(|_| RinggridStatus::ErrBadJson)
 }

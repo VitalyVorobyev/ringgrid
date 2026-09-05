@@ -1,9 +1,8 @@
 //! Printable target rendering (SVG and PNG) for any [`TargetLayout`].
 
-use crate::marker::codebook::CODEBOOK;
-use crate::target::{MarkerCoding, TargetLayout};
+use crate::marker::codec::Codebook;
+use crate::target::{MarkerCoding, PageSize, PageSpec, TargetLayout};
 use image::{GrayImage, Luma};
-#[cfg(feature = "std")]
 use png::{BitDepth, ColorType, Encoder as PngEncoder, EncodingError, PixelDimensions, Unit};
 use std::f64::consts::PI;
 #[cfg(feature = "std")]
@@ -17,46 +16,62 @@ const CODE_SECTORS: usize = 16;
 const MM_PER_INCH: f64 = 25.4;
 const DEFAULT_PNG_DPI: f32 = 300.0;
 
-/// SVG target-generation options.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SvgTargetOptions {
-    /// Extra white border around the generated square page, in millimeters.
-    pub margin_mm: f32,
-    /// Include the default scale bar in the lower-left corner.
+/// Options shared by every rendered target format.
+///
+/// One options type covers all formats: the page and scale bar apply to the
+/// SVG and PNG renderings, and `png_dpi` is only consulted by the raster. The
+/// DXF rendering ignores all of them — see
+/// [`TargetLayout::render_target_dxf`].
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TargetRenderOptions {
+    /// Sheet the target is printed on.
+    ///
+    /// Defaults to [`PageSize::FitContent`] with no margin: a square page sized
+    /// exactly to the drawn content.
+    pub page: PageSpec,
+    /// Draw the scale bar in the lower-left corner of the printable area.
+    ///
+    /// `true` by default. A consumer that draws its own scale line must set
+    /// this to `false`, or the print carries two.
     pub include_scale_bar: bool,
+    /// Raster density used to convert millimeters into PNG pixels.
+    ///
+    /// Also embedded in the encoded PNG as physical pixel dimensions (`pHYs`)
+    /// so the file retains its intended print scale.
+    pub png_dpi: f32,
 }
 
-impl Default for SvgTargetOptions {
+impl Default for TargetRenderOptions {
     fn default() -> Self {
         Self {
-            margin_mm: 0.0,
+            page: PageSpec::default(),
             include_scale_bar: true,
+            png_dpi: DEFAULT_PNG_DPI,
         }
     }
 }
 
-/// PNG target-generation options.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PngTargetOptions {
-    /// Raster density used to convert millimeters into output pixels.
-    ///
-    /// When written via [`TargetLayout::write_target_png`], this is also
-    /// embedded as PNG physical pixel dimensions (`pHYs`) so the file retains
-    /// the intended print scale.
-    pub dpi: f32,
-    /// Extra white border around the generated square page, in millimeters.
-    pub margin_mm: f32,
-    /// Include the default scale bar in the lower-left corner.
-    pub include_scale_bar: bool,
-}
+impl TargetRenderOptions {
+    /// Set the page.
+    #[must_use]
+    pub fn with_page(mut self, page: PageSpec) -> Self {
+        self.page = page;
+        self
+    }
 
-impl Default for PngTargetOptions {
-    fn default() -> Self {
-        Self {
-            dpi: DEFAULT_PNG_DPI,
-            margin_mm: 0.0,
-            include_scale_bar: true,
-        }
+    /// Enable or disable the printed scale bar.
+    #[must_use]
+    pub fn with_scale_bar(mut self, include_scale_bar: bool) -> Self {
+        self.include_scale_bar = include_scale_bar;
+        self
+    }
+
+    /// Set the PNG raster density in dots per inch.
+    #[must_use]
+    pub fn with_png_dpi(mut self, png_dpi: f32) -> Self {
+        self.png_dpi = png_dpi;
+        self
     }
 }
 
@@ -73,13 +88,33 @@ pub enum TargetGenerationError {
         /// The invalid DPI value.
         dpi: f32,
     },
+    /// A [`PageSize::Custom`] whose dimensions are not finite and positive.
+    InvalidPageSize {
+        /// The invalid page width in millimeters.
+        width_mm: f64,
+        /// The invalid page height in millimeters.
+        height_mm: f64,
+    },
+    /// The margin leaves no printable area on the chosen page.
+    EmptyPrintableArea {
+        /// Page size in millimeters, `[width, height]`.
+        page_mm: [f64; 2],
+        /// The margin that consumed it.
+        margin_mm: f64,
+    },
+    /// The target does not fit the chosen page at the chosen margin.
+    ContentExceedsPage {
+        /// Drawn extent of the target in millimeters, `[width, height]`.
+        content_mm: [f64; 2],
+        /// Printable area in millimeters, `[width, height]`.
+        printable_mm: [f64; 2],
+    },
     /// File I/O error during target writing.
     #[cfg(feature = "std")]
     Io(std::io::Error),
     /// Image encoding error.
     Image(image::ImageError),
     /// PNG-specific encoding error.
-    #[cfg(feature = "std")]
     PngEncoding(EncodingError),
 }
 
@@ -92,10 +127,29 @@ impl std::fmt::Display for TargetGenerationError {
             Self::InvalidDpi { dpi } => {
                 write!(f, "dpi must be finite and > 0 (got {dpi})")
             }
+            Self::InvalidPageSize {
+                width_mm,
+                height_mm,
+            } => write!(
+                f,
+                "custom page size must be finite and > 0 (got {width_mm} x {height_mm} mm)"
+            ),
+            Self::EmptyPrintableArea { page_mm, margin_mm } => write!(
+                f,
+                "a {margin_mm} mm margin leaves no printable area on a {} x {} mm page",
+                page_mm[0], page_mm[1]
+            ),
+            Self::ContentExceedsPage {
+                content_mm,
+                printable_mm,
+            } => write!(
+                f,
+                "target needs {} x {} mm but the printable area is only {} x {} mm",
+                content_mm[0], content_mm[1], printable_mm[0], printable_mm[1]
+            ),
             #[cfg(feature = "std")]
             Self::Io(err) => write!(f, "failed to write target output: {err}"),
             Self::Image(err) => write!(f, "failed to encode target image: {err}"),
-            #[cfg(feature = "std")]
             Self::PngEncoding(err) => write!(f, "failed to encode PNG target: {err}"),
         }
     }
@@ -107,9 +161,12 @@ impl std::error::Error for TargetGenerationError {
             #[cfg(feature = "std")]
             Self::Io(err) => Some(err),
             Self::Image(err) => Some(err),
-            #[cfg(feature = "std")]
             Self::PngEncoding(err) => Some(err),
-            Self::InvalidMargin { .. } | Self::InvalidDpi { .. } => None,
+            Self::InvalidMargin { .. }
+            | Self::InvalidDpi { .. }
+            | Self::InvalidPageSize { .. }
+            | Self::EmptyPrintableArea { .. }
+            | Self::ContentExceedsPage { .. } => None,
         }
     }
 }
@@ -127,7 +184,6 @@ impl From<image::ImageError> for TargetGenerationError {
     }
 }
 
-#[cfg(feature = "std")]
 impl From<EncodingError> for TargetGenerationError {
     fn from(value: EncodingError) -> Self {
         Self::PngEncoding(value)
@@ -145,10 +201,16 @@ struct RenderGeometry {
     outer_draw_extent_mm: f64,
 }
 
+/// Resolved page geometry for one rendering.
+///
+/// `printable_*` is the page minus the margin on every edge; the offsets
+/// translate board millimeters (first cell at `[0, 0]`) into page millimeters
+/// with a top-left origin and `+y` downward.
 #[derive(Debug, Clone, Copy)]
 struct CanvasLayout {
-    side_mm: f64,
-    canvas_side_mm: f64,
+    printable_w_mm: f64,
+    canvas_w_mm: f64,
+    canvas_h_mm: f64,
     offset_x_mm: f64,
     offset_y_mm: f64,
 }
@@ -171,56 +233,55 @@ impl ScaleBarParams {
 }
 
 impl TargetLayout {
-    /// Side length in millimeters of the printed page this target renders onto,
-    /// including `margin_mm` on every edge.
+    /// Size in millimeters of the printed page this target renders onto,
+    /// as `[width, height]`, including the margin on every edge.
     ///
-    /// The page is square: markers and fiducial dots are fitted into a square
-    /// content box, so one number describes both dimensions. Use it to check a
-    /// target against a paper size before committing to a print run — this is
-    /// the same figure `render_target_svg` writes into the SVG `width`/`height`,
-    /// so the two can never disagree.
-    ///
-    /// A negative or non-finite `margin_mm` is clamped to `0`.
+    /// Use it to check a target against a paper size before committing to a
+    /// print run — this is the same figure [`TargetLayout::render_target_svg`]
+    /// writes into the SVG `width`/`height`, so the two can never disagree.
+    /// For the default [`PageSize::FitContent`] both components are equal,
+    /// because that page is square.
     ///
     /// ```
-    /// # use ringgrid::TargetLayout;
+    /// # use ringgrid::{TargetLayout, TargetRenderOptions, PageSpec};
     /// // 24x24 cells at 14 mm pitch, Ø11.2 mm markers, 5 mm margin.
-    /// let side = TargetLayout::rect_24x24().print_side_mm(5.0);
-    /// assert!((side - 343.2).abs() < 1e-3);
+    /// let options = TargetRenderOptions::default()
+    ///     .with_page(PageSpec::default().with_margin_mm(5.0));
+    /// let [w, h] = TargetLayout::rect_24x24().page_size_mm(&options).unwrap();
+    /// assert!((w - 343.2).abs() < 1e-3);
+    /// assert!((h - 343.2).abs() < 1e-3);
     /// ```
-    pub fn print_side_mm(&self, margin_mm: f32) -> f32 {
-        let margin = f64::from(margin_mm);
-        let margin = if margin.is_finite() {
-            margin.max(0.0)
-        } else {
-            0.0
-        };
+    pub fn page_size_mm(
+        &self,
+        options: &TargetRenderOptions,
+    ) -> Result<[f32; 2], TargetGenerationError> {
         let geometry = render_geometry(self);
-        canvas_layout(self, geometry.outer_draw_extent_mm, margin).canvas_side_mm as f32
+        let canvas = canvas_layout(self, geometry.outer_draw_extent_mm, &options.page)?;
+        Ok([canvas.canvas_w_mm as f32, canvas.canvas_h_mm as f32])
     }
 
     /// Render a printable SVG target.
     ///
     /// Input marker centers stay in normalized board millimeters with the
     /// first cell anchored at `[0, 0]`. The returned SVG translates those
-    /// markers into a square page in millimeters with top-left origin and
-    /// `+y` increasing downward.
+    /// markers onto the page described by [`TargetRenderOptions::page`], in
+    /// millimeters with a top-left origin and `+y` increasing downward.
     pub fn render_target_svg(
         &self,
-        options: &SvgTargetOptions,
+        options: &TargetRenderOptions,
     ) -> Result<String, TargetGenerationError> {
-        let margin_mm = validated_margin(options.margin_mm)?;
         let geometry = render_geometry(self);
-        let canvas = canvas_layout(self, geometry.outer_draw_extent_mm, margin_mm);
+        let codebook = target_codebook(self);
+        let canvas = canvas_layout(self, geometry.outer_draw_extent_mm, &options.page)?;
         let mut lines = Vec::new();
 
         lines.push("<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string());
         lines.push(format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}mm\" height=\"{}mm\" viewBox=\"0 0 {} {}\">",
-            svg_fmt(canvas.canvas_side_mm),
-            svg_fmt(canvas.canvas_side_mm),
-            svg_fmt(canvas.canvas_side_mm),
-            svg_fmt(canvas.canvas_side_mm)
+            svg_fmt(canvas.canvas_w_mm),
+            svg_fmt(canvas.canvas_h_mm),
+            svg_fmt(canvas.canvas_w_mm),
+            svg_fmt(canvas.canvas_h_mm)
         ));
         lines.push(
             "<rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\"/>".to_string(),
@@ -233,7 +294,8 @@ impl TargetLayout {
             match cell.id {
                 Some(id) => {
                     lines.push(format!("<g id=\"m{idx}\" data-id=\"{id}\">"));
-                    append_coded_marker_svg(&mut lines, cx, cy, geometry, CODEBOOK[id].into());
+                    let codeword = codeword_of(&codebook, id);
+                    append_coded_marker_svg(&mut lines, cx, cy, geometry, codeword.into());
                     lines.push("</g>".to_string());
                 }
                 None => {
@@ -278,7 +340,7 @@ impl TargetLayout {
     pub fn write_target_svg(
         &self,
         path: &Path,
-        options: &SvgTargetOptions,
+        options: &TargetRenderOptions,
     ) -> Result<(), TargetGenerationError> {
         let svg = self.render_target_svg(options)?;
         if let Some(parent) = path.parent()
@@ -296,16 +358,16 @@ impl TargetLayout {
     /// target generator's sampling convention.
     pub fn render_target_png(
         &self,
-        options: &PngTargetOptions,
+        options: &TargetRenderOptions,
     ) -> Result<GrayImage, TargetGenerationError> {
-        let margin_mm = validated_margin(options.margin_mm)?;
-        let dpi = validated_dpi(options.dpi)?;
+        let dpi = validated_dpi(options.png_dpi)?;
         let geometry = render_geometry(self);
-        let canvas = canvas_layout(self, geometry.outer_draw_extent_mm, margin_mm);
+        let codebook = target_codebook(self);
+        let canvas = canvas_layout(self, geometry.outer_draw_extent_mm, &options.page)?;
 
         let pixels_per_mm = dpi / MM_PER_INCH;
-        let width_px = (canvas.canvas_side_mm * pixels_per_mm).round().max(1.0) as u32;
-        let height_px = width_px;
+        let width_px = (canvas.canvas_w_mm * pixels_per_mm).round().max(1.0) as u32;
+        let height_px = (canvas.canvas_h_mm * pixels_per_mm).round().max(1.0) as u32;
         let mut image = GrayImage::from_pixel(width_px, height_px, Luma([255]));
 
         let ring_half_thickness_px = geometry.ring_half_thickness_mm * pixels_per_mm;
@@ -327,7 +389,7 @@ impl TargetLayout {
         let bound = outer_draw_extent_px + 2.0;
 
         for cell in self.cells() {
-            let codeword = cell.id.map(|id| u32::from(CODEBOOK[id]));
+            let codeword = cell.id.map(|id| u32::from(codeword_of(&codebook, id)));
             let cx = (f64::from(cell.xy_mm[0]) + canvas.offset_x_mm) * pixels_per_mm;
             let cy = (f64::from(cell.xy_mm[1]) + canvas.offset_y_mm) * pixels_per_mm;
 
@@ -409,10 +471,10 @@ impl TargetLayout {
     pub fn write_target_png(
         &self,
         path: &Path,
-        options: &PngTargetOptions,
+        options: &TargetRenderOptions,
     ) -> Result<(), TargetGenerationError> {
         let image = self.render_target_png(options)?;
-        let dpi = validated_dpi(options.dpi)?;
+        let dpi = validated_dpi(options.png_dpi)?;
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -437,6 +499,7 @@ impl TargetLayout {
     /// - `fiducials` — one circle per origin dot.
     pub fn render_target_dxf(&self) -> String {
         let geometry = render_geometry(self);
+        let codebook = target_codebook(self);
         let mut lines: Vec<String> = Vec::new();
         dxf_prologue(&mut lines);
 
@@ -444,9 +507,13 @@ impl TargetLayout {
             let cx = f64::from(cell.xy_mm[0]);
             let cy = f64::from(cell.xy_mm[1]);
             match cell.id {
-                Some(id) => {
-                    append_coded_marker_dxf(&mut lines, cx, cy, geometry, CODEBOOK[id].into())
-                }
+                Some(id) => append_coded_marker_dxf(
+                    &mut lines,
+                    cx,
+                    cy,
+                    geometry,
+                    codeword_of(&codebook, id).into(),
+                ),
                 None => {
                     dxf_circle(
                         &mut lines,
@@ -495,6 +562,62 @@ impl TargetLayout {
         std::fs::write(path, dxf)?;
         Ok(())
     }
+
+    /// Render every target artifact in one pass, in memory.
+    ///
+    /// This is the whole target-generation surface in a single call: the
+    /// canonical spec JSON plus the SVG, PNG and DXF renderings. Nothing is
+    /// optional — rendering all four costs far less than a second round trip
+    /// through a language binding, and a consumer simply ignores what it does
+    /// not need. Which of them get written to files is a caller's concern.
+    ///
+    /// Available without the `std` feature, so WebAssembly consumers get the
+    /// same bundle as native ones.
+    ///
+    /// ```
+    /// # use ringgrid::{TargetLayout, TargetRenderOptions};
+    /// let bundle = TargetLayout::default_hex()
+    ///     .render_target_artifacts(&TargetRenderOptions::default())
+    ///     .unwrap();
+    /// assert!(bundle.svg_text.starts_with("<?xml"));
+    /// assert!(bundle.png_bytes.starts_with(b"\x89PNG"));
+    /// assert!(bundle.dxf_text.ends_with("\nEOF\n"));
+    /// ```
+    pub fn render_target_artifacts(
+        &self,
+        options: &TargetRenderOptions,
+    ) -> Result<TargetArtifacts, TargetGenerationError> {
+        let svg_text = self.render_target_svg(options)?;
+        let image = self.render_target_png(options)?;
+        let dpi = validated_dpi(options.png_dpi)?;
+        let mut png_bytes = Vec::new();
+        encode_png(&mut png_bytes, &image, dpi)?;
+        Ok(TargetArtifacts {
+            // Newline-terminated, like every other text artifact here and like
+            // `write_json_file`, so writing the bundle reproduces those files byte
+            // for byte.
+            json_text: format!("{}\n", self.to_json_string()),
+            svg_text,
+            png_bytes,
+            dxf_text: self.render_target_dxf(),
+        })
+    }
+}
+
+/// Every rendered form of one target, held in memory.
+///
+/// Produced by [`TargetLayout::render_target_artifacts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetArtifacts {
+    /// The canonical target spec, serialized as JSON and newline-terminated.
+    pub json_text: String,
+    /// The target rendered as an SVG document.
+    pub svg_text: String,
+    /// The target rendered as PNG bytes, carrying the requested DPI as
+    /// physical pixel dimensions (`pHYs`).
+    pub png_bytes: Vec<u8>,
+    /// The target rendered as a DXF drawing for fabrication.
+    pub dxf_text: String,
 }
 
 fn append_coded_marker_svg(
@@ -727,7 +850,6 @@ fn validated_dpi(dpi: f32) -> Result<f64, TargetGenerationError> {
     }
 }
 
-#[cfg(feature = "std")]
 fn encode_png<W: std::io::Write>(
     writer: W,
     image: &GrayImage,
@@ -745,6 +867,27 @@ fn encode_png<W: std::io::Write>(
     let mut writer = encoder.write_header()?;
     writer.write_image_data(image.as_raw())?;
     Ok(())
+}
+
+/// Codeword table this target's markers are drawn from.
+///
+/// Plain targets carry no codewords; the returned table is then unused.
+fn target_codebook(target: &TargetLayout) -> Codebook {
+    match target.coding() {
+        MarkerCoding::Coded16(spec) => Codebook::from_profile(spec.codebook_profile),
+        MarkerCoding::Plain => Codebook::default(),
+    }
+}
+
+/// Codeword for an assigned cell ID.
+///
+/// `TargetLayout` validates every ID against its own profile's table on
+/// construction and is immutable, so a missing word is a broken invariant
+/// rather than a caller error — there is no way to reach it from the public API.
+fn codeword_of(codebook: &Codebook, id: usize) -> u16 {
+    codebook
+        .word(id)
+        .expect("target validation bounds every cell ID to its codebook profile")
 }
 
 fn render_geometry(target: &TargetLayout) -> RenderGeometry {
@@ -790,20 +933,60 @@ fn content_bounds_mm(target: &TargetLayout, outer_draw_extent_mm: f64) -> (f64, 
     (min_x, min_y, max_x, max_y)
 }
 
-fn canvas_layout(target: &TargetLayout, outer_draw_extent_mm: f64, margin_mm: f64) -> CanvasLayout {
+fn canvas_layout(
+    target: &TargetLayout,
+    outer_draw_extent_mm: f64,
+    page: &PageSpec,
+) -> Result<CanvasLayout, TargetGenerationError> {
+    let margin_mm = validated_margin(page.margin_mm)?;
     let (min_x, min_y, max_x, max_y) = content_bounds_mm(target, outer_draw_extent_mm);
     let span_x = max_x - min_x;
     let span_y = max_y - min_y;
-    let side_mm = span_x.max(span_y);
-    let offset_x_mm = margin_mm + 0.5 * (side_mm - span_x) - min_x;
-    let offset_y_mm = margin_mm + 0.5 * (side_mm - span_y) - min_y;
 
-    CanvasLayout {
-        side_mm,
-        canvas_side_mm: side_mm + 2.0 * margin_mm,
-        offset_x_mm,
-        offset_y_mm,
-    }
+    // `FitContent` sizes the page from the content: a square box, so a printed
+    // sheet can be turned without changing which markers fit. Every other size
+    // is fixed, and the content is centered in what the margin leaves.
+    let (printable_w_mm, printable_h_mm) = match page.fixed_dimensions_mm() {
+        None => {
+            if let PageSize::Custom {
+                width_mm,
+                height_mm,
+            } = page.size
+            {
+                return Err(TargetGenerationError::InvalidPageSize {
+                    width_mm,
+                    height_mm,
+                });
+            }
+            let side_mm = span_x.max(span_y);
+            (side_mm, side_mm)
+        }
+        Some((page_w_mm, page_h_mm)) => {
+            let printable_w_mm = page_w_mm - 2.0 * margin_mm;
+            let printable_h_mm = page_h_mm - 2.0 * margin_mm;
+            if printable_w_mm <= 0.0 || printable_h_mm <= 0.0 {
+                return Err(TargetGenerationError::EmptyPrintableArea {
+                    page_mm: [page_w_mm, page_h_mm],
+                    margin_mm,
+                });
+            }
+            if span_x > printable_w_mm || span_y > printable_h_mm {
+                return Err(TargetGenerationError::ContentExceedsPage {
+                    content_mm: [span_x, span_y],
+                    printable_mm: [printable_w_mm, printable_h_mm],
+                });
+            }
+            (printable_w_mm, printable_h_mm)
+        }
+    };
+
+    Ok(CanvasLayout {
+        printable_w_mm,
+        canvas_w_mm: printable_w_mm + 2.0 * margin_mm,
+        canvas_h_mm: printable_h_mm + 2.0 * margin_mm,
+        offset_x_mm: margin_mm + 0.5 * (printable_w_mm - span_x) - min_x,
+        offset_y_mm: margin_mm + 0.5 * (printable_h_mm - span_y) - min_y,
+    })
 }
 
 fn scale_bar_params(
@@ -824,13 +1007,13 @@ fn scale_bar_params(
     let mut bar_h_mm = (0.4 * f64::from(target.pitch_mm())).clamp(2.0, 4.0);
     let clearance_mm = (0.2 * bar_h_mm).max(0.5);
     let available_mm =
-        canvas.canvas_side_mm - inset_y_mm - bar_h_mm - (marker_bottom_mm + clearance_mm);
+        canvas.canvas_h_mm - inset_y_mm - bar_h_mm - (marker_bottom_mm + clearance_mm);
     if available_mm < 0.0 {
-        bar_h_mm = (canvas.canvas_side_mm - inset_y_mm - (marker_bottom_mm + clearance_mm))
-            .clamp(1.0, 4.0);
+        bar_h_mm =
+            (canvas.canvas_h_mm - inset_y_mm - (marker_bottom_mm + clearance_mm)).clamp(1.0, 4.0);
     }
 
-    let usable_w_mm = (canvas.side_mm - 2.0 * inset_x_mm).max(1.0);
+    let usable_w_mm = (canvas.printable_w_mm - 2.0 * inset_x_mm).max(1.0);
     let target_len_mm = (0.5 * usable_w_mm).min(100.0);
     let mut bar_len_mm = (target_len_mm / 10.0).round() as i32 * 10;
     bar_len_mm = bar_len_mm.max(10);
@@ -848,8 +1031,8 @@ fn scale_bar_params(
     };
 
     ScaleBarParams {
-        x0_mm: 0.5 * (canvas.canvas_side_mm - canvas.side_mm) + inset_x_mm,
-        y0_mm: canvas.canvas_side_mm - inset_y_mm - bar_h_mm,
+        x0_mm: 0.5 * (canvas.canvas_w_mm - canvas.printable_w_mm) + inset_x_mm,
+        y0_mm: canvas.canvas_h_mm - inset_y_mm - bar_h_mm,
         bar_len_mm,
         bar_h_mm,
         tick_step_mm,
@@ -1127,7 +1310,6 @@ fn square(x: f64) -> f64 {
     x * x
 }
 
-#[cfg(feature = "std")]
 fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
     (dpi * 1000.0 / MM_PER_INCH).round() as u32
 }
@@ -1135,16 +1317,16 @@ fn dpi_to_pixels_per_meter(dpi: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::marker::CodebookProfile;
     use crate::target::{CodedRingSpec, OriginDots};
 
     #[test]
     fn rejects_invalid_svg_margin() {
         let target = TargetLayout::default_hex();
         let err = target
-            .render_target_svg(&SvgTargetOptions {
-                margin_mm: -1.0,
-                ..SvgTargetOptions::default()
-            })
+            .render_target_svg(
+                &TargetRenderOptions::default().with_page(PageSpec::default().with_margin_mm(-1.0)),
+            )
             .expect_err("negative margin must fail");
         assert!(matches!(err, TargetGenerationError::InvalidMargin { .. }));
     }
@@ -1153,10 +1335,7 @@ mod tests {
     fn rejects_invalid_png_dpi() {
         let target = TargetLayout::default_hex();
         let err = target
-            .render_target_png(&PngTargetOptions {
-                dpi: 0.0,
-                ..PngTargetOptions::default()
-            })
+            .render_target_png(&TargetRenderOptions::default().with_png_dpi(0.0))
             .expect_err("non-positive dpi must fail");
         assert!(matches!(err, TargetGenerationError::InvalidDpi { .. }));
     }
@@ -1192,6 +1371,7 @@ mod tests {
             base.ring(),
             MarkerCoding::Coded16(CodedRingSpec {
                 ring_width_mm: 1.152,
+                codebook_profile: CodebookProfile::Base,
                 id_assignment: Some(ids),
             }),
             None,
@@ -1199,7 +1379,7 @@ mod tests {
         .expect("valid board");
 
         let svg = target
-            .render_target_svg(&SvgTargetOptions::default())
+            .render_target_svg(&TargetRenderOptions::default())
             .expect("render");
         assert!(
             svg.contains(&format!("<g id=\"m0\" data-id=\"{}\">", n - 1)),
@@ -1212,7 +1392,7 @@ mod tests {
         let target = TargetLayout::rect_24x24();
 
         let svg = target
-            .render_target_svg(&SvgTargetOptions::default())
+            .render_target_svg(&TargetRenderOptions::default())
             .expect("render svg");
         assert!(svg.contains("<g id=\"fiducials\">"));
         assert!(!svg.contains("data-id"), "plain markers carry no IDs");
@@ -1223,11 +1403,11 @@ mod tests {
 
         // Low-DPI raster for speed: check center-line intensity profile.
         let png = target
-            .render_target_png(&PngTargetOptions {
-                dpi: 25.4, // 1 px per mm
-                margin_mm: 0.0,
-                include_scale_bar: false,
-            })
+            .render_target_png(
+                &TargetRenderOptions::default()
+                    .with_png_dpi(25.4) // 1 px per mm
+                    .with_scale_bar(false),
+            )
             .expect("render png");
 
         // First ring center is at (5.6, 5.6) mm from the page edge.
@@ -1259,11 +1439,11 @@ mod tests {
         );
 
         let png = target
-            .render_target_png(&PngTargetOptions {
-                dpi: 25.4, // 1 px per mm
-                margin_mm: 0.0,
-                include_scale_bar: false,
-            })
+            .render_target_png(
+                &TargetRenderOptions::default()
+                    .with_png_dpi(25.4) // 1 px per mm
+                    .with_scale_bar(false),
+            )
             .expect("render png");
 
         // Content box: cell centers 0..98 mm padded by the 5.6 mm draw extent,

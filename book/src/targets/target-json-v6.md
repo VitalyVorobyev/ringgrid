@@ -158,7 +158,7 @@ schema tag is rejected with `TargetValidationError::UnsupportedSchema`.
 
 ## Generating target JSON from the CLI
 
-The maintainer-only `ringgrid-dev gen-target` writes `target_spec.json` (v5)
+The maintainer-only `ringgrid-dev gen-target` writes `target_spec.json` (v6)
 alongside printable SVG/PNG. (The published `ringgrid` CLI generates targets
 with the recipe-driven `ringgrid gen <recipe>` instead — see
 [Target Generation](../target-generation.md).) It is a subcommand family:

@@ -51,6 +51,7 @@ from ._api import (
     SeedProposalConfig,
     SelfUndistortConfig,
     SelfUndistortResult,
+    TargetArtifacts,
     TargetLayout,
     __version__,
     propose,
@@ -58,6 +59,7 @@ from ._api import (
 )
 
 __all__ = [
+    "TargetArtifacts",
     "TargetLayout",
     "HexGeometry",
     "RectGeometry",

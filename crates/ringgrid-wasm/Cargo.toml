@@ -9,7 +9,7 @@
 # `[workspace.package]` / `[workspace.dependencies]` in the root Cargo.toml.
 [package]
 name = "ringgrid-wasm"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
@@ -22,9 +22,9 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.12", default-features = false }
-# `default-features = false` is load-bearing: the full image codec stack (and
-# rayon) must not be linked into the wasm cdylib.
+ringgrid = { path = "../ringgrid", version = "0.13", default-features = false }
+# Only the pixel types are needed here; the codec set is chosen once in the
+# workspace root and reaches this crate through `ringgrid`.
 image = { version = "0.25", default-features = false }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -36,8 +36,8 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
-# Full-featured image (PNG decoder) for tests only.
-image = "0.25"
+# PNG decoder for the fixture the tests decode.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O3"]

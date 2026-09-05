@@ -63,14 +63,20 @@ better than it found them.
 crates/ringgrid/src/
 ├── lib.rs              # Re-exports only (public API: root + diagnostics/codebook tiers)
 ├── api.rs              # Detector facade + propose_with_* free functions
+├── bin/ringgrid.rs     # Published CLI (feature `cli`): `gen` + `detect`
+├── cli/                # Internal CLI support (#[doc(hidden)], feature `cli`)
+│   ├── recipe.rs       # TargetRecipe/RenderRecipe authoring schema (TOML/JSON)
+│   ├── artifacts.rs    # write_target_artifacts — renders the bundle, writes files
+│   └── detect.rs       # Shared detect/load helpers
 ├── target/             # Compositional target model (lattice × ring × coding × fiducials)
 │   ├── layout.rs       # TargetLayout + presets (default_hex, coded_hex, rect_24x24)
 │   ├── lattice.rs      # LatticeGeometry (Hex | Rect) + cell generation
-│   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain)
+│   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain), CodebookProfile
+│   ├── page.rs         # PageSpec/PageSize/PageOrientation (printed sheet)
 │   ├── fiducials.rs    # OriginFiducials (validation: rotation-asymmetry, clearance)
-│   ├── schema.rs       # JSON v5 (canonical) + v4 auto-migration
+│   ├── schema.rs       # JSON v6 (canonical) + v5/v4 auto-migration
 │   └── error.rs        # TargetValidationError, TargetLoadError
-├── target_generation.rs # SVG/PNG/DXF target rendering (coded + plain + fiducial dots)
+├── target_generation.rs # SVG/PNG/DXF rendering + TargetRenderOptions/TargetArtifacts
 ├── proposal/           # Center proposal generation (delegates to radsym)
 │   ├── mod.rs          # Adapter: radsym fused RSD → ringgrid Proposal types
 │   ├── config.rs       # ProposalConfig (translated to radsym RsdConfig)
@@ -104,7 +110,7 @@ crates/ringgrid/src/
 ├── marker/             # Code decoding & marker specification
 │   ├── decode.rs       # 16-sector code sampling → codebook match
 │   ├── codec.rs        # Codebook matching logic
-│   ├── codebook.rs     # Generated 893-codeword table (don't hand-edit)
+│   ├── codebook.rs     # Generated codeword tables: base (893) + extended (2180)
 │   └── marker_spec.rs  # MarkerSpec type
 ├── pipeline/           # Detection pipeline orchestration
 │   ├── mod.rs          # Module glue, re-exports
@@ -119,6 +125,9 @@ crates/ringgrid/src/
 │   ├── anchor.rs       # Origin-dot resolution (verify dots at predicted positions)
 │   ├── geometric_verify.rs # Local/global geometric consistency checks
 │   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
+│   ├── axis_ratio_filter.rs # Ellipse axis-ratio gating
+│   ├── stats.rs        # Pipeline counters
+│   ├── time_compat.rs  # wasm-safe Instant
 │   ├── prelude.rs      # Common imports for pipeline modules
 │   └── result.rs       # DetectionResult, DetectedMarker, BoardFrame, diagnostics
 ├── homography/         # Homography estimation & utilities
@@ -145,7 +154,7 @@ crates/ringgrid/src/
 1. **Proposal** (`proposal/mod.rs`) — radsym fused RSD (Scharr gradient + magnitude voting + NMS) → candidate centers
 2. **Outer Estimate** (`ring/outer_estimate.rs`) — radius hypotheses via radial profile peaks
 3. **Outer Fit** (`detector/outer_fit/`) — RANSAC ellipse fitting (Fitzgibbon direct LS)
-4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (893 codewords)
+4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (base 893 / extended 2180, selected by the target)
 5. **Inner Fit** (`detector/inner_fit.rs`) — inner ring ellipse fit
 6. **Dedup** (`detector/dedup.rs`) — spatial + ID-based deduplication
 7. **Projective Center** (`detector/center_correction.rs`) — correct fit-decode marker centers (once per marker)
@@ -179,7 +188,9 @@ Key public types (root tier):
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
 - `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
-- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (legacy v4 `board_spec.json` still loads via `TargetLayout::from_json_*` auto-migration; the `BoardLayout`/`BoardMarker` types were removed in 0.9)
+- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (legacy v5/v4 `board_spec.json` still loads via `TargetLayout::from_json_*` auto-migration; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
+- `TargetRenderOptions`, `TargetArtifacts`, `PageSpec`/`PageSize`/`PageOrientation`, `TargetGenerationError` — target rendering. `render_target_artifacts` returns all four formats in memory and works without the `std` feature, so every binding shares one contract.
+- `CodebookProfile` — `Base` (893) or `Extended` (2180). Lives on `CodedRingSpec`, i.e. on the **target**: rendering draws from it and `DetectConfig::with_target` derives `advanced.decode.codebook_profile` from it, so a printed target can never be decoded against a different table.
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
 - `Ellipse` — conic geometry
 - `Proposal`, `ProposalConfig`, `ProposalResult` — proposal types
@@ -218,7 +229,7 @@ cargo run -p ringgrid-cli --bin ringgrid-dev -- detect --image <path> --target <
 .venv/bin/python tools/score_detect.py --gt <gt.json> --pred <det.json> --gate 8.0 --out <score.json>
 
 # Regenerate embedded codebook/board constants (don't hand-edit these)
-.venv/bin/python tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/codebook.rs
+.venv/bin/python tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/marker/codebook.rs
 .venv/bin/python tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
 cargo build  # rebuild after regenerating
 ```
@@ -235,7 +246,7 @@ Single-choice selector: `none` | `projective_center`
 
 CLI: `--circle-refine-method {none,projective-center}`
 
-Center correction is applied once per marker: before global filter for fit-decode markers, and after completion for newly completed markers only. Logic is in `pipeline/finalize.rs`.
+Center correction is applied once per marker: before global filter for fit-decode markers, and after completion for newly completed markers only. Logic is in `pipeline/finalize/`.
 
 ## Camera / Distortion Support
 
@@ -270,10 +281,14 @@ When bumping the version, update **seven** locations:
 
 **Release step for the vcpkg port:** `vcpkg.json`'s version is what the
 portfile's released-tarball mode fetches as `v${VERSION}`, so between the bump
-and the git tag that mode is broken for external users (404). After tagging,
-regenerate the `SHA512` in `crates/ringgrid-c/vcpkg/portfile.cmake` for the new
-tarball. CI is unaffected either way — both vcpkg jobs build from the local
-checkout via `RINGGRID_SOURCE_DIR`.
+and the git tag that mode cannot work. `portfile.cmake` therefore carries
+`SHA512 0` between a bump and its tag — it fails and prints the expected hash,
+rather than failing on a stale hash from an older release. **After tagging,
+replace it with the real hash** (`shasum -a 512` of the
+`github.com/VitalyVorobyev/ringgrid/archive/v<version>.tar.gz` tarball). CI is
+unaffected either way — both vcpkg jobs build from the local checkout via
+`RINGGRID_SOURCE_DIR`. `publish-crates.yml` now guards `CMakeLists.txt` and
+`vcpkg.json` against the tag, so those two can no longer drift silently.
 
 CI workflows (`.github/workflows/publish-crates.yml`, `release-pypi.yml`) verify
 version consistency between the git tag and the Cargo/pyproject files using
@@ -286,17 +301,28 @@ workspace member crates that do inherit.
 After bumping, run `cargo update --workspace` at the root **and** for each of
 the three binding crates so their sibling `Cargo.lock` files stay in sync.
 
-**Pinned transitive dependency:** all four lockfiles hold `exr` at 1.74.0.
-1.74.2 pulls `pulp` in, which breaks the MSVC link of `ringgrid-c`'s test
-binary under fat LTO (`LNK1276: invalid directive`). A bare `cargo update`
-will undo this and turn the Windows C/C++ ABI job red; re-pin with
-`cargo update -p exr --precise 1.74.0` (root and each binding crate) until
-the upstream issue is resolved.
+**No `exr` in the graph (do not re-add it).** `image` is declared once at the
+workspace root with `default-features = false` and an explicit codec set
+(`png`, `jpeg`, `tiff`, `bmp`), and `imageproc` with `default-features = false`
+(its `default` pulls `image/default` back in). That keeps `exr`, `ravif`/`rav1e`
+and the rest of the codec stack out of every artifact — the published library,
+the wasm cdylib and the C shared library alike. Restoring `image`'s default
+features re-links an AVIF encoder into all of them and reintroduces `exr`, whose
+`pulp` dependency breaks the MSVC link of `ringgrid-c`'s test binary under fat
+LTO (`LNK1276: invalid directive`) and turns the Windows C/C++ ABI job red.
+
+Check it with `cargo tree --edges normal -i exr`, which must print nothing.
+The root `Cargo.lock` still lists `exr`/`ravif` as entries — a lockfile records
+the union of the graph over all feature selections, and `imageproc` declares an
+optional `image/default` path — but no build enables them, and
+`cargo clean -p exr` finds no artifacts. The three binding lockfiles do not
+list them at all.
 
 ## Feature Flags (ringgrid crate)
 
-- `std` (default) — enables file I/O (`from_json_file`, `write_json_file`, `write_target_svg`, `write_target_png`) and the `png` dependency. Disable for WASM targets.
-- WASM crate uses `default-features = false` to exclude `std`.
+- `std` (default) — file I/O only: `from_json_file`, `write_json_file`, `write_target_svg`/`_png`/`_dxf`. Disable for WASM targets.
+- WASM crate uses `default-features = false` to exclude `std`. Rendering is unaffected: `render_target_svg`/`_png`/`_dxf` and `render_target_artifacts` (PNG bytes included) work with the feature off, because `png` is a plain dependency — `image`'s png codec links it anyway, so it costs nothing.
+- `cli` — the published `ringgrid` binary (`gen` + `detect`). Off by default.
 
 ## Decision-Making Rules
 
@@ -307,9 +333,9 @@ the upstream issue is resolved.
 ## Conventions
 
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`
-- External JSON uses `serde` structs (see `DetectionResult` in `pipeline/mod.rs`)
+- External JSON uses `serde` structs (see `DetectionResult` in `pipeline/result.rs`)
 - Never introduce OpenCV bindings
-- `codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
+- `marker/codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - `lib.rs` is purely re-exports; type definitions live at their construction sites
 - Keep one source of truth for shared configs/defaults: if a config is used by multiple stages, define it once and reuse it directly.

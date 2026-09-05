@@ -32,7 +32,8 @@ for m in result.detected_markers:
 ```
 
 The Python package ships type stubs (`py.typed`) and a typed `TargetLayout` API
-that can also render printable SVG/PNG/DXF targets. See the
+that can also render printable SVG/PNG/DXF targets — `write_svg` / `write_png` /
+`write_dxf` to files, or `render_artifacts()` for all four in memory. See the
 [`ringgrid-py` README](https://pypi.org/project/ringgrid/) for the full
 `DetectConfig` field guide.
 
@@ -58,3 +59,20 @@ const result = JSON.parse(json);
 
 The WASM package powers the [interactive demo](../demo.md); it accepts grayscale
 or RGBA (canvas `ImageData`) buffers and returns the same `DetectionResult` JSON.
+
+It also builds and renders targets, so a browser application needs no generator
+of its own:
+
+```js
+import init, { coded_hex_target_json, render_target_bundle_json } from "@vitavision/ringgrid";
+
+await init();
+const targetJson = coded_hex_target_json(8.0, 15, 14, 4.8, 3.2, 1.152);
+const bundle = render_target_bundle_json(targetJson, JSON.stringify({
+  page: { size: { kind: "a4" }, orientation: "portrait", margin_mm: 10 },
+}));
+// bundle.json_text / svg_text / png_bytes (Uint8Array) / dxf_text
+```
+
+See the [`ringgrid-wasm` README](https://www.npmjs.com/package/@vitavision/ringgrid)
+for the full function list and the page/scale-bar options.

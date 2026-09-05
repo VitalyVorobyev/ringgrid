@@ -6,9 +6,9 @@
 
 use image::GrayImage;
 use ringgrid::{
-    BoardFrame, CodedRingSpec, DetectConfig, DetectError, DetectionResult, Detector, HexGeometry,
-    LatticeGeometry, MarkerCoding, OriginFiducials, PngTargetOptions, RectGeometry, RingGeometry,
-    TargetLayout,
+    BoardFrame, CodebookProfile, CodedRingSpec, DetectConfig, DetectError, DetectionResult,
+    Detector, HexGeometry, LatticeGeometry, MarkerCoding, OriginFiducials, PageSpec, RectGeometry,
+    RingGeometry, TargetLayout, TargetRenderOptions,
 };
 
 /// Count markers assigned a lattice coordinate.
@@ -79,11 +79,12 @@ fn plain_rect_no_dots() -> TargetLayout {
 
 fn render(target: &TargetLayout, dpi: f32) -> GrayImage {
     target
-        .render_target_png(&PngTargetOptions {
-            dpi,
-            margin_mm: 6.0,
-            include_scale_bar: false,
-        })
+        .render_target_png(
+            &TargetRenderOptions::default()
+                .with_page(PageSpec::default().with_margin_mm(6.0))
+                .with_png_dpi(dpi)
+                .with_scale_bar(false),
+        )
         .expect("render target png")
 }
 
@@ -320,6 +321,7 @@ fn coded_rect_detects_absolute_ids() {
         },
         MarkerCoding::Coded16(CodedRingSpec {
             ring_width_mm: 1.152,
+            codebook_profile: CodebookProfile::Base,
             id_assignment: None,
         }),
         None,

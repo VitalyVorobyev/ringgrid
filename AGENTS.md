@@ -43,11 +43,11 @@ These generators produce:
 - Embedded Rust constants only for codebook under `crates/ringgrid/src/`
 
 ```bash
-# Codebook: tools/codebook.json + crates/ringgrid/src/codebook.rs
+# Codebook: tools/codebook.json + crates/ringgrid/src/marker/codebook.rs
 python3 tools/gen_codebook.py \
   --n 893 --seed 1 \
   --out_json tools/codebook.json \
-  --out_rs crates/ringgrid/src/codebook.rs
+  --out_rs crates/ringgrid/src/marker/codebook.rs
 
 # Board spec (runtime JSON): tools/board/board_spec.json
 python3 tools/gen_board_spec.py \

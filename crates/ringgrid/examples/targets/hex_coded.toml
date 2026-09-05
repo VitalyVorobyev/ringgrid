@@ -4,7 +4,7 @@
 # dots are needed: identity and orientation come from the decoded codewords.
 # Combination: hex + coded + no dots.
 name = "hex_coded"
-coding = "coded"        # coded | plain
+coding = { kind = "coded" }   # add codebook_profile = "extended" for >893 cells
 fiducials = "none"      # coded markers must not use origin dots
 
 [lattice]
@@ -20,5 +20,9 @@ ring_width_mm = 1.152   # required for coded markers
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+# Sheet the target prints on. Omit for a square page fitted to the content;
+# set `size` to place it on real paper, e.g. `size = { kind = "a4" }`.
+[render.page]
+margin_mm = 5.0

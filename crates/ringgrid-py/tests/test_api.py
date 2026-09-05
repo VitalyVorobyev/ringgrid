@@ -333,7 +333,6 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     cfg.edge_sample = edge_sample
 
     decode = cfg.decode
-    decode.codebook_profile = "extended"
     decode.min_decode_margin = 3
     cfg.decode = decode
 
@@ -377,7 +376,6 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     assert adv["seed_proposals"]["max_seeds"] == 128
     assert adv["proposal"]["max_candidates"] == 64
     assert adv["edge_sample"]["n_rays"] == 56
-    assert adv["decode"]["codebook_profile"] == "extended"
     assert adv["decode"]["min_decode_margin"] == 3
     assert adv["marker_spec"]["theta_samples"] == 120
     assert adv["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
@@ -412,7 +410,7 @@ def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
     assert cfg._resolved_cache is cache
 
 
-def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> None:
+def test_decode_config_matches_resolved_dump_surface() -> None:
     board = ringgrid.TargetLayout.default_hex()
     cfg = ringgrid.DetectConfig(board)
 
@@ -420,16 +418,37 @@ def test_decode_config_matches_resolved_dump_surface_and_profile_override() -> N
     assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
     decode = cfg.decode
-    decode.codebook_profile = "extended"
     decode.min_decode_margin = 2
     cfg.decode = decode
 
-    assert cfg.decode.codebook_profile == "extended"
     assert cfg.decode.min_decode_margin == 2
     assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
     roundtrip = ringgrid.DecodeConfig.from_dict(cfg.to_dict()["advanced"]["decode"])
     assert roundtrip.to_dict() == cfg.to_dict()["advanced"]["decode"]
+
+
+def test_codebook_profile_follows_the_target_not_the_config() -> None:
+    """The codeword table is a property of the printed target.
+
+    A target printed from the extended table must be decoded against it, so the
+    profile is derived from the target and an overlay cannot pull the two apart.
+    """
+    base = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
+    assert base.decode.codebook_profile == "base"
+
+    # Asking for `extended` on a baseline target does not take: re-deriving from
+    # the target puts it back, rather than decoding against the wrong table.
+    decode = base.decode
+    decode.codebook_profile = "extended"
+    base.decode = decode
+    assert base.decode.codebook_profile == "base"
+
+    # Setting it on the target is what changes decoding.
+    spec = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).to_dict()
+    spec["coding"]["codebook_profile"] = "extended"
+    extended = ringgrid.DetectConfig(ringgrid.TargetLayout.from_dict(spec))
+    assert extended.decode.codebook_profile == "extended"
 
 
 def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
@@ -1058,3 +1077,60 @@ def test_config_none_values_reset_previous_explicit_settings() -> None:
     seeds.max_seeds = None
     cfg.seed_proposals = seeds
     assert cfg.to_dict()["advanced"]["seed_proposals"]["max_seeds"] is None
+
+
+def test_render_artifacts_returns_every_format() -> None:
+    target = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152)
+    art = target.render_artifacts()
+
+    assert isinstance(art, ringgrid.TargetArtifacts)
+    assert art.json_text.endswith("\n")
+    assert "ringgrid.target.v6" in art.json_text
+    assert art.svg_text.startswith("<?xml")
+    assert art.png_bytes[:4] == b"\x89PNG"
+    assert art.dxf_text.endswith("\nEOF\n")
+
+
+def test_render_artifacts_honours_page_options() -> None:
+    target = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152)
+    options = {"page": {"size": {"kind": "a4"}, "orientation": "landscape"}}
+
+    width_mm, height_mm = target.page_size_mm(options)
+    assert width_mm == pytest.approx(297.0)
+    assert height_mm == pytest.approx(210.0)
+
+    svg = target.render_artifacts(options).svg_text
+    assert 'width="297mm"' in svg
+    assert 'height="210mm"' in svg
+
+
+def test_page_size_defaults_to_a_square_fitted_page() -> None:
+    width_mm, height_mm = ringgrid.TargetLayout.rect_24x24().page_size_mm(
+        {"page": {"margin_mm": 5.0}}
+    )
+    assert width_mm == pytest.approx(343.2, abs=1e-3)
+    assert height_mm == pytest.approx(width_mm)
+
+
+def test_a_target_too_large_for_the_page_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="printable area"):
+        ringgrid.TargetLayout.rect_24x24().render_artifacts(
+            {"page": {"size": {"kind": "a4"}}}
+        )
+
+
+def test_invalid_render_options_raise_value_error() -> None:
+    with pytest.raises(ValueError, match="invalid render options"):
+        ringgrid.TargetLayout.rect_24x24().render_artifacts({"nonsense": True})
+
+
+def test_extended_codebook_profile_round_trips_through_the_target_spec() -> None:
+    spec = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).to_dict()
+    spec["coding"]["codebook_profile"] = "extended"
+    target = ringgrid.TargetLayout.from_dict(spec)
+
+    assert target.coding.codebook_profile == "extended"
+    assert '"codebook_profile": "extended"' in target.to_spec_json()
+    # Baseline targets keep their exact JSON: the field is omitted.
+    plain_spec = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).to_spec_json()
+    assert "codebook_profile" not in plain_spec

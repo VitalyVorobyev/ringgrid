@@ -75,7 +75,7 @@ The available names are `hex_coded`, `rect_coded`, `hex_plain_dots`,
 
 ## `ringgrid gen` — generate target artifacts
 
-Reads a recipe and writes `target_spec.json` (schema `ringgrid.target.v5`) plus
+Reads a recipe and writes `target_spec.json` (schema `ringgrid.target.v6`) plus
 the printable `<basename>.svg`, `.png`, and `.dxf` to the output directory.
 
 ```bash

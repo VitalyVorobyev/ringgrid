@@ -33,7 +33,7 @@ Two questions had to be answered together:
 `LatticeGeometry {Hex | Rect}`, `RingGeometry`, `MarkerCoding {Coded16 | Plain}`,
 `OriginFiducials`. Illegal combinations fail at construction, not at detection.
 The legacy `BoardLayout` becomes a thin, deprecated v4 facade (removed after
-0.8). The canonical serialized form is `ringgrid.target.v5`, auto-migrating v4.
+0.8). The canonical serialized form is `ringgrid.target.v6`, auto-migrating v5 and v4.
 
 **Grid-labeling detection for plain targets.** The plain finalize path
 (`pipeline/finalize/plain.rs`) keeps the shared front half (fit + projective

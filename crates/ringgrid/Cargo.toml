@@ -16,7 +16,9 @@ include = ["src/**", "examples/**", "README.md", "LICENSE-*", "Cargo.toml"]
 
 [features]
 default = ["std"]
-std = ["dep:png"]
+# Filesystem I/O only: the `from_json_file` / `write_*_file` helpers. Rendering,
+# including PNG encoding, works with the feature off (see `png` below).
+std = []
 # Build the `ringgrid` command-line tool (target generation + detection).
 # Off by default so library users get a clean dependency graph; enable with
 # `cargo install ringgrid --features cli`.
@@ -30,7 +32,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 approx = { workspace = true }
 rand = { workspace = true }
-png = { workspace = true, optional = true }
+# Not optional: `render_target_artifacts` encodes PNG bytes in memory on every
+# target, including wasm32 builds that disable `std`. `image`'s png codec already
+# links this crate, so it costs nothing extra.
+png = { workspace = true }
 projective-grid = { workspace = true }
 radsym = { workspace = true }
 clap = { workspace = true, optional = true }

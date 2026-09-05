@@ -15,7 +15,7 @@ pub use stages::{
 };
 
 use crate::conic::RansacConfig;
-use crate::marker::{DecodeConfig, MarkerSpecConfig};
+use crate::marker::{CodebookProfile, DecodeConfig, MarkerSpecConfig};
 use crate::pixelmap::SelfUndistortConfig;
 use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 use crate::target::{MarkerCoding, TargetLayout};
@@ -404,6 +404,14 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
 }
 
 fn apply_target_geometry_priors(config: &mut DetectConfig) {
+    // The codeword table is a property of the printed target, so decoding
+    // always follows it. Set before the geometry guards below, which bail out
+    // early on degenerate radii — the profile is valid regardless.
+    config.advanced.decode.codebook_profile = match config.target.coding() {
+        MarkerCoding::Coded16(spec) => spec.codebook_profile,
+        MarkerCoding::Plain => CodebookProfile::default(),
+    };
+
     let ring = config.target.ring();
     let outer = ring.outer_radius_mm;
     let inner = ring.inner_radius_mm;

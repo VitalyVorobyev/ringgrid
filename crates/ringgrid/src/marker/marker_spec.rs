@@ -8,6 +8,7 @@
 /// Used by both inner and outer edge estimators to constrain the search
 /// direction. `Auto` tries both polarities and picks the more coherent peak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum GradPolarity {
     /// Intensity increases as radius increases (dark → light).
@@ -20,13 +21,15 @@ pub enum GradPolarity {
 
 /// Aggregation method across theta samples.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AngularAggregator {
     /// Median across theta responses.
     Median,
     /// Trimmed mean (drops `trim_fraction` on each side).
     TrimmedMean {
-        /// Fraction removed from each tail before averaging.
+        /// Fraction removed from each tail before averaging; values are clamped to `[0, 0.45]`.
+        #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 0.45)))]
         trim_fraction: f32,
     },
 }
@@ -46,11 +49,14 @@ pub enum AngularAggregator {
 ///   r_inner_expected =
 ///       (inner_radius - ring_half_thickness) / (outer_radius + ring_half_thickness)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct MarkerSpecConfig {
-    /// Expected inner radius as fraction of outer radius.
+    /// Expected inner edge radius as a fraction of the outer edge radius (dimensionless).
+    /// Derived from the target's ring radii and stroke width; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true)))]
     pub r_inner_expected: f32,
-    /// Allowed deviation in normalized radius around `r_inner_expected`.
+    /// Half-width of the inner-edge search window, in outer-normalized radius units (dimensionless), around `r_inner_expected`.
     pub inner_search_halfwidth: f32,
     /// Expected sign of dI/dr at the inner edge.
     pub inner_grad_polarity: GradPolarity,
@@ -58,12 +64,14 @@ pub struct MarkerSpecConfig {
     ///
     /// Same convention as [`crate::OuterEstimationConfig::radial_samples`], calibrated
     /// independently for the inner estimation stage.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 5)))]
     pub radial_samples: usize,
     /// Number of theta samples (rays) for inner-scale estimation.
     ///
     /// Unlike the outer estimator (where ray count is set to `edge_sample.n_rays`
     /// at the call site), this value is used directly — the inner scan is not
     /// coupled to the edge-sampling resolution.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 8)))]
     pub theta_samples: usize,
     /// Aggregator across theta.
     ///

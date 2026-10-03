@@ -203,7 +203,7 @@ impl Default for RinggridDetector {
 
 #[wasm_bindgen]
 impl RinggridDetector {
-    /// Create a detector from a target layout JSON string (`v5` or legacy `v4`).
+    /// Create a detector from a target layout JSON string (`v6`, or legacy `v5` / `v4`).
     #[wasm_bindgen(constructor)]
     pub fn new(board_json: &str) -> Result<RinggridDetector, JsValue> {
         let target = parse_target(board_json)?;

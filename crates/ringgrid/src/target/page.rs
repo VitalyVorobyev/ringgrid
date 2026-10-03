@@ -15,6 +15,7 @@ const MM_PER_INCH: f64 = 25.4;
 
 /// Page orientation applied on top of a [`PageSize`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PageOrientation {
     /// Tall: the page's longer side runs vertically.
@@ -26,6 +27,7 @@ pub enum PageOrientation {
 
 /// Physical page size for a printed target.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PageSize {
     /// A square page sized to the drawn content plus the margin.
@@ -41,9 +43,11 @@ pub enum PageSize {
     Letter,
     /// An explicit size in millimeters, given in portrait.
     Custom {
-        /// Page width in millimeters.
+        /// Page width in millimeters (portrait), greater than 0.
+        #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
         width_mm: f64,
-        /// Page height in millimeters.
+        /// Page height in millimeters (portrait), greater than 0.
+        #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
         height_mm: f64,
     },
 }
@@ -77,6 +81,7 @@ impl PageSize {
 /// The default is [`PageSize::FitContent`] with a zero margin — a square page
 /// sized exactly to the target.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct PageSpec {
     /// Physical page size.
     #[serde(default)]
@@ -85,8 +90,9 @@ pub struct PageSpec {
     /// [`PageSize::FitContent`], whose page is square.
     #[serde(default)]
     pub orientation: PageOrientation,
-    /// Uniform white margin in millimeters on every edge.
+    /// Uniform white margin in millimeters on every edge (0 or more).
     #[serde(default)]
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0), extend("x-unit" = "mm")))]
     pub margin_mm: f32,
 }
 

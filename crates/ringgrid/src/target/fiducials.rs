@@ -21,9 +21,11 @@ use super::ring::{MarkerCoding, RingGeometry};
 /// broken: an opaque planar target always maps to the image through an
 /// orientation-preserving homography.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct OriginFiducials {
-    /// Dot radius in millimeters.
+    /// Dot radius in millimeters, greater than 0.
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub dot_radius_mm: f32,
 }
 

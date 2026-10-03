@@ -65,6 +65,14 @@ pub(crate) fn derive_proposal_config(
 /// [`DetectConfig`] constructors derive sensible scale-dependent values.
 /// Override individual fields for fine-grained tuning of difficult scenes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schemars",
+    schemars(
+        title = "advanced detector configuration",
+        description = "Per-stage tuning parameters of the detection pipeline (proposals, edge sampling, ellipse fitting, decoding, ID correction, completion). Most users never need to change them; several defaults are derived from the target layout and `marker_scale`, see the top-level description."
+    )
+)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct AdvancedDetectConfig {
@@ -96,9 +104,10 @@ pub struct AdvancedDetectConfig {
     /// Derived from `marker_scale` by the config constructors; do not set directly.
     #[serde(skip)]
     pub(crate) max_semi_axis: f64,
-    /// Maximum aspect ratio (a/b) for a valid ellipse.
+    /// Maximum major/minor axis ratio (`a/b`, dimensionless) of a valid outer ellipse; fits above it are rejected.
     pub max_aspect_ratio: f64,
-    /// NMS dedup radius for final markers (pixels).
+    /// Non-maximum-suppression radius (pixels) used to merge duplicate final markers.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub dedup_radius: f64,
     /// Enable global homography filtering (requires board spec).
     pub use_global_filter: bool,
@@ -184,6 +193,14 @@ impl Default for AdvancedDetectConfig {
 /// [`DetectConfig::with_target`] to attach the real target layout and
 /// re-derive all scale- and geometry-coupled parameters.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schemars",
+    schemars(
+        title = "ringgrid detector configuration",
+        description = "Detector configuration: marker scale prior, center refinement, self-undistort controls and per-stage tuning under `advanced`. Every field is optional; omitted fields keep their defaults. The target layout is not part of this object. Defaults are board-dependent: scale- and geometry-coupled values (proposal radii, edge search windows, ellipse bounds, completion ROI, code-band ratio, expected inner radius, codebook profile) are derived from the target layout and `marker_scale`, and the defaults embedded in this schema are those of the default hex target. Use `DetectConfig::from_target` (or `default_config_json(board_json)` in the WebAssembly package) to obtain the defaults for a specific board."
+    )
+)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct DetectConfig {
@@ -192,11 +209,11 @@ pub struct DetectConfig {
     /// Not serialized — supply it via a constructor or [`DetectConfig::with_target`].
     #[serde(skip)]
     pub target: TargetLayout,
-    /// Marker diameter prior (range) in working-frame pixels.
+    /// Expected marker outer-diameter range `[diameter_min_px, diameter_max_px]` in working-frame pixels; scale-dependent stage parameters are derived from it.
     pub marker_scale: MarkerScalePrior,
-    /// Post-fit circle refinement method selector.
+    /// Center-correction strategy applied after local fits are accepted: `None` disables it, `ProjectiveCenter` recovers unbiased centers from the inner/outer conics.
     pub circle_refinement: CircleRefinementMethod,
-    /// Self-undistort estimation controls.
+    /// Self-undistort (division-model lens distortion) estimation controls; disabled by default.
     pub self_undistort: SelfUndistortConfig,
     /// Require the full board for detection success.
     ///

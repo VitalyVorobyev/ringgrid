@@ -149,6 +149,8 @@ pub mod codebook {
 // Geometry — compositional target model. Legacy v4 `board_spec.json` files load
 // via `TargetLayout::from_json_*` (schema auto-migration); the deprecated
 // `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
+#[cfg(feature = "schemars")]
+pub use target::target_spec_schema;
 pub use target::{
     CodedRingSpec, HexGeometry, LatticeGeometry, MarkerCoding, OriginDots, OriginFiducials,
     PageOrientation, PageSize, PageSpec, RectGeometry, RingGeometry, TARGET_SCHEMA_VERSION,

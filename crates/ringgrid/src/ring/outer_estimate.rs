@@ -117,15 +117,19 @@ pub struct OuterEstimate {
 /// synchronise it with the edge-sampling resolution without a silent override.
 /// Set [`crate::EdgeSampleConfig::n_rays`] to control angular density for both stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct OuterEstimationConfig {
-    /// Search half-width around the expected outer radius, in pixels.
+    /// Search half-width around the expected outer radius, in pixels (at least 0.5).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.5), extend("readOnly" = true, "x-unit" = "px")))]
     pub search_halfwidth_px: f32,
     /// Number of radial samples used to build the aggregated response.
     ///
     /// Same convention as [`crate::MarkerSpecConfig::radial_samples`], calibrated
     /// independently for the outer estimation stage.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 7)))]
     pub radial_samples: usize,
     /// Aggregation method across theta.
     ///
@@ -134,22 +138,24 @@ pub struct OuterEstimationConfig {
     pub aggregator: AngularAggregator,
     /// Expected polarity of `dI/dr` at the outer edge.
     pub grad_polarity: GradPolarity,
-    /// Minimum fraction of theta samples required for an estimate.
+    /// Minimum fraction (0 to 1) of theta samples required for an estimate.
     ///
     /// Same convention as [`crate::MarkerSpecConfig::min_theta_coverage`], calibrated
     /// independently for the outer estimation stage.
     pub min_theta_coverage: f32,
-    /// Minimum fraction of theta samples that must agree with the selected peak.
+    /// Minimum fraction (0 to 1) of theta samples that must agree with the selected peak.
     ///
     /// Same convention as [`crate::MarkerSpecConfig::min_theta_consistency`]; the outer
     /// estimator uses a stricter default (0.35) than the inner estimator (0.25)
     /// because the outer edge is anchored to a scale prior.
     pub min_theta_consistency: f32,
-    /// If set, emit up to two hypotheses (best + runner-up) when runner-up is comparable.
+    /// Emit up to two hypotheses (best and runner-up) when the runner-up is comparable.
     pub allow_two_hypotheses: bool,
-    /// Runner-up must be at least this fraction of the best peak strength.
+    /// Runner-up must be at least this fraction (0 to 1) of the best peak strength; values are clamped to `[0, 1]`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 1.0)))]
     pub second_peak_min_rel: f32,
-    /// Per-theta local refinement half-width around the chosen radius.
+    /// Per-theta local refinement half-width (pixels) around the chosen radius.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub refine_halfwidth_px: f32,
 }
 

@@ -10,10 +10,13 @@ use crate::marker::codec::Codebook;
 /// the stroked outer and inner rings; for [`MarkerCoding::Plain`] markers they
 /// bound the filled annulus directly.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct RingGeometry {
-    /// Outer ring radius in millimeters.
+    /// Outer ring radius in millimeters, greater than 0 (centerline radius for coded markers).
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub outer_radius_mm: f32,
-    /// Inner ring radius in millimeters.
+    /// Inner ring radius in millimeters, greater than 0 and smaller than the outer radius (centerline radius for coded markers).
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub inner_radius_mm: f32,
 }
 
@@ -41,8 +44,10 @@ impl RingGeometry {
 
 /// Parameters of the 16-sector coded ring style.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct CodedRingSpec {
-    /// Stroke width of the inner and outer rings in millimeters.
+    /// Stroke width of the inner and outer rings in millimeters, greater than 0.
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub ring_width_mm: f32,
     /// Embedded codeword table these markers are drawn from.
     ///
@@ -69,6 +74,7 @@ fn is_base_profile(profile: &CodebookProfile) -> bool {
 
 /// Marker coding style: how (and whether) markers encode their identity.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MarkerCoding {
     /// Two stroked rings with a 16-sector code band between them.

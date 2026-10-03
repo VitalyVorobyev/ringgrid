@@ -3,11 +3,12 @@ resolver = "2"
 members = [
     "crates/ringgrid",
     "crates/ringgrid-cli",
+    "xtask",
 ]
 exclude = ["crates/ringgrid-py", "crates/ringgrid-wasm", "crates/ringgrid-c"]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
@@ -32,3 +33,6 @@ png = "0.18"
 projective-grid = "0.14"
 radsym = { version = "0.4.1", features = ["unsafe-opt"] }
 web-time = "1"
+# JSON Schema generation (optional `schemars` feature of `ringgrid`) and validation.
+schemars = { version = "1", features = ["derive"] }
+jsonschema = { version = "0.58", default-features = false }

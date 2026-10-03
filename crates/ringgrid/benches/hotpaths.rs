@@ -9,6 +9,9 @@ use std::hint::black_box;
 
 mod marker {
     #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+    // `ring/outer_estimate.rs` is included below, and its config derives `JsonSchema`
+    // under the `schemars` feature, so these stand-ins must too.
+    #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum AngularAggregator {
         Median,
@@ -16,6 +19,7 @@ mod marker {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum GradPolarity {
         DarkToLight,

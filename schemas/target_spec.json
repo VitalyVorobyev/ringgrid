@@ -1,0 +1,252 @@
+{
+  "$defs": {
+    "CodebookProfile": {
+      "description": "Explicit embedded codebook profile selector.",
+      "oneOf": [
+        {
+          "const": "base",
+          "description": "Shipped baseline profile with stable IDs `0..892`.",
+          "type": "string"
+        },
+        {
+          "const": "extended",
+          "description": "Additive opt-in profile that appends the remaining valid 16-bit words\nwithout introducing new complement collisions beyond the shipped\nbaseline.",
+          "type": "string"
+        }
+      ]
+    },
+    "CodedRingSpec": {
+      "description": "Parameters of the 16-sector coded ring style.",
+      "properties": {
+        "codebook_profile": {
+          "$ref": "#/$defs/CodebookProfile",
+          "description": "Embedded codeword table these markers are drawn from.\n\nA property of the printed target, not of a rendering or a detector run:\na target printed from one profile can only be decoded against the same\none. Detection derives its profile from here, so the two cannot drift.\n\nDefaults to `CodebookProfile::Base`, the 893-word table, which is what\nevery target predating this field used. Omitted from serialized specs\nwhen it is `Base`, so targets written before this field existed keep\ntheir exact JSON."
+        },
+        "id_assignment": {
+          "description": "Optional optimized codebook-ID assignment. When present,\n`id_assignment[i]` is the codebook ID for the i-th cell (in generation\norder). When absent, IDs are assigned sequentially (0, 1, 2, ...).",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "ring_width_mm": {
+          "description": "Stroke width of the inner and outer rings in millimeters, greater than 0.",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        }
+      },
+      "required": [
+        "ring_width_mm"
+      ],
+      "type": "object"
+    },
+    "HexGeometry": {
+      "description": "Hex-lattice geometry: axial rows alternating between long and short rows.",
+      "properties": {
+        "long_row_cols": {
+          "description": "Number of columns in the longest (even-offset) rows; at least 1, and at least 2 when `rows` > 1.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "pitch_mm": {
+          "description": "Axial lattice pitch in millimeters, greater than 0. The nearest-neighbor center distance is `pitch_mm * sqrt(3)`.",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        },
+        "rows": {
+          "description": "Number of marker rows (at least 1).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows",
+        "long_row_cols",
+        "pitch_mm"
+      ],
+      "type": "object"
+    },
+    "LatticeGeometry": {
+      "description": "Lattice arrangement of marker cells.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HexGeometry",
+          "description": "Hexagonal lattice (axial rows with alternating long/short rows).",
+          "properties": {
+            "kind": {
+              "const": "hex",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/RectGeometry",
+          "description": "Rectangular lattice (`rows × cols` grid).",
+          "properties": {
+            "kind": {
+              "const": "rect",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MarkerCoding": {
+      "description": "Marker coding style: how (and whether) markers encode their identity.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CodedRingSpec",
+          "description": "Two stroked rings with a 16-sector code band between them.",
+          "properties": {
+            "kind": {
+              "const": "coded16",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A plain filled annulus between the inner and outer radii; markers\ncarry no identity and are labeled by lattice position instead.",
+          "properties": {
+            "kind": {
+              "const": "plain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OriginFiducials": {
+      "additionalProperties": false,
+      "description": "Filled circular dots that define the target's origin and orientation.\n\nDots are printed dark on the white background, in the gaps of the marker\nlattice around cell `(0, 0)`. **Only the dot size is stored** — the\npositions are derived from the lattice and read back via\n`TargetLayout::fiducial_dots_mm`,\nso they cannot go stale when the target's dimensions change. (Before schema\nv6 this type carried absolute `dots_mm` coordinates, which silently\nremained \"valid\" when copied onto a board they no longer fit.)\n\nThe derived pattern breaks every rotational symmetry of the cell lattice, so\na detector can resolve board orientation uniquely. Reflections need not be\nbroken: an opaque planar target always maps to the image through an\norientation-preserving homography.",
+      "properties": {
+        "dot_radius_mm": {
+          "description": "Dot radius in millimeters, greater than 0.",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        }
+      },
+      "required": [
+        "dot_radius_mm"
+      ],
+      "type": "object"
+    },
+    "RectGeometry": {
+      "description": "Rectangular (square-lattice) geometry: `rows × cols` cells at uniform pitch.",
+      "properties": {
+        "cols": {
+          "description": "Number of marker columns (at least 1).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "pitch_mm": {
+          "description": "Center-to-center spacing between adjacent markers in millimeters, greater than 0.",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        },
+        "rows": {
+          "description": "Number of marker rows (at least 1).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows",
+        "cols",
+        "pitch_mm"
+      ],
+      "type": "object"
+    },
+    "RingGeometry": {
+      "description": "Ring radii shared by every marker on the target, in millimeters.\n\nFor `MarkerCoding::Coded16` markers these are the *centerline* radii of\nthe stroked outer and inner rings; for `MarkerCoding::Plain` markers they\nbound the filled annulus directly.",
+      "properties": {
+        "inner_radius_mm": {
+          "description": "Inner ring radius in millimeters, greater than 0 and smaller than the outer radius (centerline radius for coded markers).",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        },
+        "outer_radius_mm": {
+          "description": "Outer ring radius in millimeters, greater than 0 (centerline radius for coded markers).",
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "x-unit": "mm"
+        }
+      },
+      "required": [
+        "outer_radius_mm",
+        "inner_radius_mm"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the canonical v6 form that writers emit; the loaders additionally migrate legacy `ringgrid.target.v5` and `ringgrid.target.v4` files.",
+  "properties": {
+    "coding": {
+      "$ref": "#/$defs/MarkerCoding",
+      "description": "How markers encode identity: 16-sector coded rings or plain annuli."
+    },
+    "fiducials": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OriginFiducials"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional origin fiducial dots that fix the board frame; omit for none."
+    },
+    "lattice": {
+      "$ref": "#/$defs/LatticeGeometry",
+      "description": "Cell arrangement: hexagonal or rectangular lattice, with its dimensions and pitch."
+    },
+    "marker": {
+      "$ref": "#/$defs/RingGeometry",
+      "description": "Ring radii shared by every marker on the target."
+    },
+    "name": {
+      "description": "Human-readable target name (free text, e.g. for file naming).",
+      "type": "string"
+    },
+    "schema": {
+      "const": "ringgrid.target.v6",
+      "description": "Schema identifier; always `\"ringgrid.target.v6\"`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "lattice",
+    "marker",
+    "coding"
+  ],
+  "title": "ringgrid target specification (v6)",
+  "type": "object"
+}

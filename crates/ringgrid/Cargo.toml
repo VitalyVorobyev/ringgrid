@@ -23,6 +23,11 @@ std = []
 # Off by default so library users get a clean dependency graph; enable with
 # `cargo install ringgrid --features cli`.
 cli = ["std", "dep:clap", "dep:toml", "dep:tracing-subscriber"]
+# Derive `schemars::JsonSchema` for the detector config, target spec and
+# render-options types, and expose `target_spec_schema()`. Off by default; the
+# JSON Schemas shipped in `schemas/` (and in the npm package) are generated
+# with this feature on.
+schemars = ["dep:schemars"]
 
 [dependencies]
 nalgebra = { workspace = true }
@@ -41,6 +46,7 @@ radsym = { workspace = true }
 clap = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 
 [[bin]]
 name = "ringgrid"
@@ -56,6 +62,7 @@ approx = { workspace = true }
 imageproc = { workspace = true }
 rand = { workspace = true }
 criterion = "0.8"
+jsonschema = { workspace = true }
 
 [[bench]]
 name = "hotpaths"

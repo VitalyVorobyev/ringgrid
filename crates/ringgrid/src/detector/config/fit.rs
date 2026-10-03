@@ -9,20 +9,23 @@ fn default_max_angular_gap_rad() -> f64 {
 
 /// Configuration for robust inner ellipse fitting from outer-fit hints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct InnerFitConfig {
-    /// Minimum number of sampled points required to attempt a fit.
+    /// Minimum number of sampled edge points required to attempt an inner ellipse fit.
     pub min_points: usize,
-    /// Minimum accepted inlier ratio when RANSAC is used.
+    /// Minimum accepted inlier fraction (0 to 1) when RANSAC is used; fits below it are rejected.
     pub min_inlier_ratio: f32,
-    /// Maximum accepted RMS Sampson residual (px) of the fitted inner ellipse.
+    /// Maximum accepted RMS Sampson residual (pixels) of the fitted inner ellipse.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub max_rms_residual: f64,
-    /// Maximum allowed center shift from outer to inner fit center (px).
+    /// Maximum allowed distance (pixels) between the outer-fit and inner-fit centers.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub max_center_shift_px: f64,
-    /// Maximum allowed absolute error in recovered scale ratio vs radial hint.
+    /// Maximum allowed absolute difference (dimensionless, inner/outer radius ratio) between the recovered scale ratio and the radial hint.
     pub max_ratio_abs_error: f64,
-    /// Local half-width (in radius-sample indices) around the radial hint.
+    /// Local half-width, in radius-sample indices, of the search window around the radial hint.
     pub local_peak_halfwidth_idx: usize,
     /// RANSAC configuration for robust inner ellipse fitting.
     pub ransac: crate::conic::RansacConfig,
@@ -41,6 +44,7 @@ pub struct InnerFitConfig {
     ///
     /// Default: π/2 (90 degrees).
     #[serde(default = "default_max_angular_gap_rad")]
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "rad")))]
     pub max_angular_gap_rad: f64,
     /// When true, markers are hard-rejected (not just penalized) if the inner
     /// ellipse cannot be fitted. Requires two good ellipses per marker.
@@ -83,12 +87,13 @@ impl Default for InnerFitConfig {
 
 /// Configuration for robust outer ellipse fitting from sampled edge points.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct OuterFitConfig {
-    /// Minimum number of sampled points required to attempt direct LS fit.
+    /// Minimum number of sampled edge points required to attempt a direct least-squares ellipse fit.
     pub min_direct_fit_points: usize,
-    /// Minimum sampled points required before attempting RANSAC.
+    /// Minimum number of sampled edge points required before RANSAC is attempted.
     pub min_ransac_points: usize,
     /// RANSAC configuration for robust outer ellipse fitting.
     pub ransac: crate::conic::RansacConfig,
@@ -100,12 +105,14 @@ pub struct OuterFitConfig {
     ///
     /// Default: `0.15` (preserves legacy behavior).
     #[serde(default = "OuterFitConfig::default_size_score_weight")]
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 1.0)))]
     pub size_score_weight: f32,
     /// Maximum allowed angular gap (radians) between consecutive outer edge
     /// points. Fits where the largest gap exceeds this are rejected.
     ///
     /// Default: π/2 (90 degrees).
     #[serde(default = "default_max_angular_gap_rad")]
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "rad")))]
     pub max_angular_gap_rad: f64,
 }
 

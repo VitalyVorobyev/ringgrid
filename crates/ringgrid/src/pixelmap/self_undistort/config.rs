@@ -2,15 +2,17 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for self-undistort estimation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct SelfUndistortConfig {
     /// Enable self-undistort refinement.
     pub enable: bool,
-    /// Search range for lambda: [lambda_min, lambda_max].
+    /// Search range `[lambda_min, lambda_max]` for the division-model parameter lambda (units 1/px^2, with radius measured in pixels from the distortion center).
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "1/px^2")))]
     pub lambda_range: [f64; 2],
-    /// Maximum function evaluations for the 1D optimizer.
+    /// Maximum objective evaluations of the 1D lambda optimizer.
     pub max_evals: usize,
-    /// Minimum number of markers with both inner+outer edge points required.
+    /// Minimum number of markers with both inner and outer edge points required to run the estimation.
     pub min_markers: usize,
     /// Relative improvement threshold: accept only if
     /// `(baseline - optimum) / baseline > improvement_threshold`.
@@ -21,20 +23,24 @@ pub struct SelfUndistortConfig {
     pub min_abs_improvement: f64,
     /// Trim fraction for robust aggregation of per-marker objective values.
     ///
-    /// `0.1` means drop 10% low and 10% high scores before averaging.
+    /// `0.1` means drop 10% low and 10% high scores before averaging. Values are clamped to `[0, 0.49]`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 0.49)))]
     pub trim_fraction: f64,
-    /// Minimum |lambda| required for applying the model.
+    /// Minimum |lambda| (1/px^2) required for applying the model.
     ///
     /// Very small lambda values are effectively identity and are treated as
     /// "no correction" even if relative improvement is non-zero.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "1/px^2")))]
     pub min_lambda_abs: f64,
     /// Reject solutions that land too close to lambda-range boundaries.
     pub reject_range_edge: bool,
-    /// Relative margin of the lambda range treated as unstable boundary area.
+    /// Relative margin (fraction of the lambda range width) treated as unstable boundary area; values are clamped to `[0, 0.49]`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 0.49)))]
     pub range_edge_margin_frac: f64,
     /// Minimum decoded-ID correspondences needed for homography validation.
     pub validation_min_markers: usize,
     /// Minimum absolute homography self-error improvement (pixels) required.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub validation_abs_improvement_px: f64,
     /// Minimum relative homography self-error improvement required.
     pub validation_rel_improvement: f64,

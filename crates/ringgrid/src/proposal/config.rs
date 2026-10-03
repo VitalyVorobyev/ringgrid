@@ -30,23 +30,30 @@
 /// - [`radius_step`](Self::radius_step) — stride between voting radii; raise
 ///   it to trade accumulator sensitivity for proposal-stage speed.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct ProposalConfig {
     /// Minimum voting radius (pixels).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub r_min: f32,
     /// Maximum voting radius (pixels).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub r_max: f32,
     /// Minimum distance between output proposals (pixels).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
     ///
     /// Internally the module uses a two-step strategy:
     /// 1. NMS peak extraction with a capped radius for efficiency.
     /// 2. Greedy distance suppression at the full `min_distance`.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub min_distance: f32,
-    /// Gradient magnitude threshold (fraction of max gradient).
+    /// Gradient magnitude threshold as a fraction (0 to 1) of the maximum gradient magnitude.
     pub grad_threshold: f32,
-    /// Minimum accumulator value for a proposal (fraction of max).
+    /// Minimum accumulator value for a proposal, as a fraction (0 to 1) of the accumulator maximum.
     pub min_vote_frac: f32,
-    /// Optional cap on number of proposals returned (after score sorting).
+    /// Optional cap on the number of proposals returned (after score sorting); `null` means no cap.
     #[serde(default)]
     pub max_candidates: Option<usize>,
     /// Step (in pixels) between consecutive voting radii.
@@ -61,6 +68,7 @@ pub struct ProposalConfig {
     /// Subsampling is **opt-in**: on the regression suite, `radius_step = 2`
     /// cuts proposal time ~29 % but lowers recall on blurry / low-contrast and
     /// real-world scenes (rtv3d −2.9 %), so the default keeps full coverage.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1), extend("x-unit" = "px")))]
     pub radius_step: u32,
 }
 

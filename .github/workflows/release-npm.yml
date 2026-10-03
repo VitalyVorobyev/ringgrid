@@ -58,6 +58,11 @@ jobs:
           package-manager-cache: false
           registry-url: "https://registry.npmjs.org"
 
+      # Copies schemas/ into pkg/, adds it to package.json `files`, and fails the
+      # release if `npm pack --dry-run` does not list all three schema files.
+      - name: Package JSON Schemas
+        run: bash tools/ci/package_schemas.sh
+
       - name: Publish to npm with Trusted Publishing
         working-directory: crates/ringgrid-wasm/pkg
         shell: bash

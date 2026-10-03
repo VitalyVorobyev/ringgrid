@@ -129,16 +129,18 @@ impl Conic2D {
 
 /// Configuration for RANSAC fitting (ellipse and homography).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct RansacConfig {
     /// Maximum number of RANSAC iterations.
     pub max_iters: usize,
-    /// Inlier distance threshold in pixels.
+    /// Inlier distance threshold in pixels (Sampson distance for ellipse fits, reprojection error for homography fits).
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub inlier_threshold: f64,
-    /// Minimum number of inliers for a valid model.
+    /// Minimum number of inliers for a model to be accepted.
     pub min_inliers: usize,
-    /// RNG seed for reproducibility.
+    /// RNG seed; the same seed reproduces the same fit.
     pub seed: u64,
 }
 

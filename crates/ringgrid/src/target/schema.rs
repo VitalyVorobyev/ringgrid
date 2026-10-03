@@ -34,6 +34,18 @@ const EXPECTED_SCHEMAS: &str = "'ringgrid.target.v6', 'ringgrid.target.v5' or 'r
 /// genuinely different placement (a whole pitch away) never passes.
 const LEGACY_DOT_TOL_MM: f32 = 1e-3;
 
+/// JSON Schema (draft 2020-12) of the canonical `ringgrid.target.v6` target
+/// specification, as read and written by [`TargetLayout::from_json_str`] and
+/// [`TargetLayout::to_json_string`].
+///
+/// The wire type itself is private; this is the supported way to obtain its
+/// schema. Legacy `v5` / `v4` documents are still accepted by the loaders but
+/// are not described by this schema.
+#[cfg(feature = "schemars")]
+pub fn target_spec_schema() -> schemars::Schema {
+    schemars::schema_for!(TargetSpecV6)
+}
+
 /// Minimal probe to dispatch on the schema tag before full deserialization.
 #[derive(serde::Deserialize)]
 struct SchemaProbe {
@@ -42,13 +54,31 @@ struct SchemaProbe {
 
 /// The compositional `ringgrid.target.v6` schema.
 #[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schemars",
+    schemars(
+        title = "ringgrid target specification (v6)",
+        description = "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the canonical v6 form that writers emit; the loaders additionally migrate legacy `ringgrid.target.v5` and `ringgrid.target.v4` files."
+    )
+)]
 #[serde(deny_unknown_fields)]
 struct TargetSpecV6 {
+    /// Schema identifier; always `"ringgrid.target.v6"`.
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(extend("const" = "ringgrid.target.v6"))
+    )]
     schema: String,
+    /// Human-readable target name (free text, e.g. for file naming).
     name: String,
+    /// Cell arrangement: hexagonal or rectangular lattice, with its dimensions and pitch.
     lattice: LatticeGeometry,
+    /// Ring radii shared by every marker on the target.
     marker: RingGeometry,
+    /// How markers encode identity: 16-sector coded rings or plain annuli.
     coding: MarkerCoding,
+    /// Optional origin fiducial dots that fix the board frame; omit for none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fiducials: Option<OriginFiducials>,
 }

@@ -6,20 +6,26 @@ use crate::pixelmap::PixelMapper;
 
 /// Configuration for radial edge sampling.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct EdgeSampleConfig {
-    /// Number of radial rays to cast.
+    /// Number of radial rays to cast per candidate.
     pub n_rays: usize,
     /// Maximum sampling radius (pixels).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub r_max: f32,
     /// Minimum sampling radius (pixels).
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub r_min: f32,
     /// Step size along each ray (pixels).
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub r_step: f32,
-    /// Minimum intensity drop (0-1) for a valid ring.
+    /// Minimum intensity drop (0 to 1, normalized intensity) for a valid ring.
     pub min_ring_depth: f32,
-    /// Minimum number of rays with detected ring for a valid candidate.
+    /// Minimum number of rays with a detected ring for a valid candidate.
     pub min_rays_with_ring: usize,
 }
 

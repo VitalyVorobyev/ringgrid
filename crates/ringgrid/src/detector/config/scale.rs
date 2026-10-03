@@ -3,6 +3,7 @@
 
 /// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum CircleRefinementMethod {
     /// Disable center correction.
     None,
@@ -31,11 +32,14 @@ impl CircleRefinementMethod {
 ///
 /// [`DetectConfig::set_marker_scale_prior`]: super::DetectConfig::set_marker_scale_prior
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct MarkerScalePrior {
-    /// Minimum expected marker outer diameter in pixels.
+    /// Minimum expected marker outer diameter in pixels. Values below 4 px are raised to 4.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 4.0), extend("x-unit" = "px")))]
     pub diameter_min_px: f32,
-    /// Maximum expected marker outer diameter in pixels.
+    /// Maximum expected marker outer diameter in pixels. Raised to `diameter_min_px` when smaller.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 4.0), extend("x-unit" = "px")))]
     pub diameter_max_px: f32,
 }
 
@@ -268,6 +272,7 @@ impl ScaleTiers {
 ///
 /// Proposal coordinates are automatically scaled back to original image space.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalDownscale {
     /// Auto-select downscale factor from `marker_scale.diameter_min_px`.
@@ -280,7 +285,7 @@ pub enum ProposalDownscale {
     #[default]
     Off,
     /// Explicit integer downscale factor (clamped to `[1, 4]`).
-    Factor(u32),
+    Factor(#[cfg_attr(feature = "schemars", schemars(range(min = 1, max = 4)))] u32),
 }
 
 impl ProposalDownscale {

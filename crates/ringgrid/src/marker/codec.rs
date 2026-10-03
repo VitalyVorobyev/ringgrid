@@ -58,6 +58,7 @@ fn cyclic_distance(a: u16, b: u16) -> u8 {
 
 /// Explicit embedded codebook profile selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CodebookProfile {
     /// Shipped baseline profile with stable IDs `0..892`.

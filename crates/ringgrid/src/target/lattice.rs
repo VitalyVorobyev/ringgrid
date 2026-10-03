@@ -6,29 +6,37 @@ use super::error::TargetValidationError;
 
 /// Hex-lattice geometry: axial rows alternating between long and short rows.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct HexGeometry {
-    /// Number of marker rows.
+    /// Number of marker rows (at least 1).
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
     pub rows: usize,
-    /// Number of columns in the longest (even-offset) rows.
+    /// Number of columns in the longest (even-offset) rows; at least 1, and at least 2 when `rows` > 1.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
     pub long_row_cols: usize,
-    /// Axial lattice pitch in millimeters (see [`LatticeGeometry::min_center_spacing_mm`]
-    /// for the resulting nearest-neighbor distance).
+    /// Axial lattice pitch in millimeters, greater than 0. The nearest-neighbor center distance is `pitch_mm * sqrt(3)`.
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub pitch_mm: f32,
 }
 
 /// Rectangular (square-lattice) geometry: `rows × cols` cells at uniform pitch.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct RectGeometry {
-    /// Number of marker rows.
+    /// Number of marker rows (at least 1).
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
     pub rows: usize,
-    /// Number of marker columns.
+    /// Number of marker columns (at least 1).
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
     pub cols: usize,
-    /// Center-to-center spacing between adjacent markers in millimeters.
+    /// Center-to-center spacing between adjacent markers in millimeters, greater than 0.
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "mm")))]
     pub pitch_mm: f32,
 }
 
 /// Lattice arrangement of marker cells.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LatticeGeometry {
     /// Hexagonal lattice (axial rows with alternating long/short rows).

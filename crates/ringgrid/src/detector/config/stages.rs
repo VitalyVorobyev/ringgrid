@@ -3,14 +3,16 @@
 
 /// Seed-injection controls for proposal generation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct SeedProposalConfig {
-    /// Radius (pixels) used to merge seed centers with detector proposals.
+    /// Radius (pixels) within which an injected seed center is merged with a detector proposal.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub merge_radius_px: f32,
-    /// Score assigned to injected seed proposals.
+    /// Score assigned to injected seed proposals (dimensionless).
     pub seed_score: f32,
-    /// Maximum number of seeds consumed in one run.
+    /// Maximum number of seeds consumed in one run; `null` means no cap.
     pub max_seeds: Option<usize>,
 }
 
@@ -27,23 +29,27 @@ impl Default for SeedProposalConfig {
 /// Configuration for homography-guided completion: attempt local fits for
 /// missing IDs at H-projected board locations.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct CompletionConfig {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
-    /// Radial sampling extent (pixels) used for edge sampling around the prior center.
+    /// Radial sampling extent (pixels) around the prior center used for edge sampling.
+    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
     pub roi_radius_px: f32,
-    /// Maximum allowed reprojection error (pixels) between the fitted center and
-    /// the H-projected board center.
+    /// Maximum allowed distance (pixels) between the fitted center and the homography-projected board center.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub reproj_gate_px: f32,
-    /// Minimum fit confidence in [0, 1].
+    /// Minimum fit confidence (0 to 1) for a completion candidate to be accepted.
     pub min_fit_confidence: f32,
-    /// Minimum arc coverage (fraction of rays with both edges found).
+    /// Minimum arc coverage (fraction of rays, 0 to 1, with both edges found) for a completion candidate to be accepted.
     pub min_arc_coverage: f32,
-    /// Optional cap on how many completion fits to attempt (in ID order).
+    /// Optional cap on how many completion fits to attempt (in ID order); `null` means no cap.
     pub max_attempts: Option<usize>,
-    /// Skip attempts whose projected center is too close to the image boundary.
+    /// Skip attempts whose projected center lies closer than this distance (pixels) to the image boundary.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub image_margin_px: f32,
     /// Require a perfect decode (dist=0 and margin ≥ the active profile's
     /// minimum cyclic Hamming distance) for a completion marker to be accepted.
@@ -98,31 +104,30 @@ impl Default for CompletionConfig {
 
 /// Projective-only unbiased center recovery from inner/outer conics.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct ProjectiveCenterConfig {
-    /// Use `marker_spec.r_inner_expected` as an optional eigenvalue prior.
+    /// Use `marker_spec.r_inner_expected` as an eigenvalue prior when selecting the center.
     pub use_expected_ratio: bool,
-    /// Weight of the eigenvalue-vs-ratio penalty term.
+    /// Weight (dimensionless, negative values are treated as 0) of the eigenvalue-versus-expected-ratio penalty term.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0)))]
     pub ratio_penalty_weight: f64,
     /// Maximum allowed shift (pixels) from the pre-correction center.
     ///
     /// Corrections jumping further than this are rejected and the original
-    /// center is kept. `None` means "auto": the gate uses the nominal marker
+    /// center is kept. `None` (JSON `null`) means "auto": the gate uses the nominal marker
     /// diameter derived from the active [`MarkerScalePrior`](super::MarkerScalePrior).
     /// Explicit values are honored as-is and survive target re-derivation.
     /// (Renamed from `max_center_shift_px` in 0.8.0 to disambiguate from the
     /// unrelated inner-fit field of the same name; the old JSON key is still
     /// accepted as an alias.)
     #[serde(alias = "max_center_shift_px")]
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub max_correction_shift_px: Option<f64>,
-    /// Optional maximum accepted projective-selection residual.
-    ///
-    /// Higher values are less strict; `None` disables this gate.
+    /// Optional maximum accepted projective-selection residual (dimensionless); higher values are less strict, `null` disables the gate.
     pub max_selected_residual: Option<f64>,
-    /// Optional minimum accepted eigenvalue separation used by the selector.
-    ///
-    /// Low separation indicates unstable conic-pencil eigenpairs.
+    /// Optional minimum eigenvalue separation (dimensionless) required by the selector; low separation indicates unstable conic-pencil eigenpairs. `null` disables the gate.
     pub min_eig_separation: Option<f64>,
 }
 
@@ -151,6 +156,7 @@ impl Default for ProjectiveCenterConfig {
 /// (`id = None`) or are removed entirely depending on `remove_unverified`.
 /// This guarantees no wrong IDs reach the global filter or completion stages.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct IdCorrectionConfig {
@@ -164,7 +170,7 @@ pub struct IdCorrectionConfig {
     /// Multiple multipliers produce a staged sweep from tight to loose. A single-element
     /// Vec produces one pass (equivalent to the old `search_radius_outer_mul`).
     pub auto_search_radius_outer_muls: Vec<f64>,
-    /// Local-scale neighborhood multiplier for consistency checks.
+    /// Neighbor gate for consistency checks: two markers are neighbors when their distance is at most this multiple (dimensionless) of their mean outer radius.
     pub consistency_outer_mul: f64,
     /// Minimum number of local neighbors required to run consistency checks.
     /// Default: 1 (any single neighbor provides enough evidence).
@@ -172,7 +178,7 @@ pub struct IdCorrectionConfig {
     /// Minimum number of one-hop board-neighbor support edges required for a
     /// non-soft-locked ID to remain assigned. Default: 1.
     pub consistency_min_support_edges: usize,
-    /// Maximum allowed contradiction fraction in local consistency checks.
+    /// Maximum allowed fraction (0 to 1) of contradicting neighbor edges in local consistency checks.
     pub consistency_max_contradiction_frac: f32,
     /// Promote a decoded ID to trusted when its local neighborhood structurally
     /// confirms it (support edges ≥ `consistency_min_support_edges`, zero
@@ -193,11 +199,11 @@ pub struct IdCorrectionConfig {
     /// A single high-confidence trusted neighbor is sufficient evidence when
     /// there is no existing wrong ID to protect. Default: 1.
     pub min_votes_recover: usize,
-    /// Minimum fraction of total weighted votes the winning candidate must
-    /// receive. Default: 0.55 (slight majority).
+    /// Minimum fraction (0 to 1) of the total weighted votes the winning candidate must receive. Default: 0.55 (slight majority).
     pub min_vote_weight_frac: f32,
     /// H-reprojection gate (pixels) used by rough-homography fallback
     /// assignments. Intentionally loose to tolerate significant distortion.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub h_reproj_gate_px: f64,
     /// Enable rough-homography fallback for unresolved markers.
     pub homography_fallback_enable: bool,
@@ -216,8 +222,7 @@ pub struct IdCorrectionConfig {
     /// When `false` (default), clear their ID (set to `None`) and keep the
     /// detection so its geometry is available for debugging.
     pub remove_unverified: bool,
-    /// Minimum decode confidence for bootstrapping trusted seeds when no
-    /// homography is available. Default: 0.7.
+    /// Minimum decode confidence (0 to 1) for bootstrapping trusted seeds when no homography is available. Default: 0.7.
     pub seed_min_decode_confidence: f32,
 }
 
@@ -274,6 +279,7 @@ impl Default for IdCorrectionConfig {
 /// (`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto
 /// the inner ring even under the relaxed thresholds.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct InnerAsOuterRecoveryConfig {
@@ -308,6 +314,7 @@ pub struct InnerAsOuterRecoveryConfig {
     /// Per-ray radius refinement half-width (pixels) during recovery. Wider
     /// than production (1.0 px) to catch the flat-topped derivative peaks that
     /// occur under blur. Default: `2.5`.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub refine_halfwidth_px: f32,
     /// Maximum allowed fractional deviation of the recovered outer radius from
     /// the neighbor-median corrected radius: `|r_recovered - r_corrected| /

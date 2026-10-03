@@ -219,6 +219,11 @@ cd crates/ringgrid-py && VIRTUAL_ENV=../../.venv ../../.venv/bin/maturin develop
 # WASM bindings
 wasm-pack build crates/ringgrid-wasm --target web --release
 
+# JSON Schemas (schemas/*.json, shipped in the npm package) — regenerate after
+# touching any config / target-spec / render-options type or its doc comments.
+# CI runs the --check form.
+cargo xtask emit-schemas [--check]
+
 # Run detector
 cargo run -p ringgrid-cli --bin ringgrid-dev -- detect --image <path> --target <path> --out <path> --marker-diameter 32.0
 
@@ -350,7 +355,7 @@ GitHub Actions workflows in `.github/workflows/`:
 - `ci.yml` — fmt, clippy, test, WASM build smoke test on push/PR
 - `publish-crates.yml` — publish ringgrid to crates.io on tag (ringgrid-cli is intentionally unpublished, installable from source)
 - `release-pypi.yml` — build and publish Python wheels to PyPI on tag
-- `release-npm.yml` — build and publish WASM npm package on tag
+- `release-npm.yml` — build and publish WASM npm package on tag (copies `schemas/` into the package via `tools/ci/package_schemas.sh`)
 - `release.yml` — create GitHub release
 - `publish-docs.yml` — build and deploy mdBook docs
 - `audit.yml` — dependency audit

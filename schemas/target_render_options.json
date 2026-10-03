@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "PageOrientation": {
+      "description": "Page orientation applied on top of a `PageSize`.",
+      "oneOf": [
+        {
+          "const": "portrait",
+          "description": "Tall: the page's longer side runs vertically.",
+          "type": "string"
+        },
+        {
+          "const": "landscape",
+          "description": "Wide: the page's longer side runs horizontally.",
+          "type": "string"
+        }
+      ]
+    },
+    "PageSize": {
+      "description": "Physical page size for a printed target.",
+      "oneOf": [
+        {
+          "description": "A square page sized to the drawn content plus the margin.\n\nThe default, and the only size whose extent depends on the target: the\ncontent is fitted into a square box so a printed sheet can be rotated\nwithout changing which markers fit. `PageOrientation` does not apply.",
+          "properties": {
+            "kind": {
+              "const": "fit_content",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "ISO A4: 210 × 297 mm in portrait.",
+          "properties": {
+            "kind": {
+              "const": "a4",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "US Letter: 8.5 × 11 inches in portrait.",
+          "properties": {
+            "kind": {
+              "const": "letter",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An explicit size in millimeters, given in portrait.",
+          "properties": {
+            "height_mm": {
+              "description": "Page height in millimeters (portrait), greater than 0.",
+              "exclusiveMinimum": 0,
+              "type": "number",
+              "x-unit": "mm"
+            },
+            "kind": {
+              "const": "custom",
+              "type": "string"
+            },
+            "width_mm": {
+              "description": "Page width in millimeters (portrait), greater than 0.",
+              "exclusiveMinimum": 0,
+              "type": "number",
+              "x-unit": "mm"
+            }
+          },
+          "required": [
+            "kind",
+            "width_mm",
+            "height_mm"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PageSpec": {
+      "description": "Page size, orientation, and margin for a printed target.\n\nThe default is `PageSize::FitContent` with a zero margin — a square page\nsized exactly to the target.",
+      "properties": {
+        "margin_mm": {
+          "default": 0.0,
+          "description": "Uniform white margin in millimeters on every edge (0 or more).",
+          "minimum": 0.0,
+          "type": "number",
+          "x-unit": "mm"
+        },
+        "orientation": {
+          "$ref": "#/$defs/PageOrientation",
+          "default": "portrait",
+          "description": "Orientation applied to `PageSpec::size`. Ignored by\n`PageSize::FitContent`, whose page is square."
+        },
+        "size": {
+          "$ref": "#/$defs/PageSize",
+          "default": {
+            "kind": "fit_content"
+          },
+          "description": "Physical page size."
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Options shared by every rendered target format.\n\nOne options type covers all formats: the page and scale bar apply to the\nSVG and PNG renderings, and `png_dpi` is only consulted by the raster. The\nDXF rendering ignores all of them — see\n`TargetLayout::render_target_dxf`.",
+  "properties": {
+    "include_scale_bar": {
+      "default": true,
+      "description": "Draw the scale bar in the lower-left corner of the printable area.\n\n`true` by default. A consumer that draws its own scale line must set\nthis to `false`, or the print carries two.",
+      "type": "boolean"
+    },
+    "page": {
+      "$ref": "#/$defs/PageSpec",
+      "default": {
+        "margin_mm": 0.0,
+        "orientation": "portrait",
+        "size": {
+          "kind": "fit_content"
+        }
+      },
+      "description": "Sheet the target is printed on.\n\nDefaults to `PageSize::FitContent` with no margin: a square page sized\nexactly to the drawn content."
+    },
+    "png_dpi": {
+      "default": 300.0,
+      "description": "Raster density (dots per inch, greater than 0) used to convert millimeters into PNG pixels.\n\nAlso embedded in the encoded PNG as physical pixel dimensions (`pHYs`)\nso the file retains its intended print scale.",
+      "exclusiveMinimum": 0,
+      "type": "number",
+      "x-unit": "dpi"
+    }
+  },
+  "title": "TargetRenderOptions",
+  "type": "object"
+}

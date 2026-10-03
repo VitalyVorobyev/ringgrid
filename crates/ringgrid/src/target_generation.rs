@@ -23,6 +23,7 @@ const DEFAULT_PNG_DPI: f32 = 300.0;
 /// DXF rendering ignores all of them — see
 /// [`TargetLayout::render_target_dxf`].
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct TargetRenderOptions {
     /// Sheet the target is printed on.
@@ -35,10 +36,11 @@ pub struct TargetRenderOptions {
     /// `true` by default. A consumer that draws its own scale line must set
     /// this to `false`, or the print carries two.
     pub include_scale_bar: bool,
-    /// Raster density used to convert millimeters into PNG pixels.
+    /// Raster density (dots per inch, greater than 0) used to convert millimeters into PNG pixels.
     ///
     /// Also embedded in the encoded PNG as physical pixel dimensions (`pHYs`)
     /// so the file retains its intended print scale.
+    #[cfg_attr(feature = "schemars", schemars(extend("exclusiveMinimum" = 0, "x-unit" = "dpi")))]
     pub png_dpi: f32,
 }
 

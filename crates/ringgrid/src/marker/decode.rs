@@ -50,6 +50,7 @@ pub struct DecodeMetrics {
 
 /// Configuration for sector decoding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 #[non_exhaustive]
 pub struct DecodeConfig {
@@ -64,11 +65,14 @@ pub struct DecodeConfig {
     /// Defaults to [`CodebookProfile::Base`], which preserves the shipped stable
     /// IDs `0..892`. `extended` expands the codebook at the cost of a weaker
     /// minimum cyclic Hamming distance.
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true)))]
     pub codebook_profile: CodebookProfile,
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the
     /// ellipse coordinate frame.
+    /// Derived from the target's ring radii and stroke width; a value supplied in JSON is overwritten when the config is loaded.
     /// Default: `0.76` (see the `Default` impl).
+    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true)))]
     pub code_band_ratio: f32,
     /// Number of angular samples per sector.
     /// Default: `5` (see the `Default` impl).
@@ -76,10 +80,10 @@ pub struct DecodeConfig {
     /// Number of radial rings to sample within the code band.
     /// Default: `3` (see the `Default` impl).
     pub n_radial_rings: usize,
-    /// Maximum Hamming distance for a valid decode.
+    /// Maximum Hamming distance (bit errors out of 16 sectors) for a valid decode.
     /// Default: `3` (see the `Default` impl).
     pub max_decode_dist: u8,
-    /// Minimum confidence for a valid decode.
+    /// Minimum decode confidence (0 to 1) for a valid decode.
     /// Default: `0.3` (see the `Default` impl).
     pub min_decode_confidence: f32,
     /// Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.
@@ -94,9 +98,10 @@ pub struct DecodeConfig {
     /// Default: `1` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_min_decode_margin")]
     pub min_decode_margin: u8,
-    /// Minimum accepted sector-intensity contrast (`max - min`) before decode.
+    /// Minimum accepted sector-intensity contrast (`max - min`, in normalized 0 to 1 intensity units) before decode; negative values are treated as 0.
     /// Default: `0.03` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_min_decode_contrast")]
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0)))]
     pub min_decode_contrast: f32,
     /// Maximum iterations for iterative 2-means threshold refinement.
     /// Default: `10` (see the `Default` impl).

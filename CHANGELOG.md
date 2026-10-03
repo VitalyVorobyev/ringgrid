@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-03
+
+JSON Schemas for the configs the WASM package accepts, so a schema-driven form
+can edit them. Additive only: no serde representation or public API changed.
+
+### Added
+
+- **JSON Schemas in `schemas/` and in the `@vitavision/ringgrid` npm package**
+  (`schemas/detect_config.json`, `schemas/target_spec.json`,
+  `schemas/target_render_options.json`, JSON Schema draft 2020-12). They
+  describe the detector config passed to `RinggridDetector.with_config` /
+  `update_config`, the target JSON returned by `default_board_json` and the
+  target builders (and accepted wherever a `target_json` is taken), and the
+  options passed to `render_target_bundle_json`. Every field carries its doc comment as `description`;
+  pixel, millimetre, radian and dpi fields carry an `x-unit` annotation, and
+  bounds the code enforces (clamps, validation) appear as `minimum` /
+  `maximum` / `exclusiveMinimum`; fields the library re-derives from
+  `marker_scale` and the target on every load are `readOnly`. The detector config's defaults depend on the
+  target layout (`default_config_json(board_json)` re-derives them), which the
+  top-level description states. The target schema describes the canonical
+  `ringgrid.target.v6` form only; legacy v5/v4 files are still migrated on load.
+- **`schemars` feature on `ringgrid`** (off by default). It derives
+  `schemars::JsonSchema` for `DetectConfig` and every type reachable from it,
+  for `TargetRenderOptions` and the page types, and exposes
+  `ringgrid::target_spec_schema()` for the private v6 wire type.
+- **`cargo xtask emit-schemas [--check]`** regenerates `schemas/`; CI runs the
+  `--check` form so the committed files cannot drift from the source types.
+  `tests/config_schemas.rs` validates real library output (defaults, board-
+  derived configs, every target preset and builder, render options) and
+  rejects hand-built invalid documents against the generated schemas.
+
+### Changed
+
+- The release workflow copies `schemas/` into the npm package and fails if
+  `npm pack --dry-run` does not list all three files; CI's `wasm-build` job
+  runs the same check (`tools/ci/package_schemas.sh`).
+- `.gitattributes` now normalizes line endings to LF (`* text=auto eol=lf`) so
+  the byte-compared schema files never pick up CRLF on Windows checkouts.
+
 ## [0.13.0]
 
 Target rendering is now reachable from every binding, and can place a target on

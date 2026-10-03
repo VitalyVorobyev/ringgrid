@@ -98,6 +98,36 @@ const detector = RinggridDetector.with_config(boardJson, JSON.stringify(config))
 detector.update_config(JSON.stringify({ advanced: { completion: { enable: true } } }));
 ```
 
+### JSON Schemas
+
+The npm package ships JSON Schemas (draft 2020-12) for the JSON the API takes,
+so a schema-driven form can edit it. Each field carries its description, unit
+(`x-unit`: `px`, `mm`, `rad`, `dpi`) and enforced bounds.
+
+| File | Describes |
+|------|-----------|
+| `schemas/detect_config.json` | the detector config (`with_config`, `update_config` overlays, `config_json()`) |
+| `schemas/target_spec.json` | target JSON (`default_board_json()`, the `*_target_json` builders, any `target_json` argument) |
+| `schemas/target_render_options.json` | the `options_json` of `render_target_bundle_json` / `target_page_size_mm` |
+
+```js
+import detectConfigSchema from "@vitavision/ringgrid/schemas/detect_config.json" with { type: "json" };
+```
+
+Fields derived from `marker_scale` and the target (proposal radii, edge-sampling
+radii, completion ROI, code-band ratio, ...) are marked `readOnly`: the library
+overwrites them whenever a config is loaded, so a form should not offer them as
+inputs.
+
+`x-unit` is an annotation keyword; a validator in strict mode must be told about
+it (Ajv: `ajv.addVocabulary(["x-unit"])`).
+
+The detector config's defaults depend on the board (scale- and geometry-coupled
+values are derived from it), so seed a form from `default_config_json(board_json)`
+rather than from the defaults embedded in the schema. The target schema covers
+the canonical `ringgrid.target.v6` form; legacy v5/v4 files are migrated by
+`canonical_target_spec_json`.
+
 ## API
 
 ### `RinggridDetector`

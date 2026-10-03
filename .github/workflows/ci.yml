@@ -46,6 +46,10 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
+      # `schemas/` ships in the npm package; it must match the source types.
+      - name: Check JSON Schemas are up to date
+        run: cargo xtask emit-schemas --check
+
   synth-smoke:
     name: Synthetic Smoke Eval (ubuntu)
     runs-on: ubuntu-latest
@@ -190,6 +194,11 @@ jobs:
           test -f crates/ringgrid-wasm/pkg/ringgrid_wasm.js
           test -f crates/ringgrid-wasm/pkg/ringgrid_wasm.d.ts
           ls -lh crates/ringgrid-wasm/pkg/ringgrid_wasm_bg.wasm
+
+      # Copies schemas/ into pkg/, adds it to package.json `files`, and asserts
+      # via `npm pack --dry-run` that the tarball lists all three schema files.
+      - name: Package JSON Schemas and verify the npm tarball
+        run: bash tools/ci/package_schemas.sh
 
   cross-build:
     name: Cross-platform Build/Test

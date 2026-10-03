@@ -1,0 +1,1351 @@
+{
+  "$defs": {
+    "AdvancedDetectConfig": {
+      "description": "Per-stage tuning parameters of the detection pipeline (proposals, edge sampling, ellipse fitting, decoding, ID correction, completion). Most users never need to change them; several defaults are derived from the target layout and `marker_scale`, see the top-level description.",
+      "properties": {
+        "completion": {
+          "$ref": "#/$defs/CompletionConfig",
+          "default": {
+            "enable": true,
+            "image_margin_px": 10.0,
+            "max_attempts": null,
+            "max_radii_std_ratio": 0.35,
+            "min_arc_coverage": 0.35,
+            "min_fit_confidence": 0.45,
+            "reproj_gate_px": 3.0,
+            "require_perfect_decode": false,
+            "roi_radius_px": 24.0
+          },
+          "description": "Homography-guided completion controls."
+        },
+        "decode": {
+          "$ref": "#/$defs/DecodeConfig",
+          "default": {
+            "code_band_ratio": 0.76,
+            "codebook_profile": "base",
+            "max_decode_dist": 3,
+            "min_decode_confidence": 0.3,
+            "min_decode_contrast": 0.03,
+            "min_decode_margin": 1,
+            "n_radial_rings": 3,
+            "samples_per_sector": 5,
+            "threshold_convergence_eps": 0.0001,
+            "threshold_max_iters": 10
+          },
+          "description": "Marker decode configuration."
+        },
+        "dedup_radius": {
+          "default": 6.0,
+          "description": "Non-maximum-suppression radius (pixels) used to merge duplicate final markers.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "edge_sample": {
+          "$ref": "#/$defs/EdgeSampleConfig",
+          "default": {
+            "min_rays_with_ring": 16,
+            "min_ring_depth": 0.08,
+            "n_rays": 48,
+            "r_max": 14.0,
+            "r_min": 1.5,
+            "r_step": 0.5
+          },
+          "description": "Radial edge sampling configuration."
+        },
+        "geometric_verify": {
+          "default": true,
+          "description": "Final precision-first geometric verification gate.\n\nAfter the final homography, each decoded marker is checked against its\nhex-neighbor midpoint prediction (locally affine, so distortion-robust)\nand, as a gross-blunder backstop, against its final-H reprojection\nresidual. Both thresholds adapt to the observed inlier residual\ndistribution, so the gate stays recall-safe on clean and lens-distorted\nboards alike. Markers the lattice judges geometrically inconsistent are\nremoved, so only trusted board correspondences reach the output.\n\nDisable (`false`) to keep every decoded marker and apply your own\nfiltering. Default: `true`.",
+          "type": "boolean"
+        },
+        "id_correction": {
+          "$ref": "#/$defs/IdCorrectionConfig",
+          "default": {
+            "auto_search_radius_outer_muls": [
+              2.4,
+              2.9,
+              3.5,
+              4.2,
+              5.0
+            ],
+            "confirm_by_consistency": true,
+            "consistency_max_contradiction_frac": 0.5,
+            "consistency_min_neighbors": 1,
+            "consistency_min_support_edges": 1,
+            "consistency_outer_mul": 3.2,
+            "enable": true,
+            "h_reproj_gate_px": 30.0,
+            "homography_fallback_enable": true,
+            "homography_min_inliers": 12,
+            "homography_min_trusted": 24,
+            "max_iters": 5,
+            "min_vote_weight_frac": 0.55,
+            "min_votes": 2,
+            "min_votes_recover": 1,
+            "remove_unverified": false,
+            "seed_min_decode_confidence": 0.7,
+            "soft_lock_exact_decode": true
+          },
+          "description": "Structural ID verification and correction using hex neighborhood consensus."
+        },
+        "inner_as_outer_recovery": {
+          "$ref": "#/$defs/InnerAsOuterRecoveryConfig",
+          "default": {
+            "enable": true,
+            "k_neighbors": 6,
+            "min_ring_depth": 0.02,
+            "min_theta_consistency": 0.18,
+            "min_theta_coverage": 0.4,
+            "ratio_threshold": 0.75,
+            "refine_halfwidth_px": 2.5,
+            "size_gate_tolerance": 0.25
+          },
+          "description": "Automatic recovery for markers where the inner edge was incorrectly\nfitted as the outer ellipse."
+        },
+        "inner_fit": {
+          "$ref": "#/$defs/InnerFitConfig",
+          "default": {
+            "local_peak_halfwidth_idx": 3,
+            "max_angular_gap_rad": 1.5707963267948966,
+            "max_center_shift_px": 12.0,
+            "max_ratio_abs_error": 0.15,
+            "max_rms_residual": 1.0,
+            "min_inlier_ratio": 0.5,
+            "min_points": 20,
+            "miss_confidence_factor": 0.7,
+            "ransac": {
+              "inlier_threshold": 1.5,
+              "max_iters": 200,
+              "min_inliers": 8,
+              "seed": 43
+            },
+            "require_inner_fit": false
+          },
+          "description": "Robust inner ellipse fitting controls shared across pipeline stages."
+        },
+        "marker_spec": {
+          "$ref": "#/$defs/MarkerSpecConfig",
+          "default": {
+            "aggregator": "median",
+            "inner_grad_polarity": "light_to_dark",
+            "inner_search_halfwidth": 0.08,
+            "min_theta_consistency": 0.25,
+            "min_theta_coverage": 0.6,
+            "r_inner_expected": 0.48809525,
+            "radial_samples": 64,
+            "theta_samples": 96
+          },
+          "description": "Marker geometry specification and estimator controls."
+        },
+        "max_aspect_ratio": {
+          "default": 3.0,
+          "description": "Maximum major/minor axis ratio (`a/b`, dimensionless) of a valid outer ellipse; fits above it are rejected.",
+          "type": "number"
+        },
+        "outer_estimation": {
+          "$ref": "#/$defs/OuterEstimationConfig",
+          "default": {
+            "aggregator": "median",
+            "allow_two_hypotheses": true,
+            "grad_polarity": "dark_to_light",
+            "min_theta_consistency": 0.35,
+            "min_theta_coverage": 0.6,
+            "radial_samples": 64,
+            "refine_halfwidth_px": 1.0,
+            "search_halfwidth_px": 4.0,
+            "second_peak_min_rel": 0.85
+          },
+          "description": "Outer edge estimation configuration (anchored on `marker_scale`)."
+        },
+        "outer_fit": {
+          "$ref": "#/$defs/OuterFitConfig",
+          "default": {
+            "max_angular_gap_rad": 1.5707963267948966,
+            "min_direct_fit_points": 6,
+            "min_ransac_points": 8,
+            "ransac": {
+              "inlier_threshold": 1.5,
+              "max_iters": 200,
+              "min_inliers": 6,
+              "seed": 42
+            },
+            "size_score_weight": 0.15
+          },
+          "description": "Robust outer ellipse fitting controls shared across pipeline stages."
+        },
+        "projective_center": {
+          "$ref": "#/$defs/ProjectiveCenterConfig",
+          "default": {
+            "max_correction_shift_px": null,
+            "max_selected_residual": 0.25,
+            "min_eig_separation": 1e-6,
+            "ratio_penalty_weight": 1.0,
+            "use_expected_ratio": true
+          },
+          "description": "Projective-center recovery controls."
+        },
+        "proposal": {
+          "$ref": "#/$defs/ProposalConfig",
+          "default": {
+            "grad_threshold": 0.05,
+            "max_candidates": null,
+            "min_distance": 7.0,
+            "min_vote_frac": 0.1,
+            "r_max": 12.0,
+            "r_min": 3.0,
+            "radius_step": 1
+          },
+          "description": "Proposal generation configuration."
+        },
+        "proposal_downscale": {
+          "$ref": "#/$defs/ProposalDownscale",
+          "default": "off",
+          "description": "Optional image downscaling before proposal generation.\n\nWhen markers are large, running proposals on a smaller image is much\nfaster while proposal coordinates are approximate anyway (downstream\nstages refine at full resolution). Default: `Off`."
+        },
+        "ransac_homography": {
+          "$ref": "#/$defs/RansacConfig",
+          "default": {
+            "inlier_threshold": 5.0,
+            "max_iters": 2000,
+            "min_inliers": 6,
+            "seed": 0
+          },
+          "description": "RANSAC homography configuration."
+        },
+        "seed_proposals": {
+          "$ref": "#/$defs/SeedProposalConfig",
+          "default": {
+            "max_seeds": 512,
+            "merge_radius_px": 3.0,
+            "seed_score": 1000000000000.0
+          },
+          "description": "Seed-injection controls for multi-pass proposal generation."
+        },
+        "use_global_filter": {
+          "default": true,
+          "description": "Enable global homography filtering (requires board spec).",
+          "type": "boolean"
+        }
+      },
+      "title": "advanced detector configuration",
+      "type": "object"
+    },
+    "AngularAggregator": {
+      "description": "Aggregation method across theta samples.",
+      "oneOf": [
+        {
+          "const": "median",
+          "description": "Median across theta responses.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Trimmed mean (drops `trim_fraction` on each side).",
+          "properties": {
+            "trimmed_mean": {
+              "properties": {
+                "trim_fraction": {
+                  "description": "Fraction removed from each tail before averaging; values are clamped to `[0, 0.45]`.",
+                  "maximum": 0.45,
+                  "minimum": 0.0,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "trim_fraction"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "trimmed_mean"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CircleRefinementMethod": {
+      "description": "Center-correction strategy used after local fits are accepted.",
+      "oneOf": [
+        {
+          "const": "None",
+          "description": "Disable center correction.",
+          "type": "string"
+        },
+        {
+          "const": "ProjectiveCenter",
+          "description": "Run projective-center recovery from inner/outer conics.",
+          "type": "string"
+        }
+      ]
+    },
+    "CodebookProfile": {
+      "description": "Explicit embedded codebook profile selector.",
+      "oneOf": [
+        {
+          "const": "base",
+          "description": "Shipped baseline profile with stable IDs `0..892`.",
+          "type": "string"
+        },
+        {
+          "const": "extended",
+          "description": "Additive opt-in profile that appends the remaining valid 16-bit words\nwithout introducing new complement collisions beyond the shipped\nbaseline.",
+          "type": "string"
+        }
+      ]
+    },
+    "CompletionConfig": {
+      "description": "Configuration for homography-guided completion: attempt local fits for\nmissing IDs at H-projected board locations.",
+      "properties": {
+        "enable": {
+          "default": true,
+          "description": "Enable completion (runs only when a valid homography is available).",
+          "type": "boolean"
+        },
+        "image_margin_px": {
+          "default": 10.0,
+          "description": "Skip attempts whose projected center lies closer than this distance (pixels) to the image boundary.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "max_attempts": {
+          "default": null,
+          "description": "Optional cap on how many completion fits to attempt (in ID order); `null` means no cap.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_radii_std_ratio": {
+          "default": 0.35,
+          "description": "Maximum allowed coefficient of variation (std_dev / mean) of per-ray outer\nradii. High scatter indicates inner/outer edge contamination — rays landing on\nthe inner ring inflate the apparent outer radius for some angles. Values above\nthis threshold cause the completion candidate to be rejected.\n\nThe gate is skipped when fewer than 2 rays have valid outer radii or when the\nmean outer radius is below 1 px (degenerate fit).\n\nDefault: `0.35` (35% coefficient of variation).",
+          "type": "number"
+        },
+        "min_arc_coverage": {
+          "default": 0.35,
+          "description": "Minimum arc coverage (fraction of rays, 0 to 1, with both edges found) for a completion candidate to be accepted.",
+          "type": "number"
+        },
+        "min_fit_confidence": {
+          "default": 0.45,
+          "description": "Minimum fit confidence (0 to 1) for a completion candidate to be accepted.",
+          "type": "number"
+        },
+        "reproj_gate_px": {
+          "default": 3.0,
+          "description": "Maximum allowed distance (pixels) between the fitted center and the homography-projected board center.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "require_perfect_decode": {
+          "default": false,
+          "description": "Require a perfect decode (dist=0 and margin ≥ the active profile's\nminimum cyclic Hamming distance) for a completion marker to be accepted.\n\nWhen homography prediction accuracy is low (e.g. significant lens distortion\nwithout a calibrated mapper), the H-projected seed can be several pixels off.\nUnder those conditions, the geometry gates alone are insufficient; requiring a\nperfect decode provides an independent quality signal that does not depend on H.\n\nDefault: `false` (backward-compatible). Set to `true` for Scheimpflug / high-\ndistortion setups where no calibrated camera model is available.",
+          "type": "boolean"
+        },
+        "roi_radius_px": {
+          "default": 24.0,
+          "description": "Radial sampling extent (pixels) around the prior center used for edge sampling.\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        }
+      },
+      "type": "object"
+    },
+    "DecodeConfig": {
+      "description": "Configuration for sector decoding.",
+      "properties": {
+        "code_band_ratio": {
+          "default": 0.76,
+          "description": "Ratio of code band center radius to outer ellipse semi-major axis.\nThe code band is sampled at `code_band_ratio * (a, b)` in the\nellipse coordinate frame.\nDerived from the target's ring radii and stroke width; a value supplied in JSON is overwritten when the config is loaded.\nDefault: `0.76` (see the `Default` impl).",
+          "readOnly": true,
+          "type": "number"
+        },
+        "codebook_profile": {
+          "$ref": "#/$defs/CodebookProfile",
+          "default": "base",
+          "description": "Embedded codebook profile to match against.\n\n**Derived from the target**, not set by hand: attaching a target with\n`DetectConfig::with_target` copies\nthe profile from its `CodedRingSpec`, so a target printed from one table\nis never decoded against another. Set `codebook_profile` on the target's\ncoding to change it.\n\nDefaults to `CodebookProfile::Base`, which preserves the shipped stable\nIDs `0..892`. `extended` expands the codebook at the cost of a weaker\nminimum cyclic Hamming distance.",
+          "readOnly": true
+        },
+        "max_decode_dist": {
+          "default": 3,
+          "description": "Maximum Hamming distance (bit errors out of 16 sectors) for a valid decode.\nDefault: `3` (see the `Default` impl).",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_decode_confidence": {
+          "default": 0.3,
+          "description": "Minimum decode confidence (0 to 1) for a valid decode.\nDefault: `0.3` (see the `Default` impl).",
+          "type": "number"
+        },
+        "min_decode_contrast": {
+          "default": 0.03,
+          "description": "Minimum accepted sector-intensity contrast (`max - min`, in normalized 0 to 1 intensity units) before decode; negative values are treated as 0.\nDefault: `0.03` (see the `Default` impl).",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "min_decode_margin": {
+          "default": 1,
+          "description": "Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.\n\nA margin of 0 means the two closest codewords are equidistant from the\nobserved word — genuinely ambiguous. Default rejects ties (margin = 0).\nFor setups without homography validation (e.g. no camera intrinsics),\nsetting this to the selected profile's minimum cyclic Hamming distance\naccepts only matches that are unambiguous within that profile's distance\nguarantee. For the shipped baseline profile this value is `2`.\n\nDefault: `1` (see the `Default` impl).",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "n_radial_rings": {
+          "default": 3,
+          "description": "Number of radial rings to sample within the code band.\nDefault: `3` (see the `Default` impl).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "samples_per_sector": {
+          "default": 5,
+          "description": "Number of angular samples per sector.\nDefault: `5` (see the `Default` impl).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threshold_convergence_eps": {
+          "default": 0.0001,
+          "description": "Convergence epsilon for iterative 2-means threshold refinement.\nStop when `|new_threshold - old_threshold| <= eps`.\nDefault: `1e-4` (see the `Default` impl).",
+          "type": "number"
+        },
+        "threshold_max_iters": {
+          "default": 10,
+          "description": "Maximum iterations for iterative 2-means threshold refinement.\nDefault: `10` (see the `Default` impl).",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "EdgeSampleConfig": {
+      "description": "Configuration for radial edge sampling.",
+      "properties": {
+        "min_rays_with_ring": {
+          "default": 16,
+          "description": "Minimum number of rays with a detected ring for a valid candidate.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_ring_depth": {
+          "default": 0.08,
+          "description": "Minimum intensity drop (0 to 1, normalized intensity) for a valid ring.",
+          "type": "number"
+        },
+        "n_rays": {
+          "default": 48,
+          "description": "Number of radial rays to cast per candidate.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "r_max": {
+          "default": 14.0,
+          "description": "Maximum sampling radius (pixels).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "r_min": {
+          "default": 1.5,
+          "description": "Minimum sampling radius (pixels).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "r_step": {
+          "default": 0.5,
+          "description": "Step size along each ray (pixels).",
+          "type": "number",
+          "x-unit": "px"
+        }
+      },
+      "type": "object"
+    },
+    "GradPolarity": {
+      "description": "Expected polarity of the radial intensity derivative `dI/dr` at an edge.\n\nUsed by both inner and outer edge estimators to constrain the search\ndirection. `Auto` tries both polarities and picks the more coherent peak.",
+      "oneOf": [
+        {
+          "const": "dark_to_light",
+          "description": "Intensity increases as radius increases (dark → light).",
+          "type": "string"
+        },
+        {
+          "const": "light_to_dark",
+          "description": "Intensity decreases as radius increases (light → dark).",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Try both and pick the more coherent peak.",
+          "type": "string"
+        }
+      ]
+    },
+    "IdCorrectionConfig": {
+      "description": "Structural ID verification and correction using hex neighborhood consensus.\n\nRuns after fit-decode and deduplication, before the global RANSAC filter.\nUses the board's hex lattice geometry to detect wrong IDs (misidentified by\nthe codebook decoder) and recover missing ones. Each marker's correct ID is\nimplied by its decoded neighbors' positions: neighbors vote on the expected\nboard position of the query marker using a local affine transform (or scale\nestimate when fewer than 3 neighbors are available).\n\nMarkers that cannot be verified or corrected have their IDs cleared\n(`id = None`) or are removed entirely depending on `remove_unverified`.\nThis guarantees no wrong IDs reach the global filter or completion stages.",
+      "properties": {
+        "auto_search_radius_outer_muls": {
+          "default": [
+            2.4,
+            2.9,
+            3.5,
+            4.2,
+            5.0
+          ],
+          "description": "Local-scale staged search multipliers (one per recovery pass, sorted ascending).\n\nThe neighbor gate for pair `(i, j)` in each pass is:\n`dist_px(i,j) <= mul * 0.5 * (outer_radius_px_i + outer_radius_px_j)`.\n\nMultiple multipliers produce a staged sweep from tight to loose. A single-element\nVec produces one pass (equivalent to the old `search_radius_outer_mul`).",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "confirm_by_consistency": {
+          "default": true,
+          "description": "Promote a decoded ID to trusted when its local neighborhood structurally\nconfirms it (support edges ≥ `consistency_min_support_edges`, zero\ncontradiction edges, and no confident vote against it), even when the\nvoting stages produced no candidate. Recovers correct non-exact decodes\nin sparse/partial/blurry views that would otherwise be cleared by\ncleanup. Default: true.",
+          "type": "boolean"
+        },
+        "consistency_max_contradiction_frac": {
+          "default": 0.5,
+          "description": "Maximum allowed fraction (0 to 1) of contradicting neighbor edges in local consistency checks.",
+          "type": "number"
+        },
+        "consistency_min_neighbors": {
+          "default": 1,
+          "description": "Minimum number of local neighbors required to run consistency checks.\nDefault: 1 (any single neighbor provides enough evidence).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "consistency_min_support_edges": {
+          "default": 1,
+          "description": "Minimum number of one-hop board-neighbor support edges required for a\nnon-soft-locked ID to remain assigned. Default: 1.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "consistency_outer_mul": {
+          "default": 3.2,
+          "description": "Neighbor gate for consistency checks: two markers are neighbors when their distance is at most this multiple (dimensionless) of their mean outer radius.",
+          "type": "number"
+        },
+        "enable": {
+          "default": true,
+          "description": "Enable structural ID verification and correction.",
+          "type": "boolean"
+        },
+        "h_reproj_gate_px": {
+          "default": 30.0,
+          "description": "H-reprojection gate (pixels) used by rough-homography fallback\nassignments. Intentionally loose to tolerate significant distortion.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "homography_fallback_enable": {
+          "default": true,
+          "description": "Enable rough-homography fallback for unresolved markers.",
+          "type": "boolean"
+        },
+        "homography_min_inliers": {
+          "default": 12,
+          "description": "Minimum inliers required for fallback homography RANSAC acceptance.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "homography_min_trusted": {
+          "default": 24,
+          "description": "Minimum trusted markers required before attempting homography fallback.\n\nActs as a ceiling: the effective floor is\n`min(homography_min_trusted, max(8, n_markers / 3))`, so sparse/partial\nviews (where local voting is weakest) still engage the geometric\nfallback once a third of the visible markers are trusted.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_iters": {
+          "default": 5,
+          "description": "Maximum number of iterative correction passes. Default: 5.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_vote_weight_frac": {
+          "default": 0.55,
+          "description": "Minimum fraction (0 to 1) of the total weighted votes the winning candidate must receive. Default: 0.55 (slight majority).",
+          "type": "number"
+        },
+        "min_votes": {
+          "default": 2,
+          "description": "Minimum number of independent neighbor votes required to accept a\ncandidate ID for a marker that already has an id. Default: 2.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_votes_recover": {
+          "default": 1,
+          "description": "Minimum votes to assign an ID to a marker that currently has `id = None`.\n\nA single high-confidence trusted neighbor is sufficient evidence when\nthere is no existing wrong ID to protect. Default: 1.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "remove_unverified": {
+          "default": false,
+          "description": "When `true`, remove markers that cannot be verified or corrected.\nWhen `false` (default), clear their ID (set to `None`) and keep the\ndetection so its geometry is available for debugging.",
+          "type": "boolean"
+        },
+        "seed_min_decode_confidence": {
+          "default": 0.7,
+          "description": "Minimum decode confidence (0 to 1) for bootstrapping trusted seeds when no homography is available. Default: 0.7.",
+          "type": "number"
+        },
+        "soft_lock_exact_decode": {
+          "default": true,
+          "description": "When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:\nthey are not overridden during normal recovery and only cleared on\nstrict structural contradiction.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "InnerAsOuterRecoveryConfig": {
+      "description": "Configuration for automatic recovery of markers where the inner edge was\nincorrectly fitted as the outer ellipse.\n\nAfter all markers are finalized, each marker's outer radius is compared to\nthe median outer radius of its k nearest neighbors. A ratio well below 1.0\n(see `ratio_threshold`) indicates the outer fit locked onto the inner ring\nedge. When enabled, the detector re-attempts the outer fit for flagged\nmarkers using the neighbor median radius as the corrected expected radius.\n\nThe recovery re-fit uses a tight 4 px search window (to exclude the inner\nring) combined with relaxed quality gates (`min_theta_consistency`,\n`min_ring_depth`, `refine_halfwidth_px`) suited to the blurry/soft edges\nthat typically cause inner-as-outer confusion. A post-fit size gate\n(`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto\nthe inner ring even under the relaxed thresholds.",
+      "properties": {
+        "enable": {
+          "default": true,
+          "description": "Enable inner-as-outer recovery (default: `true`).",
+          "type": "boolean"
+        },
+        "k_neighbors": {
+          "default": 6,
+          "description": "Number of nearest neighbors used to compute the median outer radius.\n\nDefault: `6` (matching the hex-lattice neighbor count). Self is always\nexcluded by passing k+1 to the neighbor function.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_ring_depth": {
+          "default": 0.02,
+          "description": "Minimum signed intensity depth at a candidate outer edge point during\nrecovery edge collection. Lower than production (0.05) to tolerate\nblur-smeared intensity gradients. Default: `0.02`.",
+          "type": "number"
+        },
+        "min_theta_consistency": {
+          "default": 0.18,
+          "description": "Minimum fraction of angular samples (rays) whose radial peak must agree\nwith the selected hypothesis radius during the recovery re-estimation.\n\nLower than the production default (0.35) because blurry outer edges\nscatter per-θ peaks more widely. Default: `0.18`.",
+          "type": "number"
+        },
+        "min_theta_coverage": {
+          "default": 0.4,
+          "description": "Minimum fraction of angular rays with valid (in-bounds) samples during\nthe recovery re-estimation. Default: `0.40`.",
+          "type": "number"
+        },
+        "ratio_threshold": {
+          "default": 0.75,
+          "description": "Neighbor-radius ratio below which a marker is considered anomalous and\na re-fit is attempted.\n\nDefault: `0.75`. Markers with `own_radius / neighbor_median < 0.75` are\nflagged. A value of ~0.64 is expected for an inner-as-outer confusion\n(inner radius ≈ 0.49 × outer radius → ratio = 0.49 / 0.77 ≈ 0.64 when\ninner accounts for the inner/outer ratio of the ring marker geometry).",
+          "type": "number"
+        },
+        "refine_halfwidth_px": {
+          "default": 2.5,
+          "description": "Per-ray radius refinement half-width (pixels) during recovery. Wider\nthan production (1.0 px) to catch the flat-topped derivative peaks that\noccur under blur. Default: `2.5`.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "size_gate_tolerance": {
+          "default": 0.25,
+          "description": "Maximum allowed fractional deviation of the recovered outer radius from\nthe neighbor-median corrected radius: `|r_recovered - r_corrected| /\nr_corrected ≤ size_gate_tolerance`. Prevents the relaxed estimator from\naccepting a re-locked inner-ring fit. Default: `0.25`.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "InnerFitConfig": {
+      "description": "Configuration for robust inner ellipse fitting from outer-fit hints.",
+      "properties": {
+        "local_peak_halfwidth_idx": {
+          "default": 3,
+          "description": "Local half-width, in radius-sample indices, of the search window around the radial hint.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_angular_gap_rad": {
+          "default": 1.5707963267948966,
+          "description": "Maximum allowed angular gap (radians) between consecutive inner edge\npoints. Fits where the largest gap exceeds this are rejected.\n\nDefault: π/2 (90 degrees).",
+          "type": "number",
+          "x-unit": "rad"
+        },
+        "max_center_shift_px": {
+          "default": 12.0,
+          "description": "Maximum allowed distance (pixels) between the outer-fit and inner-fit centers.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "max_ratio_abs_error": {
+          "default": 0.15,
+          "description": "Maximum allowed absolute difference (dimensionless, inner/outer radius ratio) between the recovered scale ratio and the radial hint.",
+          "type": "number"
+        },
+        "max_rms_residual": {
+          "default": 1.0,
+          "description": "Maximum accepted RMS Sampson residual (pixels) of the fitted inner ellipse.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "min_inlier_ratio": {
+          "default": 0.5,
+          "description": "Minimum accepted inlier fraction (0 to 1) when RANSAC is used; fits below it are rejected.",
+          "type": "number"
+        },
+        "min_points": {
+          "default": 20,
+          "description": "Minimum number of sampled edge points required to attempt an inner ellipse fit.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "miss_confidence_factor": {
+          "default": 0.7,
+          "description": "Confidence multiplier applied when inner ellipse fit fails or is absent.\n\nInner fit failure is a reliable signal of poor image quality (heavy blur,\ndistortion, or edge contamination). Setting this below 1.0 discounts the\ndecode confidence when the inner ring cannot be fitted, making true markers\nin clear regions easier to separate from false detections.\n\nDefault: 0.7 (30 % confidence reduction on inner-fit miss).",
+          "type": "number"
+        },
+        "ransac": {
+          "$ref": "#/$defs/RansacConfig",
+          "default": {
+            "inlier_threshold": 1.5,
+            "max_iters": 200,
+            "min_inliers": 8,
+            "seed": 43
+          },
+          "description": "RANSAC configuration for robust inner ellipse fitting."
+        },
+        "require_inner_fit": {
+          "default": false,
+          "description": "When true, markers are hard-rejected (not just penalized) if the inner\nellipse cannot be fitted. Requires two good ellipses per marker.\n\nDefault: false (backward-compatible).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "MarkerScalePrior": {
+      "description": "Scale prior for marker diameter in detector working pixels.\n\nThe detector uses this range to derive proposal radii, outer-edge search\nwindows, ellipse validation bounds, and completion ROI. When the marker\nscale prior is set via `DetectConfig::set_marker_scale_prior` or a\nconstructor, all scale-dependent parameters are auto-derived.\n\nA single known size can be expressed with\n`MarkerScalePrior::from_nominal_diameter_px`. For scenes where markers\nvary in apparent size, use `MarkerScalePrior::new` with a range.\n\n`DetectConfig::set_marker_scale_prior`: super::DetectConfig::set_marker_scale_prior",
+      "properties": {
+        "diameter_max_px": {
+          "default": 66.0,
+          "description": "Maximum expected marker outer diameter in pixels. Raised to `diameter_min_px` when smaller.",
+          "minimum": 4.0,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "diameter_min_px": {
+          "default": 14.0,
+          "description": "Minimum expected marker outer diameter in pixels. Values below 4 px are raised to 4.",
+          "minimum": 4.0,
+          "type": "number",
+          "x-unit": "px"
+        }
+      },
+      "type": "object"
+    },
+    "MarkerSpecConfig": {
+      "description": "Marker spec in outer-normalized radius units.\n\nNOTE: Defaults are derived from the synthetic renderer in `tools/gen_synth.py`\n*and* the current edge sampler semantics in `ring::edge_sample::sample_edges`.\n\nIn `gen_synth.py` the default synthetic marker uses:\n- outer_radius         = pitch_mm * 0.6\n- inner_radius         = pitch_mm * 0.4\n- ring_half_thickness  = outer_radius * 0.12\n\nThe edge sampler finds the boundary of the merged dark band under blur, so\nthe expected (inner_edge / outer_edge) ratio in *outer-normalized* units is:\n  r_inner_expected =\n      (inner_radius - ring_half_thickness) / (outer_radius + ring_half_thickness)",
+      "properties": {
+        "aggregator": {
+          "$ref": "#/$defs/AngularAggregator",
+          "default": "median",
+          "description": "Aggregator across theta.\n\nSame convention as `OuterEstimationConfig::aggregator`, applied to the\ninner radial profile."
+        },
+        "inner_grad_polarity": {
+          "$ref": "#/$defs/GradPolarity",
+          "default": "light_to_dark",
+          "description": "Expected sign of dI/dr at the inner edge."
+        },
+        "inner_search_halfwidth": {
+          "default": 0.08,
+          "description": "Half-width of the inner-edge search window, in outer-normalized radius units (dimensionless), around `r_inner_expected`.",
+          "type": "number"
+        },
+        "min_theta_consistency": {
+          "default": 0.25,
+          "description": "Minimum fraction of theta samples that must agree on the inner edge\nlocation (used as a quality gate).\n\nSame convention as `OuterEstimationConfig::min_theta_consistency`; the\ninner estimator uses a more permissive default (0.25) than the outer (0.35)\nbecause the inner edge is less anchored to a scale prior.\n\nKept separate from `min_theta_coverage`: \"coverage\" is about in-bounds\nsampling, while \"consistency\" is about peak agreement.",
+          "type": "number"
+        },
+        "min_theta_coverage": {
+          "default": 0.6,
+          "description": "Minimum fraction of theta samples required for a valid estimate.\n\nSame convention as `OuterEstimationConfig::min_theta_coverage`, calibrated\nindependently for the inner estimation stage.",
+          "type": "number"
+        },
+        "r_inner_expected": {
+          "default": 0.48809525,
+          "description": "Expected inner edge radius as a fraction of the outer edge radius (dimensionless).\nDerived from the target's ring radii and stroke width; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number"
+        },
+        "radial_samples": {
+          "default": 64,
+          "description": "Number of radii samples per theta.\n\nSame convention as `OuterEstimationConfig::radial_samples`, calibrated\nindependently for the inner estimation stage.",
+          "minimum": 5,
+          "type": "integer"
+        },
+        "theta_samples": {
+          "default": 96,
+          "description": "Number of theta samples (rays) for inner-scale estimation.\n\nUnlike the outer estimator (where ray count is set to `edge_sample.n_rays`\nat the call site), this value is used directly — the inner scan is not\ncoupled to the edge-sampling resolution.",
+          "minimum": 8,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "OuterEstimationConfig": {
+      "description": "Configuration for outer-radius estimation around a center prior.\n\nThe number of theta samples (rays) is **not** stored here; it is passed\nexplicitly to `estimate_outer_from_prior_with_mapper` so the caller can\nsynchronise it with the edge-sampling resolution without a silent override.\nSet `EdgeSampleConfig::n_rays` to control angular density for both stages.",
+      "properties": {
+        "aggregator": {
+          "$ref": "#/$defs/AngularAggregator",
+          "default": "median",
+          "description": "Aggregation method across theta.\n\nSame convention as `MarkerSpecConfig::aggregator`, applied to the outer\nradial profile."
+        },
+        "allow_two_hypotheses": {
+          "default": true,
+          "description": "Emit up to two hypotheses (best and runner-up) when the runner-up is comparable.",
+          "type": "boolean"
+        },
+        "grad_polarity": {
+          "$ref": "#/$defs/GradPolarity",
+          "default": "dark_to_light",
+          "description": "Expected polarity of `dI/dr` at the outer edge."
+        },
+        "min_theta_consistency": {
+          "default": 0.35,
+          "description": "Minimum fraction (0 to 1) of theta samples that must agree with the selected peak.\n\nSame convention as `MarkerSpecConfig::min_theta_consistency`; the outer\nestimator uses a stricter default (0.35) than the inner estimator (0.25)\nbecause the outer edge is anchored to a scale prior.",
+          "type": "number"
+        },
+        "min_theta_coverage": {
+          "default": 0.6,
+          "description": "Minimum fraction (0 to 1) of theta samples required for an estimate.\n\nSame convention as `MarkerSpecConfig::min_theta_coverage`, calibrated\nindependently for the outer estimation stage.",
+          "type": "number"
+        },
+        "radial_samples": {
+          "default": 64,
+          "description": "Number of radial samples used to build the aggregated response.\n\nSame convention as `MarkerSpecConfig::radial_samples`, calibrated\nindependently for the outer estimation stage.",
+          "minimum": 7,
+          "type": "integer"
+        },
+        "refine_halfwidth_px": {
+          "default": 1.0,
+          "description": "Per-theta local refinement half-width (pixels) around the chosen radius.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "search_halfwidth_px": {
+          "default": 4.0,
+          "description": "Search half-width around the expected outer radius, in pixels (at least 0.5).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "minimum": 0.5,
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "second_peak_min_rel": {
+          "default": 0.85,
+          "description": "Runner-up must be at least this fraction (0 to 1) of the best peak strength; values are clamped to `[0, 1]`.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "OuterFitConfig": {
+      "description": "Configuration for robust outer ellipse fitting from sampled edge points.",
+      "properties": {
+        "max_angular_gap_rad": {
+          "default": 1.5707963267948966,
+          "description": "Maximum allowed angular gap (radians) between consecutive outer edge\npoints. Fits where the largest gap exceeds this are rejected.\n\nDefault: π/2 (90 degrees).",
+          "type": "number",
+          "x-unit": "rad"
+        },
+        "min_direct_fit_points": {
+          "default": 6,
+          "description": "Minimum number of sampled edge points required to attempt a direct least-squares ellipse fit.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_ransac_points": {
+          "default": 8,
+          "description": "Minimum number of sampled edge points required before RANSAC is attempted.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ransac": {
+          "$ref": "#/$defs/RansacConfig",
+          "default": {
+            "inlier_threshold": 1.5,
+            "max_iters": 200,
+            "min_inliers": 6,
+            "seed": 42
+          },
+          "description": "RANSAC configuration for robust outer ellipse fitting."
+        },
+        "size_score_weight": {
+          "default": 0.15,
+          "description": "Relative weight of size agreement in outer-hypothesis scoring.\n\nThe score combines decode quality, fit support, size agreement, and\nresidual quality. This weight controls the size-agreement term and is\nnormalized with the other terms at runtime.\n\nDefault: `0.15` (preserves legacy behavior).",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ProjectiveCenterConfig": {
+      "description": "Projective-only unbiased center recovery from inner/outer conics.",
+      "properties": {
+        "max_correction_shift_px": {
+          "default": null,
+          "description": "Maximum allowed shift (pixels) from the pre-correction center.\n\nCorrections jumping further than this are rejected and the original\ncenter is kept. `None` (JSON `null`) means \"auto\": the gate uses the nominal marker\ndiameter derived from the active `MarkerScalePrior`.\nExplicit values are honored as-is and survive target re-derivation.\n(Renamed from `max_center_shift_px` in 0.8.0 to disambiguate from the\nunrelated inner-fit field of the same name; the old JSON key is still\naccepted as an alias.)",
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-unit": "px"
+        },
+        "max_selected_residual": {
+          "default": 0.25,
+          "description": "Optional maximum accepted projective-selection residual (dimensionless); higher values are less strict, `null` disables the gate.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min_eig_separation": {
+          "default": 1e-6,
+          "description": "Optional minimum eigenvalue separation (dimensionless) required by the selector; low separation indicates unstable conic-pencil eigenpairs. `null` disables the gate.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ratio_penalty_weight": {
+          "default": 1.0,
+          "description": "Weight (dimensionless, negative values are treated as 0) of the eigenvalue-versus-expected-ratio penalty term.",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "use_expected_ratio": {
+          "default": true,
+          "description": "Use `marker_spec.r_inner_expected` as an eigenvalue prior when selecting the center.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ProposalConfig": {
+      "description": "Configuration for ellipse center detection via gradient-based radial\nsymmetry voting.\n\n# Primary parameters\n\nThe three parameters that most strongly affect recall and performance:\n\n- `r_min` / `r_max` — voting radius range\n  in pixels. Edges cast votes along the gradient direction at distances\n  `[r_min, r_max]` from the edge pixel. The range should bracket the\n  expected radii of the ellipses you are looking for.\n- `min_distance` — minimum distance in pixels\n  between output proposals. Controls spatial suppression of nearby peaks.\n\n# Secondary parameters\n\nThese have sensible defaults and rarely need tuning:\n\n- `grad_threshold` — fraction of max gradient\n  magnitude; pixels below this are not used for voting.\n- `min_vote_frac` — fraction of the accumulator\n  peak; candidate centers below this are discarded.\n- `max_candidates` — optional hard cap on the\n  number of returned proposals.\n- `radius_step` — stride between voting radii; raise\n  it to trade accumulator sensitivity for proposal-stage speed.",
+      "properties": {
+        "grad_threshold": {
+          "default": 0.05,
+          "description": "Gradient magnitude threshold as a fraction (0 to 1) of the maximum gradient magnitude.",
+          "type": "number"
+        },
+        "max_candidates": {
+          "default": null,
+          "description": "Optional cap on the number of proposals returned (after score sorting); `null` means no cap.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_distance": {
+          "default": 7.0,
+          "description": "Minimum distance between output proposals (pixels).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.\n\nInternally the module uses a two-step strategy:\n1. NMS peak extraction with a capped radius for efficiency.\n2. Greedy distance suppression at the full `min_distance`.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "min_vote_frac": {
+          "default": 0.1,
+          "description": "Minimum accumulator value for a proposal, as a fraction (0 to 1) of the accumulator maximum.",
+          "type": "number"
+        },
+        "r_max": {
+          "default": 12.0,
+          "description": "Maximum voting radius (pixels).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "r_min": {
+          "default": 3.0,
+          "description": "Minimum voting radius (pixels).\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
+          "readOnly": true,
+          "type": "number",
+          "x-unit": "px"
+        },
+        "radius_step": {
+          "default": 1,
+          "description": "Step (in pixels) between consecutive voting radii.\n\n`1` (the default) tests every integer radius in `[r_min, r_max]`. Values\n`> 1` subsample the radius set — `2` tests every other radius\n(≈ halves proposal voting cost), and so on — trading accumulator\nsensitivity for proposal-stage speed. The maximum radius is always\nincluded so the largest features still vote; values are clamped to a\nminimum of `1`.\n\nSubsampling is **opt-in**: on the regression suite, `radius_step = 2`\ncuts proposal time ~29 % but lowers recall on blurry / low-contrast and\nreal-world scenes (rtv3d −2.9 %), so the default keeps full coverage.",
+          "minimum": 1,
+          "type": "integer",
+          "x-unit": "px"
+        }
+      },
+      "type": "object"
+    },
+    "ProposalDownscale": {
+      "description": "Controls optional image downscaling before proposal generation.\n\nWhen markers are large in the image, the proposal stage can be run on a\ndownscaled copy for significant speedup. All downstream stages (outer fit,\ndecode, inner fit) still operate at full resolution.\n\nProposal coordinates are automatically scaled back to original image space.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Auto-select downscale factor from `marker_scale.diameter_min_px`.\n\n`factor = clamp(floor(d_min / 14.0), 1, 4)`. Ensures markers remain\nat least ~7 px diameter after downscaling, which is sufficient for\nRSD center detection.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "No downscaling (full resolution proposals).",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit integer downscale factor (clamped to `[1, 4]`).",
+          "properties": {
+            "factor": {
+              "maximum": 4,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "factor"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RansacConfig": {
+      "description": "Configuration for RANSAC fitting (ellipse and homography).",
+      "properties": {
+        "inlier_threshold": {
+          "default": 1.0,
+          "description": "Inlier distance threshold in pixels (Sampson distance for ellipse fits, reprojection error for homography fits).",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "max_iters": {
+          "default": 500,
+          "description": "Maximum number of RANSAC iterations.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_inliers": {
+          "default": 10,
+          "description": "Minimum number of inliers for a model to be accepted.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seed": {
+          "default": 42,
+          "description": "RNG seed; the same seed reproduces the same fit.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SeedProposalConfig": {
+      "description": "Seed-injection controls for proposal generation.",
+      "properties": {
+        "max_seeds": {
+          "default": 512,
+          "description": "Maximum number of seeds consumed in one run; `null` means no cap.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "merge_radius_px": {
+          "default": 3.0,
+          "description": "Radius (pixels) within which an injected seed center is merged with a detector proposal.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "seed_score": {
+          "default": 1000000000000.0,
+          "description": "Score assigned to injected seed proposals (dimensionless).",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SelfUndistortConfig": {
+      "description": "Configuration for self-undistort estimation.",
+      "properties": {
+        "enable": {
+          "default": false,
+          "description": "Enable self-undistort refinement.",
+          "type": "boolean"
+        },
+        "improvement_threshold": {
+          "default": 0.01,
+          "description": "Relative improvement threshold: accept only if\n`(baseline - optimum) / baseline > improvement_threshold`.",
+          "type": "number"
+        },
+        "lambda_range": {
+          "default": [
+            -8e-7,
+            8e-7
+          ],
+          "description": "Search range `[lambda_min, lambda_max]` for the division-model parameter lambda (units 1/px^2, with radius measured in pixels from the distortion center).",
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array",
+          "x-unit": "1/px^2"
+        },
+        "max_evals": {
+          "default": 40,
+          "description": "Maximum objective evaluations of the 1D lambda optimizer.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_abs_improvement": {
+          "default": 0.0001,
+          "description": "Minimum absolute objective improvement required to apply the model.\n\nThis prevents applying when the objective is near numerical noise floor.",
+          "type": "number"
+        },
+        "min_lambda_abs": {
+          "default": 5e-9,
+          "description": "Minimum |lambda| (1/px^2) required for applying the model.\n\nVery small lambda values are effectively identity and are treated as\n\"no correction\" even if relative improvement is non-zero.",
+          "type": "number",
+          "x-unit": "1/px^2"
+        },
+        "min_markers": {
+          "default": 6,
+          "description": "Minimum number of markers with both inner and outer edge points required to run the estimation.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "range_edge_margin_frac": {
+          "default": 0.02,
+          "description": "Relative margin (fraction of the lambda range width) treated as unstable boundary area; values are clamped to `[0, 0.49]`.",
+          "maximum": 0.49,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reject_range_edge": {
+          "default": true,
+          "description": "Reject solutions that land too close to lambda-range boundaries.",
+          "type": "boolean"
+        },
+        "trim_fraction": {
+          "default": 0.1,
+          "description": "Trim fraction for robust aggregation of per-marker objective values.\n\n`0.1` means drop 10% low and 10% high scores before averaging. Values are clamped to `[0, 0.49]`.",
+          "maximum": 0.49,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "validation_abs_improvement_px": {
+          "default": 0.05,
+          "description": "Minimum absolute homography self-error improvement (pixels) required.",
+          "type": "number",
+          "x-unit": "px"
+        },
+        "validation_min_markers": {
+          "default": 24,
+          "description": "Minimum decoded-ID correspondences needed for homography validation.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "validation_rel_improvement": {
+          "default": 0.03,
+          "description": "Minimum relative homography self-error improvement required.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Detector configuration: marker scale prior, center refinement, self-undistort controls and per-stage tuning under `advanced`. Every field is optional; omitted fields keep their defaults. The target layout is not part of this object. Defaults are board-dependent: scale- and geometry-coupled values (proposal radii, edge search windows, ellipse bounds, completion ROI, code-band ratio, expected inner radius, codebook profile) are derived from the target layout and `marker_scale`, and the defaults embedded in this schema are those of the default hex target. Use `DetectConfig::from_target` (or `default_config_json(board_json)` in the WebAssembly package) to obtain the defaults for a specific board.",
+  "properties": {
+    "advanced": {
+      "$ref": "#/$defs/AdvancedDetectConfig",
+      "default": {
+        "completion": {
+          "enable": true,
+          "image_margin_px": 10.0,
+          "max_attempts": null,
+          "max_radii_std_ratio": 0.35,
+          "min_arc_coverage": 0.35,
+          "min_fit_confidence": 0.45,
+          "reproj_gate_px": 3.0,
+          "require_perfect_decode": false,
+          "roi_radius_px": 30.0
+        },
+        "decode": {
+          "code_band_ratio": 0.74404764,
+          "codebook_profile": "base",
+          "max_decode_dist": 3,
+          "min_decode_confidence": 0.3,
+          "min_decode_contrast": 0.03,
+          "min_decode_margin": 1,
+          "n_radial_rings": 3,
+          "samples_per_sector": 5,
+          "threshold_convergence_eps": 0.0001,
+          "threshold_max_iters": 10
+        },
+        "dedup_radius": 6.0,
+        "edge_sample": {
+          "min_rays_with_ring": 16,
+          "min_ring_depth": 0.08,
+          "n_rays": 48,
+          "r_max": 66.0,
+          "r_min": 1.5,
+          "r_step": 0.5
+        },
+        "geometric_verify": true,
+        "id_correction": {
+          "auto_search_radius_outer_muls": [
+            2.4,
+            2.9,
+            3.5,
+            4.2,
+            5.0
+          ],
+          "confirm_by_consistency": true,
+          "consistency_max_contradiction_frac": 0.5,
+          "consistency_min_neighbors": 1,
+          "consistency_min_support_edges": 1,
+          "consistency_outer_mul": 3.2,
+          "enable": true,
+          "h_reproj_gate_px": 30.0,
+          "homography_fallback_enable": true,
+          "homography_min_inliers": 12,
+          "homography_min_trusted": 24,
+          "max_iters": 5,
+          "min_vote_weight_frac": 0.55,
+          "min_votes": 2,
+          "min_votes_recover": 1,
+          "remove_unverified": false,
+          "seed_min_decode_confidence": 0.7,
+          "soft_lock_exact_decode": true
+        },
+        "inner_as_outer_recovery": {
+          "enable": true,
+          "k_neighbors": 6,
+          "min_ring_depth": 0.02,
+          "min_theta_consistency": 0.18,
+          "min_theta_coverage": 0.4,
+          "ratio_threshold": 0.75,
+          "refine_halfwidth_px": 2.5,
+          "size_gate_tolerance": 0.25
+        },
+        "inner_fit": {
+          "local_peak_halfwidth_idx": 3,
+          "max_angular_gap_rad": 1.5707963267948966,
+          "max_center_shift_px": 12.0,
+          "max_ratio_abs_error": 0.15,
+          "max_rms_residual": 1.0,
+          "min_inlier_ratio": 0.5,
+          "min_points": 20,
+          "miss_confidence_factor": 0.7,
+          "ransac": {
+            "inlier_threshold": 1.5,
+            "max_iters": 200,
+            "min_inliers": 8,
+            "seed": 43
+          },
+          "require_inner_fit": false
+        },
+        "marker_spec": {
+          "aggregator": "median",
+          "inner_grad_polarity": "light_to_dark",
+          "inner_search_halfwidth": 0.08,
+          "min_theta_consistency": 0.25,
+          "min_theta_coverage": 0.6,
+          "r_inner_expected": 0.48809522,
+          "radial_samples": 64,
+          "theta_samples": 96
+        },
+        "max_aspect_ratio": 3.0,
+        "outer_estimation": {
+          "aggregator": "median",
+          "allow_two_hypotheses": true,
+          "grad_polarity": "dark_to_light",
+          "min_theta_consistency": 0.35,
+          "min_theta_coverage": 0.6,
+          "radial_samples": 64,
+          "refine_halfwidth_px": 1.0,
+          "search_halfwidth_px": 13.0,
+          "second_peak_min_rel": 0.85
+        },
+        "outer_fit": {
+          "max_angular_gap_rad": 1.5707963267948966,
+          "min_direct_fit_points": 6,
+          "min_ransac_points": 8,
+          "ransac": {
+            "inlier_threshold": 1.5,
+            "max_iters": 200,
+            "min_inliers": 6,
+            "seed": 42
+          },
+          "size_score_weight": 0.15
+        },
+        "projective_center": {
+          "max_correction_shift_px": null,
+          "max_selected_residual": 0.25,
+          "min_eig_separation": 1e-6,
+          "ratio_penalty_weight": 1.0,
+          "use_expected_ratio": true
+        },
+        "proposal": {
+          "grad_threshold": 0.05,
+          "max_candidates": null,
+          "min_distance": 17.17617,
+          "min_vote_frac": 0.1,
+          "r_max": 42.86825,
+          "r_min": 3.0310888,
+          "radius_step": 1
+        },
+        "proposal_downscale": "off",
+        "ransac_homography": {
+          "inlier_threshold": 5.0,
+          "max_iters": 2000,
+          "min_inliers": 6,
+          "seed": 0
+        },
+        "seed_proposals": {
+          "max_seeds": 512,
+          "merge_radius_px": 3.0,
+          "seed_score": 1000000000000.0
+        },
+        "use_global_filter": true
+      },
+      "description": "Advanced per-stage tuning parameters."
+    },
+    "circle_refinement": {
+      "$ref": "#/$defs/CircleRefinementMethod",
+      "default": "ProjectiveCenter",
+      "description": "Center-correction strategy applied after local fits are accepted: `None` disables it, `ProjectiveCenter` recovers unbiased centers from the inner/outer conics."
+    },
+    "marker_scale": {
+      "$ref": "#/$defs/MarkerScalePrior",
+      "default": {
+        "diameter_max_px": 66.0,
+        "diameter_min_px": 14.0
+      },
+      "description": "Expected marker outer-diameter range `[diameter_min_px, diameter_max_px]` in working-frame pixels; scale-dependent stage parameters are derived from it."
+    },
+    "require_complete_board": {
+      "default": false,
+      "description": "Require the full board for detection success.\n\nWhen `true`, `Detector::detect` returns\n`DetectError::IncompleteBoard` if\ngrid assignment ran but not every target cell was labeled. Default\n`false`: an incomplete board is reported non-fatally via\n`DetectionResult::board_complete`,\nwith the partial marker set still returned. Most meaningful for plain\n(uncoded) targets without origin dots, whose only success criterion is\nfull-board detection.",
+      "type": "boolean"
+    },
+    "self_undistort": {
+      "$ref": "#/$defs/SelfUndistortConfig",
+      "default": {
+        "enable": false,
+        "improvement_threshold": 0.01,
+        "lambda_range": [
+          -8e-7,
+          8e-7
+        ],
+        "max_evals": 40,
+        "min_abs_improvement": 0.0001,
+        "min_lambda_abs": 5e-9,
+        "min_markers": 6,
+        "range_edge_margin_frac": 0.02,
+        "reject_range_edge": true,
+        "trim_fraction": 0.1,
+        "validation_abs_improvement_px": 0.05,
+        "validation_min_markers": 24,
+        "validation_rel_improvement": 0.03
+      },
+      "description": "Self-undistort (division-model lens distortion) estimation controls; disabled by default."
+    }
+  },
+  "title": "ringgrid detector configuration",
+  "type": "object"
+}

@@ -28,3 +28,5 @@ pub use layout::{OriginDots, TargetCell, TargetLayout};
 pub use page::{PageOrientation, PageSize, PageSpec};
 pub use ring::{CodedRingSpec, MarkerCoding, RingGeometry};
 pub use schema::TARGET_SCHEMA_VERSION;
+#[cfg(feature = "schemars")]
+pub use schema::target_spec_schema;

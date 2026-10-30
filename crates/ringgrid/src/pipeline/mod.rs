@@ -32,7 +32,7 @@ pub use result::{
 };
 
 pub(crate) use assign::frame_xy_mm;
-pub(crate) use geometric_verify::build_grid_map;
+pub(crate) use geometric_verify::{GridMap, build_grid_map};
 pub(crate) use prelude::*;
 pub(crate) use result::{PipelineResult, seed_proposals};
 

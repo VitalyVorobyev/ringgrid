@@ -8,7 +8,7 @@ members = [
 exclude = ["crates/ringgrid-py", "crates/ringgrid-wasm", "crates/ringgrid-c"]
 
 [workspace.package]
-version = "0.13.1"
+version = "0.13.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
@@ -30,7 +30,7 @@ approx = "0.5"
 rand = "0.10"
 tiny-solver = "0.18"
 png = "0.18"
-projective-grid = "0.14"
+projective-grid = "0.14.4"
 radsym = { version = "0.4.1", features = ["unsafe-opt"] }
 web-time = "1"
 # JSON Schema generation (optional `schemars` feature of `ringgrid`) and validation.

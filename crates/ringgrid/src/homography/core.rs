@@ -5,7 +5,7 @@
 //! - RANSAC wrapper for outlier-robust fitting.
 //! - Reprojection error computation.
 
-use nalgebra::{Matrix3, Point2, Vector3};
+use nalgebra::{Matrix3, Vector3};
 use projective_grid::expert::geometry::estimate_homography as pg_estimate_homography;
 
 use crate::conic::RansacConfig;
@@ -113,11 +113,15 @@ pub fn estimate_homography_dlt(
         ));
     }
 
-    let src_pts: Vec<Point2<f64>> = src.iter().map(|p| Point2::new(p[0], p[1])).collect();
-    let dst_pts: Vec<Point2<f64>> = dst.iter().map(|p| Point2::new(p[0], p[1])).collect();
+    // The DLT is projective-grid's, written in its own nalgebra, which Cargo
+    // may resolve to another version than ours: the points go in and the
+    // matrix comes out through `projective_grid::nalgebra`.
+    use projective_grid::nalgebra as pg;
+    let src_pts: Vec<pg::Point2<f64>> = src.iter().map(|p| pg::Point2::new(p[0], p[1])).collect();
+    let dst_pts: Vec<pg::Point2<f64>> = dst.iter().map(|p| pg::Point2::new(p[0], p[1])).collect();
 
     pg_estimate_homography(&src_pts, &dst_pts)
-        .map(|h| h.h)
+        .map(|h| Matrix3::from_fn(|r, c| h.h[(r, c)]))
         .ok_or_else(|| HomographyError::NumericalFailure("DLT estimation failed".into()))
 }
 

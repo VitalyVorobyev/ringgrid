@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nalgebra::{Matrix3, Point2};
+use nalgebra::Matrix3;
 use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
@@ -26,16 +26,22 @@ pub(crate) fn marker_cell_coord(m: &MarkerRecord, target: &TargetLayout) -> Opti
     m.id.and_then(|id| target.coord_of_id(id))
 }
 
+/// Marker centers by lattice cell, for `projective_grid`'s lattice predictor.
+///
+/// The points are in the `nalgebra` that crate is written in
+/// (`projective_grid::nalgebra`), which Cargo may resolve to another version
+/// than this crate's own.
+pub(crate) type GridMap = HashMap<Coord, projective_grid::nalgebra::Point2<f32>>;
+
 /// Build a lattice grid map from labeled markers, mapping cell coordinate → center.
-pub(crate) fn build_grid_map(
-    markers: &[MarkerRecord],
-    target: &TargetLayout,
-) -> HashMap<Coord, Point2<f32>> {
+pub(crate) fn build_grid_map(markers: &[MarkerRecord], target: &TargetLayout) -> GridMap {
     markers
         .iter()
         .filter_map(|m| {
             let coord = marker_cell_coord(m, target)?;
-            Some((coord, Point2::new(m.center[0] as f32, m.center[1] as f32)))
+            let center =
+                projective_grid::nalgebra::Point2::new(m.center[0] as f32, m.center[1] as f32);
+            Some((coord, center))
         })
         .collect()
 }

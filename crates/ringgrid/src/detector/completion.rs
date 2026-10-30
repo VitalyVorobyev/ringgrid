@@ -1,13 +1,12 @@
-use std::collections::HashMap;
-
 /// Neighbor count for the completion-seed expected radius: wider than the
 /// hex valence (6) so the median stays robust when the immediate ring around
 /// a missing cell is itself sparse or mis-fitted.
 const EXPECTED_RADIUS_K_NEIGHBORS: usize = 12;
 
 use image::GrayImage;
-use nalgebra::Point2;
 use projective_grid::{Coord, expert::lattice::predict_grid_position};
+
+use crate::pipeline::GridMap;
 
 use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;
@@ -244,7 +243,7 @@ fn local_affine_seed_from_neighbors(
 
 fn lattice_neighbor_seed(
     id: usize,
-    grid: &HashMap<Coord, Point2<f32>>,
+    grid: &GridMap,
     target: &crate::target::TargetLayout,
 ) -> Option<[f64; 2]> {
     let coord = target.coord_of_id(id)?;
@@ -257,7 +256,7 @@ fn projected_completion_seed(
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
     target: &crate::target::TargetLayout,
-    grid: &HashMap<Coord, Point2<f32>>,
+    grid: &GridMap,
 ) -> Option<[f64; 2]> {
     let board_xy = target.xy_mm_of_id(id)?;
     let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];

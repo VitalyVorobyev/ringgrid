@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-30
+
+Builds whichever `nalgebra` Cargo resolves for `projective-grid`. No API or
+detection output changed.
+
+### Fixed
+
+- **`ringgrid` compiles when Cargo resolves `projective-grid` to `nalgebra`
+  0.34.** `projective-grid` accepts `nalgebra` 0.34 or 0.35 while `ringgrid`
+  uses 0.35, and the points and homographies passed between them were built in
+  `ringgrid`'s own `nalgebra`; in a lockfile that resolved `projective-grid` to
+  0.34 the crate failed to compile. They now cross through
+  `projective_grid::nalgebra`, so both resolutions build. Requires
+  `projective-grid` 0.14.4.
+
 ## [0.13.1] - 2026-10-03
 
 JSON Schemas for the configs the WASM package accepts, so a schema-driven form

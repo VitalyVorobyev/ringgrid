@@ -731,9 +731,9 @@ dependencies = [
 
 [[package]]
 name = "projective-grid"
-version = "0.14.0"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1164dbbb715b17eb7b6dc61e6c2a66a52932a5dd64f8490ebf62115de64b3f0b"
+checksum = "942936716fda9aa03dceccec8f2065c3cc32daebd0e9395d0d881213b8628282"
 dependencies = [
  "delaunator",
  "kiddo",
@@ -811,7 +811,7 @@ checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
 name = "ringgrid"
-version = "0.13.1"
+version = "0.13.2"
 dependencies = [
  "approx",
  "image",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "ringgrid-wasm"
-version = "0.13.1"
+version = "0.13.2"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use nalgebra::{Matrix3, Point2};
+use nalgebra::Matrix3;
 use projective_grid::{
     Coord, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind, PointFeature,
     detect_grid, expert::lattice::GridTransform,
@@ -62,7 +62,9 @@ pub(crate) fn assign_plain_grid(
         .filter_map(|(i, m)| {
             let x = m.center[0] as f32;
             let y = m.center[1] as f32;
-            (x.is_finite() && y.is_finite()).then(|| PointFeature::new(i, Point2::new(x, y)))
+            // Built in projective-grid's own nalgebra, which may differ from ours.
+            (x.is_finite() && y.is_finite())
+                .then(|| PointFeature::new(i, projective_grid::nalgebra::Point2::new(x, y)))
         })
         .collect();
     let n_input = features.len();

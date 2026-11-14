@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.15.0] - 2026-11-14
+
 The photometric centre refinement works on every target kind and reports a
 covariance that stays honest under correlated noise. Opt-in, as before.
 

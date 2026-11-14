@@ -1,5 +1,7 @@
 use crate::conic::Ellipse;
-use crate::detector::{DetectionSource, FitMetrics, MarkerRecord};
+use crate::detector::{
+    CenterSource, DetectionSource, FitMetrics, MarkerRecord, PhotometricMetrics,
+};
 use crate::marker::DecodeMetrics;
 use crate::proposal::Proposal;
 use std::cmp::Ordering;
@@ -70,6 +72,15 @@ pub struct DetectedMarker {
     /// Inner ellipse parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ellipse_inner: Option<Ellipse>,
+    /// Estimator that produced [`center`](Self::center).
+    #[serde(default)]
+    pub center_source: CenterSource,
+    /// Covariance of [`center`](Self::center) in image pixels² (row-major
+    /// 2×2), when the estimator provides one — currently the photometric fit
+    /// ([`CenterSource::Photometric`]). It is the inverse Fisher information of
+    /// the fit with the noise level estimated from the fit's own residuals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_cov: Option<[[f64; 2]; 2]>,
 }
 
 /// Detailed per-marker algorithm internals.
@@ -98,6 +109,9 @@ pub struct MarkerDiagnostics {
     /// Raw sub-pixel inner edge inlier points used for ellipse fitting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge_points_inner: Option<Vec<[f64; 2]>>,
+    /// Photometric fit summary, when the photometric stage ran on this marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub photometric: Option<PhotometricMetrics>,
 }
 
 /// Reference frame of grid-labeled outputs (`grid_coord`, `board_xy_mm`, and
@@ -195,6 +209,12 @@ pub struct DetectionDiagnostics {
     /// tiers and has no single three-stage breakdown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timings: Option<StageTimings>,
+    /// Printed radii of a coded marker estimated by the photometric stage, in
+    /// board millimetres from the centre out: hole edge, inner-ring outer
+    /// edge, outer-ring inner edge, outer edge. `None` when the stage did not
+    /// run or kept the target's nominal radii.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub photometric_print_radii_mm: Option<[f64; 4]>,
 }
 
 /// Wall-clock timing for the major single-pass detection stages, in milliseconds.
@@ -263,6 +283,8 @@ pub(crate) struct PipelineResult {
     pub self_undistort: Option<crate::pixelmap::SelfUndistortResult>,
     /// Per-stage wall-clock timing, populated by single-pass detection.
     pub timings: Option<StageTimings>,
+    /// Printed radii estimated by the photometric stage (board mm).
+    pub photometric_print_radii_mm: Option<[f64; 4]>,
 }
 
 impl PipelineResult {
@@ -294,6 +316,7 @@ impl PipelineResult {
             markers: diagnostics,
             ransac: self.ransac,
             timings: self.timings,
+            photometric_print_radii_mm: self.photometric_print_radii_mm,
         };
         (result, diag)
     }
@@ -317,6 +340,9 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         fit,
         decode,
         source,
+        center_source,
+        center_cov,
+        photometric,
     } = record;
 
     let marker = DetectedMarker {
@@ -328,6 +354,8 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         board_xy_mm,
         ellipse_outer,
         ellipse_inner,
+        center_source,
+        center_cov,
     };
     let diagnostics = MarkerDiagnostics {
         fit,
@@ -335,6 +363,7 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         source,
         edge_points_outer,
         edge_points_inner,
+        photometric,
     };
     (marker, diagnostics)
 }

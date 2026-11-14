@@ -594,6 +594,45 @@ fn detect_adaptive_candidates(
     best_result.expect("adaptive candidate list must not be empty")
 }
 
+/// Photometric centre refinement of a finished result.
+///
+/// Runs once per public detection call, after scale/candidate selection, so
+/// adaptive detection does not pay for it per candidate. The board homography
+/// and its statistics stay those fitted to the pre-refinement centres.
+pub(crate) fn refine_centers_photometric(
+    gray: &GrayImage,
+    result: &mut PipelineResult,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) {
+    if !config.circle_refinement.uses_photometric() {
+        return;
+    }
+    let self_undistort = result
+        .self_undistort
+        .as_ref()
+        .filter(|s| s.applied)
+        .map(|s| s.model);
+    let mapper: Option<&dyn PixelMapper> = match result.homography_frame {
+        DetectionFrame::Image => None,
+        DetectionFrame::Working => {
+            match mapper.or(self_undistort.as_ref().map(|m| m as &dyn PixelMapper)) {
+                Some(m) => Some(m),
+                None => return,
+            }
+        }
+    };
+    let h = result.homography;
+    result.photometric_print_radii_mm =
+        crate::detector::photometric_refine::apply_photometric_centers(
+            gray,
+            &mut result.markers,
+            h.as_ref(),
+            mapper,
+            config,
+        );
+}
+
 /// Adaptive detection using automatically selected scale tiers.
 ///
 /// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.

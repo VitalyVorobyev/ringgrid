@@ -10,8 +10,8 @@ pub use scale::{
     CircleRefinementMethod, MarkerScalePrior, ProposalDownscale, ScaleTier, ScaleTiers,
 };
 pub use stages::{
-    CompletionConfig, IdCorrectionConfig, InnerAsOuterRecoveryConfig, ProjectiveCenterConfig,
-    SeedProposalConfig,
+    CompletionConfig, IdCorrectionConfig, InnerAsOuterRecoveryConfig, PhotometricConfig,
+    ProjectiveCenterConfig, SeedProposalConfig,
 };
 
 use crate::conic::RansacConfig;
@@ -94,6 +94,8 @@ pub struct AdvancedDetectConfig {
     pub outer_fit: OuterFitConfig,
     /// Projective-center recovery controls.
     pub projective_center: ProjectiveCenterConfig,
+    /// Photometric centre refinement controls.
+    pub photometric: PhotometricConfig,
     /// Homography-guided completion controls.
     pub completion: CompletionConfig,
     /// Minimum semi-axis for a valid outer ellipse.
@@ -151,6 +153,7 @@ impl Default for AdvancedDetectConfig {
             inner_fit: InnerFitConfig::default(),
             outer_fit: OuterFitConfig::default(),
             projective_center: ProjectiveCenterConfig::default(),
+            photometric: PhotometricConfig::default(),
             completion: CompletionConfig::default(),
             min_semi_axis: 3.0,
             max_semi_axis: 15.0,

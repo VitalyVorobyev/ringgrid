@@ -26,6 +26,77 @@ pub enum DetectionSource {
     SeededPass,
 }
 
+/// Which estimator produced a marker's reported centre.
+///
+/// Exposed as [`DetectedMarker::center_source`](crate::DetectedMarker::center_source).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CenterSource {
+    /// Centre of the fitted outer ellipse: no correction was requested, the
+    /// marker has no inner ellipse, or every correction was rejected. Under
+    /// perspective this is not the image of the ring centre, and under defocus
+    /// blur it inherits the code-dependent bias of the edge points.
+    #[default]
+    OuterEllipse,
+    /// Projective centre recovered from the inner and outer ellipses.
+    ProjectiveCenter,
+    /// Photometric fit of the blurred marker pattern; the marker carries a
+    /// centre covariance.
+    Photometric,
+}
+
+/// Outcome of the photometric fit of one marker.
+///
+/// Exposed via [`MarkerDiagnostics::photometric`](crate::diagnostics::MarkerDiagnostics::photometric).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PhotometricStatus {
+    /// The fit was accepted and produced the marker's centre.
+    Accepted,
+    /// Too few usable (in-image, unsaturated) pixels.
+    InsufficientPixels,
+    /// The local board-to-image map or the normal equations were singular.
+    Degenerate,
+    /// The optimizer did not converge within the iteration budget.
+    NotConverged,
+    /// The fitted centre moved further than the configured gate.
+    ShiftTooLarge,
+    /// The fitted blur or contrast is implausible (no marker signal).
+    Implausible,
+    /// The pattern model does not explain the pixels: the residual is well
+    /// above the image's typical fit residual (glare halo, occlusion, print
+    /// defect), so the centre is not trusted.
+    PoorFit,
+}
+
+/// Photometric fit summary for one marker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct PhotometricMetrics {
+    /// Whether the fit produced the centre, or why not.
+    pub status: PhotometricStatus,
+    /// Fitted Gaussian PSF standard deviation (pixels).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blur_sigma_px: Option<f64>,
+    /// Fitted paper-minus-ink contrast at the marker centre (grey levels).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f64>,
+    /// Robust standard deviation of the pixel residuals (grey levels).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub residual_sigma: Option<f64>,
+    /// Pixels in the fit.
+    pub n_pixels: usize,
+    /// Fraction of the patch excluded as saturated.
+    pub masked_fraction: f64,
+    /// Distance from the starting centre to the fitted centre (pixels).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_shift_px: Option<f64>,
+}
+
 /// Fit quality metrics for a detected marker.
 ///
 /// Reports the edge sampling and ellipse fit quality. High RANSAC inlier
@@ -159,6 +230,15 @@ pub(crate) struct MarkerRecord {
     pub decode: Option<DecodeMetrics>,
     /// Pipeline stage that produced this marker.
     pub source: DetectionSource,
+    /// Estimator that produced `center`.
+    #[serde(default)]
+    pub center_source: CenterSource,
+    /// Covariance of `center` (px²), when the estimator provides one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center_cov: Option<[[f64; 2]; 2]>,
+    /// Photometric fit summary, when the photometric stage ran on this marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub photometric: Option<PhotometricMetrics>,
 }
 
 #[derive(Debug, Clone, Copy)]

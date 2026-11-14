@@ -39,5 +39,5 @@ pub(crate) use result::{PipelineResult, seed_proposals};
 pub(crate) use run::{
     detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,
     detect_with_mapper, detect_with_self_undistort, proposal_result_for_config,
-    proposal_seeds_for_config, select_adaptive_tiers,
+    proposal_seeds_for_config, refine_centers_photometric, select_adaptive_tiers,
 };

@@ -96,6 +96,7 @@ pub use proposal::{Proposal, ProposalConfig, ProposalResult};
 pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 
 // Result types — slim, stable primary output of `Detector::detect`.
+pub use detector::CenterSource;
 pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 
 /// Opt-in diagnostics channel returned by
@@ -106,7 +107,10 @@ pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 /// output is [`DetectionResult`]; the diagnostics surface may evolve faster
 /// between releases.
 pub mod diagnostics {
-    pub use crate::detector::{DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus};
+    pub use crate::detector::{
+        DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus, PhotometricMetrics,
+        PhotometricStatus,
+    };
     pub use crate::homography::RansacStats;
     pub use crate::marker::DecodeMetrics;
     pub use crate::pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
@@ -117,8 +121,8 @@ pub use conic::RansacConfig;
 pub use detector::{
     AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
-    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier, ScaleTiers,
-    SeedProposalConfig,
+    OuterFitConfig, PhotometricConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier,
+    ScaleTiers, SeedProposalConfig,
 };
 
 // Sub-configs

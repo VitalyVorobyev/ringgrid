@@ -143,6 +143,51 @@ impl Default for ProjectiveCenterConfig {
     }
 }
 
+/// Photometric centre refinement, used when
+/// [`CircleRefinementMethod::Photometric`](super::CircleRefinementMethod::Photometric)
+/// is selected.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(default)]
+#[non_exhaustive]
+pub struct PhotometricConfig {
+    /// Grey level (0 to 255) at or above which a pixel counts as saturated.
+    /// Saturated pixels and their 8-neighbours are left out of the fit, so a
+    /// glare blob over part of a marker does not bias it. Default: `250`.
+    pub saturation_level: u8,
+    /// Maximum Levenberg–Marquardt iterations per marker (at least 1).
+    /// Default: `30`; fits typically converge in 5 to 10.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
+    pub max_iterations: usize,
+    /// Estimate the printed radii of the ring and code-band edges from the
+    /// image instead of taking them from the target's nominal stroke width.
+    ///
+    /// Printed boards often differ from the nominal stroke width; a model of
+    /// the code band at the wrong radius biases the centre. When enabled, a
+    /// first pass fits the radii per marker and their precision-weighted
+    /// consensus is used for the final fits. Default: `true`.
+    pub estimate_print_radii: bool,
+    /// Maximum distance (pixels) between the photometric centre and the
+    /// centre it starts from; larger moves are rejected and the marker keeps
+    /// its previous centre. The fit is anchored by the board homography and
+    /// the decoded code pattern, so it can also repair a grossly wrong ellipse
+    /// centre. `None` (JSON `null`) means "auto": half the marker's outer
+    /// radius.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
+    pub max_center_shift_px: Option<f64>,
+}
+
+impl Default for PhotometricConfig {
+    fn default() -> Self {
+        Self {
+            saturation_level: 250,
+            max_iterations: 30,
+            estimate_print_radii: true,
+            max_center_shift_px: None,
+        }
+    }
+}
+
 /// Structural ID verification and correction using hex neighborhood consensus.
 ///
 /// Runs after fit-decode and deduplication, before the global RANSAC filter.

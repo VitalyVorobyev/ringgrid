@@ -10,12 +10,33 @@ pub enum CircleRefinementMethod {
     /// Run projective-center recovery from inner/outer conics.
     #[default]
     ProjectiveCenter,
+    /// Projective-center recovery, then a per-marker photometric fit of the
+    /// blurred marker pattern for every decoded marker of a coded target with
+    /// a board homography.
+    ///
+    /// The fit explains the marker's pixels with the printed ring and code
+    /// pattern (seen through the board homography, refined locally), blurred
+    /// by a fitted Gaussian PSF, over an affine background. It removes the
+    /// blur- and code-dependent bias of edge-based centres and reports a 2×2
+    /// centre covariance per marker ([`DetectedMarker::center_cov`]). Markers
+    /// it cannot refine keep their projective (or outer-ellipse) centre; see
+    /// [`DetectedMarker::center_source`]. Tuning lives in
+    /// [`AdvancedDetectConfig::photometric`](crate::AdvancedDetectConfig::photometric).
+    ///
+    /// [`DetectedMarker::center_cov`]: crate::DetectedMarker::center_cov
+    /// [`DetectedMarker::center_source`]: crate::DetectedMarker::center_source
+    Photometric,
 }
 
 impl CircleRefinementMethod {
     /// Returns `true` when this method includes projective-center recovery.
     pub fn uses_projective_center(self) -> bool {
-        matches!(self, Self::ProjectiveCenter)
+        matches!(self, Self::ProjectiveCenter | Self::Photometric)
+    }
+
+    /// Returns `true` when this method includes the photometric fit.
+    pub fn uses_photometric(self) -> bool {
+        matches!(self, Self::Photometric)
     }
 }
 

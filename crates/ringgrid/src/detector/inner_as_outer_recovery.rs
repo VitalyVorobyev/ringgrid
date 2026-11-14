@@ -266,6 +266,7 @@ fn recover_marker_at_index(
         fit: fit_metrics,
         decode: decode_metrics,
         source: crate::detector::marker_build::DetectionSource::FitDecoded,
+        ..MarkerRecord::default()
     })
 }
 

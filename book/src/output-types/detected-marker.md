@@ -27,6 +27,8 @@ fields, rather than with a struct literal.
 | `board_xy_mm` | `Option<[f64; 2]>` | Board-space marker location in millimeters. Coded targets: present when `id` decodes to a valid `TargetLayout` cell. Plain targets: present only when [`DetectionResult::board_frame`](detection-result.md) is `Absolute` (origin resolved via fiducials); absent when `RelativeCanonical`. See [Origin Fiducials](../targets/origin-fiducials.md). |
 | `ellipse_outer` | `Option<Ellipse>` | Fitted outer ring ellipse parameters. |
 | `ellipse_inner` | `Option<Ellipse>` | Fitted inner ring ellipse parameters. Present when inner fitting succeeded. |
+| `center_source` | `CenterSource` | Estimator that produced `center`: `outer_ellipse` (no correction applied or every correction rejected), `projective_center`, or `photometric`. |
+| `center_cov` | `Option<[[f64; 2]; 2]>` | Covariance of `center` in image px² (row-major), when the estimator provides one — currently photometric centers. It reflects pixel noise only; see [Photometric Center Refinement](../detection-pipeline/photometric-center.md). |
 
 ## Relocated diagnostics fields
 

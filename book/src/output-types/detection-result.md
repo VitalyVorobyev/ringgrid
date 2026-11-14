@@ -39,13 +39,16 @@ The pipeline-internal `seed_proposals()` method was also removed.
 ## DetectionDiagnostics
 
 `DetectionDiagnostics` is the opt-in diagnostics counterpart to
-`DetectionResult`. It is returned only by `Detector::detect_with_diagnostics()`;
+`DetectionResult`. It is returned only by the `*_with_diagnostics` methods
+(`detect_with_diagnostics`, `detect_adaptive_with_diagnostics`,
+`detect_with_mapper_diagnostics`);
 `detect()` returns the slim `DetectionResult` alone.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `markers` | `Vec<MarkerDiagnostics>` | Per-marker algorithm internals. Positionally aligned 1:1 with `DetectionResult::detected_markers`: `markers[i]` describes the marker at index `i`. See [MarkerDiagnostics](fit-metrics.md#markerdiagnostics). |
 | `ransac` | `Option<RansacStats>` | RANSAC quality statistics for the homography fit. Present when a homography was fitted. See [RansacStats](ransac-stats.md). |
+| `photometric_print_radii_mm` | `Option<[f64; 4]>` | Printed marker radii estimated by the [photometric stage](../detection-pipeline/photometric-center.md), board mm from the center out: hole edge, inner-ring outer edge, outer-ring inner edge, outer edge. |
 
 `DetectionDiagnostics` is `#[non_exhaustive]` and derives `serde::Serialize` /
 `serde::Deserialize`. In the CLI `detect.json` it appears as the nested

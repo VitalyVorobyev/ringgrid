@@ -9,6 +9,7 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
+use crate::detector::photometric_refine::PhotometricResidualMarker;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pipeline::DetectionDiagnostics;
@@ -18,6 +19,15 @@ use crate::target::TargetLayout;
 #[cfg(feature = "std")]
 use crate::target::TargetLoadError;
 use crate::{DetectionResult, Proposal, ProposalResult};
+
+/// Result, diagnostics and per-marker fit residuals of
+/// [`Detector::detect_with_photometric_residuals`].
+#[doc(hidden)]
+pub type PhotometricResiduals = (
+    DetectionResult,
+    DetectionDiagnostics,
+    Vec<PhotometricResidualMarker>,
+);
 
 /// Detection-time failures reported by [`Detector`] methods.
 ///
@@ -202,9 +212,21 @@ impl Detector {
         &self,
         image: &GrayImage,
         mapper: Option<&dyn PixelMapper>,
-        mut pipeline: pipeline::PipelineResult,
+        pipeline: pipeline::PipelineResult,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        pipeline::refine_centers_photometric(image, &mut pipeline, &self.config, mapper);
+        self.finish_collecting(image, mapper, pipeline, None)
+    }
+
+    /// [`finish_with_diagnostics`](Self::finish_with_diagnostics) that can also
+    /// collect the photometric fits' per-pixel residuals.
+    fn finish_collecting(
+        &self,
+        image: &GrayImage,
+        mapper: Option<&dyn PixelMapper>,
+        mut pipeline: pipeline::PipelineResult,
+        residuals: Option<&mut Vec<PhotometricResidualMarker>>,
+    ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
+        pipeline::refine_centers_photometric(image, &mut pipeline, &self.config, mapper, residuals);
         let (mut result, diagnostics) = pipeline.split();
         self.apply_completeness(&mut result)?;
         Ok((result, diagnostics))
@@ -274,6 +296,40 @@ impl Detector {
         image: &GrayImage,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
         self.finish_with_diagnostics(image, None, self.run_detect(image))
+    }
+
+    /// [`detect_with_diagnostics`](Self::detect_with_diagnostics) that also
+    /// returns each photometrically fitted marker's per-pixel residuals
+    /// (observed minus model) with the pixel's position in marker
+    /// coordinates. For studying where the intensity model fails; the result
+    /// and diagnostics are identical to the plain call, which pays nothing for
+    /// this. Empty unless `circle_refinement` is `Photometric`.
+    #[doc(hidden)]
+    pub fn detect_with_photometric_residuals(
+        &self,
+        image: &GrayImage,
+    ) -> Result<PhotometricResiduals, DetectError> {
+        let mut residuals = Vec::new();
+        let (result, diagnostics) =
+            self.finish_collecting(image, None, self.run_detect(image), Some(&mut residuals))?;
+        Ok((result, diagnostics, residuals))
+    }
+
+    /// Adaptive variant of
+    /// [`detect_with_photometric_residuals`](Self::detect_with_photometric_residuals).
+    #[doc(hidden)]
+    pub fn detect_adaptive_with_photometric_residuals(
+        &self,
+        image: &GrayImage,
+    ) -> Result<PhotometricResiduals, DetectError> {
+        let mut residuals = Vec::new();
+        let (result, diagnostics) = self.finish_collecting(
+            image,
+            None,
+            pipeline::detect_adaptive(image, &self.config),
+            Some(&mut residuals),
+        )?;
+        Ok((result, diagnostics, residuals))
     }
 
     /// Generate pass-1 center proposals in image coordinates.

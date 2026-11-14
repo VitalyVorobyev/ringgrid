@@ -143,6 +143,18 @@ and `residual_autocorrelation` the residual ACF at lags 1–6 px per axis.
   markers and removes most of the structured residual (old covariance
   over-report 1.42–1.72 → 1.07–1.13 on coded markers). Mixed at the 8 px /
   blur-3 cells (±15 %), which are outside the accepted regime anyway.
+- **A blur gradient across each marker (two more parameters).** Built and
+  measured, not adopted. On synthetic scenes with a blur width that varies
+  across the image (`tests/blur_gradient.rs`) the centre is biased toward the
+  sharper side by about gradient × blur width (factor 0.9–1.8 by target
+  kind, independent of marker size), and a gradient term removes about 90 %
+  of it. It costs about 14 % per fit and, without a gradient, up to 1.4–1.8×
+  the centre error on plain rect markers whose blur is a fifth of their
+  radius. On real captures of a tilted-focus camera, calibrating six cameras
+  with the term on and off left the calibrated residual unchanged (pooled
+  0.137 px RMS both ways), so the measured benefit does not cover the cost.
+  The intensity centroid of a blurred marker does not move under a blur
+  gradient, so this is an estimator bias, not an optical shift.
 
 ## Consequences
 

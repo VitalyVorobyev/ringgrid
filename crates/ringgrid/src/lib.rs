@@ -116,6 +116,15 @@ pub mod diagnostics {
     pub use crate::pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
 }
 
+/// Per-pixel photometric fit residuals, for studying where the intensity model
+/// fails. Not part of the stable API.
+#[doc(hidden)]
+pub mod photometric_residuals {
+    pub use crate::api::PhotometricResiduals;
+    pub use crate::detector::photometric_refine::PhotometricResidualMarker;
+    pub use crate::ring::photometric_center::PhotometricResidualSample;
+}
+
 // Configuration
 pub use conic::RansacConfig;
 pub use detector::{

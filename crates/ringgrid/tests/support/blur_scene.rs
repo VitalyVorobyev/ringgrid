@@ -27,6 +27,37 @@ use ringgrid::{TargetLayout, TargetRenderOptions};
 const BOARD_DPI: f32 = 600.0;
 const SUPERSAMPLE: usize = 4;
 
+/// How a display rasterises the ideal pattern onto its pixel grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayRaster {
+    /// A pixel is white when the ideal pattern at its centre is (reflectance
+    /// at least one half), else black.
+    Binary,
+    /// Area coverage of the ideal pattern, quantised to 16 grey levels.
+    Grey16,
+}
+
+/// A display of pixel pitch `pitch_mm`, axes aligned with the board.
+#[derive(Debug, Clone, Copy)]
+pub struct DisplaySpec {
+    pub pitch_mm: f64,
+    pub raster: DisplayRaster,
+}
+
+/// Fraction of a display pixel by which the display grid is shifted against
+/// the board raster origin, so no marker sits at a special grid phase.
+const DISPLAY_PHASE: f64 = 0.37;
+/// Sub-samples per display-pixel side for the area coverage.
+const COVERAGE_TAPS: usize = 8;
+
+/// Display pixel values in 0..=15 (15 = white), row-major.
+struct DisplayGrid {
+    spec: DisplaySpec,
+    w: usize,
+    h: usize,
+    levels: Vec<u8>,
+}
+
 /// A saturated glare blob: an additive Gaussian bump in grey levels.
 #[derive(Debug, Clone, Copy)]
 pub struct Glare {
@@ -56,6 +87,31 @@ pub enum Psf {
     },
     /// Uniform disc (geometric defocus) of `radius` px.
     Disc { radius: f64 },
+    /// Isotropic Gaussian whose sigma varies along the image y axis:
+    /// `sigma(y) = clamp(sigma0 + gradient * (y - y0), sigma_range)` (px; the
+    /// clamp keeps a steep field positive far from the band of interest).
+    /// `form` says whose position sets the kernel, see [`BlurForm`].
+    VaryingGaussian {
+        sigma0: f64,
+        /// d sigma / d y, px per px.
+        gradient: f64,
+        y0: f64,
+        sigma_range: [f64; 2],
+        form: BlurForm,
+    },
+}
+
+/// How a spatially varying PSF is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlurForm {
+    /// Every output pixel averages the sharp scene with the kernel of its own
+    /// position: `I(x) = sum_y S(y) G_{sigma(x)}(x - y)` (a constant scene
+    /// stays constant; light is not conserved).
+    Gather,
+    /// Every scene point spreads its light with the kernel of its own
+    /// position: `I(x) = sum_y S(y) G_{sigma(y)}(x - y)` (light is conserved;
+    /// the physical form of depth-dependent defocus).
+    Scatter,
 }
 
 impl Psf {
@@ -70,6 +126,7 @@ impl Psf {
             } => (sigma_major * sigma_minor).sqrt(),
             Psf::Halo { sigma, .. } => sigma,
             Psf::Disc { radius } => 0.5 * radius,
+            Psf::VaryingGaussian { sigma0, .. } => sigma0,
         }
     }
 }
@@ -106,6 +163,8 @@ pub struct SceneSpec {
     /// Spatial correlation (Gaussian sigma, px) of the sensor noise; 0 is
     /// white.
     pub noise_corr_px: f64,
+    /// Sub-pixel samples per side when integrating the board reflectance.
+    pub supersample: usize,
     pub seed: u64,
 }
 
@@ -141,6 +200,7 @@ impl SceneSpec {
             }),
             noise_sigma: 2.0,
             noise_corr_px: 0.0,
+            supersample: SUPERSAMPLE,
             seed,
         }
     }
@@ -165,11 +225,16 @@ impl SceneSpec {
 }
 
 /// High-density raster of a board plus the board-mm → raster-pixel map.
+#[derive(Clone)]
 pub struct BoardRaster {
     pub target: TargetLayout,
-    raster: GrayImage,
+    raster: std::sync::Arc<GrayImage>,
     px_per_mm: f64,
     offset_mm: [f64; 2],
+    display: Option<std::sync::Arc<DisplayGrid>>,
+    /// Only the board within this disc (centre, radius, mm) is printed; the
+    /// rest is paper.
+    keep: Option<([f64; 2], f64)>,
 }
 
 impl BoardRaster {
@@ -235,16 +300,110 @@ impl BoardRaster {
         }
         Self {
             target,
-            raster,
+            raster: std::sync::Arc::new(raster),
             px_per_mm,
             offset_mm,
+            display: None,
+            keep: None,
         }
     }
 
-    /// Reflectance in [0, 1] (white paper = 1) at a board point, bilinear.
-    fn reflectance(&self, xy_mm: [f64; 2]) -> f64 {
-        let x = (xy_mm[0] + self.offset_mm[0]) * self.px_per_mm;
-        let y = (xy_mm[1] + self.offset_mm[1]) * self.px_per_mm;
+    /// The same board with everything outside the disc of `radius_mm` around
+    /// `center_mm` replaced by paper (one isolated marker).
+    pub fn isolated(&self, center_mm: [f64; 2], radius_mm: f64) -> Self {
+        Self {
+            keep: Some((center_mm, radius_mm)),
+            ..self.clone()
+        }
+    }
+
+    /// The same board shown on a display: the ideal pattern rasterised onto
+    /// the display's pixel grid, which then replaces it as the imaged
+    /// reflectance (piecewise constant per display pixel).
+    pub fn displayed(&self, spec: DisplaySpec) -> Self {
+        let (rw, rh) = self.raster.dimensions();
+        let p = spec.pitch_mm;
+        let side_x = f64::from(rw) / self.px_per_mm;
+        let side_y = f64::from(rh) / self.px_per_mm;
+        let (w, h) = (
+            (side_x / p).ceil() as usize + 2,
+            (side_y / p).ceil() as usize + 2,
+        );
+        let mut levels = vec![15u8; w * h];
+        let taps = COVERAGE_TAPS;
+        for j in 0..h {
+            for i in 0..w {
+                // Pixel square in board+offset mm.
+                let x0 = (i as f64 + DISPLAY_PHASE - 1.0) * p;
+                let y0 = (j as f64 + DISPLAY_PHASE - 1.0) * p;
+                let sample =
+                    |fx: f64, fy: f64| self.ideal_reflectance_offset([x0 + fx * p, y0 + fy * p]);
+                levels[j * w + i] = match spec.raster {
+                    DisplayRaster::Binary => {
+                        if sample(0.5, 0.5) >= 0.5 {
+                            15
+                        } else {
+                            0
+                        }
+                    }
+                    DisplayRaster::Grey16 => {
+                        let mut acc = 0.0;
+                        for ty in 0..taps {
+                            for tx in 0..taps {
+                                acc += sample(
+                                    (tx as f64 + 0.5) / taps as f64,
+                                    (ty as f64 + 0.5) / taps as f64,
+                                );
+                            }
+                        }
+                        (acc / (taps * taps) as f64 * 15.0).round() as u8
+                    }
+                };
+            }
+        }
+        Self {
+            target: self.target.clone(),
+            raster: self.raster.clone(),
+            px_per_mm: self.px_per_mm,
+            offset_mm: self.offset_mm,
+            display: Some(std::sync::Arc::new(DisplayGrid { spec, w, h, levels })),
+            keep: self.keep,
+        }
+    }
+
+    /// Reflectance in [0, 1] at a board point as imaged: the display pixel's
+    /// value when the board is displayed, else the ideal pattern.
+    pub fn reflectance(&self, xy_mm: [f64; 2]) -> f64 {
+        if let Some((c, r)) = self.keep
+            && (xy_mm[0] - c[0]).hypot(xy_mm[1] - c[1]) > r
+        {
+            return 1.0;
+        }
+        let Some(d) = &self.display else {
+            return self.ideal_reflectance(xy_mm);
+        };
+        let p = d.spec.pitch_mm;
+        let i = ((xy_mm[0] + self.offset_mm[0]) / p - DISPLAY_PHASE + 1.0).floor();
+        let j = ((xy_mm[1] + self.offset_mm[1]) / p - DISPLAY_PHASE + 1.0).floor();
+        if i < 0.0 || j < 0.0 || i >= d.w as f64 || j >= d.h as f64 {
+            return 1.0;
+        }
+        f64::from(d.levels[j as usize * d.w + i as usize]) / 15.0
+    }
+
+    /// Reflectance of the ideal (un-rasterised) pattern at a board point.
+    pub fn ideal_reflectance(&self, xy_mm: [f64; 2]) -> f64 {
+        self.ideal_reflectance_offset([xy_mm[0] + self.offset_mm[0], xy_mm[1] + self.offset_mm[1]])
+    }
+
+    /// Ideal reflectance at a point given in raster-origin mm.
+    fn ideal_reflectance_offset(&self, mm: [f64; 2]) -> f64 {
+        let x = mm[0] * self.px_per_mm;
+        let y = mm[1] * self.px_per_mm;
+        self.bilinear(x, y)
+    }
+
+    fn bilinear(&self, x: f64, y: f64) -> f64 {
         let (w, h) = self.raster.dimensions();
         if !(x >= 0.0 && y >= 0.0 && x < f64::from(w - 1) && y < f64::from(h - 1)) {
             return 1.0;
@@ -428,8 +587,92 @@ fn convolve(buf: &mut [f64], w: usize, h: usize, r: i64, kernel: impl Fn(f64, f6
     }
 }
 
-/// Apply the scene's PSF.
-fn apply_psf(buf: &mut [f64], w: usize, h: usize, psf: Psf) {
+/// Sigma of a [`Psf::VaryingGaussian`] at image row `y`.
+pub fn varying_sigma(psf: &Psf, y: f64) -> Option<f64> {
+    match *psf {
+        Psf::VaryingGaussian {
+            sigma0,
+            gradient,
+            y0,
+            sigma_range,
+            ..
+        } => Some((sigma0 + gradient * (y - y0)).clamp(sigma_range[0], sigma_range[1])),
+        _ => None,
+    }
+}
+
+/// Gaussian blur whose sigma depends on the image row (`sigma_of_row`), in
+/// gather or scatter form. Separable: the kernel of a row is the product of
+/// two 1-D Gaussians of that row's sigma. Rows outside the image repeat the
+/// border row (as the uniform blur's edge clamping does) but keep their own
+/// sigma.
+fn varying_blur(
+    buf: &mut [f64],
+    w: usize,
+    h: usize,
+    form: BlurForm,
+    sigma_of_row: &dyn Fn(f64) -> f64,
+) {
+    let max_sigma = (0..h)
+        .map(|y| sigma_of_row(y as f64))
+        .fold(0.0f64, f64::max);
+    let pad = (4.0 * max_sigma).ceil() as i64 + 1;
+    let horizontal = |row: &[f64], sigma: f64, out: &mut [f64]| {
+        let k = gaussian_kernel(sigma);
+        let r = (k.len() / 2) as i64;
+        for (x, o) in out.iter_mut().enumerate().take(w) {
+            let mut acc = 0.0;
+            for (j, kv) in k.iter().enumerate() {
+                let xx = (x as i64 + j as i64 - r).clamp(0, w as i64 - 1) as usize;
+                acc += kv * row[xx];
+            }
+            *o = acc;
+        }
+    };
+    let mut out = vec![0.0; w * h];
+    match form {
+        BlurForm::Gather => {
+            let mut col = vec![0.0; w];
+            for y in 0..h {
+                let sigma = sigma_of_row(y as f64);
+                let k = gaussian_kernel(sigma);
+                let r = (k.len() / 2) as i64;
+                col.iter_mut().for_each(|v| *v = 0.0);
+                for (j, kv) in k.iter().enumerate() {
+                    let yy = (y as i64 + j as i64 - r).clamp(0, h as i64 - 1) as usize;
+                    for x in 0..w {
+                        col[x] += kv * buf[yy * w + x];
+                    }
+                }
+                horizontal(&col, sigma, &mut out[y * w..(y + 1) * w]);
+            }
+        }
+        BlurForm::Scatter => {
+            let mut row = vec![0.0; w];
+            for ys in -pad..h as i64 + pad {
+                let sigma = sigma_of_row(ys as f64);
+                let src = ys.clamp(0, h as i64 - 1) as usize;
+                horizontal(&buf[src * w..(src + 1) * w], sigma, &mut row);
+                let k = gaussian_kernel(sigma);
+                let r = (k.len() / 2) as i64;
+                for (j, kv) in k.iter().enumerate() {
+                    let yy = ys + j as i64 - r;
+                    if yy < 0 || yy >= h as i64 {
+                        continue;
+                    }
+                    let dst = &mut out[yy as usize * w..(yy as usize + 1) * w];
+                    for x in 0..w {
+                        dst[x] += kv * row[x];
+                    }
+                }
+            }
+        }
+    }
+    buf.copy_from_slice(&out);
+}
+
+/// Apply a PSF to a `w × h` row-major buffer.
+pub fn apply_psf(buf: &mut [f64], w: usize, h: usize, psf: Psf) {
     match psf {
         Psf::Gaussian { sigma } => blur(buf, w, h, sigma),
         Psf::Anisotropic {
@@ -469,6 +712,11 @@ fn apply_psf(buf: &mut [f64], w: usize, h: usize, psf: Psf) {
                 },
             );
         }
+        Psf::VaryingGaussian { form, .. } => {
+            varying_blur(buf, w, h, form, &|y| {
+                varying_sigma(&psf, y).expect("varying PSF")
+            });
+        }
     }
 }
 
@@ -493,12 +741,12 @@ pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
 
     // Reflectance, area-sampled.
     let mut buf = vec![0.0f64; w * hh];
-    let n = SUPERSAMPLE as f64;
+    let n = spec.supersample as f64;
     for y in 0..hh {
         for x in 0..w {
             let mut acc = 0.0;
-            for sy in 0..SUPERSAMPLE {
-                for sx in 0..SUPERSAMPLE {
+            for sy in 0..spec.supersample {
+                for sx in 0..spec.supersample {
                     let px = x as f64 + (sx as f64 + 0.5) / n - 0.5;
                     let py = y as f64 + (sy as f64 + 0.5) / n - 0.5;
                     acc += board.reflectance(apply_h(&h_inv, [px, py]));

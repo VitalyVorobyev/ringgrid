@@ -604,6 +604,7 @@ pub(crate) fn refine_centers_photometric(
     result: &mut PipelineResult,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
+    residuals: Option<&mut Vec<crate::detector::photometric_refine::PhotometricResidualMarker>>,
 ) {
     if !config.circle_refinement.uses_photometric() {
         return;
@@ -635,6 +636,7 @@ pub(crate) fn refine_centers_photometric(
             result.board_frame,
             mapper,
             config,
+            residuals,
         );
 }
 

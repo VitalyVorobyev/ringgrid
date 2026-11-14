@@ -12,6 +12,7 @@ class DetectionFrame(str, Enum):
 class CircleRefinementMethod(str, Enum):
     NONE: CircleRefinementMethod
     PROJECTIVE_CENTER: CircleRefinementMethod
+    PHOTOMETRIC: CircleRefinementMethod
 
 class HexGeometry:
     rows: int
@@ -311,6 +312,8 @@ class DetectedMarker:
     board_xy_mm: list[float] | None
     ellipse_outer: Ellipse | None
     ellipse_inner: Ellipse | None
+    center_source: str
+    center_cov: list[list[float]] | None
     def __init__(
         self,
         confidence: float,
@@ -321,9 +324,33 @@ class DetectedMarker:
         board_xy_mm: list[float] | None = ...,
         ellipse_outer: Ellipse | None = ...,
         ellipse_inner: Ellipse | None = ...,
+        center_source: str = ...,
+        center_cov: list[list[float]] | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DetectedMarker: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class PhotometricMetrics:
+    status: str
+    n_pixels: int
+    masked_fraction: float
+    blur_sigma_px: float | None
+    contrast: float | None
+    residual_sigma: float | None
+    center_shift_px: float | None
+    def __init__(
+        self,
+        status: str,
+        n_pixels: int = ...,
+        masked_fraction: float = ...,
+        blur_sigma_px: float | None = ...,
+        contrast: float | None = ...,
+        residual_sigma: float | None = ...,
+        center_shift_px: float | None = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> PhotometricMetrics: ...
     def to_dict(self) -> dict[str, Any]: ...
 
 class MarkerDiagnostics:
@@ -332,6 +359,7 @@ class MarkerDiagnostics:
     decode: DecodeMetrics | None
     edge_points_outer: list[list[float]] | None
     edge_points_inner: list[list[float]] | None
+    photometric: PhotometricMetrics | None
     def __init__(
         self,
         fit: FitMetrics,
@@ -339,6 +367,7 @@ class MarkerDiagnostics:
         decode: DecodeMetrics | None = ...,
         edge_points_outer: list[list[float]] | None = ...,
         edge_points_inner: list[list[float]] | None = ...,
+        photometric: PhotometricMetrics | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> MarkerDiagnostics: ...
@@ -440,10 +469,12 @@ class DetectionResult:
 class DetectionDiagnostics:
     markers: list[MarkerDiagnostics]
     ransac: RansacStats | None
+    photometric_print_radii_mm: list[float] | None
     def __init__(
         self,
         markers: list[MarkerDiagnostics],
         ransac: RansacStats | None = ...,
+        photometric_print_radii_mm: list[float] | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DetectionDiagnostics: ...
@@ -531,6 +562,22 @@ class CompletionConfig:
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CompletionConfig: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+class PhotometricConfig:
+    saturation_level: int
+    max_iterations: int
+    estimate_print_radii: bool
+    max_center_shift_px: float | None
+    def __init__(
+        self,
+        saturation_level: int = ...,
+        max_iterations: int = ...,
+        estimate_print_radii: bool = ...,
+        max_center_shift_px: float | None = ...,
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> PhotometricConfig: ...
     def to_dict(self) -> dict[str, Any]: ...
 
 class ProjectiveCenterConfig:
@@ -816,6 +863,10 @@ class DetectConfig:
     @projective_center.setter
     def projective_center(self, value: ProjectiveCenterConfig) -> None: ...
     @property
+    def photometric(self) -> PhotometricConfig: ...
+    @photometric.setter
+    def photometric(self, value: PhotometricConfig) -> None: ...
+    @property
     def seed_proposals(self) -> SeedProposalConfig: ...
     @seed_proposals.setter
     def seed_proposals(self, value: SeedProposalConfig) -> None: ...
@@ -921,6 +972,7 @@ class Detector:
     def detect_with_diagnostics(self, image: np.ndarray | str | Path) -> tuple[DetectionResult, DetectionDiagnostics]: ...
     def detect_with_mapper_diagnostics(self, image: np.ndarray | str | Path, mapper: CameraModel | DivisionModel) -> tuple[DetectionResult, DetectionDiagnostics]: ...
     def detect_adaptive(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
+    def detect_adaptive_with_diagnostics(self, image: np.ndarray | str | Path) -> tuple[DetectionResult, DetectionDiagnostics]: ...
     def detect_adaptive_with_hint(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> DetectionResult: ...
     def detect_multiscale(self, image: np.ndarray | str | Path, tiers: ScaleTiers) -> DetectionResult: ...
     def adaptive_tiers(self, image: np.ndarray | str | Path, nominal_diameter_px: float | None = ...) -> ScaleTiers: ...

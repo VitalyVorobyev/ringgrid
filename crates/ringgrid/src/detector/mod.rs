@@ -13,6 +13,7 @@ pub(crate) mod inner_fit;
 pub(crate) mod marker_build;
 pub(crate) mod neighbors;
 pub(crate) mod outer_fit;
+pub(crate) mod photometric_refine;
 
 pub(crate) mod config;
 
@@ -23,8 +24,8 @@ pub(crate) use completion::{CompletionStats, complete_plain_with_h, complete_wit
 pub use config::{
     AdvancedDetectConfig, CircleRefinementMethod, CompletionConfig, DetectConfig,
     IdCorrectionConfig, InnerAsOuterRecoveryConfig, InnerFitConfig, MarkerScalePrior,
-    OuterFitConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier, ScaleTiers,
-    SeedProposalConfig,
+    OuterFitConfig, PhotometricConfig, ProjectiveCenterConfig, ProposalDownscale, ScaleTier,
+    ScaleTiers, SeedProposalConfig,
 };
 pub use dedup::{dedup_by_id, dedup_markers};
 pub use global_filter::global_filter;
@@ -34,6 +35,8 @@ pub(crate) use inner_as_outer_recovery::{
 };
 pub use inner_fit::{InnerFitReason, InnerFitStatus};
 pub(crate) use marker_build::MarkerRecord;
-pub use marker_build::{DetectionSource, FitMetrics};
+pub use marker_build::{
+    CenterSource, DetectionSource, FitMetrics, PhotometricMetrics, PhotometricStatus,
+};
 pub(crate) use neighbors::median_neighbor_outer_radius_px;
 pub(crate) use outer_fit::{OuterFitCandidate, fit_outer_candidate_from_prior_for_completion};

@@ -491,6 +491,27 @@ impl DetectorCore {
         serde_json::to_string(&result).map_err(py_value_error)
     }
 
+    fn detect_adaptive_with_diagnostics_path(&self, image_path: &str) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = load_gray_image(image_path)?;
+        let (result, diagnostics) = detector
+            .detect_adaptive_with_diagnostics(&gray)
+            .map_err(py_value_error)?;
+        detection_with_diagnostics_json(result, diagnostics)
+    }
+
+    fn detect_adaptive_with_diagnostics_array(
+        &self,
+        image: PyReadonlyArrayDyn<'_, u8>,
+    ) -> PyResult<String> {
+        let detector = detector_from_json(&self.board_spec_json, &self.config_json)?;
+        let gray = gray_image_from_array(image)?;
+        let (result, diagnostics) = detector
+            .detect_adaptive_with_diagnostics(&gray)
+            .map_err(py_value_error)?;
+        detection_with_diagnostics_json(result, diagnostics)
+    }
+
     #[pyo3(signature = (image_path, nominal_diameter_px=None))]
     fn detect_adaptive_with_hint_path(
         &self,

@@ -27,6 +27,7 @@ README_SECTION_TYPES: dict[str, type[object]] = {
     "decode": ringgrid.DecodeConfig,
     "seed_proposals": ringgrid.SeedProposalConfig,
     "projective_center": ringgrid.ProjectiveCenterConfig,
+    "photometric": ringgrid.PhotometricConfig,
     "completion": ringgrid.CompletionConfig,
     "ransac_homography": ringgrid.RansacConfig,
     "self_undistort": ringgrid.SelfUndistortConfig,
@@ -1134,3 +1135,110 @@ def test_extended_codebook_profile_round_trips_through_the_target_spec() -> None
     # Baseline targets keep their exact JSON: the field is omitted.
     plain_spec = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).to_spec_json()
     assert "codebook_profile" not in plain_spec
+
+
+def test_photometric_config_roundtrips_through_detect_config() -> None:
+    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
+    defaults = cfg.photometric
+    assert defaults.saturation_level == 250
+    assert defaults.max_iterations == 30
+    assert defaults.estimate_print_radii is True
+    assert defaults.max_center_shift_px is None
+
+    cfg.photometric = ringgrid.PhotometricConfig(
+        saturation_level=240,
+        max_iterations=12,
+        estimate_print_radii=False,
+        max_center_shift_px=3.5,
+    )
+    section = cfg.to_dict()["advanced"]["photometric"]
+    assert section["saturation_level"] == 240
+    assert section["max_iterations"] == 12
+    assert section["estimate_print_radii"] is False
+    assert section["max_center_shift_px"] == pytest.approx(3.5)
+    assert cfg.photometric.max_center_shift_px == pytest.approx(3.5)
+
+    cfg.photometric = ringgrid.PhotometricConfig()
+    assert cfg.to_dict()["advanced"]["photometric"]["max_center_shift_px"] is None
+
+    cfg.circle_refinement = ringgrid.CircleRefinementMethod.PHOTOMETRIC
+    assert cfg.circle_refinement == ringgrid.CircleRefinementMethod.PHOTOMETRIC
+    assert cfg.to_dict()["circle_refinement"] == "Photometric"
+
+    with pytest.raises(TypeError):
+        cfg.photometric = ringgrid.ProjectiveCenterConfig()  # type: ignore[assignment]
+
+
+def test_detect_with_photometric_refinement_reports_center_source() -> None:
+    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
+    cfg.circle_refinement = ringgrid.CircleRefinementMethod.PHOTOMETRIC
+    detector = ringgrid.Detector(cfg)
+
+    allowed = {"outer_ellipse", "projective_center", "photometric"}
+    for result, diagnostics in (
+        detector.detect_with_diagnostics(SAMPLE_IMAGE),
+        detector.detect_adaptive_with_diagnostics(SAMPLE_IMAGE),
+    ):
+        assert len(diagnostics.markers) == len(result.detected_markers)
+        for marker, diag in zip(result.detected_markers, diagnostics.markers):
+            assert marker.center_source in allowed
+            if marker.center_source == "photometric":
+                cov = marker.center_cov
+                assert cov is not None and len(cov) == 2 and all(len(r) == 2 for r in cov)
+                assert cov[0][0] > 0.0 and cov[1][1] > 0.0
+                assert diag.photometric is not None
+                assert diag.photometric.status == "accepted"
+        restored = ringgrid.DetectionResult.from_dict(result.to_dict())
+        assert [m.center_source for m in restored.detected_markers] == [
+            m.center_source for m in result.detected_markers
+        ]
+
+
+def test_photometric_diagnostics_parse_and_tolerate_absent_fields() -> None:
+    _, real = _make_detector().detect_with_diagnostics(SAMPLE_IMAGE)
+    fit = real.markers[0].fit.to_dict()
+    base = ringgrid.DetectedMarker.from_dict({"confidence": 0.9, "center": [1.0, 2.0]})
+    assert base.center_source == "outer_ellipse"
+    assert base.center_cov is None
+
+    marker = ringgrid.DetectedMarker.from_dict(
+        {
+            "confidence": 0.9,
+            "center": [1.0, 2.0],
+            "center_source": "photometric",
+            "center_cov": [[0.01, 0.0], [0.0, 0.02]],
+        }
+    )
+    assert marker.center_cov == [[0.01, 0.0], [0.0, 0.02]]
+    assert marker.to_dict()["center_source"] == "photometric"
+
+    metrics = ringgrid.PhotometricMetrics.from_dict(
+        {
+            "status": "accepted",
+            "blur_sigma_px": 1.4,
+            "contrast": 120.0,
+            "residual_sigma": 2.5,
+            "n_pixels": 900,
+            "masked_fraction": 0.02,
+            "center_shift_px": 0.3,
+        }
+    )
+    assert metrics.status == "accepted"
+    assert metrics.blur_sigma_px == pytest.approx(1.4)
+    assert ringgrid.PhotometricMetrics.from_dict(metrics.to_dict()) == metrics
+    rejected = ringgrid.PhotometricMetrics.from_dict({"status": "poor_fit", "n_pixels": 5})
+    assert rejected.blur_sigma_px is None
+    assert "blur_sigma_px" not in rejected.to_dict()
+
+    assert ringgrid.MarkerDiagnostics.from_dict({"fit": fit}).photometric is None
+    diag = ringgrid.MarkerDiagnostics.from_dict(
+        {"fit": fit, "photometric": metrics.to_dict()}
+    )
+    assert diag.photometric == metrics
+    assert diag.to_dict()["photometric"]["status"] == "accepted"
+
+    dd = ringgrid.DetectionDiagnostics.from_dict(
+        {"markers": [], "photometric_print_radii_mm": [1.0, 2.0, 3.0, 4.0]}
+    )
+    assert dd.photometric_print_radii_mm == [1.0, 2.0, 3.0, 4.0]
+    assert ringgrid.DetectionDiagnostics.from_dict({"markers": []}).photometric_print_radii_mm is None

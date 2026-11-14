@@ -115,6 +115,7 @@ class CircleRefinementMethod(str, Enum):
 
     NONE = "none"
     PROJECTIVE_CENTER = "projective_center"
+    PHOTOMETRIC = "photometric"
 
 
 @dataclass(slots=True)
@@ -1004,6 +1005,11 @@ class DetectedMarker:
     board_xy_mm: list[float] | None = None
     ellipse_outer: Ellipse | None = None
     ellipse_inner: Ellipse | None = None
+    #: Which estimator produced ``center``: ``"outer_ellipse"``,
+    #: ``"projective_center"`` or ``"photometric"``.
+    center_source: str = "outer_ellipse"
+    #: 2x2 covariance of ``center`` (px^2); set for photometric centers only.
+    center_cov: list[list[float]] | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectedMarker":
@@ -1023,19 +1029,66 @@ class DetectedMarker:
             ellipse_inner=None
             if data.get("ellipse_inner") is None
             else Ellipse.from_dict(data["ellipse_inner"]),
+            center_source=str(data.get("center_source", "outer_ellipse")),
+            center_cov=_optional_cov2(data.get("center_cov")),
         )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "confidence": float(self.confidence),
             "center": [float(self.center[0]), float(self.center[1])],
+            "center_source": str(self.center_source),
         }
+        _set_optional(out, "center_cov", self.center_cov)
         _set_optional(out, "id", self.id)
         _set_optional(out, "grid_coord", self.grid_coord)
         _set_optional(out, "center_mapped", self.center_mapped)
         _set_optional(out, "board_xy_mm", self.board_xy_mm)
         _set_optional(out, "ellipse_outer", None if self.ellipse_outer is None else self.ellipse_outer.to_dict())
         _set_optional(out, "ellipse_inner", None if self.ellipse_inner is None else self.ellipse_inner.to_dict())
+        return out
+
+
+@dataclass(slots=True)
+class PhotometricMetrics:
+    """Outcome of the photometric centre fit for one marker.
+
+    ``status`` is one of ``"accepted"``, ``"insufficient_pixels"``,
+    ``"degenerate"``, ``"not_converged"``, ``"shift_too_large"``,
+    ``"implausible"`` or ``"poor_fit"``.
+    """
+
+    status: str
+    n_pixels: int = 0
+    masked_fraction: float = 0.0
+    blur_sigma_px: float | None = None
+    contrast: float | None = None
+    residual_sigma: float | None = None
+    center_shift_px: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "PhotometricMetrics":
+        data = _require_mapping(data, name="data")
+        return cls(
+            status=str(data["status"]),
+            n_pixels=int(data.get("n_pixels", 0)),
+            masked_fraction=float(data.get("masked_fraction", 0.0)),
+            blur_sigma_px=_optional_float(data.get("blur_sigma_px")),
+            contrast=_optional_float(data.get("contrast")),
+            residual_sigma=_optional_float(data.get("residual_sigma")),
+            center_shift_px=_optional_float(data.get("center_shift_px")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "status": str(self.status),
+            "n_pixels": int(self.n_pixels),
+            "masked_fraction": float(self.masked_fraction),
+        }
+        _set_optional(out, "blur_sigma_px", self.blur_sigma_px)
+        _set_optional(out, "contrast", self.contrast)
+        _set_optional(out, "residual_sigma", self.residual_sigma)
+        _set_optional(out, "center_shift_px", self.center_shift_px)
         return out
 
 
@@ -1053,6 +1106,7 @@ class MarkerDiagnostics:
     decode: DecodeMetrics | None = None
     edge_points_outer: list[list[float]] | None = None
     edge_points_inner: list[list[float]] | None = None
+    photometric: PhotometricMetrics | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "MarkerDiagnostics":
@@ -1064,6 +1118,9 @@ class MarkerDiagnostics:
             else DecodeMetrics.from_dict(data["decode"]),
             edge_points_outer=_optional_points(data.get("edge_points_outer")),
             edge_points_inner=_optional_points(data.get("edge_points_inner")),
+            photometric=None
+            if data.get("photometric") is None
+            else PhotometricMetrics.from_dict(data["photometric"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1074,6 +1131,11 @@ class MarkerDiagnostics:
         _set_optional(out, "decode", None if self.decode is None else self.decode.to_dict())
         _set_optional(out, "edge_points_outer", self.edge_points_outer)
         _set_optional(out, "edge_points_inner", self.edge_points_inner)
+        _set_optional(
+            out,
+            "photometric",
+            None if self.photometric is None else self.photometric.to_dict(),
+        )
         return out
 
 
@@ -1334,6 +1396,8 @@ class DetectionDiagnostics:
 
     markers: list[MarkerDiagnostics]
     ransac: RansacStats | None = None
+    #: Print radii (mm) the photometric fit estimated: outer, inner, ... (4 values).
+    photometric_print_radii_mm: list[float] | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectionDiagnostics":
@@ -1341,6 +1405,9 @@ class DetectionDiagnostics:
         return cls(
             markers=markers,
             ransac=None if data.get("ransac") is None else RansacStats.from_dict(data["ransac"]),
+            photometric_print_radii_mm=None
+            if data.get("photometric_print_radii_mm") is None
+            else [float(v) for v in data["photometric_print_radii_mm"]],
         )
 
     @classmethod
@@ -1353,6 +1420,7 @@ class DetectionDiagnostics:
             "markers": [m.to_dict() for m in self.markers],
         }
         _set_optional(out, "ransac", None if self.ransac is None else self.ransac.to_dict())
+        _set_optional(out, "photometric_print_radii_mm", self.photometric_print_radii_mm)
         return out
 
 
@@ -1539,6 +1607,39 @@ class ProjectiveCenterConfig:
             None if self.max_correction_shift_px is None else float(self.max_correction_shift_px)
         )
         return out
+
+
+@dataclass(slots=True)
+class PhotometricConfig:
+    """Blur-robust photometric centre refinement (``CircleRefinementMethod.PHOTOMETRIC``)."""
+
+    saturation_level: int = 250
+    max_iterations: int = 30
+    estimate_print_radii: bool = True
+    # None means "auto" (derived from the marker size).
+    max_center_shift_px: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "PhotometricConfig":
+        data = _require_mapping(data, name="data")
+        return cls(
+            saturation_level=int(data["saturation_level"]),
+            max_iterations=int(data["max_iterations"]),
+            estimate_print_radii=bool(data["estimate_print_radii"]),
+            max_center_shift_px=_optional_float(data.get("max_center_shift_px")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        # Explicit null for None: overlays merge, so omitting the key would
+        # keep a previously-set explicit value.
+        return {
+            "saturation_level": int(self.saturation_level),
+            "max_iterations": int(self.max_iterations),
+            "estimate_print_radii": bool(self.estimate_print_radii),
+            "max_center_shift_px": None
+            if self.max_center_shift_px is None
+            else float(self.max_center_shift_px),
+        }
 
 
 @dataclass(slots=True)
@@ -1958,6 +2059,7 @@ _ADVANCED_KEYS: frozenset[str] = frozenset(
         "inner_fit",
         "outer_fit",
         "projective_center",
+        "photometric",
         "completion",
         "max_aspect_ratio",
         "dedup_radius",
@@ -2140,6 +2242,16 @@ class DetectConfig:
         if not isinstance(value, ProjectiveCenterConfig):
             raise TypeError("projective_center must be ProjectiveCenterConfig")
         self._apply_overlay({"projective_center": value.to_dict()}, refresh=True)
+
+    @property
+    def photometric(self) -> PhotometricConfig:
+        return PhotometricConfig.from_dict(self._resolved_value("photometric"))
+
+    @photometric.setter
+    def photometric(self, value: PhotometricConfig) -> None:
+        if not isinstance(value, PhotometricConfig):
+            raise TypeError("photometric must be PhotometricConfig")
+        self._apply_overlay({"photometric": value.to_dict()}, refresh=True)
 
     @property
     def seed_proposals(self) -> SeedProposalConfig:
@@ -2489,6 +2601,25 @@ class Detector:
             )
         return DetectionResult.from_dict(json.loads(result_json))
 
+    def detect_adaptive_with_diagnostics(
+        self,
+        image: np.ndarray | str | Path,
+    ) -> tuple[DetectionResult, DetectionDiagnostics]:
+        """Run robust adaptive detection and also return diagnostics.
+
+        Adaptive counterpart of :meth:`detect_with_diagnostics`;
+        ``diagnostics.markers`` is aligned 1:1 with ``result.detected_markers``.
+        """
+        self._refresh_core_if_needed()
+        if isinstance(image, np.ndarray):
+            _validate_image_array(image)
+            combined_json = self._core.detect_adaptive_with_diagnostics_array(image)
+        else:
+            combined_json = self._core.detect_adaptive_with_diagnostics_path(
+                _coerce_path(image)
+            )
+        return _split_detection_with_diagnostics(combined_json)
+
     def detect_adaptive_with_hint(
         self,
         image: np.ndarray | str | Path,
@@ -2690,6 +2821,12 @@ def _split_detection_with_diagnostics(
     return result, diagnostics
 
 
+def _optional_cov2(value: Any) -> list[list[float]] | None:
+    if value is None:
+        return None
+    return [[float(v) for v in row] for row in value]
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -2760,6 +2897,8 @@ def _circle_refinement_from_wire(value: str) -> CircleRefinementMethod:
         return CircleRefinementMethod.NONE
     if lowered in {"projectivecenter", "projective_center"}:
         return CircleRefinementMethod.PROJECTIVE_CENTER
+    if lowered == "photometric":
+        return CircleRefinementMethod.PHOTOMETRIC
     raise ValueError(f"unknown circle refinement value: {value!r}")
 
 
@@ -2768,6 +2907,8 @@ def _circle_refinement_to_wire(value: CircleRefinementMethod) -> str:
         return "None"
     if value == CircleRefinementMethod.PROJECTIVE_CENTER:
         return "ProjectiveCenter"
+    if value == CircleRefinementMethod.PHOTOMETRIC:
+        return "Photometric"
     raise ValueError(f"unsupported circle refinement value: {value!r}")
 
 
@@ -2969,6 +3110,8 @@ __all__ = [
     "OuterFitConfig",
     "CompletionConfig",
     "ProjectiveCenterConfig",
+    "PhotometricConfig",
+    "PhotometricMetrics",
     "SeedProposalConfig",
     "ProposalConfig",
     "EdgeSampleConfig",

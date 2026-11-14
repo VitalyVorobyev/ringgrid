@@ -286,6 +286,7 @@ Deeper theory and Rust-side derivation details:
 | `cfg.decode` | `DecodeConfig` | Code-band sampling and decode strictness |
 | `cfg.seed_proposals` | `SeedProposalConfig` | Seed-injected proposals for multi-pass flows |
 | `cfg.projective_center` | `ProjectiveCenterConfig` | Projective-center recovery gates |
+| `cfg.photometric` | `PhotometricConfig` | Blur-robust photometric centre fit |
 | `cfg.completion` | `CompletionConfig` | Homography-guided recovery of missing IDs |
 | `cfg.ransac_homography` | `RansacConfig` | Global homography fitting thresholds |
 | `cfg.self_undistort` | `SelfUndistortConfig` | Division-model self-undistort estimation |
@@ -297,7 +298,7 @@ Deeper theory and Rust-side derivation details:
 | Property | Default | Practical notes |
 |---|---|---|
 | `cfg.target` | constructor input | Read-only target layout. Replace the whole config if you need a different target. |
-| `cfg.circle_refinement` | `ringgrid.CircleRefinementMethod.PROJECTIVE_CENTER` | Use `NONE` for raw ellipse centers, or keep `PROJECTIVE_CENTER` for the accuracy-oriented default. |
+| `cfg.circle_refinement` | `ringgrid.CircleRefinementMethod.PROJECTIVE_CENTER` | Use `NONE` for raw ellipse centers, keep `PROJECTIVE_CENTER` for the accuracy-oriented default, or choose `PHOTOMETRIC` for the blur-robust fit (markers report `center_source` and, when photometric, `center_cov`). |
 | `cfg.dedup_radius` | `6.0` | Final marker merge radius in pixels. Raise only if duplicate fits survive; lower if nearby valid markers merge incorrectly. |
 | `cfg.max_aspect_ratio` | `3.0` | Rejects very elongated ellipses. Tighten when false positives are obviously non-circular; loosen only for extreme perspective. |
 | `cfg.use_global_filter` | `True` | Enables homography-based outlier rejection. Turn it off when debugging local fits or when you want to inspect raw pre-homography detections. |
@@ -476,6 +477,18 @@ Controls the center-refinement stage used when
 | `max_correction_shift_px` | `None` (auto) | Maximum accepted correction jump (pre-0.8 name: `max_center_shift_px`). `None` falls back to the nominal marker diameter; explicit values are honored as-is. |
 | `max_selected_residual` | `0.25` | Rejects unstable projective-center candidates. Raise only if valid markers are failing this gate. |
 | `min_eig_separation` | `1e-06` | Guards against unstable conic-pencil eigenpairs. Lower only if you have evidence the default is too strict. |
+
+### `photometric`
+
+Controls the blur-robust centre fit used when
+`cfg.circle_refinement == ringgrid.CircleRefinementMethod.PHOTOMETRIC`.
+
+| Field | Default | Practical notes |
+|---|---|---|
+| `saturation_level` | `250` | Pixels at or above this gray level are masked out of the fit. Lower it for sensors that clip earlier. |
+| `max_iterations` | `30` | Iteration cap of the photometric solver. |
+| `estimate_print_radii` | `True` | Estimates the printed ring radii from the image (reported in `DetectionDiagnostics.photometric_print_radii_mm`). |
+| `max_center_shift_px` | `None` (auto) | Maximum accepted shift from the starting centre. `None` derives it from the marker size; explicit values are honored as-is. |
 
 ### `completion`
 

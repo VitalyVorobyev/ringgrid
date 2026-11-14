@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-14
+
+Blur-robust photometric marker centers with a per-marker covariance. Opt-in;
+default detection output gains a `center_source` field but no default number
+changes.
+
+### Added
+
+- **`CircleRefinementMethod::Photometric`.** After detection, each decoded
+  marker of a coded target is re-fitted from its pixels with a model of the
+  blurred printed pattern (rings, the marker's own code sectors, neighbours'
+  rings, fitted Gaussian blur, smooth illumination, saturated pixels masked).
+  The reported center is the image of the ring center under the fitted local
+  map. On synthetic 33 px markers with 40–80 grey levels of contrast and
+  σ = 2 noise, center RMS drops from 0.45–0.74 px (projective center) to
+  0.008–0.040 px for blur σ 0.8–3 px. Tuning in
+  `AdvancedDetectConfig::photometric` (`PhotometricConfig`:
+  `saturation_level`, `max_iterations`, `estimate_print_radii`,
+  `max_center_shift_px`). The printed ring and code-band radii are estimated
+  from the image by default, since printed boards often differ from the
+  nominal stroke width.
+- **`DetectedMarker::center_source`** (`CenterSource`: `outer_ellipse`,
+  `projective_center`, `photometric`) says which estimator produced the
+  center — including when projective correction was rejected and the
+  outer-ellipse center was kept.
+- **`DetectedMarker::center_cov`**: 2×2 center covariance (px²) for
+  photometric centers. It reflects pixel noise; model mismatch (a non-Gaussian
+  lens PSF, glare) is not included.
+- **`MarkerDiagnostics::photometric`** (`PhotometricMetrics`: status, fitted
+  blur, contrast, residual) and
+  **`DetectionDiagnostics::photometric_print_radii_mm`**.
+- **`Detector::detect_adaptive_with_diagnostics`**, and the Python
+  `Detector.detect_adaptive_with_diagnostics`.
+- Python: `CircleRefinementMethod.PHOTOMETRIC`, `PhotometricConfig`,
+  `PhotometricMetrics`, `DetectedMarker.center_source` / `center_cov`.
+- CLI: `--circle-refine-method photometric`.
+
+### Changed
+
+- **Breaking:** `CircleRefinementMethod` has a new variant; exhaustive
+  `match`es need an arm for `Photometric`.
+
 ## [0.13.2] - 2026-10-30
 
 Builds whichever `nalgebra` Cargo resolves for `projective-grid`. No API or

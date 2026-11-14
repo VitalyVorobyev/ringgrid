@@ -28,6 +28,7 @@
 - [Inner Ellipse Estimation](detection-pipeline/inner-estimate.md)
 - [Deduplication](detection-pipeline/dedup.md)
 - [Projective Center & Global Filter](detection-pipeline/projective-center.md)
+- [Photometric Center Refinement](detection-pipeline/photometric-center.md)
 - [ID Correction](detection-pipeline/id-correction.md)
 - [Completion & Final Refit](detection-pipeline/completion.md)
 - [Plain / Rect Target Detection](detection-pipeline/plain-target.md)

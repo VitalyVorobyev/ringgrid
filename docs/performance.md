@@ -165,6 +165,33 @@ Snapshot:
 | Avg H vs GT error (px) | 0.147 |
 | Avg H self error (px) | 0.235 |
 
+### Blur Benchmark: Photometric Centers (2026-11)
+
+Source: `crates/ringgrid/tests/blur_center_accuracy.rs` (Rust, no Python).
+Synthetic 720×540 frames of the default hex board printed with 0.84 mm strokes
+(a 1.15 mm code band, as real prints can have), detected with the nominal
+default-board config through `detect_adaptive`; ≈33 px markers, tilts 0/20/30°,
+an illumination gradient, a saturated glare blob and σ = 2 grey-level noise.
+Center RMS / p95 over decoded markers (px):
+
+| blur σ | contrast | projective-center | photometric |
+|---:|---:|---:|---:|
+| 0.8 | 40 | 0.485 / 0.559 | 0.013 / 0.023 |
+| 1.5 | 40 | 0.449 / 0.693 | 0.022 / 0.038 |
+| 0.8 | 80 | 0.614 / 0.924 | 0.008 / 0.014 |
+| 1.5 | 80 | 0.715 / 1.095 | 0.013 / 0.022 |
+| 2.5 | 80 | 0.600 / 1.118 | 0.028 / 0.052 |
+| 3.0 | 80 | 0.736 / 1.387 | 0.040 / 0.073 |
+
+Decoded counts are identical for every method (the photometric stage runs
+after detection). At 40 grey levels and blur ≥ 2.5, and at blur 4 for any
+contrast, the decoder loses or mis-decodes most markers for every method.
+
+```bash
+BLUR_BENCH_CONTRAST=80 cargo test --release -p ringgrid --test blur_center_accuracy \
+  -- --ignored --nocapture --test-threads 1 blur_center_benchmark
+```
+
 ## Related Docs
 
 - [docs/tuning-guide.md](tuning-guide.md) for symptom-driven tuning notes

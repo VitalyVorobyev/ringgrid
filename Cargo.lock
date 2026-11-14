@@ -1858,7 +1858,7 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "ringgrid"
-version = "0.13.2"
+version = "0.14.0"
 dependencies = [
  "approx",
  "clap",
@@ -1882,10 +1882,11 @@ dependencies = [
 
 [[package]]
 name = "ringgrid-cli"
-version = "0.13.2"
+version = "0.14.0"
 dependencies = [
  "clap",
  "image",
+ "nalgebra 0.35.0",
  "ringgrid",
  "serde",
  "serde_json",

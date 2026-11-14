@@ -97,7 +97,7 @@ knobs are reached through the `advanced` sub-config.
 |---|---|---|---|
 | `target` | `TargetLayout` | default hex | Target layout defining marker positions and geometry. Not serialized — re-attach via `with_target` when loading a config from JSON. |
 | `marker_scale` | `MarkerScalePrior` | 14.0--66.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
-| `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None` or `ProjectiveCenter`. |
+| `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None`, `ProjectiveCenter` or `Photometric` (blur-robust, adds a center covariance). |
 | `self_undistort` | `SelfUndistortConfig` | disabled | Self-undistort estimation from conic consistency of detected ring edges. |
 | `advanced.outer_estimation` | `OuterEstimationConfig` | (see sub-configs) | Outer-edge radius hypothesis generation from radial profile peaks. |
 | `advanced.proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
@@ -108,6 +108,7 @@ knobs are reached through the `advanced` sub-config.
 | `advanced.inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
 | `advanced.outer_fit` | `OuterFitConfig` | (see sub-configs) | Robust outer ellipse fitting: RANSAC params, scoring weights. |
 | `advanced.projective_center` | `ProjectiveCenterConfig` | (see sub-configs) | Projective center recovery gates and tuning. `max_correction_shift_px` (renamed from `max_center_shift_px`) defaults to `None` = "auto" (nominal marker diameter at the point of use); explicit values survive target re-derivation. |
+| `advanced.photometric` | `PhotometricConfig` | (see sub-configs) | Photometric center refinement: saturation level, iteration budget, print-radii estimation, shift gate. Used only with `circle_refinement = Photometric`. |
 | `advanced.completion` | `CompletionConfig` | (see sub-configs) | Completion at missing H-projected board positions. `roi_radius_px` is auto-derived from scale. |
 | `advanced.max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
 | `advanced.dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |

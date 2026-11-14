@@ -172,6 +172,16 @@
           },
           "description": "Robust outer ellipse fitting controls shared across pipeline stages."
         },
+        "photometric": {
+          "$ref": "#/$defs/PhotometricConfig",
+          "default": {
+            "estimate_print_radii": true,
+            "max_center_shift_px": null,
+            "max_iterations": 30,
+            "saturation_level": 250
+          },
+          "description": "Photometric centre refinement controls."
+        },
         "projective_center": {
           "$ref": "#/$defs/ProjectiveCenterConfig",
           "default": {
@@ -274,6 +284,11 @@
         {
           "const": "ProjectiveCenter",
           "description": "Run projective-center recovery from inner/outer conics.",
+          "type": "string"
+        },
+        {
+          "const": "Photometric",
+          "description": "Projective-center recovery, then a per-marker photometric fit of the\nblurred marker pattern for every decoded marker of a coded target with\na board homography.\n\nThe fit explains the marker's pixels with the printed ring and code\npattern (seen through the board homography, refined locally), blurred\nby a fitted Gaussian PSF, over an affine background. It removes the\nblur- and code-dependent bias of edge-based centres and reports a 2×2\ncentre covariance per marker (`DetectedMarker::center_cov`). Markers\nit cannot refine keep their projective (or outer-ellipse) centre; see\n`DetectedMarker::center_source`. Tuning lives in\n`AdvancedDetectConfig::photometric`.\n\n`DetectedMarker::center_cov`: crate::DetectedMarker::center_cov\n`DetectedMarker::center_source`: crate::DetectedMarker::center_source",
           "type": "string"
         }
       ]
@@ -876,6 +891,39 @@
       },
       "type": "object"
     },
+    "PhotometricConfig": {
+      "description": "Photometric centre refinement, used when\n`CircleRefinementMethod::Photometric`\nis selected.",
+      "properties": {
+        "estimate_print_radii": {
+          "default": true,
+          "description": "Estimate the printed radii of the ring and code-band edges from the\nimage instead of taking them from the target's nominal stroke width.\n\nPrinted boards often differ from the nominal stroke width; a model of\nthe code band at the wrong radius biases the centre. When enabled, a\nfirst pass fits the radii per marker and their precision-weighted\nconsensus is used for the final fits. Default: `true`.",
+          "type": "boolean"
+        },
+        "max_center_shift_px": {
+          "default": null,
+          "description": "Maximum distance (pixels) between the photometric centre and the\ncentre it starts from; larger moves are rejected and the marker keeps\nits previous centre. The fit is anchored by the board homography and\nthe decoded code pattern, so it can also repair a grossly wrong ellipse\ncentre. `None` (JSON `null`) means \"auto\": half the marker's outer\nradius.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-unit": "px"
+        },
+        "max_iterations": {
+          "default": 30,
+          "description": "Maximum Levenberg–Marquardt iterations per marker (at least 1).\nDefault: `30`; fits typically converge in 5 to 10.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "saturation_level": {
+          "default": 250,
+          "description": "Grey level (0 to 255) at or above which a pixel counts as saturated.\nSaturated pixels and their 8-neighbours are left out of the fit, so a\nglare blob over part of a marker does not bias it. Default: `250`.",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ProjectiveCenterConfig": {
       "description": "Projective-only unbiased center recovery from inner/outer conics.",
       "properties": {
@@ -1272,6 +1320,12 @@
             "seed": 42
           },
           "size_score_weight": 0.15
+        },
+        "photometric": {
+          "estimate_print_radii": true,
+          "max_center_shift_px": null,
+          "max_iterations": 30,
+          "saturation_level": 250
         },
         "projective_center": {
           "max_correction_shift_px": null,

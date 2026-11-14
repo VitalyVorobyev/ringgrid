@@ -91,6 +91,7 @@ pub(crate) fn apply_projective_centers(markers: &mut [MarkerRecord], config: &De
         }
 
         m.center = center_projective;
+        m.center_source = crate::detector::CenterSource::ProjectiveCenter;
         n_applied += 1;
     }
 

@@ -746,6 +746,9 @@ impl CliCameraArgs {
 enum CircleRefineMethodArg {
     None,
     ProjectiveCenter,
+    /// Projective centre, then a photometric fit of each decoded marker
+    /// (blur-robust; adds a centre covariance).
+    Photometric,
 }
 
 impl CircleRefineMethodArg {
@@ -753,6 +756,7 @@ impl CircleRefineMethodArg {
         match self {
             Self::None => ringgrid::CircleRefinementMethod::None,
             Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
+            Self::Photometric => ringgrid::CircleRefinementMethod::Photometric,
         }
     }
 }

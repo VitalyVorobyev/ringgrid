@@ -159,8 +159,10 @@ pub struct PhotometricConfig {
     /// Default: `30`; fits typically converge in 5 to 10.
     #[cfg_attr(feature = "schemars", schemars(range(min = 1)))]
     pub max_iterations: usize,
-    /// Estimate the printed radii of the ring and code-band edges from the
-    /// image instead of taking them from the target's nominal stroke width.
+    /// Estimate the printed radii of the marker edges from the image instead
+    /// of taking them from the target's nominal geometry: the hole and both
+    /// code-band edges of coded markers, the inner edge of plain annuli (the
+    /// outer edge sets the scale).
     ///
     /// Printed boards often differ from the nominal stroke width; a model of
     /// the code band at the wrong radius biases the centre. When enabled, a
@@ -170,7 +172,7 @@ pub struct PhotometricConfig {
     /// Maximum distance (pixels) between the photometric centre and the
     /// centre it starts from; larger moves are rejected and the marker keeps
     /// its previous centre. The fit is anchored by the board homography and
-    /// the decoded code pattern, so it can also repair a grossly wrong ellipse
+    /// the printed pattern, so it can also repair a grossly wrong ellipse
     /// centre. `None` (JSON `null`) means "auto": half the marker's outer
     /// radius.
     #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]

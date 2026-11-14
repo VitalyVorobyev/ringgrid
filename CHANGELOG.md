@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The photometric centre refinement works on every target kind and reports a
+covariance that stays honest under correlated noise. Opt-in, as before.
+
+### Added
+
+- **Photometric centres for plain targets.** `CircleRefinementMethod::Photometric`
+  now refines plain (uncoded, filled-annulus) markers as well as coded ones,
+  on hex and rect lattices, with or without origin dots. The printed pattern
+  around each marker — its ink annulus, the code sectors of a coded marker,
+  the outer edges of the neighbouring markers and nearby origin dots — is
+  derived from the target definition, so every kind goes through the same
+  model. Plain markers are placed by their lattice label (absolute or relative
+  board frame). On synthetic 17–33 px markers under Gaussian blur σ ≤ 3 px
+  (contrast 40–80, tilt 0–30°, σ = 2 noise) the photometric centre RMS is
+  0.005–0.042 px for every plain target kind, where the projective centre
+  errs by 0.05–1.3 px RMS.
+- **`PhotometricStatus::NoBoardPosition`.** With the photometric method
+  selected, every marker now reports a photometric status; markers without a
+  decoded id or lattice label, or results without a board homography, say
+  `no_board_position` instead of carrying no status.
+- **`PhotometricMetrics::covariance_inflation`** (reported centre σ over the
+  independent-pixel σ) and **`PhotometricMetrics::residual_autocorrelation`**
+  (`ResidualAutocorrelation`: residual correlation at lags 1–6 px along image
+  x and y), in the diagnostics. Python: `PhotometricMetrics.covariance_inflation`,
+  `PhotometricMetrics.residual_autocorrelation`, `ResidualAutocorrelation`.
+
+### Changed
+
+- **`DetectedMarker::center_cov` accounts for spatially correlated
+  residuals.** It was the inverse Fisher information, which assumes
+  independent pixels; with sensor noise correlated over about a pixel
+  (demosaicing, compression, sharpening) it understated the centre scatter
+  about threefold. It is now a sandwich estimate with a fitted
+  white-plus-Gaussian-correlated residual noise model, taken from the part of
+  the residuals antisymmetric about the centre so that a centrally symmetric
+  model misfit is not mistaken for noise. With white residuals it equals the
+  previous value wherever the data, not the prior, determine the centre.
+  Synthetic Monte-Carlo, reported over empirical centre σ with noise
+  correlated over 1 px: 0.33–0.38 before, 0.99–1.04 now, for every target
+  kind. Under a coded marker's asymmetric model misfit (anisotropic or disc
+  PSF, heavy blur) it is conservative, up to about 2× the scatter.
+- The PSF of the photometric model is an anisotropic Gaussian (two more
+  fitted parameters, held near isotropic by a weak prior): astigmatic optics
+  no longer leave a structured residual. Centre RMS under a PSF with axis
+  ratio 1.8 improves by 2–13 % depending on the target kind; isotropic scenes
+  are unchanged.
+- Print-radius estimation also runs on plain targets (the annulus' inner
+  edge), and its priors and gates scale with the marker instead of being fixed
+  millimetre values. `DetectionDiagnostics::photometric_print_radii_mm` of a
+  plain target holds the inner edge and then the outer edge three times.
+
 ## [0.14.0] - 2026-11-14
 
 Blur-robust photometric marker centers with a per-marker covariance. Opt-in;

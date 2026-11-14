@@ -1,26 +1,30 @@
 //! Photometric centre refinement stage.
 //!
-//! Runs once on the final marker set of a coded target that has a board
-//! homography: every decoded marker is re-fitted with the blurred-pattern
-//! model of [`crate::ring::photometric_center`], seeded from its current
-//! (projective) centre and the board homography. Accepted fits replace the
-//! centre and attach a covariance; rejected ones leave the marker untouched
-//! and record why.
+//! Runs once on the final marker set of any target with a board homography:
+//! every marker with a position on the board (a decoded id on a coded target,
+//! a lattice label on a plain one) is re-fitted with the blurred-pattern model
+//! of [`crate::ring::photometric_center`], seeded from its current
+//! (projective) centre and the board homography. The printed pattern — ink
+//! annulus, code band, neighbouring markers, origin dots — is derived from the
+//! target definition, so coded and plain markers on hex and rect lattices go
+//! through the same model. Accepted fits replace the centre and attach a
+//! covariance; every other marker keeps its centre and records why.
 
 use image::GrayImage;
+use projective_grid::Coord;
 
 use crate::detector::{
     CenterSource, DetectConfig, MarkerRecord, PhotometricMetrics, PhotometricStatus,
+    ResidualAutocorrelation,
 };
 use crate::marker::codec::Codebook;
+use crate::pipeline::BoardFrame;
 use crate::pixelmap::PixelMapper;
 use crate::ring::photometric_center::{
-    Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem, PrintRadii, fit_marker,
+    InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem, PrintRadii, fit_marker,
 };
 use crate::target::{MarkerCoding, TargetLayout};
 
-/// Neighbours are the cells within this multiple of the lattice spacing.
-const NEIGHBOR_SPACING_FACTOR: f64 = 1.15;
 /// Minimum number of well-determined markers for a print-radii consensus.
 const MIN_RADII_SAMPLES: usize = 6;
 /// Fits whose residual exceeds this multiple of the image median are retried
@@ -32,8 +36,9 @@ const CUBIC_RETRY_RATIO: f64 = 1.5;
 const CUBIC_ADOPT_RATIO: f64 = 0.85;
 /// Markers fitted with free radii for the print-radii consensus.
 const MAX_RADII_MARKERS: usize = 16;
-/// Per-marker radius estimates less precise than this (mm) are not used.
-const MAX_RADIUS_STD_MM: f64 = 0.1;
+/// Per-marker radius estimates less precise than this fraction of the outer
+/// radius are not used.
+const MAX_RADIUS_STD_REL: f64 = 0.02;
 /// Plausible fitted PSF sigma range (pixels).
 const SIGMA_RANGE_PX: (f64, f64) = (0.2, 15.0);
 /// Minimum fitted contrast in units of the residual noise.
@@ -42,6 +47,11 @@ const MIN_CONTRAST_SNR: f64 = 3.0;
 /// image-wide median is a model misfit (a glare halo, an occluder, a print
 /// defect); its centre is not trusted.
 const MAX_RESIDUAL_RATIO: f64 = 3.0;
+/// Board-mm reach of a blurred edge for selecting the ink discs of a patch,
+/// in PSF sigmas at the largest plausible blur.
+const DISC_REACH_SIGMAS: f64 = 6.0;
+/// Ink discs are looked for no further than this many lattice spacings away.
+const MAX_DISC_SPACINGS: f64 = 3.0;
 
 fn mat3_mul(a: &Mat3, b: &Mat3) -> Mat3 {
     let mut out = [[0.0; 3]; 3];
@@ -102,84 +112,185 @@ fn local_map(
     Some(crate::homography::matrix3_to_array(&m))
 }
 
-/// Nominal printed radii of a coded marker (board mm).
-fn nominal_radii(target: &TargetLayout) -> Option<PrintRadii> {
-    let MarkerCoding::Coded16(spec) = target.coding() else {
-        return None;
-    };
+/// Nominal printed radii of the target's markers (board mm), see
+/// [`PrintRadii`]: stroked rings around a code band for coded markers, the
+/// filled annulus between the two radii for plain ones.
+fn nominal_radii(target: &TargetLayout) -> PrintRadii {
     let ring = target.ring();
-    let h = 0.5 * f64::from(spec.ring_width_mm);
     let inner = f64::from(ring.inner_radius_mm);
     let outer = f64::from(ring.outer_radius_mm);
-    Some([inner - h, inner + h, outer - h, outer + h])
+    match target.coding() {
+        MarkerCoding::Coded16(spec) => {
+            let h = 0.5 * f64::from(spec.ring_width_mm);
+            [inner - h, inner + h, outer - h, outer + h]
+        }
+        MarkerCoding::Plain => [inner, outer, outer, outer],
+    }
+}
+
+/// Where markers sit in the source plane of the result homography (board mm
+/// in the absolute frame, assignment-frame mm in a plain target's relative
+/// frame) and what else is printed around them there.
+struct PrintedBoard<'a> {
+    target: &'a TargetLayout,
+    /// The homography's source plane is the physical board frame.
+    absolute: bool,
+    codebook: Option<Codebook>,
+    /// Centres of every printed marker in the frame.
+    cells_mm: Vec<[f64; 2]>,
+    /// Fiducial dots in the frame (absolute frame only: the relative frame
+    /// does not know where they are).
+    dots: Vec<InkDisc>,
+}
+
+impl<'a> PrintedBoard<'a> {
+    /// `None` when the markers have no frame position (a plain target whose
+    /// grid assignment did not run).
+    fn new(
+        target: &'a TargetLayout,
+        board_frame: Option<BoardFrame>,
+        markers: &[MarkerRecord],
+    ) -> Option<Self> {
+        let f32_pair = |p: [f32; 2]| [f64::from(p[0]), f64::from(p[1])];
+        let (absolute, codebook) = match target.coding() {
+            MarkerCoding::Coded16(spec) => {
+                (true, Some(Codebook::from_profile(spec.codebook_profile)))
+            }
+            MarkerCoding::Plain => (board_frame?.origin_resolved(), None),
+        };
+        let mut board = Self {
+            target,
+            absolute,
+            codebook,
+            cells_mm: Vec::new(),
+            dots: Vec::new(),
+        };
+        if absolute {
+            board.cells_mm = target.cells().iter().map(|c| f32_pair(c.xy_mm)).collect();
+            if let Some(f) = target.fiducials() {
+                let radius = f64::from(f.dot_radius_mm);
+                board.dots = target
+                    .fiducial_dots_mm()
+                    .iter()
+                    .map(|&d| InkDisc {
+                        center: f32_pair(d),
+                        radius,
+                    })
+                    .collect();
+            }
+        } else {
+            // Relative frame: only the labelled markers are known to exist.
+            board.cells_mm = markers.iter().filter_map(|m| board.frame_xy(m)).collect();
+        }
+        Some(board)
+    }
+
+    /// Lattice cell of a plain marker's label.
+    fn coord(m: &MarkerRecord) -> Option<Coord> {
+        m.grid_coord.map(|c| Coord::new(c[0], c[1]))
+    }
+
+    /// The marker's centre in the frame.
+    fn frame_xy(&self, m: &MarkerRecord) -> Option<[f64; 2]> {
+        let xy = match (&self.codebook, self.absolute) {
+            (Some(_), _) => self.target.xy_mm_of_id(m.id?)?,
+            (None, true) => self.target.cell_xy_mm(Self::coord(m)?)?,
+            (None, false) => {
+                return Some(crate::pipeline::frame_xy_mm(self.target, Self::coord(m)?));
+            }
+        };
+        Some([f64::from(xy[0]), f64::from(xy[1])])
+    }
+
+    /// The marker's codeword; `Ok(None)` for a plain marker, `Err` when a
+    /// coded marker's id has no word.
+    fn codeword(&self, m: &MarkerRecord) -> Result<Option<u16>, ()> {
+        match &self.codebook {
+            Some(cb) => m.id.and_then(|id| cb.word(id)).map(Some).ok_or(()),
+            None => Ok(None),
+        }
+    }
+
+    /// Ink discs within reach of a patch of radius `r_patch_mm` around
+    /// `center_mm`, relative to it.
+    fn ink_discs(
+        &self,
+        center_mm: [f64; 2],
+        r_patch_mm: f64,
+        r_outer_mm: f64,
+        px_per_mm: f64,
+    ) -> Vec<InkDisc> {
+        let spacing = f64::from(self.target.min_center_spacing_mm());
+        let edge_reach = DISC_REACH_SIGMAS * SIGMA_RANGE_PX.1 / px_per_mm;
+        let neighbours = self.cells_mm.iter().map(|&c| InkDisc {
+            center: c,
+            radius: r_outer_mm,
+        });
+        neighbours
+            .chain(self.dots.iter().copied())
+            .filter_map(|d| {
+                let rel = [d.center[0] - center_mm[0], d.center[1] - center_mm[1]];
+                let dist = rel[0].hypot(rel[1]);
+                let reach = (r_patch_mm + d.radius + edge_reach).min(MAX_DISC_SPACINGS * spacing);
+                (dist > 1e-6 && dist <= reach).then_some(InkDisc {
+                    center: rel,
+                    radius: d.radius,
+                })
+            })
+            .collect()
+    }
 }
 
 /// One marker's fit inputs.
 struct Task {
     index: usize,
     local_map: Mat3,
-    codeword: u16,
-    neighbors_mm: Vec<[f64; 2]>,
+    codeword: Option<u16>,
+    ink_discs: Vec<InkDisc>,
     /// Image px per board mm at the marker (geometric mean).
     px_per_mm: f64,
+}
+
+/// Image px per board mm of a local map at the marker centre.
+fn local_scale(map: &Mat3) -> Option<f64> {
+    let c0 = project(map, [0.0, 0.0])?;
+    let cx = project(map, [1.0, 0.0])?;
+    let cy = project(map, [0.0, 1.0])?;
+    let det = ((cx[0] - c0[0]) * (cy[1] - c0[1]) - (cx[1] - c0[1]) * (cy[0] - c0[0])).abs();
+    (det.is_finite() && det > 0.0).then(|| det.sqrt())
 }
 
 fn build_tasks(
     markers: &[MarkerRecord],
     h: &Mat3,
     mapper: Option<&dyn PixelMapper>,
-    target: &TargetLayout,
-    codebook: &Codebook,
+    board: &PrintedBoard<'_>,
     r_outer_mm: f64,
+    r_patch_mm: f64,
 ) -> Vec<Task> {
-    let spacing = f64::from(target.min_center_spacing_mm());
-    let reach = NEIGHBOR_SPACING_FACTOR * spacing;
-    let cells: Vec<[f64; 2]> = target
-        .cells()
-        .iter()
-        .map(|c| [f64::from(c.xy_mm[0]), f64::from(c.xy_mm[1])])
-        .collect();
     let mut tasks = Vec::new();
     for (index, m) in markers.iter().enumerate() {
-        let Some(id) = m.id else { continue };
-        let Some(xy) = target.xy_mm_of_id(id) else {
-            continue;
-        };
-        let Some(codeword) = codebook.word(id) else {
-            continue;
-        };
         if !(m.center[0].is_finite() && m.center[1].is_finite()) {
             continue;
         }
-        let cell = [f64::from(xy[0]), f64::from(xy[1])];
+        let Some(cell) = board.frame_xy(m) else {
+            continue;
+        };
+        let Ok(codeword) = board.codeword(m) else {
+            continue;
+        };
         let Some(map) = local_map(h, cell, r_outer_mm, mapper) else {
             continue;
         };
-        // Local scale from the map's Jacobian at the marker centre.
-        let Some(c0) = project(&map, [0.0, 0.0]) else {
+        let Some(px_per_mm) = local_scale(&map) else {
             continue;
         };
-        let (Some(cx), Some(cy)) = (project(&map, [1.0, 0.0]), project(&map, [0.0, 1.0])) else {
-            continue;
-        };
-        let det = ((cx[0] - c0[0]) * (cy[1] - c0[1]) - (cx[1] - c0[1]) * (cy[0] - c0[0])).abs();
-        if !(det.is_finite() && det > 0.0) {
-            continue;
-        }
-        let neighbors_mm = cells
-            .iter()
-            .filter_map(|c| {
-                let d = [c[0] - cell[0], c[1] - cell[1]];
-                let r = d[0].hypot(d[1]);
-                (r > 1e-6 && r <= reach).then_some(d)
-            })
-            .collect();
         tasks.push(Task {
             index,
             local_map: map,
             codeword,
-            neighbors_mm,
-            px_per_mm: det.sqrt(),
+            ink_discs: board.ink_discs(cell, r_patch_mm, r_outer_mm, px_per_mm),
+            px_per_mm,
         });
     }
     tasks
@@ -198,6 +309,8 @@ struct Stage<'a> {
     config: &'a DetectConfig,
     tasks: Vec<Task>,
     patch_margin_mm: f64,
+    /// Whether the markers carry a code band (radii `r1`, `r2` exist).
+    coded: bool,
 }
 
 impl Stage<'_> {
@@ -217,7 +330,12 @@ impl Stage<'_> {
             radii,
             fit_radii: mode.fit_radii,
             cubic_background: mode.cubic_background,
-            neighbors_mm: &task.neighbors_mm,
+            ink_discs: &task.ink_discs,
+            // Real lenses are often astigmatic: an isotropic PSF leaves a
+            // structured residual there; the two extra parameters cost little
+            // and are held at zero by their prior where the blur is too small
+            // to tell.
+            anisotropic_blur: true,
             patch_margin_mm: self.patch_margin_mm,
             saturation_level: photometric.saturation_level,
             max_iterations: photometric.max_iterations.max(1),
@@ -242,7 +360,8 @@ impl Stage<'_> {
             .step_by(stride)
             .filter_map(|t| self.fit(t, markers[t.index].center, nominal, mode).ok())
             .collect();
-        let estimated = radii_consensus(&fits, nominal);
+        let n_free = if self.coded { 3 } else { 1 };
+        let estimated = radii_consensus(&fits, nominal, n_free);
         tracing::debug!(?estimated, n_fits = fits.len(), "photometric print radii");
         estimated
     }
@@ -295,24 +414,31 @@ impl Stage<'_> {
     }
 }
 
-/// Precision-weighted consensus of per-marker radius estimates with a
-/// 4-sigma outlier cut; `None` when too few markers determine them.
-fn radii_consensus(fits: &[PhotometricFit], nominal: PrintRadii) -> Option<PrintRadii> {
-    let samples: Vec<([f64; 3], [f64; 3])> = fits
+/// Precision-weighted consensus of per-marker estimates of the first
+/// `n_free` radii with a 4-sigma outlier cut; `None` when too few markers
+/// determine them.
+fn radii_consensus(
+    fits: &[PhotometricFit],
+    nominal: PrintRadii,
+    n_free: usize,
+) -> Option<PrintRadii> {
+    let max_std = MAX_RADIUS_STD_REL * nominal[3];
+    let samples: Vec<(PrintRadii, [f64; 3])> = fits
         .iter()
         .filter(|f| f.converged)
         .filter_map(|f| {
             let std = f.radii_std?;
-            std.iter()
-                .all(|s| s.is_finite() && *s > 0.0 && *s < MAX_RADIUS_STD_MM)
-                .then_some(([f.radii[0], f.radii[1], f.radii[2]], std))
+            std[..n_free]
+                .iter()
+                .all(|s| s.is_finite() && *s > 0.0 && *s < max_std)
+                .then_some((f.radii, std))
         })
         .collect();
     if samples.len() < MIN_RADII_SAMPLES {
         return None;
     }
     let mut out = nominal;
-    for k in 0..3 {
+    for k in 0..n_free {
         let mean_of = |keep: &dyn Fn(f64, f64) -> bool| {
             let (mut sw, mut swx, mut n) = (0.0, 0.0, 0usize);
             for (r, s) in &samples {
@@ -332,7 +458,8 @@ fn radii_consensus(fits: &[PhotometricFit], nominal: PrintRadii) -> Option<Print
         let spread = 1.4826 * dev[dev.len() / 2];
         out[k] = mean_of(&|r, s| (r - first).abs() <= 4.0 * s.hypot(spread))?;
     }
-    let ordered = out[0] > 0.0 && out[0] < out[1] && out[1] < out[2] && out[2] < out[3];
+    // Plain markers keep r1 = r2 = r3, hence the non-strict comparisons.
+    let ordered = out[0] > 0.0 && out[0] < out[1] && out[1] <= out[2] && out[2] <= out[3];
     ordered.then_some(out)
 }
 
@@ -342,6 +469,21 @@ fn failure_status(f: PhotometricFailure) -> PhotometricStatus {
         PhotometricFailure::DegenerateMap | PhotometricFailure::SingularSystem => {
             PhotometricStatus::Degenerate
         }
+    }
+}
+
+/// Metrics of a marker that has no fit.
+fn status_only(status: PhotometricStatus) -> PhotometricMetrics {
+    PhotometricMetrics {
+        status,
+        blur_sigma_px: None,
+        contrast: None,
+        residual_sigma: None,
+        n_pixels: 0,
+        masked_fraction: 0.0,
+        center_shift_px: None,
+        covariance_inflation: None,
+        residual_autocorrelation: None,
     }
 }
 
@@ -370,6 +512,8 @@ fn judge(
     } else {
         PhotometricStatus::Accepted
     };
+    let trace = |c: &[[f64; 2]; 2]| c[0][0] + c[1][1];
+    let inflation = (trace(&fit.center_cov) / trace(&fit.center_cov_white)).sqrt();
     PhotometricMetrics {
         status,
         blur_sigma_px: Some(fit.blur_sigma_px),
@@ -378,42 +522,77 @@ fn judge(
         n_pixels: fit.n_pixels,
         masked_fraction: fit.masked_fraction,
         center_shift_px: Some(shift),
+        covariance_inflation: inflation.is_finite().then_some(inflation),
+        residual_autocorrelation: Some(ResidualAutocorrelation {
+            x: fit.residual_acf.x,
+            y: fit.residual_acf.y,
+        }),
     }
 }
 
-/// Refine the centres of decoded markers in place.
+/// Record [`PhotometricStatus::NoBoardPosition`] on every marker the stage
+/// did not reach, so a requested refinement never leaves a marker silent.
+pub(crate) fn mark_unrefined(markers: &mut [MarkerRecord]) {
+    for m in markers.iter_mut().filter(|m| m.photometric.is_none()) {
+        m.photometric = Some(status_only(PhotometricStatus::NoBoardPosition));
+    }
+}
+
+/// Refine the centres of every marker with a board position in place.
 ///
-/// `homography` maps board mm to the working frame; `mapper` maps that frame
-/// to image pixels and must be `Some` exactly when the two differ. Marker
+/// `homography` maps the result's board frame (`board_frame`; absolute board
+/// mm for coded targets) to the working frame; `mapper` maps that frame to
+/// image pixels and must be `Some` exactly when the two differ. Marker
 /// centres are image pixels on entry and on exit. Returns the print radii the
 /// final fits used when they were estimated from the image.
 pub(crate) fn apply_photometric_centers(
     gray: &GrayImage,
     markers: &mut [MarkerRecord],
     homography: Option<&Mat3>,
+    board_frame: Option<BoardFrame>,
     mapper: Option<&dyn PixelMapper>,
     config: &DetectConfig,
 ) -> Option<PrintRadii> {
     if !config.circle_refinement.uses_photometric() {
         return None;
     }
+    let estimated = refine(gray, markers, homography, board_frame, mapper, config);
+    mark_unrefined(markers);
+    estimated
+}
+
+fn refine(
+    gray: &GrayImage,
+    markers: &mut [MarkerRecord],
+    homography: Option<&Mat3>,
+    board_frame: Option<BoardFrame>,
+    mapper: Option<&dyn PixelMapper>,
+    config: &DetectConfig,
+) -> Option<PrintRadii> {
     let target = &config.target;
     let h = homography?;
-    let nominal = nominal_radii(target)?;
-    let MarkerCoding::Coded16(spec) = target.coding() else {
-        return None;
-    };
-    let codebook = Codebook::from_profile(spec.codebook_profile);
-    let tasks = build_tasks(markers, h, mapper, target, &codebook, nominal[3]);
+    let board = PrintedBoard::new(target, board_frame, markers)?;
+    let nominal = nominal_radii(target);
+    let spacing = f64::from(target.min_center_spacing_mm());
+    let patch_margin_mm =
+        (0.5 * (spacing - 2.0 * nominal[3])).clamp(0.04 * nominal[3], 0.5 * nominal[3]);
+    let tasks = build_tasks(
+        markers,
+        h,
+        mapper,
+        &board,
+        nominal[3],
+        nominal[3] + patch_margin_mm,
+    );
     if tasks.is_empty() {
         return None;
     }
-    let spacing = f64::from(target.min_center_spacing_mm());
     let stage = Stage {
         gray,
         config,
         tasks,
-        patch_margin_mm: (0.5 * (spacing - 2.0 * nominal[3])).clamp(0.2, 0.5 * nominal[3]),
+        patch_margin_mm,
+        coded: target.is_coded(),
     };
 
     let estimated = if config.advanced.photometric.estimate_print_radii {
@@ -433,15 +612,7 @@ pub(crate) fn apply_photometric_centers(
             .max_center_shift_px
             .unwrap_or(0.5 * nominal[3] * t.px_per_mm);
         let metrics = match fit {
-            Err(f) => PhotometricMetrics {
-                status: failure_status(f),
-                blur_sigma_px: None,
-                contrast: None,
-                residual_sigma: None,
-                n_pixels: 0,
-                masked_fraction: 0.0,
-                center_shift_px: None,
-            },
+            Err(f) => status_only(failure_status(f)),
             Ok(fit) => {
                 iterations += fit.iterations;
                 let metrics = judge(&fit, m.center, max_shift_px, typical_residual);

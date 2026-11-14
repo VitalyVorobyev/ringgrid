@@ -11,16 +11,21 @@ pub enum CircleRefinementMethod {
     #[default]
     ProjectiveCenter,
     /// Projective-center recovery, then a per-marker photometric fit of the
-    /// blurred marker pattern for every decoded marker of a coded target with
-    /// a board homography.
+    /// blurred marker pattern for every marker with a board position — a
+    /// decoded id on a coded target, a lattice label on a plain one — on any
+    /// lattice, whenever the result has a board homography.
     ///
-    /// The fit explains the marker's pixels with the printed ring and code
-    /// pattern (seen through the board homography, refined locally), blurred
-    /// by a fitted Gaussian PSF, over an affine background. It removes the
-    /// blur- and code-dependent bias of edge-based centres and reports a 2×2
-    /// centre covariance per marker ([`DetectedMarker::center_cov`]). Markers
-    /// it cannot refine keep their projective (or outer-ellipse) centre; see
-    /// [`DetectedMarker::center_source`]. Tuning lives in
+    /// The fit explains the marker's pixels with what the target prints
+    /// around it (the ring annulus, the code sectors of a coded marker, the
+    /// outer edges of the neighbouring markers and any origin dots), seen
+    /// through the board homography refined locally, blurred by a fitted
+    /// Gaussian PSF, over an affine background. It removes the blur- and
+    /// code-dependent bias of edge-based centres and reports a 2×2 centre
+    /// covariance per marker ([`DetectedMarker::center_cov`]) that accounts
+    /// for spatially correlated fit residuals. Markers it does not refine keep
+    /// their projective (or outer-ellipse) centre, see
+    /// [`DetectedMarker::center_source`]; the diagnostics give every marker a
+    /// photometric status saying why. Tuning lives in
     /// [`AdvancedDetectConfig::photometric`](crate::AdvancedDetectConfig::photometric).
     ///
     /// [`DetectedMarker::center_cov`]: crate::DetectedMarker::center_cov

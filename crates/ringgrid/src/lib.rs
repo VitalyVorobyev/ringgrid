@@ -109,7 +109,7 @@ pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 pub mod diagnostics {
     pub use crate::detector::{
         DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus, PhotometricMetrics,
-        PhotometricStatus,
+        PhotometricStatus, ResidualAutocorrelation,
     };
     pub use crate::homography::RansacStats;
     pub use crate::marker::DecodeMetrics;

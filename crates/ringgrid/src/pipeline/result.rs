@@ -77,8 +77,11 @@ pub struct DetectedMarker {
     pub center_source: CenterSource,
     /// Covariance of [`center`](Self::center) in image pixels² (row-major
     /// 2×2), when the estimator provides one — currently the photometric fit
-    /// ([`CenterSource::Photometric`]). It is the inverse Fisher information of
-    /// the fit with the noise level estimated from the fit's own residuals.
+    /// ([`CenterSource::Photometric`]). It is a sandwich estimate built from
+    /// the fit's own residuals that accounts for their spatial correlation
+    /// (model misfit, correlated sensor noise); with white residuals it is the
+    /// inverse Fisher information of the fit. It does not cover a systematic
+    /// bias common to the whole patch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_cov: Option<[[f64; 2]; 2]>,
 }
@@ -209,10 +212,12 @@ pub struct DetectionDiagnostics {
     /// tiers and has no single three-stage breakdown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timings: Option<StageTimings>,
-    /// Printed radii of a coded marker estimated by the photometric stage, in
+    /// Printed radii of the markers estimated by the photometric stage, in
     /// board millimetres from the centre out: hole edge, inner-ring outer
-    /// edge, outer-ring inner edge, outer edge. `None` when the stage did not
-    /// run or kept the target's nominal radii.
+    /// edge, outer-ring inner edge, outer edge. A plain marker is one filled
+    /// annulus without a code band; its three outer entries are then all the
+    /// outer edge. `None` when the stage did not run or kept the target's
+    /// nominal radii.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photometric_print_radii_mm: Option<[f64; 4]>,
 }

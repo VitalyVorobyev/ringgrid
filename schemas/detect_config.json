@@ -288,7 +288,7 @@
         },
         {
           "const": "Photometric",
-          "description": "Projective-center recovery, then a per-marker photometric fit of the\nblurred marker pattern for every decoded marker of a coded target with\na board homography.\n\nThe fit explains the marker's pixels with the printed ring and code\npattern (seen through the board homography, refined locally), blurred\nby a fitted Gaussian PSF, over an affine background. It removes the\nblur- and code-dependent bias of edge-based centres and reports a 2×2\ncentre covariance per marker (`DetectedMarker::center_cov`). Markers\nit cannot refine keep their projective (or outer-ellipse) centre; see\n`DetectedMarker::center_source`. Tuning lives in\n`AdvancedDetectConfig::photometric`.\n\n`DetectedMarker::center_cov`: crate::DetectedMarker::center_cov\n`DetectedMarker::center_source`: crate::DetectedMarker::center_source",
+          "description": "Projective-center recovery, then a per-marker photometric fit of the\nblurred marker pattern for every marker with a board position — a\ndecoded id on a coded target, a lattice label on a plain one — on any\nlattice, whenever the result has a board homography.\n\nThe fit explains the marker's pixels with what the target prints\naround it (the ring annulus, the code sectors of a coded marker, the\nouter edges of the neighbouring markers and any origin dots), seen\nthrough the board homography refined locally, blurred by a fitted\nGaussian PSF, over an affine background. It removes the blur- and\ncode-dependent bias of edge-based centres and reports a 2×2 centre\ncovariance per marker (`DetectedMarker::center_cov`) that accounts\nfor spatially correlated fit residuals. Markers it does not refine keep\ntheir projective (or outer-ellipse) centre, see\n`DetectedMarker::center_source`; the diagnostics give every marker a\nphotometric status saying why. Tuning lives in\n`AdvancedDetectConfig::photometric`.\n\n`DetectedMarker::center_cov`: crate::DetectedMarker::center_cov\n`DetectedMarker::center_source`: crate::DetectedMarker::center_source",
           "type": "string"
         }
       ]
@@ -896,12 +896,12 @@
       "properties": {
         "estimate_print_radii": {
           "default": true,
-          "description": "Estimate the printed radii of the ring and code-band edges from the\nimage instead of taking them from the target's nominal stroke width.\n\nPrinted boards often differ from the nominal stroke width; a model of\nthe code band at the wrong radius biases the centre. When enabled, a\nfirst pass fits the radii per marker and their precision-weighted\nconsensus is used for the final fits. Default: `true`.",
+          "description": "Estimate the printed radii of the marker edges from the image instead\nof taking them from the target's nominal geometry: the hole and both\ncode-band edges of coded markers, the inner edge of plain annuli (the\nouter edge sets the scale).\n\nPrinted boards often differ from the nominal stroke width; a model of\nthe code band at the wrong radius biases the centre. When enabled, a\nfirst pass fits the radii per marker and their precision-weighted\nconsensus is used for the final fits. Default: `true`.",
           "type": "boolean"
         },
         "max_center_shift_px": {
           "default": null,
-          "description": "Maximum distance (pixels) between the photometric centre and the\ncentre it starts from; larger moves are rejected and the marker keeps\nits previous centre. The fit is anchored by the board homography and\nthe decoded code pattern, so it can also repair a grossly wrong ellipse\ncentre. `None` (JSON `null`) means \"auto\": half the marker's outer\nradius.",
+          "description": "Maximum distance (pixels) between the photometric centre and the\ncentre it starts from; larger moves are rejected and the marker keeps\nits previous centre. The fit is anchored by the board homography and\nthe printed pattern, so it can also repair a grossly wrong ellipse\ncentre. `None` (JSON `null`) means \"auto\": half the marker's outer\nradius.",
           "type": [
             "number",
             "null"

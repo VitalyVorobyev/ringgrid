@@ -28,7 +28,7 @@ fields, rather than with a struct literal.
 | `ellipse_outer` | `Option<Ellipse>` | Fitted outer ring ellipse parameters. |
 | `ellipse_inner` | `Option<Ellipse>` | Fitted inner ring ellipse parameters. Present when inner fitting succeeded. |
 | `center_source` | `CenterSource` | Estimator that produced `center`: `outer_ellipse` (no correction applied or every correction rejected), `projective_center`, or `photometric`. |
-| `center_cov` | `Option<[[f64; 2]; 2]>` | Covariance of `center` in image px² (row-major), when the estimator provides one — currently photometric centers. It reflects pixel noise only; see [Photometric Center Refinement](../detection-pipeline/photometric-center.md). |
+| `center_cov` | `Option<[[f64; 2]; 2]>` | Covariance of `center` in image px² (row-major), when the estimator provides one — currently photometric centers. It accounts for spatially correlated residuals (correlated sensor noise, model misfit), not for a bias common to the marker; see [Photometric Center Refinement](../detection-pipeline/photometric-center.md#covariance). |
 
 ## Relocated diagnostics fields
 

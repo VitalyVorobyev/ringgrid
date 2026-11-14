@@ -1,12 +1,21 @@
-//! Test-side renderer of a coded ring-grid board seen by a pinhole camera
-//! under defocus blur, low contrast, an illumination gradient, a saturated
-//! glare blob and additive noise, with exact ground-truth marker centres.
+//! Test-side renderer of a ring-grid board (any target kind: coded or plain
+//! markers, hex or rect lattice, with or without origin dots) seen by a
+//! pinhole camera under defocus blur, low contrast, an illumination gradient,
+//! a saturated glare blob and additive noise, with exact ground-truth marker
+//! centres.
 //!
 //! The board is rasterized once by the crate's own printable-target renderer
 //! at high density, then warped into the camera image by a homography with
 //! 4×4 supersampling per pixel. Pixel centres sit at integer coordinates, the
 //! detector's convention. The true projected centre of a marker is the
 //! homography image of its board position (no lens distortion).
+//!
+//! Besides the Gaussian PSF the detector models, a scene can carry effects the
+//! photometric model cannot represent — an anisotropic Gaussian, a Gaussian
+//! with a wide halo, a defocus disc, a gamma response, spatially correlated
+//! sensor noise — to test how honest its covariance stays under misfit.
+//! Rendering is split into the noise-free [`radiance`] and its noisy
+//! [`expose`]ure so Monte-Carlo runs re-render only the noise.
 
 #![allow(dead_code)] // each integration-test binary uses a different subset
 
@@ -26,6 +35,45 @@ pub struct Glare {
     pub peak: f64,
 }
 
+/// Point spread function of the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Psf {
+    /// Isotropic Gaussian (the photometric model's PSF).
+    Gaussian { sigma: f64 },
+    /// Anisotropic Gaussian with principal sigmas along `angle_deg` and
+    /// perpendicular to it.
+    Anisotropic {
+        sigma_major: f64,
+        sigma_minor: f64,
+        angle_deg: f64,
+    },
+    /// A Gaussian core plus a wide Gaussian halo carrying `halo_weight` of the
+    /// energy (lens flare, scattering).
+    Halo {
+        sigma: f64,
+        halo_sigma: f64,
+        halo_weight: f64,
+    },
+    /// Uniform disc (geometric defocus) of `radius` px.
+    Disc { radius: f64 },
+}
+
+impl Psf {
+    /// Second-moment sigma (px) along one axis, for labelling.
+    pub fn nominal_sigma(&self) -> f64 {
+        match *self {
+            Psf::Gaussian { sigma } => sigma,
+            Psf::Anisotropic {
+                sigma_major,
+                sigma_minor,
+                ..
+            } => (sigma_major * sigma_minor).sqrt(),
+            Psf::Halo { sigma, .. } => sigma,
+            Psf::Disc { radius } => 0.5 * radius,
+        }
+    }
+}
+
 /// Everything that defines one synthetic frame.
 #[derive(Debug, Clone)]
 pub struct SceneSpec {
@@ -42,8 +90,10 @@ pub struct SceneSpec {
     /// Offset (mm) from the board's centre to the board point that lands on
     /// the principal point.
     pub board_center_mm: [f64; 2],
-    /// Isotropic Gaussian PSF sigma, pixels.
-    pub blur_sigma_px: f64,
+    pub psf: Psf,
+    /// Camera response exponent applied to the normalized radiance (1 =
+    /// linear).
+    pub gamma: f64,
     /// Grey level of the white paper at the image centre.
     pub white: f64,
     /// White minus black, grey levels.
@@ -53,6 +103,9 @@ pub struct SceneSpec {
     pub glare: Option<Glare>,
     /// Additive Gaussian noise sigma, grey levels.
     pub noise_sigma: f64,
+    /// Spatial correlation (Gaussian sigma, px) of the sensor noise; 0 is
+    /// white.
+    pub noise_corr_px: f64,
     pub seed: u64,
 }
 
@@ -74,7 +127,10 @@ impl SceneSpec {
             tilt_axis_deg: 30.0,
             roll_deg: 7.0,
             board_center_mm: [0.0, 0.0],
-            blur_sigma_px,
+            psf: Psf::Gaussian {
+                sigma: blur_sigma_px,
+            },
+            gamma: 1.0,
             white: 70.0 + contrast,
             contrast,
             illum_gradient: 0.3,
@@ -84,7 +140,26 @@ impl SceneSpec {
                 peak: 600.0,
             }),
             noise_sigma: 2.0,
+            noise_corr_px: 0.0,
             seed,
+        }
+    }
+
+    /// A clean scene for any target: `outer_radius_px` sets the board
+    /// distance (the marker's drawn outer radius at the image centre), no
+    /// glare; otherwise as [`with_contrast`](Self::with_contrast).
+    pub fn for_target(
+        target: &TargetLayout,
+        outer_radius_px: f64,
+        blur_sigma_px: f64,
+        tilt_deg: f64,
+        contrast: f64,
+        seed: u64,
+    ) -> Self {
+        Self {
+            px_per_mm: outer_radius_px / f64::from(target.outer_draw_radius_mm()),
+            glare: None,
+            ..Self::with_contrast(blur_sigma_px, tilt_deg, seed, contrast)
         }
     }
 }
@@ -102,12 +177,22 @@ impl BoardRaster {
         Self::with_code_band(target, true)
     }
 
+    /// A raster at `dpi` (dense enough that its edge quantization stays well
+    /// below a camera pixel: a few raster pixels per camera pixel).
+    pub fn with_dpi(target: TargetLayout, dpi: f32) -> Self {
+        Self::build(target, true, dpi)
+    }
+
     /// `code_band = false` paints every code sector black (diagnostic only:
     /// such markers cannot be decoded).
     pub fn with_code_band(target: TargetLayout, code_band: bool) -> Self {
+        Self::build(target, code_band, BOARD_DPI)
+    }
+
+    fn build(target: TargetLayout, code_band: bool, dpi: f32) -> Self {
         let options = TargetRenderOptions::default()
             .with_scale_bar(false)
-            .with_png_dpi(BOARD_DPI);
+            .with_png_dpi(dpi);
         let mut raster = target
             .render_target_png(&options)
             .expect("render board raster");
@@ -125,7 +210,7 @@ impl BoardRaster {
             0.5 * (side - span[0]) - min[0],
             0.5 * (side - span[1]) - min[1],
         ];
-        let px_per_mm = f64::from(BOARD_DPI) / 25.4;
+        let px_per_mm = f64::from(dpi) / 25.4;
         if !code_band && let Some((r0, r1)) = target.code_band_bounds_mm() {
             let (r0, r1) = (f64::from(r0) - 0.05, f64::from(r1) + 0.05);
             for c in target.cells() {
@@ -307,8 +392,96 @@ fn blur(buf: &mut [f64], w: usize, h: usize, sigma: f64) {
     }
 }
 
-/// Render one frame of `board` under `spec`.
-pub fn render(board: &BoardRaster, spec: &SceneSpec) -> Scene {
+/// Convolution with a general kernel given on a `(2r+1)²` grid, edge
+/// clamping. `kernel(dx, dy)` need not be normalized.
+fn convolve(buf: &mut [f64], w: usize, h: usize, r: i64, kernel: impl Fn(f64, f64) -> f64) {
+    // Supersampled kernel taps, so a disc edge is antialiased.
+    let mut taps = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let mut v = 0.0;
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    v += kernel(
+                        dx as f64 + (sx as f64 + 0.5) / 4.0 - 0.5,
+                        dy as f64 + (sy as f64 + 0.5) / 4.0 - 0.5,
+                    );
+                }
+            }
+            if v > 0.0 {
+                taps.push((dx, dy, v));
+            }
+        }
+    }
+    let total: f64 = taps.iter().map(|t| t.2).sum();
+    let src = buf.to_vec();
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let mut acc = 0.0;
+            for &(dx, dy, v) in &taps {
+                let xx = (x + dx).clamp(0, w as i64 - 1) as usize;
+                let yy = (y + dy).clamp(0, h as i64 - 1) as usize;
+                acc += v * src[yy * w + xx];
+            }
+            buf[y as usize * w + x as usize] = acc / total;
+        }
+    }
+}
+
+/// Apply the scene's PSF.
+fn apply_psf(buf: &mut [f64], w: usize, h: usize, psf: Psf) {
+    match psf {
+        Psf::Gaussian { sigma } => blur(buf, w, h, sigma),
+        Psf::Anisotropic {
+            sigma_major,
+            sigma_minor,
+            angle_deg,
+        } => {
+            let (s, c) = angle_deg.to_radians().sin_cos();
+            let r = (4.0 * sigma_major).ceil() as i64;
+            convolve(buf, w, h, r, |dx, dy| {
+                let a = (c * dx + s * dy) / sigma_major;
+                let b = (-s * dx + c * dy) / sigma_minor;
+                (-0.5 * (a * a + b * b)).exp()
+            });
+        }
+        Psf::Halo {
+            sigma,
+            halo_sigma,
+            halo_weight,
+        } => {
+            let mut halo = buf.to_vec();
+            blur(buf, w, h, sigma);
+            blur(&mut halo, w, h, halo_sigma);
+            for (v, hv) in buf.iter_mut().zip(halo) {
+                *v = (1.0 - halo_weight) * *v + halo_weight * hv;
+            }
+        }
+        Psf::Disc { radius } => {
+            let r = radius.ceil() as i64 + 1;
+            convolve(
+                buf,
+                w,
+                h,
+                r,
+                |dx, dy| {
+                    if dx.hypot(dy) <= radius { 1.0 } else { 0.0 }
+                },
+            );
+        }
+    }
+}
+
+/// Noise-free radiance of a frame (grey levels, before the camera response).
+pub struct Radiance {
+    pub buf: Vec<f64>,
+    /// Board mm → image pixels (row-major 3×3).
+    pub h: [[f64; 3]; 3],
+}
+
+/// Render the noise-free radiance of `board` under `spec` (geometry,
+/// illumination, glare, PSF).
+pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
     let (lo, hi) = board.target.marker_bounds_mm().expect("non-empty board");
     let mid = [
         0.5 * f64::from(lo[0] + hi[0]),
@@ -355,17 +528,45 @@ pub fn render(board: &BoardRaster, spec: &SceneSpec) -> Scene {
         }
     }
 
-    blur(&mut buf, w, hh, spec.blur_sigma_px);
+    apply_psf(&mut buf, w, hh, spec.psf);
+    Radiance { buf, h }
+}
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(spec.seed);
-    let mut image = GrayImage::new(spec.image_size[0], spec.image_size[1]);
-    for y in 0..hh {
-        for x in 0..w {
+/// Unit-variance Gaussian noise field, white or Gaussian-correlated.
+fn noise_field(w: usize, h: usize, corr_px: f64, seed: u64) -> Vec<f64> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut field: Vec<f64> = (0..w * h)
+        .map(|_| {
             // Box–Muller.
             let u1: f64 = rng.random_range(f64::EPSILON..1.0);
             let u2: f64 = rng.random_range(0.0..1.0);
-            let noise = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-            let v = buf[y * w + x] + spec.noise_sigma * noise;
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        })
+        .collect();
+    if corr_px > 0.0 {
+        blur(&mut field, w, h, corr_px);
+        // A normalized Gaussian kernel shrinks white noise variance by
+        // sum(k^2) per axis.
+        let k = gaussian_kernel(corr_px);
+        let gain = k.iter().map(|v| v * v).sum::<f64>();
+        field.iter_mut().for_each(|v| *v /= gain);
+    }
+    field
+}
+
+/// One noisy 8-bit exposure of a radiance: camera response, noise,
+/// quantization.
+pub fn expose(radiance: &Radiance, spec: &SceneSpec, seed: u64) -> Scene {
+    let (w, hh) = (spec.image_size[0] as usize, spec.image_size[1] as usize);
+    let noise = noise_field(w, hh, spec.noise_corr_px, seed);
+    let mut image = GrayImage::new(spec.image_size[0], spec.image_size[1]);
+    for y in 0..hh {
+        for x in 0..w {
+            let mut v = radiance.buf[y * w + x];
+            if spec.gamma != 1.0 {
+                v = 255.0 * (v.max(0.0) / 255.0).powf(spec.gamma);
+            }
+            let v = v + spec.noise_sigma * noise[y * w + x];
             image.put_pixel(
                 x as u32,
                 y as u32,
@@ -373,7 +574,15 @@ pub fn render(board: &BoardRaster, spec: &SceneSpec) -> Scene {
             );
         }
     }
-    Scene { image, h }
+    Scene {
+        image,
+        h: radiance.h,
+    }
+}
+
+/// Render one frame of `board` under `spec`.
+pub fn render(board: &BoardRaster, spec: &SceneSpec) -> Scene {
+    expose(&radiance(board, spec), spec, spec.seed)
 }
 
 /// Centre-error statistics against ground truth for decoded markers.

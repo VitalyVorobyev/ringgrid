@@ -71,8 +71,8 @@ fn pooled_edge(report: &Report, class: usize) -> Vec<Acc> {
     (0..N_EDGE)
         .map(|b| {
             let mut a = Acc::default();
-            for t in 0..3 {
-                let x = &report.edge[class][t][b];
+            for tercile in &report.edge[class] {
+                let x = &tercile[b];
                 a.n += x.n;
                 a.sum += x.sum;
                 a.sumsq += x.sumsq;
@@ -117,8 +117,8 @@ fn profiles_are_flat_under_the_model_assumptions() {
     // Radius profile, pooled over terciles.
     for b in 0..report.radius[0].len() {
         let mut a = Acc::default();
-        for t in 0..3 {
-            let x = &report.radius[t][b];
+        for tercile in &report.radius {
+            let x = &tercile[b];
             a.n += x.n;
             a.sum += x.sum;
         }

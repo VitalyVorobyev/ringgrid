@@ -375,9 +375,9 @@ pub fn analyze(markers: &[MarkerData]) -> Report {
     };
     let mut flat_acc = Acc::default();
     for (m, marker) in markers.iter().enumerate() {
-        for i in 0..marker.samples.len() {
+        for (i, sample) in marker.samples.iter().enumerate() {
             if is_flat(m, i) {
-                flat_acc.add(f64::from(marker.samples[i].residual()));
+                flat_acc.add(f64::from(sample.residual()));
             }
         }
     }

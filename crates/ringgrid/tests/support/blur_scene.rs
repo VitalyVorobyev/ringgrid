@@ -27,6 +27,37 @@ use ringgrid::{TargetLayout, TargetRenderOptions};
 const BOARD_DPI: f32 = 600.0;
 const SUPERSAMPLE: usize = 4;
 
+/// How a display rasterises the ideal pattern onto its pixel grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayRaster {
+    /// A pixel is white when the ideal pattern at its centre is (reflectance
+    /// at least one half), else black.
+    Binary,
+    /// Area coverage of the ideal pattern, quantised to 16 grey levels.
+    Grey16,
+}
+
+/// A display of pixel pitch `pitch_mm`, axes aligned with the board.
+#[derive(Debug, Clone, Copy)]
+pub struct DisplaySpec {
+    pub pitch_mm: f64,
+    pub raster: DisplayRaster,
+}
+
+/// Fraction of a display pixel by which the display grid is shifted against
+/// the board raster origin, so no marker sits at a special grid phase.
+const DISPLAY_PHASE: f64 = 0.37;
+/// Sub-samples per display-pixel side for the area coverage.
+const COVERAGE_TAPS: usize = 8;
+
+/// Display pixel values in 0..=15 (15 = white), row-major.
+struct DisplayGrid {
+    spec: DisplaySpec,
+    w: usize,
+    h: usize,
+    levels: Vec<u8>,
+}
+
 /// A saturated glare blob: an additive Gaussian bump in grey levels.
 #[derive(Debug, Clone, Copy)]
 pub struct Glare {
@@ -106,6 +137,8 @@ pub struct SceneSpec {
     /// Spatial correlation (Gaussian sigma, px) of the sensor noise; 0 is
     /// white.
     pub noise_corr_px: f64,
+    /// Sub-pixel samples per side when integrating the board reflectance.
+    pub supersample: usize,
     pub seed: u64,
 }
 
@@ -141,6 +174,7 @@ impl SceneSpec {
             }),
             noise_sigma: 2.0,
             noise_corr_px: 0.0,
+            supersample: SUPERSAMPLE,
             seed,
         }
     }
@@ -165,11 +199,13 @@ impl SceneSpec {
 }
 
 /// High-density raster of a board plus the board-mm → raster-pixel map.
+#[derive(Clone)]
 pub struct BoardRaster {
     pub target: TargetLayout,
-    raster: GrayImage,
+    raster: std::sync::Arc<GrayImage>,
     px_per_mm: f64,
     offset_mm: [f64; 2],
+    display: Option<std::sync::Arc<DisplayGrid>>,
 }
 
 impl BoardRaster {
@@ -235,16 +271,94 @@ impl BoardRaster {
         }
         Self {
             target,
-            raster,
+            raster: std::sync::Arc::new(raster),
             px_per_mm,
             offset_mm,
+            display: None,
         }
     }
 
-    /// Reflectance in [0, 1] (white paper = 1) at a board point, bilinear.
-    fn reflectance(&self, xy_mm: [f64; 2]) -> f64 {
-        let x = (xy_mm[0] + self.offset_mm[0]) * self.px_per_mm;
-        let y = (xy_mm[1] + self.offset_mm[1]) * self.px_per_mm;
+    /// The same board shown on a display: the ideal pattern rasterised onto
+    /// the display's pixel grid, which then replaces it as the imaged
+    /// reflectance (piecewise constant per display pixel).
+    pub fn displayed(&self, spec: DisplaySpec) -> Self {
+        let (rw, rh) = self.raster.dimensions();
+        let p = spec.pitch_mm;
+        let side_x = f64::from(rw) / self.px_per_mm;
+        let side_y = f64::from(rh) / self.px_per_mm;
+        let (w, h) = (
+            (side_x / p).ceil() as usize + 2,
+            (side_y / p).ceil() as usize + 2,
+        );
+        let mut levels = vec![15u8; w * h];
+        let taps = COVERAGE_TAPS;
+        for j in 0..h {
+            for i in 0..w {
+                // Pixel square in board+offset mm.
+                let x0 = (i as f64 + DISPLAY_PHASE - 1.0) * p;
+                let y0 = (j as f64 + DISPLAY_PHASE - 1.0) * p;
+                let sample =
+                    |fx: f64, fy: f64| self.ideal_reflectance_offset([x0 + fx * p, y0 + fy * p]);
+                levels[j * w + i] = match spec.raster {
+                    DisplayRaster::Binary => {
+                        if sample(0.5, 0.5) >= 0.5 {
+                            15
+                        } else {
+                            0
+                        }
+                    }
+                    DisplayRaster::Grey16 => {
+                        let mut acc = 0.0;
+                        for ty in 0..taps {
+                            for tx in 0..taps {
+                                acc += sample(
+                                    (tx as f64 + 0.5) / taps as f64,
+                                    (ty as f64 + 0.5) / taps as f64,
+                                );
+                            }
+                        }
+                        (acc / (taps * taps) as f64 * 15.0).round() as u8
+                    }
+                };
+            }
+        }
+        Self {
+            target: self.target.clone(),
+            raster: self.raster.clone(),
+            px_per_mm: self.px_per_mm,
+            offset_mm: self.offset_mm,
+            display: Some(std::sync::Arc::new(DisplayGrid { spec, w, h, levels })),
+        }
+    }
+
+    /// Reflectance in [0, 1] at a board point as imaged: the display pixel's
+    /// value when the board is displayed, else the ideal pattern.
+    pub fn reflectance(&self, xy_mm: [f64; 2]) -> f64 {
+        let Some(d) = &self.display else {
+            return self.ideal_reflectance(xy_mm);
+        };
+        let p = d.spec.pitch_mm;
+        let i = ((xy_mm[0] + self.offset_mm[0]) / p - DISPLAY_PHASE + 1.0).floor();
+        let j = ((xy_mm[1] + self.offset_mm[1]) / p - DISPLAY_PHASE + 1.0).floor();
+        if i < 0.0 || j < 0.0 || i >= d.w as f64 || j >= d.h as f64 {
+            return 1.0;
+        }
+        f64::from(d.levels[j as usize * d.w + i as usize]) / 15.0
+    }
+
+    /// Reflectance of the ideal (un-rasterised) pattern at a board point.
+    pub fn ideal_reflectance(&self, xy_mm: [f64; 2]) -> f64 {
+        self.ideal_reflectance_offset([xy_mm[0] + self.offset_mm[0], xy_mm[1] + self.offset_mm[1]])
+    }
+
+    /// Ideal reflectance at a point given in raster-origin mm.
+    fn ideal_reflectance_offset(&self, mm: [f64; 2]) -> f64 {
+        let x = mm[0] * self.px_per_mm;
+        let y = mm[1] * self.px_per_mm;
+        self.bilinear(x, y)
+    }
+
+    fn bilinear(&self, x: f64, y: f64) -> f64 {
         let (w, h) = self.raster.dimensions();
         if !(x >= 0.0 && y >= 0.0 && x < f64::from(w - 1) && y < f64::from(h - 1)) {
             return 1.0;
@@ -493,12 +607,12 @@ pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
 
     // Reflectance, area-sampled.
     let mut buf = vec![0.0f64; w * hh];
-    let n = SUPERSAMPLE as f64;
+    let n = spec.supersample as f64;
     for y in 0..hh {
         for x in 0..w {
             let mut acc = 0.0;
-            for sy in 0..SUPERSAMPLE {
-                for sx in 0..SUPERSAMPLE {
+            for sy in 0..spec.supersample {
+                for sx in 0..spec.supersample {
                     let px = x as f64 + (sx as f64 + 0.5) / n - 0.5;
                     let py = y as f64 + (sy as f64 + 0.5) / n - 0.5;
                     acc += board.reflectance(apply_h(&h_inv, [px, py]));

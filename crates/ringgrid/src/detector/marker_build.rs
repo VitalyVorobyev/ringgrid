@@ -71,6 +71,28 @@ pub enum PhotometricStatus {
     /// above the image's typical fit residual (glare halo, occlusion, print
     /// defect), so the centre is not trusted.
     PoorFit,
+    /// The marker was not fitted because its printed pattern cannot be placed
+    /// on the board: a coded marker without a decoded id, a plain marker
+    /// without a lattice label, or a result without a board homography.
+    NoBoardPosition,
+}
+
+/// Spatial autocorrelation of one marker's photometric fit residuals.
+///
+/// Entry `k` is the correlation coefficient of the (robustly weighted)
+/// residuals of pixels `k + 1` px apart along the image x or y axis. White
+/// pixel noise gives values near 0; a pattern model that does not match the
+/// image (PSF shape, response nonlinearity, print defects) or correlated
+/// sensor noise gives positive values over a few pixels. The centre
+/// covariance accounts for this correlation (see
+/// [`PhotometricMetrics::covariance_inflation`]).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ResidualAutocorrelation {
+    /// Correlation at lags 1 to 6 px along image x.
+    pub x: [f64; 6],
+    /// Correlation at lags 1 to 6 px along image y.
+    pub y: [f64; 6],
 }
 
 /// Photometric fit summary for one marker.
@@ -95,6 +117,16 @@ pub struct PhotometricMetrics {
     /// Distance from the starting centre to the fitted centre (pixels).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_shift_px: Option<f64>,
+    /// Ratio of the reported centre standard deviation to the one the fit
+    /// would report for spatially white residuals (`sqrt` of the trace ratio
+    /// of the two covariances). Near 1 when the model explains the pixels up
+    /// to white noise; above 1 when correlated misfit or correlated noise
+    /// inflates the centre uncertainty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covariance_inflation: Option<f64>,
+    /// Spatial autocorrelation of the fit residuals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residual_autocorrelation: Option<ResidualAutocorrelation>,
 }
 
 /// Fit quality metrics for a detected marker.

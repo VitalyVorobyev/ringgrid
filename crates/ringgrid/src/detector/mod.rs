@@ -37,6 +37,7 @@ pub use inner_fit::{InnerFitReason, InnerFitStatus};
 pub(crate) use marker_build::MarkerRecord;
 pub use marker_build::{
     CenterSource, DetectionSource, FitMetrics, PhotometricMetrics, PhotometricStatus,
+    ResidualAutocorrelation,
 };
 pub(crate) use neighbors::median_neighbor_outer_radius_px;
 pub(crate) use outer_fit::{OuterFitCandidate, fit_outer_candidate_from_prior_for_completion};

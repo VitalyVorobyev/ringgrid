@@ -95,7 +95,7 @@ used when `circle_refinement` is `Photometric`.
 |---|---|---|---|
 | `saturation_level` | `u8` | 250 | Grey level at or above which a pixel counts as saturated; saturated pixels and their 8-neighbours are left out of the fit. |
 | `max_iterations` | `usize` | 30 | Maximum Levenberg–Marquardt iterations per marker. Fits typically converge in 5 to 10. |
-| `estimate_print_radii` | `bool` | `true` | Estimate the printed ring and code-band radii from the image instead of taking them from the target's nominal stroke width. |
+| `estimate_print_radii` | `bool` | `true` | Estimate the printed marker radii (coded: hole and code-band edges; plain: inner annulus edge) from the image instead of taking them from the target's nominal geometry. |
 | `max_center_shift_px` | `Option<f64>` | `None` | Maximum distance (px) from the starting center; larger moves are rejected. `None` means "auto": half the marker's outer radius. |
 
 **Source:** `crates/ringgrid/src/detector/config/stages.rs`
@@ -141,7 +141,7 @@ Enum selector for the center correction strategy applied after local ellipse fit
 |---|---|
 | `None` | Disable center correction. The naive ellipse center is used as-is. |
 | `ProjectiveCenter` | **(default)** Run projective center recovery from the inner/outer conic pencil. Requires both inner and outer ellipses to be successfully fitted. |
-| `Photometric` | Projective center recovery, then a [photometric fit](../detection-pipeline/photometric-center.md) of every decoded marker of a coded target. Robust to defocus blur; adds a per-marker center covariance. Opt-in. |
+| `Photometric` | Projective center recovery, then a [photometric fit](../detection-pipeline/photometric-center.md) of every marker with a board position (coded or plain, hex or rect). Robust to defocus blur; adds a per-marker center covariance. Opt-in. |
 
 ```rust
 use ringgrid::CircleRefinementMethod;

@@ -1,4 +1,4 @@
-//! Photometric (intensity-model) refinement of one coded marker.
+//! Photometric (intensity-model) refinement of one ring marker.
 //!
 //! The marker patch is explained pixel by pixel as
 //!
@@ -12,21 +12,26 @@
 //!   2×2 matrix `C`: `y = h0 + C (x - p)`, `u = H_loc^-1(y)`. The marker centre
 //!   (`u = 0`) is imaged exactly at `p`, so the reported centre is `p` — no
 //!   ellipse-centre or two-conic construction is involved.
-//! - `P` is the dark-ink coverage of the printed marker (both rings, the
-//!   decoded code sectors and the outer rings of the neighbouring markers)
-//!   blurred by an isotropic Gaussian PSF of standard deviation `sigma` px. Each
-//!   edge contributes a normal-CDF step of its signed image-space distance (the
-//!   board-space distance divided by the local gradient norm); code sectors are
-//!   the product of a radial band and an angular indicator whose sector
-//!   transitions are blurred the same way.
+//! - `P` is the dark-ink coverage of the printed pattern around the marker,
+//!   blurred by a Gaussian PSF of standard deviation `sigma` px (optionally
+//!   anisotropic, two more parameters, see [`Blur`]):
+//!   the marker's ink annulus `[r0, r3]`, minus the paper sectors of its code
+//!   band `[r1, r2]` when the target is coded, plus the ink discs around it
+//!   (the outer edges of neighbouring markers, origin fiducial dots). Each
+//!   edge contributes a normal-CDF step of its signed image-space distance
+//!   (the board-space distance divided by the local gradient norm); code
+//!   sectors are the product of a radial band and an angular indicator whose
+//!   sector transitions are blurred the same way. A plain marker is the same
+//!   model without a code band.
 //! - `B` (paper) and `A` (paper minus ink) are affine in the image, which absorbs
 //!   vignetting and illumination gradients.
 //!
 //! The parameters are fitted by Levenberg–Marquardt on the pixel residuals with
 //! Huber weights; saturated pixels (and their immediate neighbours) are
-//! masked. The centre covariance is the `p` block of the inverse Fisher
-//! information `(J^T W J / s^2 + prior)^-1`, with `s^2` the weighted residual
-//! variance.
+//! masked. The centre covariance is a sandwich estimate that stays honest when
+//! the residuals are spatially correlated (see [`correlated_center_covariance`]);
+//! it reduces to the `p` block of the inverse Fisher information
+//! `(J^T W J / s^2 + prior)^-1` when they are white.
 
 use image::GrayImage;
 use nalgebra::{DMatrix, DVector};
@@ -35,6 +40,14 @@ use nalgebra::{DMatrix, DVector};
 const CODE_SECTORS: usize = 16;
 /// Nonlinear geometric parameters: p (2), C (4), log sigma (1).
 const N_GEOM: usize = 7;
+/// PSF anisotropy parameters, when fitted.
+const N_ANISO: usize = 2;
+/// Largest PSF anisotropy `|[a, b]|` (axis ratio `sqrt((1 + r) / (1 - r))`).
+const MAX_ANISO: f64 = 0.9;
+/// Prior standard deviation of the PSF anisotropy: keeps it at zero where the
+/// pattern cannot tell (blur far below a pixel) without limiting real
+/// astigmatism.
+const ANISO_PRIOR_SIGMA: f64 = 0.5;
 /// Linear photometric coefficients: B up to cubic (10) and A affine (3).
 const N_LIN: usize = 13;
 /// Active linear coefficients with an affine background.
@@ -46,25 +59,50 @@ const CONTRAST: usize = 10;
 /// Beyond this many PSF sigmas an edge's contribution is exactly 0 or 1.
 const EDGE_REACH_SIGMAS: f64 = 6.0;
 /// Prior standard deviation of `C - I` (dimensionless). Keeps the rotation of
-/// a marker whose code band is blurred away well-posed; far wider than the
-/// error of a board-homography seed.
+/// a marker whose code band is blurred away (or that has none) well-posed;
+/// far wider than the error of a board-homography seed.
 const C_PRIOR_SIGMA: f64 = 0.15;
-/// Prior standard deviation of free print radii (mm).
-const RADIUS_PRIOR_SIGMA_MM: f64 = 0.5;
+/// Prior standard deviation of free print radii, as a fraction of the outer
+/// radius `r3` (scale-free, so any marker size gets the same prior).
+const RADIUS_PRIOR_SIGMA_REL: f64 = 0.1;
 /// Huber threshold in units of the robust residual scale.
 const HUBER_K: f64 = 2.0;
 /// Blur search grid for the initial sigma (px).
 const SIGMA_GRID: [f64; 4] = [0.7, 1.4, 2.6, 4.5];
 /// Iterations during which the robust residual scale is re-estimated.
 const SCALE_UPDATE_ITERATIONS: usize = 3;
+/// Lags (px) of the reported residual autocorrelation diagnostic.
+pub(crate) const RESIDUAL_ACF_LAGS: usize = 6;
+/// Largest lag (px, per axis) at which the residual autocovariance model is
+/// fitted.
+const ACF_FIT_LAGS: i64 = 4;
+/// Candidate correlation lengths (px) of the correlated residual component.
+const ACF_LENGTHS: [f64; 8] = [0.4, 0.6, 0.85, 1.2, 1.7, 2.4, 3.4, 4.8];
+/// A correlated residual component is used only when its estimate exceeds
+/// this many standard errors.
+const ACF_SIGNIFICANCE: f64 = 3.0;
+/// The covariance window extends this many correlation lengths.
+const ACF_WINDOW_LENGTHS: f64 = 3.0;
+/// Largest covariance window half-width (px).
+const MAX_ACF_WINDOW: i64 = 16;
 
 /// Board → image projective map, row-major.
 pub(crate) type Mat3 = [[f64; 3]; 3];
 
-/// Radial print geometry of a coded marker, board mm, from the centre out:
+/// Radial print geometry of a marker, board mm, from the centre out:
 /// `[hole edge, inner ring outer edge, outer ring inner edge, outer edge]`.
-/// Ink covers `[r0, r1]` and `[r2, r3]`; the code band is `[r1, r2]`.
+/// Ink covers `[r0, r3]` except the paper sectors of the code band `[r1, r2]`.
+/// A plain marker (a filled annulus, no code band) has `r1 = r2 = r3`.
 pub(crate) type PrintRadii = [f64; 4];
+
+/// A filled ink disc near the marker, board mm relative to the marker centre:
+/// the outer edge of a neighbouring marker (whose interior never reaches the
+/// patch) or an origin fiducial dot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct InkDisc {
+    pub center: [f64; 2],
+    pub radius: f64,
+}
 
 /// Everything the fitter needs for one marker.
 pub(crate) struct PhotometricProblem<'a> {
@@ -73,18 +111,23 @@ pub(crate) struct PhotometricProblem<'a> {
     pub local_map: Mat3,
     /// Initial centre estimate, image px.
     pub center_seed: [f64; 2],
-    /// Decoded codeword; bit `s` set ⇔ sector `s` is paper (white).
-    pub codeword: u16,
+    /// Codeword of a coded marker (bit `s` set ⇔ sector `s` is paper);
+    /// `None` for a plain marker, which has no code band.
+    pub codeword: Option<u16>,
     pub radii: PrintRadii,
-    /// Free the three inner radii (`r3` stays fixed: a common scale of all
-    /// radii is indistinguishable from the scale in `C`).
+    /// Free the inner radii: `r0`, and `r1`, `r2` when there is a code band.
+    /// `r3` stays fixed: a common scale of all radii is indistinguishable
+    /// from the scale in `C`.
     pub fit_radii: bool,
     /// Model the paper level `B` as a cubic instead of an affine function of
     /// the image position, for patches where a smooth but strongly curved additive term
     /// (a glare halo) is present. Costs precision elsewhere.
     pub cubic_background: bool,
-    /// Centres of neighbouring markers, board mm relative to this marker.
-    pub neighbors_mm: &'a [[f64; 2]],
+    /// Other ink near the marker (neighbours' outer edges, fiducial dots).
+    pub ink_discs: &'a [InkDisc],
+    /// Fit an anisotropic Gaussian PSF (two more parameters) instead of an
+    /// isotropic one.
+    pub anisotropic_blur: bool,
     /// Pixels up to `r3 + patch_margin_mm` (board mm) enter the fit.
     pub patch_margin_mm: f64,
     /// Grey level at or above which a pixel counts as saturated.
@@ -92,12 +135,26 @@ pub(crate) struct PhotometricProblem<'a> {
     pub max_iterations: usize,
 }
 
+/// Spatial autocorrelation of the (Huber-weighted) fit residuals at lags
+/// `1..=RESIDUAL_ACF_LAGS` px along the image x and y axes.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct ResidualAcf {
+    pub x: [f64; RESIDUAL_ACF_LAGS],
+    pub y: [f64; RESIDUAL_ACF_LAGS],
+}
+
 /// Fitted parameters and their uncertainty.
 #[derive(Debug, Clone)]
 pub(crate) struct PhotometricFit {
     pub center: [f64; 2],
-    /// Covariance of `center`, px².
+    /// Covariance of `center`, px², honest under spatially correlated
+    /// residuals.
     pub center_cov: [[f64; 2]; 2],
+    /// The same covariance assuming white residuals (the inverse Fisher
+    /// information); `center_cov` reduces to it when the residuals are white.
+    pub center_cov_white: [[f64; 2]; 2],
+    /// Residual autocorrelation (diagnostic).
+    pub residual_acf: ResidualAcf,
     pub blur_sigma_px: f64,
     /// Paper minus ink at the marker centre, grey levels.
     pub contrast: f64,
@@ -110,7 +167,8 @@ pub(crate) struct PhotometricFit {
     pub converged: bool,
     /// Fitted radii (equal to the input unless `fit_radii`).
     pub radii: PrintRadii,
-    /// Standard deviations of `r0..r2` when fitted.
+    /// Standard deviations of `r0..r2` when fitted; entries of radii that are
+    /// not free (`r1`, `r2` of a plain marker) are 0.
     pub radii_std: Option<[f64; 3]>,
 }
 
@@ -234,6 +292,8 @@ struct Params {
     p: [f64; 2],
     c: [[f64; 2]; 2],
     log_sigma: f64,
+    /// PSF anisotropy `[a, b]`, see [`Blur`]; zero unless fitted.
+    aniso: [f64; 2],
     /// `B` then `A` coefficients, see [`lin_row`]; inactive ones stay zero.
     lin: [f64; N_LIN],
     radii: PrintRadii,
@@ -286,8 +346,63 @@ struct PatternEval {
     /// dP/dy (the pre-image coordinate `y = h0 + C (x - p)`).
     grad_y: [f64; 2],
     dlog_sigma: f64,
+    /// dP/d(anisotropy) of the PSF.
+    d_aniso: [f64; 2],
     /// dP/dr0, dP/dr1, dP/dr2.
     d_radii: [f64; 3],
+}
+
+impl PatternEval {
+    /// Add `dls` (a derivative in log sigma of an edge's step) to the blur
+    /// derivatives, splitting it onto the anisotropy through the edge's
+    /// direction.
+    #[inline]
+    fn add_dlog_sigma(&mut self, dls: f64, e: &Edge) {
+        self.dlog_sigma += dls;
+        self.d_aniso[0] += dls * e.dlog_aniso[0];
+        self.d_aniso[1] += dls * e.dlog_aniso[1];
+    }
+}
+
+/// The PSF: a Gaussian of covariance `sigma^2 [[1 + a, b], [b, 1 - a]]`,
+/// `aniso = [a, b]` (isotropic when zero). Across a straight edge with image
+/// normal `g` it blurs like a 1-D Gaussian of `sigma sqrt(g^T S g / |g|^2)`.
+#[derive(Clone, Copy)]
+struct Blur {
+    sigma: f64,
+    aniso: [f64; 2],
+}
+
+impl Blur {
+    /// Effective sigma across an edge with image gradient `g` (norm `gnorm`)
+    /// and the derivatives of its log in `aniso`.
+    #[inline]
+    fn along(&self, g: [f64; 2], gnorm: f64) -> (f64, [f64; 2]) {
+        if gnorm <= 0.0 {
+            return (self.sigma, [0.0; 2]);
+        }
+        let (nx, ny) = (g[0] / gnorm, g[1] / gnorm);
+        let c2 = nx * nx - ny * ny;
+        let s2 = 2.0 * nx * ny;
+        let q = 1.0 + self.aniso[0] * c2 + self.aniso[1] * s2;
+        (self.sigma * q.sqrt(), [0.5 * c2 / q, 0.5 * s2 / q])
+    }
+
+    /// The largest effective sigma over directions.
+    fn max_sigma(&self) -> f64 {
+        self.sigma * (1.0 + self.aniso[0].hypot(self.aniso[1])).sqrt()
+    }
+}
+
+/// A board-space edge at one pixel: its covector `dq/dy`, image gradient
+/// norm (mm per px) and blur across it.
+#[derive(Clone, Copy)]
+struct Edge {
+    v: [f64; 2],
+    gnorm: f64,
+    sigma: f64,
+    /// d log(sigma) / d aniso.
+    dlog_aniso: [f64; 2],
 }
 
 /// Transition of the angular code indicator at a sector boundary.
@@ -299,12 +414,41 @@ struct Transition {
     delta: f64,
 }
 
+/// The paper sectors of a coded marker's code band.
+struct CodeBand {
+    bits: [f64; CODE_SECTORS],
+    transitions: Vec<Transition>,
+}
+
+impl CodeBand {
+    fn new(codeword: u16) -> Self {
+        let mut bits = [0.0; CODE_SECTORS];
+        for (s, b) in bits.iter_mut().enumerate() {
+            *b = f64::from((codeword >> s) & 1);
+        }
+        let dtheta = 2.0 * std::f64::consts::PI / CODE_SECTORS as f64;
+        let transitions = (0..CODE_SECTORS)
+            .filter_map(|s| {
+                let before = bits[(s + CODE_SECTORS - 1) % CODE_SECTORS];
+                let delta = bits[s] - before;
+                (delta != 0.0).then(|| {
+                    let a = -std::f64::consts::PI + s as f64 * dtheta;
+                    Transition {
+                        dir: [a.cos(), a.sin()],
+                        delta,
+                    }
+                })
+            })
+            .collect();
+        Self { bits, transitions }
+    }
+}
+
 struct Model<'a> {
     h_inv: Mat3,
     h0: [f64; 2],
-    bits: [f64; CODE_SECTORS],
-    transitions: Vec<Transition>,
-    neighbors: &'a [[f64; 2]],
+    code: Option<CodeBand>,
+    ink_discs: &'a [InkDisc],
 }
 
 impl Model<'_> {
@@ -334,7 +478,10 @@ impl Model<'_> {
 
     /// Ink coverage and derivatives at pixel `x`.
     fn pattern(&self, x: [f64; 2], prm: &Params) -> Option<PatternEval> {
-        let sigma = prm.log_sigma.exp();
+        let blur = Blur {
+            sigma: prm.log_sigma.exp(),
+            aniso: prm.aniso,
+        };
         let dx = [x[0] - prm.p[0], x[1] - prm.p[1]];
         let c = &prm.c;
         let y = [
@@ -343,9 +490,9 @@ impl Model<'_> {
         ];
         let (u, j) = self.unproject(y)?;
 
-        // Covector `dq/dy` for a board-space linear functional with gradient
-        // `n` (board frame), and its image-space norm `|C^T J^T n|`.
-        let covector = |n: [f64; 2]| -> ([f64; 2], f64) {
+        // A board-space edge with unit normal `n` (board frame): its covector
+        // `dq/dy`, its image-space gradient norm `|C^T J^T n|` and its blur.
+        let edge = |n: [f64; 2]| -> Edge {
             let v = [
                 j[0][0] * n[0] + j[1][0] * n[1],
                 j[0][1] * n[0] + j[1][1] * n[1],
@@ -354,7 +501,14 @@ impl Model<'_> {
                 c[0][0] * v[0] + c[1][0] * v[1],
                 c[0][1] * v[0] + c[1][1] * v[1],
             ];
-            (v, g[0].hypot(g[1]))
+            let gnorm = g[0].hypot(g[1]);
+            let (sigma, dlog_aniso) = blur.along(g, gnorm);
+            Edge {
+                v,
+                gnorm,
+                sigma,
+                dlog_aniso,
+            }
         };
 
         let rho = u[0].hypot(u[1]);
@@ -362,90 +516,126 @@ impl Model<'_> {
             p: 0.0,
             grad_y: [0.0; 2],
             dlog_sigma: 0.0,
+            d_aniso: [0.0; 2],
             d_radii: [0.0; 3],
         };
         if rho < 1e-9 {
             // At the exact centre the pattern is flat paper.
             return Some(out);
         }
-        let n_r = [u[0] / rho, u[1] / rho];
-        let (v_r, gnorm) = covector(n_r);
-        if gnorm < 1e-12 {
+        let er = edge([u[0] / rho, u[1] / rho]);
+        if er.gnorm < 1e-12 {
             return None;
         }
         // Image px per board mm along the radial direction is 1 / (dρ/dx).
-        let inv_g = 1.0 / gnorm;
-        let rq = [v_r[0] * inv_g, v_r[1] * inv_g]; // d(dist)/dy for radial edges
+        let inv_g = 1.0 / er.gnorm;
+        let rq = [er.v[0] * inv_g, er.v[1] * inv_g]; // d(dist)/dy for radial edges
         let r = &prm.radii;
-        let s = |k: usize| step_curved((rho - r[k]) * inv_g, sigma, r[k] * inv_g);
+        let s = |k: usize| step_curved((rho - r[k]) * inv_g, er.sigma, r[k] * inv_g);
 
-        // Annulus [r0, r3]: Phi(d0) - Phi(d3).
+        // Ink annulus [r0, r3]: Phi(d0) - Phi(d3).
         let s0 = s(0);
         let s3 = s(3);
         out.p = s0.value - s3.value;
         let mut radial_slope = s0.slope - s3.slope;
-        out.dlog_sigma = s0.dlog_sigma - s3.dlog_sigma;
+        let mut radial_dls = s0.dlog_sigma - s3.dlog_sigma;
         out.d_radii[0] = -s0.slope * inv_g;
 
         // Board-mm reach of a blurred edge (gnorm is mm per image px), with
         // slack for the anisotropy of the local map.
-        let reach_mm = EDGE_REACH_SIGMAS * sigma * gnorm * 1.5;
+        let reach_mm = EDGE_REACH_SIGMAS * blur.max_sigma() * er.gnorm * 1.5;
 
         // Code band [r1, r2] times the angular paper indicator.
-        let s1 = s(1);
-        let s2 = s(2);
-        let band = s1.value - s2.value;
-        if band > 1e-9 || s1.slope != 0.0 || s2.slope != 0.0 {
-            let (theta, dtheta_y, dtheta_ls) = self.angular(u, sigma, reach_mm, &covector);
-            out.p -= band * theta;
-            radial_slope -= (s1.slope - s2.slope) * theta;
-            out.dlog_sigma -= (s1.dlog_sigma - s2.dlog_sigma) * theta + band * dtheta_ls;
-            out.grad_y[0] -= band * dtheta_y[0];
-            out.grad_y[1] -= band * dtheta_y[1];
-            out.d_radii[1] = s1.slope * inv_g * theta;
-            out.d_radii[2] = -s2.slope * inv_g * theta;
+        if let Some(code) = &self.code {
+            let s1 = s(1);
+            let s2 = s(2);
+            let band = s1.value - s2.value;
+            if band > 1e-9 || s1.slope != 0.0 || s2.slope != 0.0 {
+                let ang = code.angular(u, reach_mm, &edge);
+                out.p -= band * ang.theta;
+                radial_slope -= (s1.slope - s2.slope) * ang.theta;
+                radial_dls -= (s1.dlog_sigma - s2.dlog_sigma) * ang.theta;
+                out.dlog_sigma -= band * ang.dlog_sigma;
+                for k in 0..2 {
+                    out.grad_y[k] -= band * ang.grad_y[k];
+                    out.d_aniso[k] -= band * ang.d_aniso[k];
+                }
+                out.d_radii[1] = s1.slope * inv_g * ang.theta;
+                out.d_radii[2] = -s2.slope * inv_g * ang.theta;
+            }
         }
         out.grad_y[0] += radial_slope * rq[0];
         out.grad_y[1] += radial_slope * rq[1];
+        out.add_dlog_sigma(radial_dls, &er);
 
-        // Outer rings of the neighbours.
-        let reach_sq = (r[3] + reach_mm) * (r[3] + reach_mm);
-        for nb in self.neighbors {
-            let un = [u[0] - nb[0], u[1] - nb[1]];
-            let rho_sq = un[0] * un[0] + un[1] * un[1];
-            if rho_sq > reach_sq || rho_sq < 1e-18 {
-                continue;
-            }
-            let rho_n = rho_sq.sqrt();
-            let (v_n, g_n) = covector([un[0] / rho_n, un[1] / rho_n]);
-            if g_n < 1e-12 {
-                continue;
-            }
-            let sn = step_curved((rho_n - r[3]) / g_n, sigma, r[3] / g_n);
-            out.p += 1.0 - sn.value;
-            out.grad_y[0] -= sn.slope * v_n[0] / g_n;
-            out.grad_y[1] -= sn.slope * v_n[1] / g_n;
-            out.dlog_sigma -= sn.dlog_sigma;
-        }
+        self.add_ink_discs(u, reach_mm, &edge, &mut out);
         Some(out)
     }
 
-    /// Blurred paper indicator of the code sectors at board point `u`, with its
-    /// gradient in `y` and derivative in log sigma.
-    fn angular(
+    /// Add the blurred coverage of the surrounding ink discs.
+    fn add_ink_discs(
         &self,
         u: [f64; 2],
-        sigma: f64,
         reach_mm: f64,
-        covector: &dyn Fn([f64; 2]) -> ([f64; 2], f64),
-    ) -> (f64, [f64; 2], f64) {
+        edge: &dyn Fn([f64; 2]) -> Edge,
+        out: &mut PatternEval,
+    ) {
+        for disc in self.ink_discs {
+            let un = [u[0] - disc.center[0], u[1] - disc.center[1]];
+            let rho_sq = un[0] * un[0] + un[1] * un[1];
+            let outer = disc.radius + reach_mm;
+            if rho_sq > outer * outer {
+                continue;
+            }
+            let inner = disc.radius - reach_mm;
+            if inner > 0.0 && rho_sq < inner * inner {
+                // Deep inside the disc: solid ink.
+                out.p += 1.0;
+                continue;
+            }
+            if rho_sq < 1e-18 {
+                continue;
+            }
+            let rho_n = rho_sq.sqrt();
+            let e = edge([un[0] / rho_n, un[1] / rho_n]);
+            if e.gnorm < 1e-12 {
+                continue;
+            }
+            let sn = step_curved(
+                (rho_n - disc.radius) / e.gnorm,
+                e.sigma,
+                disc.radius / e.gnorm,
+            );
+            out.p += 1.0 - sn.value;
+            out.grad_y[0] -= sn.slope * e.v[0] / e.gnorm;
+            out.grad_y[1] -= sn.slope * e.v[1] / e.gnorm;
+            out.add_dlog_sigma(-sn.dlog_sigma, &e);
+        }
+    }
+}
+
+/// The blurred paper indicator of a code band at one board point.
+struct Angular {
+    theta: f64,
+    grad_y: [f64; 2],
+    dlog_sigma: f64,
+    d_aniso: [f64; 2],
+}
+
+impl CodeBand {
+    /// Blurred paper indicator of the code sectors at board point `u`, with its
+    /// gradient in `y` and derivatives in the blur parameters.
+    fn angular(&self, u: [f64; 2], reach_mm: f64, edge: &dyn Fn([f64; 2]) -> Edge) -> Angular {
         let angle = u[1].atan2(u[0]);
         let pos =
             (angle + std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * CODE_SECTORS as f64;
         let sector = (pos.floor() as isize).rem_euclid(CODE_SECTORS as isize) as usize;
-        let mut theta = self.bits[sector];
-        let mut grad = [0.0; 2];
-        let mut dls = 0.0;
+        let mut out = Angular {
+            theta: self.bits[sector],
+            grad_y: [0.0; 2],
+            dlog_sigma: 0.0,
+            d_aniso: [0.0; 2],
+        };
         for tr in &self.transitions {
             // Only the boundary ray on this side of the centre.
             if tr.dir[0] * u[0] + tr.dir[1] * u[1] <= 0.0 {
@@ -457,52 +647,36 @@ impl Model<'_> {
             if t_mm.abs() > reach_mm {
                 continue;
             }
-            let (v, g) = covector(n);
-            if g < 1e-12 {
+            let e = edge(n);
+            if e.gnorm < 1e-12 {
                 continue;
             }
-            let t = t_mm / g;
-            if t.abs() > EDGE_REACH_SIGMAS * sigma {
+            let t = t_mm / e.gnorm;
+            if t.abs() > EDGE_REACH_SIGMAS * e.sigma {
                 continue;
             }
-            let st = step(t, sigma);
+            let st = step(t, e.sigma);
             let heaviside = if t >= 0.0 { 1.0 } else { 0.0 };
-            theta += tr.delta * (st.value - heaviside);
-            grad[0] += tr.delta * st.slope * v[0] / g;
-            grad[1] += tr.delta * st.slope * v[1] / g;
-            dls += tr.delta * st.dlog_sigma;
+            out.theta += tr.delta * (st.value - heaviside);
+            out.grad_y[0] += tr.delta * st.slope * e.v[0] / e.gnorm;
+            out.grad_y[1] += tr.delta * st.slope * e.v[1] / e.gnorm;
+            let dls = tr.delta * st.dlog_sigma;
+            out.dlog_sigma += dls;
+            out.d_aniso[0] += dls * e.dlog_aniso[0];
+            out.d_aniso[1] += dls * e.dlog_aniso[1];
         }
-        (theta, grad, dls)
+        out
     }
 }
 
 fn build_model<'a>(problem: &'a PhotometricProblem<'_>) -> Option<Model<'a>> {
     let h_inv = mat3_inverse(&problem.local_map)?;
     let h0 = project(&problem.local_map, [0.0, 0.0])?;
-    let mut bits = [0.0; CODE_SECTORS];
-    for (s, b) in bits.iter_mut().enumerate() {
-        *b = f64::from((problem.codeword >> s) & 1);
-    }
-    let dtheta = 2.0 * std::f64::consts::PI / CODE_SECTORS as f64;
-    let transitions = (0..CODE_SECTORS)
-        .filter_map(|s| {
-            let before = bits[(s + CODE_SECTORS - 1) % CODE_SECTORS];
-            let delta = bits[s] - before;
-            (delta != 0.0).then(|| {
-                let a = -std::f64::consts::PI + s as f64 * dtheta;
-                Transition {
-                    dir: [a.cos(), a.sin()],
-                    delta,
-                }
-            })
-        })
-        .collect();
     Some(Model {
         h_inv,
         h0,
-        bits,
-        transitions,
-        neighbors: problem.neighbors_mm,
+        code: problem.codeword.map(CodeBand::new),
+        ink_discs: problem.ink_discs,
     })
 }
 
@@ -568,22 +742,34 @@ fn collect_patch(problem: &PhotometricProblem<'_>, model: &Model<'_>) -> (Vec<Pa
 /// Layout of the full parameter vector: geometry, the active linear
 /// coefficients, then the free radii.
 struct Layout {
-    fit_radii: bool,
+    /// Fit the PSF anisotropy (two more geometric parameters).
+    aniso: bool,
+    /// Number of free radii: 0, 1 (`r0` of a plain marker) or 3 (`r0..r2`).
+    n_radii: usize,
     lin: &'static [usize],
 }
 
 impl Layout {
-    fn new(fit_radii: bool, cubic: bool) -> Self {
+    fn new(fit_radii: bool, coded: bool, cubic: bool, aniso: bool) -> Self {
         Self {
-            fit_radii,
+            aniso,
+            n_radii: match (fit_radii, coded) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 3,
+            },
             lin: if cubic { &LIN_CUBIC } else { &LIN_AFFINE },
         }
     }
+    /// Index of the first linear coefficient (after the geometry).
+    fn lin_base(&self) -> usize {
+        N_GEOM + if self.aniso { N_ANISO } else { 0 }
+    }
     fn radii_base(&self) -> usize {
-        N_GEOM + self.lin.len()
+        self.lin_base() + self.lin.len()
     }
     fn n(&self) -> usize {
-        self.radii_base() + if self.fit_radii { 3 } else { 0 }
+        self.radii_base() + self.n_radii
     }
     fn pack(&self, prm: &Params) -> DVector<f64> {
         let mut v = DVector::zeros(self.n());
@@ -594,13 +780,15 @@ impl Layout {
         v[4] = prm.c[1][0];
         v[5] = prm.c[1][1];
         v[6] = prm.log_sigma;
-        for (k, &li) in self.lin.iter().enumerate() {
-            v[N_GEOM + k] = prm.lin[li];
+        if self.aniso {
+            v[N_GEOM] = prm.aniso[0];
+            v[N_GEOM + 1] = prm.aniso[1];
         }
-        if self.fit_radii {
-            for k in 0..3 {
-                v[self.radii_base() + k] = prm.radii[k];
-            }
+        for (k, &li) in self.lin.iter().enumerate() {
+            v[self.lin_base() + k] = prm.lin[li];
+        }
+        for k in 0..self.n_radii {
+            v[self.radii_base() + k] = prm.radii[k];
         }
         v
     }
@@ -609,20 +797,72 @@ impl Layout {
         prm.p = [v[0], v[1]];
         prm.c = [[v[2], v[3]], [v[4], v[5]]];
         prm.log_sigma = v[6];
-        for (k, &li) in self.lin.iter().enumerate() {
-            prm.lin[li] = v[N_GEOM + k];
+        if self.aniso {
+            // Keep the PSF covariance positive definite (axis ratio ≤ 4.4).
+            let a = [v[N_GEOM], v[N_GEOM + 1]];
+            let r = a[0].hypot(a[1]);
+            let k = if r > MAX_ANISO { MAX_ANISO / r } else { 1.0 };
+            prm.aniso = [k * a[0], k * a[1]];
         }
-        if self.fit_radii {
-            for k in 0..3 {
-                prm.radii[k] = v[self.radii_base() + k];
-            }
+        for (k, &li) in self.lin.iter().enumerate() {
+            prm.lin[li] = v[self.lin_base() + k];
+        }
+        for k in 0..self.n_radii {
+            prm.radii[k] = v[self.radii_base() + k];
         }
         prm
     }
 }
 
-/// Maximum parameter count (geometry, photometry, three free radii).
-const N_MAX: usize = N_GEOM + N_LIN + 3;
+/// Maximum parameter count (geometry with anisotropy, photometry, three free
+/// radii).
+const N_MAX: usize = N_GEOM + N_ANISO + N_LIN + 3;
+
+/// Residual and Jacobian row (`d model / d params`, active entries first) of
+/// one pixel.
+fn pixel_row(
+    model: &Model<'_>,
+    px: &PatchPixel,
+    prm: &Params,
+    layout: &Layout,
+    row: &mut [f64; N_MAX],
+) -> Option<f64> {
+    let pe = model.pattern(px.x, prm)?;
+    let (value, a) = photometry(&prm.lin, px.xi, pe.p);
+    let c = &prm.c;
+    let gy = pe.grad_y;
+    let dx = [px.x[0] - prm.p[0], px.x[1] - prm.p[1]];
+    // dy/dp = -C  =>  dI/dp = A * C^T grad_y.
+    row[0] = a * (c[0][0] * gy[0] + c[1][0] * gy[1]);
+    row[1] = a * (c[0][1] * gy[0] + c[1][1] * gy[1]);
+    // dy_i/dC_ij = dx_j.
+    row[2] = -a * gy[0] * dx[0];
+    row[3] = -a * gy[0] * dx[1];
+    row[4] = -a * gy[1] * dx[0];
+    row[5] = -a * gy[1] * dx[1];
+    row[6] = -a * pe.dlog_sigma;
+    if layout.aniso {
+        row[N_GEOM] = -a * pe.d_aniso[0];
+        row[N_GEOM + 1] = -a * pe.d_aniso[1];
+    }
+    let full = lin_row(px.xi, pe.p);
+    let lin_base = layout.lin_base();
+    for (k, &li) in layout.lin.iter().enumerate() {
+        row[lin_base + k] = full[li];
+    }
+    let base = layout.radii_base();
+    for k in 0..layout.n_radii {
+        row[base + k] = -a * pe.d_radii[k];
+    }
+    Some(px.value - value)
+}
+
+/// Huber IRLS weight of a residual.
+#[inline]
+fn huber_weight(r: f64, k_huber: f64) -> f64 {
+    let ar = r.abs();
+    if ar <= k_huber { 1.0 } else { k_huber / ar }
+}
 
 /// Robust normal equations over the patch at one parameter point.
 struct Accumulated {
@@ -655,16 +895,12 @@ fn accumulate(
     let mut robust_cost = 0.0;
     let mut wrss = 0.0;
     let mut wsum = 0.0;
-    let c = &prm.c;
-    let l = &prm.lin;
     let mut row = [0.0f64; N_MAX];
     for px in pixels {
-        let pe = model.pattern(px.x, prm)?;
-        let (value, a) = photometry(l, px.xi, pe.p);
-        let r = px.value - value;
+        let r = pixel_row(model, px, prm, layout, &mut row)?;
         residuals.push(r);
         let ar = r.abs();
-        let w = if ar <= k_huber { 1.0 } else { k_huber / ar };
+        let w = huber_weight(r, k_huber);
         robust_cost += if ar <= k_huber {
             0.5 * r * r
         } else {
@@ -672,28 +908,6 @@ fn accumulate(
         };
         wrss += w * r * r;
         wsum += w;
-
-        let gy = pe.grad_y;
-        let dx = [px.x[0] - prm.p[0], px.x[1] - prm.p[1]];
-        // dy/dp = -C  =>  dI/dp = A * C^T grad_y.
-        row[0] = a * (c[0][0] * gy[0] + c[1][0] * gy[1]);
-        row[1] = a * (c[0][1] * gy[0] + c[1][1] * gy[1]);
-        // dy_i/dC_ij = dx_j.
-        row[2] = -a * gy[0] * dx[0];
-        row[3] = -a * gy[0] * dx[1];
-        row[4] = -a * gy[1] * dx[0];
-        row[5] = -a * gy[1] * dx[1];
-        row[6] = -a * pe.dlog_sigma;
-        let full = lin_row(px.xi, pe.p);
-        for (k, &li) in layout.lin.iter().enumerate() {
-            row[N_GEOM + k] = full[li];
-        }
-        if layout.fit_radii {
-            let base = layout.radii_base();
-            for k in 0..3 {
-                row[base + k] = -a * pe.d_radii[k];
-            }
-        }
         for i in 0..n {
             let wi = w * row[i];
             g[i] += wi * r;
@@ -733,11 +947,15 @@ fn prior_terms(layout: &Layout, prior: &Params) -> (DVector<f64>, DVector<f64>) 
     for k in 2..6 {
         info[k] = ic;
     }
-    if layout.fit_radii {
-        let ir = 1.0 / (RADIUS_PRIOR_SIGMA_MM * RADIUS_PRIOR_SIGMA_MM);
-        for k in 0..3 {
-            info[layout.radii_base() + k] = ir;
-        }
+    if layout.aniso {
+        let ia = 1.0 / (ANISO_PRIOR_SIGMA * ANISO_PRIOR_SIGMA);
+        info[N_GEOM] = ia;
+        info[N_GEOM + 1] = ia;
+    }
+    let sigma_r = RADIUS_PRIOR_SIGMA_REL * prior.radii[3];
+    let ir = 1.0 / (sigma_r * sigma_r);
+    for k in 0..layout.n_radii {
+        info[layout.radii_base() + k] = ir;
     }
     (info, mean)
 }
@@ -791,6 +1009,8 @@ struct Fitting<'a> {
 struct Solution {
     prm: Params,
     acc: Accumulated,
+    /// Robust residual scale the final weights use.
+    scale: f64,
     iterations: usize,
     converged: bool,
 }
@@ -904,14 +1124,15 @@ impl Fitting<'_> {
         Ok(Solution {
             prm,
             acc,
+            scale,
             iterations,
             converged,
         })
     }
 
-    /// Parameter covariance: inverse Fisher information with the noise
-    /// variance estimated from the weighted residuals; also returns that
-    /// variance.
+    /// Parameter covariance assuming white residuals: inverse Fisher
+    /// information with the noise variance estimated from the weighted
+    /// residuals; also returns that variance.
     fn covariance(&self, acc: &Accumulated) -> Result<(DMatrix<f64>, f64), PhotometricFailure> {
         let n = self.layout.n();
         let dof = (acc.wsum - n as f64).max(1.0);
@@ -928,13 +1149,419 @@ impl Fitting<'_> {
     }
 }
 
+/// Weighted residuals and centre-influence vectors of the patch on a dense
+/// grid over its bounding box (zero outside the patch).
+struct ResidualGrid {
+    width: usize,
+    height: usize,
+    /// `sqrt(w) r`, the standardized-weight residual.
+    e: Vec<f64>,
+    /// `sqrt(w) B J`, the pixel's influence on the centre (2 components).
+    z: Vec<[f64; 2]>,
+    /// `L^T sqrt(w) J` with `L L^T = A^-1`, `n` per pixel: the hat matrix of
+    /// the fit is `H_ij = q_i . q_j`.
+    q: Vec<f64>,
+    n: usize,
+    inside: Vec<bool>,
+    /// The point-antisymmetric parts of `e` and `q` about the fitted centre,
+    /// `(f(x) - f(x'))/sqrt(2)` with `x'` the reflection of `x`, and where
+    /// both `x` and `x'` are in the patch.
+    e_odd: Vec<f64>,
+    q_odd: Vec<f64>,
+    inside_odd: Vec<bool>,
+}
+
+impl ResidualGrid {
+    /// Build the grid for the solution; `a_inv` is `(J^T W J + s^2 P)^-1`.
+    fn new(fitting: &Fitting<'_>, sol: &Solution, a_inv: &DMatrix<f64>) -> Option<Self> {
+        let n = fitting.layout.n();
+        let l = a_inv.clone().cholesky()?.l();
+        let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+        for px in &fitting.pixels {
+            let (x, y) = (px.x[0] as i64, px.x[1] as i64);
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        if x1 < x0 {
+            return None;
+        }
+        let width = (x1 - x0 + 1) as usize;
+        let height = (y1 - y0 + 1) as usize;
+        let mut grid = Self {
+            width,
+            height,
+            e: vec![0.0; width * height],
+            z: vec![[0.0; 2]; width * height],
+            q: vec![0.0; width * height * n],
+            n,
+            inside: vec![false; width * height],
+            e_odd: vec![0.0; width * height],
+            q_odd: vec![0.0; width * height * n],
+            inside_odd: vec![false; width * height],
+        };
+        let k_huber = HUBER_K * sol.scale;
+        let mut row = [0.0f64; N_MAX];
+        for px in &fitting.pixels {
+            let r = pixel_row(&fitting.model, px, &sol.prm, &fitting.layout, &mut row)?;
+            let sw = huber_weight(r, k_huber).sqrt();
+            let idx = (px.x[1] as i64 - y0) as usize * width + (px.x[0] as i64 - x0) as usize;
+            let mut z = [0.0; 2];
+            for (k, zk) in z.iter_mut().enumerate() {
+                *zk = sw * (0..n).map(|j| a_inv[(k, j)] * row[j]).sum::<f64>();
+            }
+            for k in 0..n {
+                grid.q[idx * n + k] = sw * (k..n).map(|j| l[(j, k)] * row[j]).sum::<f64>();
+            }
+            grid.e[idx] = sw * r;
+            grid.z[idx] = z;
+            grid.inside[idx] = true;
+        }
+        // Reflection through the grid point nearest the fitted centre.
+        let cx2 = (2.0 * (sol.prm.p[0] - x0 as f64)).round() as i64;
+        let cy2 = (2.0 * (sol.prm.p[1] - y0 as f64)).round() as i64;
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        for gy in 0..height as i64 {
+            for gx in 0..width as i64 {
+                let (rx, ry) = (cx2 - gx, cy2 - gy);
+                if !(0..width as i64).contains(&rx) || !(0..height as i64).contains(&ry) {
+                    continue;
+                }
+                let i = gy as usize * width + gx as usize;
+                let j = ry as usize * width + rx as usize;
+                if !(grid.inside[i] && grid.inside[j]) {
+                    continue;
+                }
+                grid.inside_odd[i] = true;
+                grid.e_odd[i] = h * (grid.e[i] - grid.e[j]);
+                for k in 0..n {
+                    grid.q_odd[i * n + k] = h * (grid.q[i * n + k] - grid.q[j * n + k]);
+                }
+            }
+        }
+        Some(grid)
+    }
+
+    /// `sum_x f(x, x + d)` over pixel pairs both inside the patch.
+    fn lag_sum<T: Default + std::ops::AddAssign>(
+        &self,
+        d: [i64; 2],
+        f: impl Fn(usize, usize) -> T,
+    ) -> T {
+        self.masked_lag_sum(&self.inside, d, f)
+    }
+
+    /// `sum_x f(x, x + d)` over pixel pairs both inside `mask`.
+    fn masked_lag_sum<T: Default + std::ops::AddAssign>(
+        &self,
+        mask: &[bool],
+        d: [i64; 2],
+        f: impl Fn(usize, usize) -> T,
+    ) -> T {
+        let mut acc = T::default();
+        let (w, h) = (self.width as i64, self.height as i64);
+        for y in 0.max(-d[1])..h.min(h - d[1]) {
+            for x in 0.max(-d[0])..w.min(w - d[0]) {
+                let i = (y * w + x) as usize;
+                let j = ((y + d[1]) * w + x + d[0]) as usize;
+                if mask[i] && mask[j] {
+                    acc += f(i, j);
+                }
+            }
+        }
+        acc
+    }
+
+    /// Residual autocorrelation coefficient at lag `d` over the pairs that
+    /// exist at that lag (diagnostic).
+    fn correlation(&self, d: [i64; 2]) -> f64 {
+        let (num, (ei, ej)) = (
+            self.lag_sum(d, |i, j| self.e[i] * self.e[j]),
+            (
+                self.lag_sum(d, |i, _| self.e[i] * self.e[i]),
+                self.lag_sum(d, |_, j| self.e[j] * self.e[j]),
+            ),
+        );
+        let den = (ei * ej).sqrt();
+        if den > 0.0 { num / den } else { 0.0 }
+    }
+}
+
+/// Lag statistics of the residual grid at one lag `d`.
+#[derive(Default, Clone, Copy)]
+struct LagStats {
+    /// `sum e_x e_{x+d}` over the pixel pairs at this lag.
+    resid: f64,
+    /// Number of pixel pairs at this lag.
+    pairs: f64,
+    /// `sum H_{x,x+d}`: the hat matrix's share of this lag.
+    hat: f64,
+}
+
+impl std::ops::AddAssign for LagStats {
+    fn add_assign(&mut self, o: Self) {
+        self.resid += o.resid;
+        self.pairs += o.pairs;
+        self.hat += o.hat;
+    }
+}
+
+impl ResidualGrid {
+    /// Residual-noise statistics at lag `d` (antisymmetric part, see
+    /// [`correlated_center_covariance`]).
+    fn noise_lag_stats(&self, d: [i64; 2]) -> LagStats {
+        let n = self.n;
+        let (e, q) = (&self.e_odd, &self.q_odd);
+        self.masked_lag_sum(&self.inside_odd, d, |i, j| LagStats {
+            resid: e[i] * e[j],
+            pairs: 1.0,
+            hat: (0..n).map(|m| q[i * n + m] * q[j * n + m]).sum(),
+        })
+    }
+
+    /// `sum_x z_x z_{x+d}^T` (row-major 2×2).
+    fn influence(&self, d: [i64; 2]) -> [f64; 4] {
+        self.lag_sum(d, |i, j| {
+            let (a, b) = (self.z[i], self.z[j]);
+            Quad([a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]])
+        })
+        .0
+    }
+}
+
+/// Four accumulated products (a 2×2 block, row-major).
+#[derive(Default, Clone, Copy)]
+struct Quad([f64; 4]);
+
+impl std::ops::AddAssign for Quad {
+    fn add_assign(&mut self, o: Self) {
+        for (a, b) in self.0.iter_mut().zip(o.0) {
+            *a += b;
+        }
+    }
+}
+
+/// Stationary autocovariance of the residual noise: a white part plus a
+/// Gaussian-correlated part, `C(d) = white δ(d) + corr exp(-|d|^2 / (2 len^2))`.
+/// Positive semidefinite for any non-negative `white`, `corr`.
+#[derive(Debug, Clone, Copy)]
+struct NoiseAcf {
+    white: f64,
+    corr: f64,
+    len: f64,
+}
+
+impl NoiseAcf {
+    fn kernel(len: f64, d: [i64; 2]) -> f64 {
+        (-((d[0] * d[0] + d[1] * d[1]) as f64) / (2.0 * len * len)).exp()
+    }
+
+    fn at(&self, d: [i64; 2]) -> f64 {
+        let white = if d == [0, 0] { self.white } else { 0.0 };
+        white + self.corr * Self::kernel(self.len, d)
+    }
+
+    /// Covariance window half-width.
+    fn window(&self) -> i64 {
+        if self.corr <= 0.0 {
+            return 0;
+        }
+        ((ACF_WINDOW_LENGTHS * self.len).ceil() as i64).min(MAX_ACF_WINDOW)
+    }
+}
+
+/// Fit [`NoiseAcf`] to the residual lag statistics.
+///
+/// The fit absorbs part of any noise (`e = (I - H) eps`). For the white part
+/// this is exact, `E[sum e_x e_{x+d}] = white (pairs δ(d) - h(d))` with
+/// `h(d) = sum_x H_{x,x+d}`; for the correlated part, with `H` varying slowly
+/// over the correlation length, `E ≈ corr (g(d) pairs(d) - G h(d))`,
+/// `G = sum_d g(d)`. Both are linear in `(white, corr)`, which are solved by
+/// non-negative least squares for each candidate length.
+fn fit_noise_acf(stats: &[([i64; 2], LagStats)]) -> Option<NoiseAcf> {
+    // Residual variance and the sampling variance of one lag statistic
+    // `c/p` (white residuals, the typical pair count).
+    let (d0, st0) = stats.first()?;
+    debug_assert_eq!(*d0, [0, 0]);
+    let var = st0.resid / st0.pairs.max(1.0);
+    let noise_var = var * var / st0.pairs.max(1.0);
+    let mut best: Option<(NoiseAcf, f64)> = None;
+    for len in ACF_LENGTHS {
+        let reach = (6.0 * len).ceil() as i64;
+        let mut g_sum = 0.0;
+        for dy in -reach..=reach {
+            for dx in -reach..=reach {
+                g_sum += NoiseAcf::kernel(len, [dx, dy]);
+            }
+        }
+        // Normal equations of c/p = white a + corr b.
+        let (mut aa, mut ab, mut bb, mut ac, mut bc, mut cc) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for (d, st) in stats {
+            let p = st.pairs;
+            if p < 1.0 {
+                continue;
+            }
+            let delta = if *d == [0, 0] { 1.0 } else { 0.0 };
+            let a = delta - st.hat / p;
+            let b = NoiseAcf::kernel(len, *d) - g_sum * st.hat / p;
+            let c = st.resid / p;
+            aa += a * a;
+            ab += a * b;
+            bb += b * b;
+            ac += a * c;
+            bc += b * c;
+            cc += c * c;
+        }
+        let det = aa * bb - ab * ab;
+        let (white, corr) = if det > 1e-12 * aa * bb {
+            ((bb * ac - ab * bc) / det, (aa * bc - ab * ac) / det)
+        } else {
+            (-1.0, -1.0)
+        };
+        // A correlated part must stand out of the sampling noise of the lag
+        // statistics (`c/p` of white residuals scatters by `s^2 / sqrt(p)`):
+        // the non-negativity constraint would otherwise turn noise into a
+        // positive correlation that a long length integrates into a large
+        // inflation.
+        let corr_se = if det > 0.0 {
+            (aa / det * noise_var).sqrt()
+        } else {
+            f64::INFINITY
+        };
+        let significant = corr > ACF_SIGNIFICANCE * corr_se;
+        // Non-negative solution: interior, else the better single term.
+        let candidates = [
+            (white, corr),
+            ((ac / aa).max(0.0), 0.0),
+            (0.0, if bb > 0.0 { (bc / bb).max(0.0) } else { 0.0 }),
+        ];
+        for (w, c) in candidates {
+            if !(w >= 0.0 && c >= 0.0) || (c > 0.0 && !significant) {
+                continue;
+            }
+            let sse = cc - 2.0 * (w * ac + c * bc) + w * w * aa + 2.0 * w * c * ab + c * c * bb;
+            if best.as_ref().is_none_or(|b| sse < b.1) {
+                best = Some((
+                    NoiseAcf {
+                        white: w,
+                        corr: c,
+                        len,
+                    },
+                    sse,
+                ));
+            }
+        }
+    }
+    best.map(|b| b.0)
+}
+
+/// Centre covariance under spatially correlated residuals, and the residual
+/// autocorrelation diagnostic.
+///
+/// The estimate is the sampling covariance of the regularized estimator, the
+/// sandwich `A^-1 J^T W^½ C W^½ J A^-1` restricted to the centre, with
+/// `A = J^T W J + s^2 P` and `C` the autocovariance of the weighted residual
+/// noise over pixel lags: a white part plus a Gaussian-correlated part
+/// ([`NoiseAcf`], positive semidefinite by construction, so the result is a
+/// valid covariance), fitted to the residual lag statistics with the fit's own
+/// absorption of the noise accounted for ([`fit_noise_acf`]). With white
+/// residuals `C = s^2 I` and the estimate is `s^2 A^-1 J^T W J A^-1`, which
+/// equals the inverse Fisher information `s^2 A^-1` wherever the data, not the
+/// prior, determine the centre. Where a direction the data barely constrain
+/// (the in-plane rotation of a plain ring under perspective) couples into the
+/// centre, the posterior `s^2 A^-1` would report the prior's width there,
+/// while the fitted centre does not scatter by it.
+///
+/// The noise statistics come from the point-antisymmetric part of the
+/// residual field about the fitted centre: a misfit of the pattern model that
+/// is symmetric about the centre (a PSF shape or response curve the model
+/// does not have, applied to a centrally symmetric marker) cannot move the
+/// centre and is not mistaken for noise, while stationary noise splits evenly
+/// between the symmetric and antisymmetric parts.
+fn correlated_center_covariance(
+    fitting: &Fitting<'_>,
+    sol: &Solution,
+    cov: &DMatrix<f64>,
+    s2: f64,
+) -> Option<CenterCovariance> {
+    let a_inv = cov / s2;
+    let grid = ResidualGrid::new(fitting, sol, &a_inv)?;
+    // Half plane of lags (d and -d are symmetric), lag 0 first.
+    let half_plane = |reach: i64| {
+        let mut lags = vec![[0i64, 0i64]];
+        for dy in 0..=reach {
+            for dx in -reach..=reach {
+                if dy > 0 || dx > 0 {
+                    lags.push([dx, dy]);
+                }
+            }
+        }
+        lags
+    };
+    let stats: Vec<([i64; 2], LagStats)> = half_plane(ACF_FIT_LAGS)
+        .into_iter()
+        .map(|d| (d, grid.noise_lag_stats(d)))
+        .collect();
+    let acf = fit_noise_acf(&stats)?;
+    let window = acf.window().min((grid.width.min(grid.height) / 3) as i64);
+    let mut m = [0.0f64; 4];
+    for d in half_plane(window) {
+        let mult = if d == [0, 0] { 1.0 } else { 2.0 };
+        let k = mult * acf.at(d);
+        if k == 0.0 {
+            continue;
+        }
+        let zz = grid.influence(d);
+        // Symmetrized: lag -d contributes the transpose.
+        m[0] += k * zz[0];
+        m[3] += k * zz[3];
+        let off = 0.5 * k * (zz[1] + zz[2]);
+        m[1] += off;
+        m[2] += off;
+    }
+    let center = [[m[0], m[1]], [m[2], m[3]]];
+    let det = center[0][0] * center[1][1] - center[0][1] * center[1][0];
+    if !(center[0][0] > 0.0 && det > 0.0 && det.is_finite()) {
+        return None;
+    }
+    let z0 = grid.influence([0, 0]);
+    let off = 0.5 * s2 * (z0[1] + z0[2]);
+    let white = [[s2 * z0[0], off], [off, s2 * z0[3]]];
+    let mut diag = ResidualAcf::default();
+    for k in 0..RESIDUAL_ACF_LAGS {
+        let lag = k as i64 + 1;
+        diag.x[k] = grid.correlation([lag, 0]);
+        diag.y[k] = grid.correlation([0, lag]);
+    }
+    Some(CenterCovariance {
+        center,
+        white,
+        acf: diag,
+    })
+}
+
+/// The centre covariance and its diagnostics.
+struct CenterCovariance {
+    /// Under the fitted residual noise correlation.
+    center: [[f64; 2]; 2],
+    /// The same sandwich with white residuals of variance `s^2`.
+    white: [[f64; 2]; 2],
+    acf: ResidualAcf,
+}
+
 /// Fit one marker.
 pub(crate) fn fit_marker(
     problem: &PhotometricProblem<'_>,
 ) -> Result<PhotometricFit, PhotometricFailure> {
     let model = build_model(problem).ok_or(PhotometricFailure::DegenerateMap)?;
     let (pixels, masked_fraction) = collect_patch(problem, &model);
-    let layout = Layout::new(problem.fit_radii, problem.cubic_background);
+    let layout = Layout::new(
+        problem.fit_radii,
+        problem.codeword.is_some(),
+        problem.cubic_background,
+        problem.anisotropic_blur,
+    );
     if pixels.len() < 4 * layout.n() + 32 {
         return Err(PhotometricFailure::InsufficientPixels);
     }
@@ -942,6 +1569,7 @@ pub(crate) fn fit_marker(
         p: problem.center_seed,
         c: [[1.0, 0.0], [0.0, 1.0]],
         log_sigma: 0.0,
+        aniso: [0.0; 2],
         lin: [0.0; N_LIN],
         radii: problem.radii,
     };
@@ -956,17 +1584,28 @@ pub(crate) fn fit_marker(
     let start = fitting.initial_params(&seed)?;
     let sol = fitting.solve(start, problem.max_iterations)?;
     let (cov, s2) = fitting.covariance(&sol.acc)?;
-    let radii_std = fitting.layout.fit_radii.then(|| {
+    let (center_cov, center_cov_white, residual_acf) =
+        match correlated_center_covariance(&fitting, &sol, &cov, s2) {
+            Some(c) => (c.center, c.white, c.acf),
+            None => {
+                // The prior-regularized inverse Fisher information.
+                let c = [[cov[(0, 0)], cov[(0, 1)]], [cov[(1, 0)], cov[(1, 1)]]];
+                (c, c, ResidualAcf::default())
+            }
+        };
+    let radii_std = (fitting.layout.n_radii > 0).then(|| {
         let b = fitting.layout.radii_base();
-        [
-            cov[(b, b)].sqrt(),
-            cov[(b + 1, b + 1)].sqrt(),
-            cov[(b + 2, b + 2)].sqrt(),
-        ]
+        let mut std = [0.0; 3];
+        for (k, s) in std.iter_mut().enumerate().take(fitting.layout.n_radii) {
+            *s = cov[(b + k, b + k)].sqrt();
+        }
+        std
     });
     Ok(PhotometricFit {
         center: sol.prm.p,
-        center_cov: [[cov[(0, 0)], cov[(0, 1)]], [cov[(1, 0)], cov[(1, 1)]]],
+        center_cov,
+        center_cov_white,
+        residual_acf,
         blur_sigma_px: sol.prm.log_sigma.exp(),
         contrast: sol.prm.lin[CONTRAST],
         residual_sigma: s2.sqrt(),
@@ -990,11 +1629,14 @@ pub(super) mod tests {
     pub(super) const CODEWORD: u16 = 0b1011_0010_1110_0100;
     pub(super) const PITCH_SPACING_MM: f64 = 13.856_406;
 
-    pub(super) fn neighbors() -> Vec<[f64; 2]> {
+    pub(super) fn neighbors() -> Vec<InkDisc> {
         (0..6)
             .map(|k| {
                 let a = k as f64 * std::f64::consts::PI / 3.0;
-                [PITCH_SPACING_MM * a.cos(), PITCH_SPACING_MM * a.sin()]
+                InkDisc {
+                    center: [PITCH_SPACING_MM * a.cos(), PITCH_SPACING_MM * a.sin()],
+                    radius: RADII[3],
+                }
             })
             .collect()
     }
@@ -1041,17 +1683,21 @@ pub(super) mod tests {
         ]
     }
 
-    fn ink(u: [f64; 2], code: u16) -> f64 {
+    /// Printed ink at board point `u`; `code = None` is a plain annulus.
+    fn ink(u: [f64; 2], code: Option<u16>) -> f64 {
         let rho = u[0].hypot(u[1]);
         for nb in neighbors() {
-            if (u[0] - nb[0]).hypot(u[1] - nb[1]) <= RADII[3] {
+            if (u[0] - nb.center[0]).hypot(u[1] - nb.center[1]) <= nb.radius {
                 return 1.0;
             }
         }
         if rho < RADII[0] || rho > RADII[3] {
             return 0.0;
         }
-        if rho > RADII[1] && rho < RADII[2] {
+        if let Some(code) = code
+            && rho > RADII[1]
+            && rho < RADII[2]
+        {
             let a = u[1].atan2(u[0]);
             let s =
                 (((a + std::f64::consts::PI) / (2.0 * std::f64::consts::PI)) * 16.0).floor() as i64;
@@ -1063,12 +1709,19 @@ pub(super) mod tests {
 
     /// Exact-geometry render: 8×8 supersampled coverage, Gaussian blur,
     /// affine illumination, noise, 8-bit quantization.
-    fn render(map: &Mat3, size: u32, blur: f64, noise: f64, seed: u64, code: u16) -> GrayImage {
+    fn render(
+        map: &Mat3,
+        size: u32,
+        blur: f64,
+        noise: f64,
+        seed: u64,
+        code: Option<u16>,
+    ) -> GrayImage {
         quantize(&radiance(map, size, blur, code), size, noise, seed)
     }
 
     /// Noise-free radiance of the patch, row-major.
-    pub(super) fn radiance(map: &Mat3, size: u32, blur: f64, code: u16) -> Vec<f64> {
+    pub(super) fn radiance(map: &Mat3, size: u32, blur: f64, code: Option<u16>) -> Vec<f64> {
         let inv = mat3_inverse(map).unwrap();
         let pad = (5.0 * blur).ceil() as i64 + 2;
         let n = size as i64 + 2 * pad;
@@ -1164,17 +1817,18 @@ pub(super) mod tests {
         gray: &'a GrayImage,
         map: Mat3,
         seed: [f64; 2],
-        nbs: &'a [[f64; 2]],
+        nbs: &'a [InkDisc],
     ) -> PhotometricProblem<'a> {
         PhotometricProblem {
             gray,
             local_map: map,
             center_seed: seed,
-            codeword: CODEWORD,
+            codeword: Some(CODEWORD),
             radii: RADII,
             fit_radii: false,
             cubic_background: false,
-            neighbors_mm: nbs,
+            ink_discs: nbs,
+            anisotropic_blur: true,
             patch_margin_mm: 1.5,
             saturation_level: 250,
             max_iterations: 30,
@@ -1209,15 +1863,18 @@ pub(super) mod tests {
         ] {
             let truth = [40.3, 39.6];
             let map = true_map(tilt, truth);
-            for code in [CODEWORD, 0u16, 0xFFFF] {
+            for code in [Some(CODEWORD), Some(0u16), Some(0xFFFF), None] {
                 let gray = render(&map, 80, blur, 0.0, 1, code);
                 let seed = [truth[0] + 0.6, truth[1] - 0.4];
                 let mut pb = problem(&gray, perturbed(&map), seed, &nbs);
                 pb.codeword = code;
+                if code.is_none() {
+                    pb.radii = [RADII[0], RADII[3], RADII[3], RADII[3]];
+                }
                 let fit = fit_marker(&pb).unwrap();
                 let err = (fit.center[0] - truth[0]).hypot(fit.center[1] - truth[1]);
                 eprintln!(
-                    "blur {blur} tilt {tilt} code {code:04x}: err {err:.4} px, sigma {:.3}, iters {}, conv {}",
+                    "blur {blur} tilt {tilt} code {code:?}: err {err:.4} px, sigma {:.3}, iters {}, conv {}",
                     fit.blur_sigma_px, fit.iterations, fit.converged
                 );
                 assert!(err < 0.5, "blur {blur}: centre error {err} px");
@@ -1231,51 +1888,128 @@ pub(super) mod tests {
 mod monte_carlo {
     use super::tests::*;
     use super::*;
+    use rand::{RngExt, SeedableRng};
 
-    /// The reported centre covariance matches the scatter of repeated fits
-    /// under independent noise (σ = 2 grey levels, 40 levels of contrast).
-    #[test]
-    fn reported_covariance_matches_monte_carlo_scatter() {
-        let nbs = neighbors();
-        let truth = [40.3, 39.6];
-        for (blur, tilt) in [(1.0, 10.0), (3.0, 30.0)] {
-            let map = true_map(tilt, truth);
-            let rad = radiance(&map, 80, blur, CODEWORD);
-            let n = 120;
-            let mut centers = Vec::with_capacity(n);
-            let mut trace_sum = 0.0;
-            for seed in 0..n as u64 {
-                let gray = quantize(&rad, 80, 2.0, 1000 + seed);
-                let fit = fit_marker(&problem(&gray, perturbed(&map), [40.8, 39.2], &nbs)).unwrap();
-                centers.push(fit.center);
-                trace_sum += fit.center_cov[0][0] + fit.center_cov[1][1];
-            }
-            let m = [
-                centers.iter().map(|c| c[0]).sum::<f64>() / n as f64,
-                centers.iter().map(|c| c[1]).sum::<f64>() / n as f64,
-            ];
-            let mut emp = [[0.0; 2]; 2];
-            for c in &centers {
-                let d = [c[0] - m[0], c[1] - m[1]];
-                for i in 0..2 {
-                    for j in 0..2 {
-                        emp[i][j] += d[i] * d[j] / (n - 1) as f64;
+    /// Radiance plus Gaussian noise of standard deviation `noise` whose
+    /// spatial correlation is a Gaussian of `corr_px` (0 = white), quantized.
+    fn noisy(radiance: &[f64], size: u32, noise: f64, corr_px: f64, seed: u64) -> GrayImage {
+        if corr_px <= 0.0 {
+            return quantize(radiance, size, noise, seed);
+        }
+        let n = size as usize;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut field: Vec<f64> = (0..n * n)
+            .map(|_| {
+                let u1: f64 = rng.random_range(f64::EPSILON..1.0);
+                let u2: f64 = rng.random_range(0.0..1.0);
+                (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+            })
+            .collect();
+        let r = (4.0 * corr_px).ceil() as i64;
+        let k: Vec<f64> = (-r..=r)
+            .map(|i| (-((i * i) as f64) / (2.0 * corr_px * corr_px)).exp())
+            .collect();
+        // A unit-variance field after the separable blur.
+        let norm = k.iter().map(|v| v * v).sum::<f64>();
+        for pass in 0..2 {
+            let src = field.clone();
+            for y in 0..n as i64 {
+                for x in 0..n as i64 {
+                    let mut acc = 0.0;
+                    for (j, kv) in k.iter().enumerate() {
+                        let o = j as i64 - r;
+                        let (xx, yy) = if pass == 0 { (x + o, y) } else { (x, y + o) };
+                        if (0..n as i64).contains(&xx) && (0..n as i64).contains(&yy) {
+                            acc += kv * src[(yy * n as i64 + xx) as usize];
+                        }
                     }
+                    field[(y * n as i64 + x) as usize] = acc / norm.sqrt();
                 }
             }
-            let rep_tr = trace_sum / n as f64;
-            let emp_tr = emp[0][0] + emp[1][1];
-            let bias = (m[0] - truth[0]).hypot(m[1] - truth[1]);
-            eprintln!(
-                "blur {blur}: bias {bias:.4} px, empirical rms {:.4} px, reported rms {:.4} px, ratio {:.3}",
-                emp_tr.sqrt(),
-                rep_tr.sqrt(),
-                (rep_tr / emp_tr).sqrt()
-            );
-            let ratio = (rep_tr / emp_tr).sqrt();
+        }
+        let mut img = GrayImage::new(size, size);
+        for (i, v) in radiance.iter().enumerate() {
+            let q = (v + noise * field[i]).round().clamp(0.0, 255.0);
+            img.put_pixel((i % n) as u32, (i / n) as u32, image::Luma([q as u8]));
+        }
+        img
+    }
+
+    /// Reported over empirical centre standard deviation of repeated fits,
+    /// for the white-residual and the correlated-residual covariance.
+    fn sigma_ratios(blur: f64, tilt: f64, code: Option<u16>, corr_px: f64) -> (f64, f64) {
+        let nbs = neighbors();
+        let truth = [40.3, 39.6];
+        let map = true_map(tilt, truth);
+        let rad = radiance(&map, 80, blur, code);
+        let n = 120;
+        let mut centers = Vec::with_capacity(n);
+        let (mut tr_white, mut tr_corr) = (0.0, 0.0);
+        for seed in 0..n as u64 {
+            let gray = noisy(&rad, 80, 2.0, corr_px, 1000 + seed);
+            let mut pb = problem(&gray, perturbed(&map), [40.8, 39.2], &nbs);
+            pb.codeword = code;
+            if code.is_none() {
+                pb.radii = [RADII[0], RADII[3], RADII[3], RADII[3]];
+            }
+            let fit = fit_marker(&pb).unwrap();
+            centers.push(fit.center);
+            tr_white += fit.center_cov_white[0][0] + fit.center_cov_white[1][1];
+            tr_corr += fit.center_cov[0][0] + fit.center_cov[1][1];
+        }
+        let m = [
+            centers.iter().map(|c| c[0]).sum::<f64>() / n as f64,
+            centers.iter().map(|c| c[1]).sum::<f64>() / n as f64,
+        ];
+        let emp_tr = centers
+            .iter()
+            .map(|c| (c[0] - m[0]).powi(2) + (c[1] - m[1]).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64;
+        let bias = (m[0] - truth[0]).hypot(m[1] - truth[1]);
+        let ratio = |tr: f64| (tr / n as f64 / emp_tr).sqrt();
+        eprintln!(
+            "blur {blur} tilt {tilt} code {:?} noise corr {corr_px}: bias {bias:.4} px, empirical rms {:.4} px, reported/empirical white {:.3} correlated {:.3}",
+            code.is_some(),
+            emp_tr.sqrt(),
+            ratio(tr_white),
+            ratio(tr_corr)
+        );
+        (ratio(tr_white), ratio(tr_corr))
+    }
+
+    /// With white noise (σ = 2 grey levels, 40 levels of contrast) both
+    /// covariances match the scatter of repeated fits.
+    #[test]
+    fn reported_covariance_matches_monte_carlo_scatter() {
+        for (blur, tilt, code) in [
+            (1.0, 10.0, Some(CODEWORD)),
+            (3.0, 30.0, Some(CODEWORD)),
+            (1.5, 20.0, None),
+        ] {
+            let (white, corr) = sigma_ratios(blur, tilt, code, 0.0);
+            for ratio in [white, corr] {
+                assert!(
+                    (0.8..=1.25).contains(&ratio),
+                    "blur {blur}: sigma ratio {ratio}"
+                );
+            }
+        }
+    }
+
+    /// Spatially correlated noise: the white-residual covariance is
+    /// overconfident; the correlated-residual one is not.
+    #[test]
+    fn correlated_noise_covariance_matches_monte_carlo_scatter() {
+        for (blur, tilt, code) in [(1.5, 20.0, Some(CODEWORD)), (1.5, 20.0, None)] {
+            let (white, corr) = sigma_ratios(blur, tilt, code, 1.0);
             assert!(
-                (0.77..=1.3).contains(&ratio),
-                "blur {blur}: sigma ratio {ratio}"
+                white < 0.8,
+                "white covariance should be overconfident: {white}"
+            );
+            assert!(
+                (0.8..=1.25).contains(&corr),
+                "blur {blur}: sigma ratio {corr}"
             );
         }
     }
@@ -1293,10 +2027,11 @@ mod timing {
         let truth = [40.3, 39.6];
         for blur in [1.0, 3.0] {
             let map = true_map(20.0, truth);
-            let gray = quantize(&radiance(&map, 80, blur, CODEWORD), 80, 2.0, 7);
-            for fit_radii in [false, true] {
+            let gray = quantize(&radiance(&map, 80, blur, Some(CODEWORD)), 80, 2.0, 7);
+            for (fit_radii, aniso) in [(false, false), (false, true), (true, true)] {
                 let mut pb = problem(&gray, perturbed(&map), [40.8, 39.2], &nbs);
                 pb.fit_radii = fit_radii;
+                pb.anisotropic_blur = aniso;
                 let n = 200;
                 let t0 = std::time::Instant::now();
                 let mut it = 0;
@@ -1304,7 +2039,7 @@ mod timing {
                     it += fit_marker(&pb).unwrap().iterations;
                 }
                 eprintln!(
-                    "blur {blur} fit_radii {fit_radii}: {:.3} ms per fit, {:.1} iterations",
+                    "blur {blur} fit_radii {fit_radii} anisotropic {aniso}: {:.3} ms per fit, {:.1} iterations",
                     t0.elapsed().as_secs_f64() * 1e3 / n as f64,
                     it as f64 / n as f64
                 );

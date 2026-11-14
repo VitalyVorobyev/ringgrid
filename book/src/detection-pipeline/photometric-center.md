@@ -8,8 +8,11 @@ paper or ink. The resulting center error depends on the marker's code and on
 the blur, so it does not average out across markers. The projective center
 inherits it from both ellipses.
 
-`CircleRefinementMethod::Photometric` adds a final stage that fits each decoded
-marker's pixels directly with a model of the blurred printed pattern.
+`CircleRefinementMethod::Photometric` adds a final stage that fits each
+marker's pixels directly with a model of the blurred printed pattern. It works
+for every target kind the detector supports — coded and plain markers, hex and
+rect lattices, with or without origin dots: the pattern is derived from the
+target definition, so all of them go through the same model.
 
 ## Model
 
@@ -25,13 +28,18 @@ I(x) = B(x) - A(x) * P(u(x); sigma)
   `y = h0 + C (x - p)`, `u = H_local^-1(y)`. The marker center is imaged
   exactly at `p`, which is the reported center — no ellipse center or conic
   pencil is involved, so the result is unbiased under perspective.
-- `P` is the ink coverage of the printed marker: the inner and outer rings,
-  the **decoded code sectors** of this marker, and the outer rings of its
-  neighbours, blurred by an isotropic Gaussian PSF of standard deviation
-  `sigma`. Each circular edge is a normal-CDF step of its signed image-space
-  distance, with the first-order correction for edge curvature (a blurred disc
-  appears smaller by `sigma^2 / (2 R)`). Code sectors are the product of a
-  blurred radial band and a blurred angular indicator.
+- `P` is the ink coverage of what the target prints around the marker: the
+  marker's ink annulus (the two stroked rings and the code band of a coded
+  marker, the filled annulus of a plain one), minus the **paper code sectors**
+  of a coded marker's decoded codeword, plus the outer edges of the
+  neighbouring markers and any origin dots nearby. It is blurred by a Gaussian
+  PSF of standard deviation `sigma` with a fitted anisotropy (two more
+  parameters, kept near isotropic by a weak prior), since real lenses are often
+  astigmatic. Each circular edge is a normal-CDF step of its signed
+  image-space distance, blurred by the PSF's width across that edge, with the
+  first-order correction for edge curvature (a blurred disc appears smaller by
+  `sigma^2 / (2 R)`). Code sectors are the product of a blurred radial band
+  and a blurred angular indicator.
 - `B` (the paper level) and `A` (paper minus ink) are affine in the image,
   absorbing vignetting and illumination gradients. Markers whose fit leaves an
   excess residual — typically next to a glare halo — are refitted with a cubic
@@ -46,9 +54,11 @@ erases the code band and the marker's in-plane rotation is unobservable.
 
 Printed boards do not always match their nominal stroke width, and a code band
 modelled at the wrong radius biases the center. With `estimate_print_radii`
-(default on), a first pass fits the three inner radii freely on up to 16
-markers and the precision-weighted consensus is used for all final fits. The
-estimate is reported in `DetectionDiagnostics::photometric_print_radii_mm`.
+(default on), a first pass fits the inner radii freely on up to 16 markers —
+the hole and both code-band edges of a coded marker, the inner edge of a plain
+annulus (the outer edge sets the scale) — and the precision-weighted consensus
+is used for all final fits. The estimate is reported in
+`DetectionDiagnostics::photometric_print_radii_mm`.
 
 ## Outputs
 
@@ -57,28 +67,58 @@ estimate is reported in `DetectionDiagnostics::photometric_print_radii_mm`.
 | Refined center | `DetectedMarker::center` |
 | Which estimator produced the center | `DetectedMarker::center_source` (`outer_ellipse`, `projective_center`, `photometric`) |
 | 2×2 center covariance (px²) | `DetectedMarker::center_cov` (photometric centers only) |
-| Fitted blur, contrast, residual, status | `MarkerDiagnostics::photometric` |
+| Fitted blur, contrast, residual, status, covariance inflation, residual autocorrelation | `MarkerDiagnostics::photometric` |
 
-The covariance is the inverse Fisher information of the fit with the noise
-level estimated from the fit's own residuals. It describes the effect of pixel
-noise. It does not include model mismatch: a lens PSF that is not Gaussian, a
-non-linear sensor response or a glare halo the background cannot follow add
-error that the covariance does not see. Use it to weight markers relative to
-one another, and check its absolute scale against your own data.
+## Covariance
+
+The inverse Fisher information of a pixel fit assumes the residuals are
+independent from pixel to pixel. Real images break that: demosaicing,
+compression and sharpening correlate sensor noise over a few pixels, and a
+pattern model that does not quite match the optics leaves structured
+residuals. With noise correlated over about a pixel, the independent-pixel
+covariance understates the center scatter about threefold.
+
+The reported covariance is therefore a sandwich estimate
+`A^-1 J^T C J A^-1` with `C` the autocovariance of the residual noise between
+pixel pairs: a white part plus a Gaussian-correlated part whose amplitude and
+correlation length are fitted per marker to the residual autocovariance at
+lags up to 4 px (accounting for the share of the noise the fit itself
+absorbs). The model is positive semidefinite by construction, a correlated part
+is used only when it is statistically significant, and with white residuals
+the estimate is the inverse Fisher information. The noise statistics are taken
+from the part of the residual field that is antisymmetric about the fitted
+center: a misfit that is symmetric about the center (a PSF shape or a response
+curve the model does not have) cannot move the center and is not mistaken for
+noise.
+
+`PhotometricMetrics::covariance_inflation` is the ratio of the reported center
+standard deviation to the independent-pixel one; `residual_autocorrelation`
+gives the residual correlation at lags 1–6 px along each image axis. The
+covariance does not cover a bias common to the whole marker (the model's own
+approximation error, an asymmetric misfit), which on synthetic data stays
+below about 0.015 px for markers of 17 px outer radius and more.
 
 A fit is rejected — and the marker keeps its previous center and
 `center_source` — when it does not converge, moves more than
 `max_center_shift_px` (default: half the outer radius), has an implausible blur
 or contrast, or leaves a residual more than three times the image's typical fit
-residual. The reason is reported in `MarkerDiagnostics::photometric.status`.
+residual. The reason is reported in `MarkerDiagnostics::photometric.status`;
+a marker that could not be placed on the board at all reports
+`no_board_position`. With the method selected, every marker has a status.
 
 ## Scope
 
-- Coded targets only, and only decoded markers: the model needs the marker's
-  code and its board position.
-- A board homography is required; it is available whenever the global filter
-  runs (the default). With a `PixelMapper`, the local board-to-image map is
-  fitted through the mapper.
+- Every marker with a board position: a decoded id on a coded target, a
+  lattice label on a plain one. Undecoded or unlabelled markers keep their
+  center (`no_board_position`).
+- A board homography is required; coded targets get one from the global
+  filter (the default), plain targets from grid assignment. When a plain
+  board's origin is resolved (absolute frame) the model knows every printed
+  marker and origin dot; in the relative frame of an unresolved board it
+  knows the labelled markers only, so an undetected neighbour or an origin dot
+  next to a marker is not modelled there.
+- With a `PixelMapper`, the local board-to-image map is fitted through the
+  mapper.
 - The stage runs once per detection call, after scale selection, so adaptive
   detection does not pay for it per candidate. The result's homography is the
   one fitted before refinement.

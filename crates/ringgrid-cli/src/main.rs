@@ -746,8 +746,8 @@ impl CliCameraArgs {
 enum CircleRefineMethodArg {
     None,
     ProjectiveCenter,
-    /// Projective centre, then a photometric fit of each decoded marker
-    /// (blur-robust; adds a centre covariance).
+    /// Projective centre, then a photometric fit of every marker with a board
+    /// position, coded or plain (blur-robust; adds a centre covariance).
     Photometric,
 }
 

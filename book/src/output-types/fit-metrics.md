@@ -22,7 +22,7 @@ the `DetectionDiagnostics::markers` vector is positionally aligned 1:1 with
 | `source` | `DetectionSource` | Pipeline path that produced the marker: `fit_decoded`, `completion`, or `seeded_pass`. |
 | `edge_points_outer` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel outer edge inlier points used for ellipse fitting. |
 | `edge_points_inner` | `Option<Vec<[f64; 2]>>` | Raw sub-pixel inner edge inlier points used for ellipse fitting. |
-| `photometric` | `Option<PhotometricMetrics>` | Photometric fit summary when the photometric stage ran on this marker: `status` (`accepted`, `insufficient_pixels`, `degenerate`, `not_converged`, `shift_too_large`, `implausible`, `poor_fit`), fitted `blur_sigma_px`, `contrast`, `residual_sigma`, `n_pixels`, `masked_fraction`, `center_shift_px`. |
+| `photometric` | `Option<PhotometricMetrics>` | Photometric fit summary, on every marker when the photometric method is selected: `status` (`accepted`, `insufficient_pixels`, `degenerate`, `not_converged`, `shift_too_large`, `implausible`, `poor_fit`, `no_board_position`), fitted `blur_sigma_px`, `contrast`, `residual_sigma`, `n_pixels`, `masked_fraction`, `center_shift_px`, `covariance_inflation` (reported center σ over the independent-pixel σ) and `residual_autocorrelation` (`x`, `y`: residual correlation at lags 1–6 px). |
 
 `MarkerDiagnostics` is `#[non_exhaustive]` and derives `serde::Serialize` /
 `serde::Deserialize`.

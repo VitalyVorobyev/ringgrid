@@ -487,7 +487,7 @@ Controls the blur-robust centre fit used when
 |---|---|---|
 | `saturation_level` | `250` | Pixels at or above this gray level are masked out of the fit. Lower it for sensors that clip earlier. |
 | `max_iterations` | `30` | Iteration cap of the photometric solver. |
-| `estimate_print_radii` | `True` | Estimates the printed ring radii from the image (reported in `DetectionDiagnostics.photometric_print_radii_mm`). |
+| `estimate_print_radii` | `True` | Estimates the printed marker radii from the image, coded or plain (reported in `DetectionDiagnostics.photometric_print_radii_mm`). |
 | `max_center_shift_px` | `None` (auto) | Maximum accepted shift from the starting centre. `None` derives it from the marker size; explicit values are honored as-is. |
 
 ### `completion`

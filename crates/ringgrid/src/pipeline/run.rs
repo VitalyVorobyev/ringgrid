@@ -618,7 +618,11 @@ pub(crate) fn refine_centers_photometric(
         DetectionFrame::Working => {
             match mapper.or(self_undistort.as_ref().map(|m| m as &dyn PixelMapper)) {
                 Some(m) => Some(m),
-                None => return,
+                None => {
+                    // No way back to image pixels: nothing can be placed.
+                    crate::detector::photometric_refine::mark_unrefined(&mut result.markers);
+                    return;
+                }
             }
         }
     };
@@ -628,6 +632,7 @@ pub(crate) fn refine_centers_photometric(
             gray,
             &mut result.markers,
             h.as_ref(),
+            result.board_frame,
             mapper,
             config,
         );

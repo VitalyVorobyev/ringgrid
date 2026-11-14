@@ -192,6 +192,21 @@ BLUR_BENCH_CONTRAST=80 cargo test --release -p ringgrid --test blur_center_accur
   -- --ignored --nocapture --test-threads 1 blur_center_benchmark
 ```
 
+### Photometric Centers Across Target Kinds (2026-11)
+
+Source: `crates/ringgrid/tests/photometric_target_matrix.rs`. Seven target
+kinds (coded hex/rect, plain hex/rect with and without origin dots, a thin
+plain ring), marker outer radius 8/17/33 px × blur 0.8/1.5/3 × contrast 40/80
+× tilt 0/20/30°, 6 noise seeds per cell, σ = 2 noise, no glare. For 17–33 px
+markers the photometric RMS is 0.012–0.016 px (median over cells) and at most
+0.045 px for every kind except one detection-limited coded-rect cell; the
+projective center errs by 0.05–1.3 px. Per-kind tables, Monte-Carlo
+covariance ratios and the model-misfit study are in decision note 022.
+
+```bash
+cargo test --release -p ringgrid --test photometric_target_matrix -- --ignored --nocapture
+```
+
 ## Related Docs
 
 - [docs/tuning-guide.md](tuning-guide.md) for symptom-driven tuning notes

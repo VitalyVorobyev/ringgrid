@@ -1886,6 +1886,7 @@ version = "0.13.2"
 dependencies = [
  "clap",
  "image",
+ "nalgebra 0.35.0",
  "ringgrid",
  "serde",
  "serde_json",

@@ -122,6 +122,9 @@ pub struct Report {
     /// Near the outer edge by image-frame angle: ink side, paper side.
     pub angle_ink: Vec<Acc>,
     pub angle_paper: Vec<Acc>,
+    /// The same per blur tercile: `angle_*_by_tercile[t][bin]`.
+    pub angle_ink_by_tercile: Vec<Vec<Acc>>,
+    pub angle_paper_by_tercile: Vec<Vec<Acc>>,
     /// Terciles then all.
     pub split: Vec<Split>,
     pub grey: Vec<Acc>,
@@ -290,6 +293,8 @@ pub fn analyze(markers: &[MarkerData]) -> Report {
     let mut edge = vec![vec![vec![Acc::default(); N_EDGE]; N_TERCILES]; 3];
     let mut angle_ink = vec![Acc::default(); N_ANGLE];
     let mut angle_paper = vec![Acc::default(); N_ANGLE];
+    let mut angle_ink_by_tercile = vec![vec![Acc::default(); N_ANGLE]; N_TERCILES];
+    let mut angle_paper_by_tercile = vec![vec![Acc::default(); N_ANGLE]; N_TERCILES];
     let mut grey = vec![Acc::default(); N_GREY];
     let mut n_pixels = 0u64;
     for (m, marker) in markers.iter().enumerate() {
@@ -316,8 +321,10 @@ pub fn analyze(markers: &[MarkerData]) -> Report {
                     .min(N_ANGLE - 1);
                 if d_out > 0.0 {
                     angle_ink[i].add(r);
+                    angle_ink_by_tercile[t][i].add(r);
                 } else {
                     angle_paper[i].add(r);
+                    angle_paper_by_tercile[t][i].add(r);
                 }
             }
             if let Some(g) = bin_index(f64::from(s.observed), 0.0, 256.0 / N_GREY as f64, N_GREY) {
@@ -392,9 +399,51 @@ pub fn analyze(markers: &[MarkerData]) -> Report {
         edge,
         angle_ink,
         angle_paper,
+        angle_ink_by_tercile,
+        angle_paper_by_tercile,
         split,
         grey,
         flat,
+    }
+}
+
+/// The part of an angle table (bins of `atan2(dy, dx)` from -180°) that
+/// varies along the image y axis: the pixel-weighted means over the upper
+/// half (above the centre, angles -180..0) and the lower half, and the first
+/// harmonic `A` of `A sin(angle)` fitted to the bin means. A blur that grows
+/// downwards across a marker makes the upper edge steeper than a single-PSF
+/// model (ink side negative, paper side positive) and the lower edge
+/// shallower.
+#[derive(Clone, Copy, Debug)]
+pub struct Dipole {
+    pub upper: f64,
+    pub lower: f64,
+    pub harmonic: f64,
+}
+
+pub fn dipole(acc: &[Acc]) -> Dipole {
+    let half = |range: std::ops::Range<usize>| {
+        let (mut s, mut n) = (0.0, 0u64);
+        for a in &acc[range] {
+            s += a.sum;
+            n += a.n;
+        }
+        s / n.max(1) as f64
+    };
+    let (mut num, mut den) = (0.0, 0.0);
+    for (i, a) in acc.iter().enumerate() {
+        if a.n == 0 {
+            continue;
+        }
+        let ang = -std::f64::consts::PI
+            + (i as f64 + 0.5) * 2.0 * std::f64::consts::PI / acc.len() as f64;
+        num += a.mean() * ang.sin();
+        den += ang.sin().powi(2);
+    }
+    Dipole {
+        upper: half(0..acc.len() / 2),
+        lower: half(acc.len() / 2..acc.len()),
+        harmonic: if den > 0.0 { num / den } else { f64::NAN },
     }
 }
 
@@ -477,6 +526,33 @@ impl Report {
                 self.angle_paper[i].n,
             );
         }
+        println!(
+            "  dipole along image y (upper = above the centre; A = amplitude of A sin(angle)):"
+        );
+        println!(
+            "  {:>5} | {:^23} | {:^23}",
+            "group", "ink: upper lower A", "paper: upper lower A"
+        );
+        let groups = (0..N_TERCILES)
+            .map(|t| {
+                (
+                    format!("T{t}"),
+                    &self.angle_ink_by_tercile[t],
+                    &self.angle_paper_by_tercile[t],
+                )
+            })
+            .chain(std::iter::once((
+                "all".to_string(),
+                &self.angle_ink,
+                &self.angle_paper,
+            )));
+        for (name, ink, paper) in groups {
+            let (i, p) = (dipole(ink), dipole(paper));
+            println!(
+                "  {name:>5} | {:>+7.2} {:>+7.2} {:>+7.2} | {:>+7.2} {:>+7.2} {:>+7.2}",
+                i.upper, i.lower, i.harmonic, p.upper, p.lower, p.harmonic
+            );
+        }
 
         println!(
             "\n(d) variance split: raw residual = part explained by the across-marker \
@@ -550,6 +626,8 @@ impl Report {
                 "band_px": ANGLE_BAND_PX,
                 "ink_side": accs(&self.angle_ink),
                 "paper_side": accs(&self.angle_paper),
+                "ink_side_by_tercile": self.angle_ink_by_tercile.iter().map(|t| accs(t)).collect::<Vec<_>>(),
+                "paper_side_by_tercile": self.angle_paper_by_tercile.iter().map(|t| accs(t)).collect::<Vec<_>>(),
             },
             "variance_split": self.split.iter().enumerate().map(|(g, s)| json!({
                 "group": if g == N_TERCILES { "all".to_string() } else { format!("T{g}") },

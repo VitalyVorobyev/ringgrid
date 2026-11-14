@@ -9,7 +9,8 @@
 //! - (b) residual vs signed distance to the nearest model edge, for inner-ring,
 //!   outer-ring and code-sector edges, per blur tercile;
 //! - (c) residual vs image-frame angle near the outer edge (anisotropic PSF,
-//!   illumination direction);
+//!   illumination direction), and its dipole along the image y axis per blur
+//!   tercile (a PSF width that changes across the marker);
 //! - (d) the share of the residual variance the across-marker mean profile of
 //!   (a)+(b) explains (a common, deterministic misfit), and the lag-1
 //!   autocorrelation of the remainder;

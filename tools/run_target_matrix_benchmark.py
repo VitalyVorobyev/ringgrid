@@ -2,7 +2,7 @@
 """Target-matrix synthetic benchmark: generate -> detect -> score -> summarize.
 
 One case per target combination the library supports beyond the hex-coded
-reference/distortion/blur3 benchmarks:
+reference/distortion/blur2 benchmarks:
 
 - rect_plain_dots / rect_plain_nodots: the 24x24 plain rect board with and
   without its origin-dot triad (absolute vs relative canonical frame).

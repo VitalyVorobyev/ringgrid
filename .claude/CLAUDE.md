@@ -382,7 +382,7 @@ The `/regression-gate` skill runs the full regression suite (invoke after signif
 2. Run 3 synthetic benchmarks + 1 real-world benchmark (rtv3d, local-only):
    - `bash tools/run_reference_benchmark.sh`
    - `bash tools/run_distortion_benchmark.sh`
-   - `bash tools/run_blur3_benchmark.sh`
+   - `bash tools/run_blur2_benchmark.sh`
    - `.venv/bin/python tools/run_rtv3d_eval.py` (skipped if `data/rtv3d` absent)
 3. Validate against `tools/ci/regression_baseline.json`
 4. Run `tools/ci/maintainability_guardrails.py`

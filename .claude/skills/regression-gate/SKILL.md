@@ -1,6 +1,6 @@
 ---
 name: regression-gate
-description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 4 synthetic benchmarks (hex-coded reference/distortion/blur3 + the target-matrix benchmark covering every lattice x coding x dots combination and the Extended codebook) + 1 real-world benchmark + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
+description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 4 synthetic benchmarks (hex-coded reference/distortion/blur2 + the target-matrix benchmark covering every lattice x coding x dots combination and the Extended codebook) + 1 real-world benchmark + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
 ---
 
 # Regression Gate
@@ -35,7 +35,7 @@ Run all 4 synthetic benchmark scripts in sequence using `.venv`:
 ```bash
 bash tools/run_reference_benchmark.sh
 bash tools/run_distortion_benchmark.sh
-bash tools/run_blur3_benchmark.sh
+bash tools/run_blur2_benchmark.sh
 bash tools/run_target_matrix_benchmark.sh
 ```
 
@@ -68,7 +68,7 @@ It reads `tools/ci/regression_baseline.json` and checks every benchmark's
 output (exit code 1 on any failure, printing each failing check; `--verbose`
 prints all checks). Each threshold `min_<metric>` requires `value >= bound`,
 `max_<metric>` requires `value <= bound`, where the value is the output's
-`<metric>` or `avg_<metric>` — for top-level `criteria` (blur3) or per
+`<metric>` or `avg_<metric>` — for top-level `criteria` (blur2) or per
 `modes` / `strategies` entry. A missing or null value fails. The rtv3d entry is
 skipped when `data/rtv3d_0` is absent.
 
@@ -76,7 +76,7 @@ What the gated metrics mean:
 
 - **reference / distortion** (`summary.json`, per mode): precision, recall,
   `center_mean_px`, `h_vs_gt_mean_px`.
-- **blur3** (`aggregate.json`): precision, recall, `center_error`.
+- **blur2** (`aggregate.json`): precision, recall, `center_error`.
 - **target matrix** (`summary.json`, per case): precision, recall,
   `center_mean_px`, `coord_accuracy` (grid labels vs ground truth: exact in the
   absolute frame, best lattice rotation + translation in the relative frame);
@@ -159,5 +159,5 @@ To regenerate baselines after intentional improvements:
 - Baselines: `tools/ci/regression_baseline.json`
 - Maintainability: `tools/ci/maintainability_baseline.json`, `tools/ci/maintainability_guardrails.py`
 - Baseline check: `tools/ci/check_regression_baseline.py`
-- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_target_matrix_benchmark.sh`, `tools/run_rtv3d_eval.py`
-- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/target_matrix_benchmark/`, `tools/out/rtv3d_eval/`
+- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur2_benchmark.sh`, `tools/run_target_matrix_benchmark.sh`, `tools/run_rtv3d_eval.py`
+- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur2_post_pipeline/`, `tools/out/target_matrix_benchmark/`, `tools/out/rtv3d_eval/`

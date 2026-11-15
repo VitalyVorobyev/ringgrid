@@ -42,7 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it moves centres by under 0.2 px while their error is the outer edge fit
   (share beyond 1 px stays 2–5× the two-conic centre's on the grid, ~16× on
   steep tilt) and it reported 3 new
-  wrong IDs on second-board views (ADR-024).
+  wrong IDs on second-board views (ADR-024). Also measured and not adopted:
+  a neighbour-supported inner-ellipse retry (+0.3–1 point recall, but its
+  centres were 6–11× more often beyond 1 px) and contrast-relative forms of
+  the outer-edge ring-depth gate (~+20 points on dark, low-contrast frames,
+  but new wrong IDs on second-board views). The precision harness gains a
+  `dark` scene group (low dynamic range, dark offset) with recall floors.
 
 - **With `CircleRefinementMethod::Photometric`, the returned homography is
   refit from the refined centres.** It used to stay the one fitted to the

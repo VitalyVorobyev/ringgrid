@@ -23,8 +23,7 @@ use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{
     CompletionScope, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
-    complete_with_h, global_filter, matrix3_to_array, recover_inner_from_neighbours,
-    verify_and_correct_ids,
+    complete_with_h, global_filter, matrix3_to_array, verify_and_correct_ids,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -58,33 +57,7 @@ fn filter_with_h(markers: &[MarkerRecord], config: &DetectConfig) -> Option<Filt
         n_inliers = filtered.len(),
         "fallback homography support"
     );
-    let accepted = match std::env::var("RINGGRID_EXP_CHANCE").as_deref() {
-        // Anchor's lattice formula, verbatim (first vote free).
-        Ok("anchor") => {
-            let n_decoded = markers.iter().filter(|m| id_is_own_decode(m)).count();
-            let n_rot = (config.target.lattice_kind().symmetry_transforms().len() / 2).max(1);
-            crate::pipeline::anchor::ln_chance_votes(
-                n_decoded,
-                n_own,
-                n_rot,
-                config.target.n_cells(),
-            ) <= 1e-3f64.ln()
-        }
-        // Homography-adapted: four votes are free (any four points fit).
-        Ok("homography") => {
-            let n_decoded = markers.iter().filter(|m| id_is_own_decode(m)).count();
-            n_own >= 4
-                && crate::pipeline::anchor::ln_chance_votes(
-                    n_decoded,
-                    n_own,
-                    1,
-                    config.target.n_cells(),
-                ) - 3.0 * (config.target.n_cells() as f64).ln()
-                    <= 1e-3f64.ln()
-        }
-        _ => n_own >= ransac.min_inliers,
-    };
-    accepted.then_some(FilterPhaseOutput {
+    (n_own >= ransac.min_inliers).then_some(FilterPhaseOutput {
         markers: filtered,
         h,
         ransac_stats: stats,
@@ -222,7 +195,6 @@ pub(super) fn finalize_decode_anchored_fallback(
 
     apply_marker_fixup(gray, &mut final_markers, config, mapper);
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
-    recover_inner_from_neighbours(gray, &mut final_markers, config, mapper);
 
     let (final_h_mat, final_ransac) = phase_final_h(
         &final_markers,

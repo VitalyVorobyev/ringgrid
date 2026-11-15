@@ -16,7 +16,8 @@ evidence; its precision under hard conditions was not measured.
 (default thin-band hex, coded rect, 1239-cell Extended hex, plain hex/rect with
 origin dots; blur × diameter, tilt to 65°, radial distortion without a camera
 model, partial views, an occluder, 1–6 markers, low contrast, a second board in
-view, and a few fail-closed scenes outside the operating range) plus a 450-scene
+view, and a few fail-closed scenes outside the operating range; since added:
+60 dark, low-dynamic-range scenes, group `dark`) plus a 450-scene
 operating-range grid (blur σ ∈ {0.8, 1.5, 2.0} px × diameter {20, 24, 32, 44,
 56} px × tilt {0, 30, 50}° × 2 poses × 5 boards). The scorer counts wrong IDs,
 wrong absolute positions, relative label errors, wrong homographies (median
@@ -96,8 +97,10 @@ Of the visible cells missing while most lattice neighbours are reported
 catalogue + grid: 7791 cells), 7358 (94 %) are reported once the
 corrected-centre contract is lifted: fitted, identified and verified, dropped
 for their outer-ellipse centre alone — 5645 without an inner ellipse, 1713
-with one whose two-conic correction was rejected. The rest: 88 geometric verify (74 shape, 14 position), 96
-uncorrected + verify, 130 no outer fit, 36 never proposed, 65 a decode
+with one in that refinement-free run (no projective-centre gate rejects
+anything in these scenes; the default run loses these rings upstream, cause
+not yet identified). The rest: 88 geometric verify (74 shape, 14 position),
+96 uncorrected + verify, 130 no outer fit, 36 never proposed, 65 a decode
 contradicting the cell, 18 fitted but not labeled.
 
 Tried: give such a labeled marker the pole of the homography's vanishing line
@@ -115,10 +118,59 @@ contract had been hiding rings of a second board labeled into this one. A
 vanishing line from a DLT over each marker's two-conic neighbours (≥ 8 within
 2 spacings) corrected no better (it only covered fewer, better-surrounded
 markers; 2 of the 3 wrong IDs remained). Not shipped (the experiment is
-commit `f91c764f`). The recall lever is the
-centre measurement itself — inner-ellipse coverage first (77 % of these
-cells), then the two-conic gates (23 %), or the photometric fit — not the
-homography.
+commit `f91c764f`). The recall lever is the centre measurement itself
+(inner-ellipse coverage, or the photometric fit), not the homography.
+
+### Neighbour-supported inner retry (measured, rejected)
+
+Every surrounded missing cell without an inner ellipse (`precision_inner_coverage`)
+failed the inner-edge *estimate* (`estimate_not_ok`), 89 % with theta
+consistency ≤ 0.2 (gate 0.25): the per-ray inner-edge peaks of a thin,
+blurred inner band do not agree. 79 % are rings under 26 px.
+
+Tried: for a labeled marker without an inner ellipse, search the inner edge
+again with the window centred on the median inner/outer ratio of its
+two-conic-centred lattice neighbours (≥ 3 within 2 spacings), each ray
+required to show an interior radial extremum of the inner polarity, then the
+ordinary fit gates and two-conic correction, before the final refit and
+verify. No new wrong output; recall +0.3 to +1.0 point (grid: hex 0.694 →
+0.701, Extended 0.708 → 0.717, rect 0.697 → 0.707, plain rect 0.498 →
+0.505). The recovered centres are much worse than two-conic centres on the
+same scenes — grid share beyond 1 px: hex 16.2 % vs 2.7 % (111 cells),
+Extended 10.9 % vs 1.6 % (350), rect 12.7 % vs 1.7 % (260), plain rect
+6.4 % vs 0.6 % (267); blur 4–6 % vs 0.6–2.3 %; tilt 18–25 % vs 1.6–2.5 %.
+The estimate's consistency gate was rejecting inner edges that are not
+measurable well enough for a calibration centre. Not shipped (commit
+`a4f318a6`).
+
+### Dark, low-contrast frames (measured, rejected)
+
+Reproduced with a `dark` scene group (paper 55–75 grey levels, contrast
+20–45, noise 1.5, rings 32–72 px): at contrast 20 every proposal is rejected,
+mostly `no_valid_hypothesis`. The cause is the outer-edge ring-depth gate,
+`edge_sample.min_ring_depth` = 0.08 of full scale — an absolute 20-grey-level
+step across ±2 px; at 0.02 the same scenes fit 80–200 markers each. The
+real-frame symptom (`outer_estimate_no_polarity_candidates`, the theta
+consistency of the radius estimate) did not reproduce synthetically.
+
+Tried, contrast-relative forms of the gate (rays whose step is ≥ f × the
+candidate's median step; or `min(0.08, f × median)`, which only relaxes it
+for low-contrast candidates). Dark recall rose by ~20 points (hex 0.564 →
+0.77–0.78, Extended 0.535 → 0.73, rect 0.538 → 0.73–0.75) and contrast
+groups by 8–19 points, but every form reported new wrong IDs on second-board views
+(rect `foreign-same`/`foreign-other`: wrong IDs on primary rings; Extended
+`foreign-same`/`-other`), `min(0.08, 0.5 × median)` a wrong homography (rect
+grid d56 t50), and dark centres beyond 1 px rose (hex 13 → 59–115). Not
+shipped (commit `5efb5466`); a second-board shape/size test is the
+prerequisite.
+
+The decode-anchored fallback's fixed `min_inliers` own-decode inliers: the
+anchor's chance formula used verbatim (one free vote) passes the harness
+(hex grid +0.6 point, no new wrong output) but is not valid for a
+homography, which any four points fit — four votes are free. With four free
+votes (`C(n, v) · n_cells^(4 − v) ≤ 1e-3`) 5 of 6 agreeing decodes are never
+enough (hex: 6 · 203⁻¹ = 0.03), and larger decode sets need 7–8; the harness
+is unchanged. Not shipped.
 
 Follow-ups: projective-centre coverage at small, tilted rings (20 px at 55°:
 143 of 390 identified rings have a corrected centre); a shape/size test for

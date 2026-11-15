@@ -10,7 +10,6 @@ pub(crate) mod global_filter;
 pub(crate) mod id_correction;
 pub(crate) mod inner_as_outer_recovery;
 pub(crate) mod inner_fit;
-pub(crate) mod inner_recovery;
 pub(crate) mod marker_build;
 pub(crate) mod neighbors;
 pub(crate) mod outer_fit;
@@ -35,7 +34,6 @@ pub(crate) use inner_as_outer_recovery::{
     annotate_neighbor_radius_ratios, try_recover_inner_as_outer,
 };
 pub use inner_fit::{InnerFitReason, InnerFitStatus};
-pub(crate) use inner_recovery::recover_inner_from_neighbours;
 pub(crate) use marker_build::MarkerRecord;
 pub use marker_build::{
     CenterSource, DetectionSource, FitMetrics, PhotometricMetrics, PhotometricStatus,

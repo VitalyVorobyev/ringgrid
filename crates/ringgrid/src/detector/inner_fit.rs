@@ -216,7 +216,6 @@ fn sample_inner_points_from_hint(
     estimate: &InnerEstimate,
     cfg: &InnerFitConfig,
     mapper: Option<&dyn PixelMapper>,
-    strict: bool,
 ) -> Vec<[f64; 2]> {
     let (Some(r_hint), Some(pol)) = (estimate.r_inner_found, estimate.polarity) else {
         return Vec::new();
@@ -277,15 +276,9 @@ fn sample_inner_points_from_hint(
                     .min_by(|&i, &j| d[i].total_cmp(&d[j]))
                     .unwrap_or(hint_idx),
             };
-            // The ray has an edge here only if the extremum is a genuine one
-            // of the right sign inside the search range — not the range
-            // boundary of a monotone or noise-only slope.
-            let interior = local_i > lo && local_i < hi;
-            if !strict || (interior && signed_peak_value(d[local_i], pol) > 0.0) {
-                let idx_f = refine_peak_idx_subpixel(&d, local_i, pol);
-                let r = (window[0] + idx_f * r_step).clamp(window[0], window[1]);
-                points.push([(cx + ray_x * r) as f64, (cy + ray_y * r) as f64]);
-            }
+            let idx_f = refine_peak_idx_subpixel(&d, local_i, pol);
+            let r = (window[0] + idx_f * r_step).clamp(window[0], window[1]);
+            points.push([(cx + ray_x * r) as f64, (cy + ray_y * r) as f64]);
         }
 
         let next_ct = ct * c_step - st * s_step;
@@ -386,56 +379,7 @@ pub(crate) fn fit_inner_ellipse_from_outer_hint(
 ) -> InnerFitResult {
     let estimate =
         estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, mapper, store_response);
-    let strict = std::env::var("RINGGRID_EXP_STRICT_ALL").is_ok();
-    fit_inner_from_estimate(gray, outer, &estimate, mapper, cfg, strict)
-}
 
-/// Inner fit at a radius known from elsewhere — the inner/outer ratio of
-/// well-fitted lattice neighbours — instead of the estimate's own radius
-/// search: the search window is centred on `ratio`, and the edge must still
-/// be found in the image ray by ray (an interior radial extremum of the
-/// configured polarity) and pass every fit gate. `None` when the configured
-/// inner polarity is `Auto` (no single polarity to look for).
-pub(crate) fn fit_inner_ellipse_with_ratio_prior(
-    gray: &GrayImage,
-    outer: &Ellipse,
-    ratio: f32,
-    spec: &MarkerSpecConfig,
-    mapper: Option<&dyn PixelMapper>,
-    cfg: &InnerFitConfig,
-) -> Option<InnerFitResult> {
-    let polarity = match spec.inner_grad_polarity {
-        crate::marker::GradPolarity::LightToDark => Polarity::Neg,
-        crate::marker::GradPolarity::DarkToLight => Polarity::Pos,
-        crate::marker::GradPolarity::Auto => return None,
-    };
-    let half = spec.inner_search_halfwidth;
-    let estimate = InnerEstimate {
-        r_inner_expected: ratio,
-        search_window: [ratio - half, ratio + half],
-        r_inner_found: Some(ratio),
-        polarity: Some(polarity),
-        peak_strength: None,
-        theta_consistency: None,
-        status: InnerStatus::Ok,
-        failure: None,
-        radial_response_agg: None,
-        r_samples: None,
-    };
-    Some(fit_inner_from_estimate(
-        gray, outer, &estimate, mapper, cfg, true,
-    ))
-}
-
-/// Sample, fit and gate the inner ellipse at an inner-edge estimate.
-fn fit_inner_from_estimate(
-    gray: &GrayImage,
-    outer: &Ellipse,
-    estimate: &InnerEstimate,
-    mapper: Option<&dyn PixelMapper>,
-    cfg: &InnerFitConfig,
-    strict: bool,
-) -> InnerFitResult {
     if estimate.status != InnerStatus::Ok {
         return failed_inner_fit(
             InnerFitReason::EstimateNotOk,
@@ -455,7 +399,7 @@ fn fit_inner_from_estimate(
         );
     }
 
-    let points_inner = sample_inner_points_from_hint(gray, outer, estimate, cfg, mapper, strict);
+    let points_inner = sample_inner_points_from_hint(gray, outer, &estimate, cfg, mapper);
     if points_inner.len() < cfg.min_points {
         return failed_inner_fit(
             InnerFitReason::InsufficientPoints,

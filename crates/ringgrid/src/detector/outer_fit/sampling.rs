@@ -23,43 +23,30 @@ fn sample_signed_radial_derivative(
     Some((i1 - i0) / (2.0 * h))
 }
 
-/// Signed intensity step across the edge at radius `r` (2 px either side),
-/// positive for the expected polarity; `None` off the image.
-fn ring_depth(
+fn passes_ring_depth_gate(
     sampler: DistortionAwareSampler<'_>,
     ray_origin: [f32; 2],
     ray_dir: [f32; 2],
     r: f32,
     pol: Polarity,
-) -> Option<f32> {
+    min_ring_depth: f32,
+) -> bool {
     let band = 2.0f32;
     let x_in = ray_origin[0] + ray_dir[0] * (r - band);
     let y_in = ray_origin[1] + ray_dir[1] * (r - band);
     let x_out = ray_origin[0] + ray_dir[0] * (r + band);
     let y_out = ray_origin[1] + ray_dir[1] * (r + band);
-    let i_in = sampler.sample_checked(x_in, y_in)?;
-    let i_out = sampler.sample_checked(x_out, y_out)?;
-    Some(match pol {
+    let Some(i_in) = sampler.sample_checked(x_in, y_in) else {
+        return false;
+    };
+    let Some(i_out) = sampler.sample_checked(x_out, y_out) else {
+        return false;
+    };
+    let signed_depth = match pol {
         Polarity::Pos => i_out - i_in,
         Polarity::Neg => i_in - i_out,
-    })
-}
-
-/// Contrast-relative ring-depth gate: keep the rays whose step is at least
-/// `min_ring_depth` of the candidate's own median step (its local contrast),
-/// which must itself be of the expected polarity. An absolute grey-level
-/// floor would reject every ray of a dark, low-dynamic-range frame.
-fn passes_relative_depth(depths: &[f32], min_ring_depth: f32) -> Vec<bool> {
-    let mut sorted = depths.to_vec();
-    sorted.sort_by(f32::total_cmp);
-    let Some(&median) = sorted.get(sorted.len() / 2) else {
-        return Vec::new();
     };
-    let min_depth = min_ring_depth * median;
-    depths
-        .iter()
-        .map(|&d| median > 0.0 && d >= min_depth)
-        .collect()
+    signed_depth >= min_ring_depth
 }
 
 fn pick_best_radius_on_ray(
@@ -118,7 +105,6 @@ pub(super) fn collect_outer_edge_points_near_radius(
 
     let mut outer_points = Vec::with_capacity(n_t);
     let mut outer_radii = Vec::with_capacity(n_t);
-    let mut depths = Vec::with_capacity(n_t);
 
     for ti in 0..n_t {
         let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
@@ -149,37 +135,23 @@ pub(super) fn collect_outer_edge_points_near_radius(
             continue;
         }
 
-        let Some(depth) = ring_depth(sampler, center_prior, ray_dir, r, pol) else {
+        if !passes_ring_depth_gate(
+            sampler,
+            center_prior,
+            ray_dir,
+            r,
+            pol,
+            edge_cfg.min_ring_depth,
+        ) {
             continue;
-        };
+        }
+
         let x = center_prior[0] + ray_dir[0] * r;
         let y = center_prior[1] + ray_dir[1] * r;
         outer_points.push([x as f64, y as f64]);
         outer_radii.push(r);
-        depths.push(depth);
     }
 
-    let keep = match std::env::var("RINGGRID_EXP_DEPTH_F")
-        .ok()
-        .and_then(|v| v.parse::<f32>().ok())
-    {
-        Some(f) if std::env::var("RINGGRID_EXP_DEPTH_MIN").is_ok() => {
-            let mut sorted = depths.clone();
-            sorted.sort_by(f32::total_cmp);
-            let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-            let thr = edge_cfg.min_ring_depth.min(f * median);
-            depths.iter().map(|&d| median > 0.0 && d >= thr).collect()
-        }
-        Some(f) => passes_relative_depth(&depths, f),
-        None => depths
-            .iter()
-            .map(|&d| d >= edge_cfg.min_ring_depth)
-            .collect(),
-    };
-    let mut k = keep.iter();
-    outer_points.retain(|_| *k.next().unwrap_or(&false));
-    let mut k = keep.iter();
-    outer_radii.retain(|_| *k.next().unwrap_or(&false));
     (outer_points, outer_radii)
 }
 
@@ -246,28 +218,28 @@ mod tests {
         .expect("expected radius pick on synthetic ring");
 
         assert!((r - outer_radius).abs() <= 1.5);
-        let depth = ring_depth(sampler, center, [1.0, 0.0], r, Polarity::Pos).expect("depth");
-        assert!(depth > 0.5, "depth {depth}");
+        assert!(passes_ring_depth_gate(
+            sampler,
+            center,
+            [1.0, 0.0],
+            r,
+            Polarity::Pos,
+            edge_cfg.min_ring_depth,
+        ));
     }
 
     #[test]
-    fn ring_depth_of_flat_image_is_zero_and_rejected() {
+    fn ring_depth_gate_rejects_low_depth_ray() {
         let img = GrayImage::from_pixel(64, 64, Luma([128u8]));
         let sampler = DistortionAwareSampler::new(&img, None);
-        let depth = ring_depth(sampler, [32.0, 32.0], [1.0, 0.0], 16.0, Polarity::Pos);
-        assert_eq!(depth, Some(0.0));
-        assert_eq!(passes_relative_depth(&[0.0; 5], 0.4), vec![false; 5]);
-    }
-
-    #[test]
-    fn relative_depth_gate_is_contrast_invariant() {
-        // The same ring at full and at a tenth of the contrast keeps the
-        // same rays: the gate is relative to the candidate's median step.
-        let strong = [0.5f32, 0.48, 0.52, 0.1, 0.5];
-        let weak: Vec<f32> = strong.iter().map(|d| d * 0.1).collect();
-        let expected = vec![true, true, true, false, true];
-        assert_eq!(passes_relative_depth(&strong, 0.4), expected);
-        assert_eq!(passes_relative_depth(&weak, 0.4), expected);
+        assert!(!passes_ring_depth_gate(
+            sampler,
+            [32.0, 32.0],
+            [1.0, 0.0],
+            16.0,
+            Polarity::Pos,
+            0.01,
+        ));
     }
 
     #[test]

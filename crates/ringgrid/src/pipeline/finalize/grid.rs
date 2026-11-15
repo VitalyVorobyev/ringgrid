@@ -25,6 +25,7 @@ use super::{annotate_radius_ratios, apply_marker_fixup};
 use crate::detector::{DetectionSource, MarkerRecord};
 use crate::homography::fit_homography_ransac;
 use crate::pipeline::anchor::CoordMap;
+use crate::pipeline::assign::{assign_plain_grid, grid_components};
 use crate::pipeline::{
     CompletionScope, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
     complete_with_h, marker_cell_coord, matrix3_to_array,
@@ -225,6 +226,75 @@ fn enforce_frame_contract(
     crate::pipeline::BoardFrame::RelativeCanonical
 }
 
+/// A labeled (and, when evidence allows, anchored) view.
+struct Labeled {
+    markers: Vec<MarkerRecord>,
+    unlabeled: Vec<MarkerRecord>,
+    h: nalgebra::Matrix3<f64>,
+    ransac: crate::homography::RansacStats,
+    anchored: bool,
+}
+
+/// Grid labeling plus origin anchoring.
+///
+/// Plain targets label the primary grid component, anchored by their dots or
+/// left in the relative frame. Coded targets try every component the lattice
+/// labeler returns, largest first, and keep the first one its own decoded IDs
+/// anchor; the rings of every other component go to the unlabeled pool, where
+/// the decoded-join and completion-adoption steps place them through the
+/// anchored homography. `Err` hands back the untouched input when nothing can
+/// be labeled (or, coded, anchored).
+fn phase_label_anchor(
+    gray: &GrayImage,
+    mut markers: Vec<MarkerRecord>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+) -> Result<Labeled, Vec<MarkerRecord>> {
+    let (target, ransac) = (&config.target, &config.advanced.ransac_homography);
+    if !target.is_coded() {
+        let Some(assignment) = assign_plain_grid(&mut markers, target, ransac) else {
+            return Err(markers);
+        };
+        let mut h = assignment.h;
+        let anchored = phase_anchor(gray, &mut markers, config, mapper, &mut h);
+        return Ok(Labeled {
+            markers,
+            unlabeled: assignment.unlabeled,
+            h,
+            ransac: assignment.ransac,
+            anchored,
+        });
+    }
+    let components = grid_components(&markers, target, ransac);
+    let n_components = components.len();
+    for (rank, component) in components.into_iter().enumerate() {
+        let n_labeled = component.len();
+        let mut trial = markers.clone();
+        let assignment = component.apply(&mut trial, target);
+        let mut h = assignment.h;
+        if phase_anchor(gray, &mut trial, config, mapper, &mut h) {
+            tracing::info!(
+                rank,
+                n_components,
+                n_labeled,
+                "grid-first: component anchored"
+            );
+            return Ok(Labeled {
+                markers: trial,
+                unlabeled: assignment.unlabeled,
+                h,
+                ransac: assignment.ransac,
+                anchored: true,
+            });
+        }
+    }
+    tracing::info!(
+        n_components,
+        "grid-first: no component anchored; decode-anchored fallback"
+    );
+    Err(markers)
+}
+
 /// Result when no grid can be labeled (or, on coded targets, anchored): coded
 /// targets fall back to the decode-anchored global filter, plain markers pass
 /// through unlabeled.
@@ -248,11 +318,10 @@ fn unlabeled_fallback(
 /// identification) → completion → marker fixup → final H refit → geometric
 /// verify.
 ///
-/// `assign_plain_grid` labels every fitted ring and keeps the frame-homography
-/// inliers; `resolve_origin` decides whether outputs are absolute board-frame
-/// or stay in the canonical relative frame (`board_xy_mm` cleared). Coded
-/// targets require the absolute frame: without it they fall back to the
-/// decode-anchored global filter on the unlabeled input.
+/// [`phase_label_anchor`] labels the fitted rings and decides whether outputs
+/// are absolute board-frame or stay in the canonical relative frame
+/// (`board_xy_mm` cleared). Coded targets require the absolute frame: without
+/// it they fall back to the decode-anchored global filter on the input.
 pub(super) fn finalize_grid_result(
     gray: &GrayImage,
     corrected_markers: Vec<MarkerRecord>,
@@ -263,46 +332,23 @@ pub(super) fn finalize_grid_result(
 ) -> PipelineResult {
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
-    // Labeling drops unlabeled rings in place; keep the input for the coded
-    // fallback when the origin then fails to anchor.
-    let fallback_input = config.target.is_coded().then(|| corrected_markers.clone());
-    let mut final_markers = corrected_markers;
 
-    let assign_start = Instant::now();
-    let Some(assignment) = crate::pipeline::assign::assign_plain_grid(
-        &mut final_markers,
-        &config.target,
-        &config.advanced.ransac_homography,
-    ) else {
-        return unlabeled_fallback(
-            gray,
-            final_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        );
+    let label_start = Instant::now();
+    let Labeled {
+        markers: mut final_markers,
+        unlabeled: mut unlabeled,
+        h: mut h_current,
+        ransac,
+        anchored,
+    } = match phase_label_anchor(gray, corrected_markers, config, mapper) {
+        Ok(labeled) => labeled,
+        Err(input) => {
+            return unlabeled_fallback(gray, input, config, mapper, homography_frame, image_size);
+        }
     };
-    let assign_elapsed = assign_start.elapsed();
+    let label_elapsed = label_start.elapsed();
     let markers_after_assign = final_markers.len();
-    let mut h_current = assignment.h;
 
-    let anchor_start = Instant::now();
-    let anchored = phase_anchor(gray, &mut final_markers, config, mapper, &mut h_current);
-    let anchor_elapsed = anchor_start.elapsed();
-    if let (false, Some(input)) = (anchored, fallback_input) {
-        tracing::info!("grid-first: origin unresolved; decode-anchored fallback");
-        return finalize_global_filter_result(
-            gray,
-            input,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        );
-    }
-
-    let mut unlabeled = assignment.unlabeled;
     if config.target.is_coded() {
         join_decoded_unlabeled(&mut final_markers, &mut unlabeled, &mut h_current, config);
     }
@@ -322,12 +368,8 @@ pub(super) fn finalize_grid_result(
     apply_marker_fixup(gray, &mut final_markers, config, mapper);
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
 
-    let (final_h_mat, final_ransac) = phase_final_h(
-        &final_markers,
-        Some(h_current),
-        Some(assignment.ransac),
-        config,
-    );
+    let (final_h_mat, final_ransac) =
+        phase_final_h(&final_markers, Some(h_current), Some(ransac), config);
     // Coded only: re-derive cell/board positions from (possibly recovered) IDs.
     sync_marker_board_correspondence_with_logging(&mut final_markers, &config.target);
 
@@ -358,8 +400,7 @@ pub(super) fn finalize_grid_result(
         n_geom_removed = geom_stats.n_removed_total,
         markers_out = result.markers.len(),
         anchored,
-        assign_ms = duration_ms(assign_elapsed),
-        anchor_ms = duration_ms(anchor_elapsed),
+        label_anchor_ms = duration_ms(label_elapsed),
         completion_ms = duration_ms(completion_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize(grid) timing summary"

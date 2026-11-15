@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use nalgebra::Matrix3;
 use projective_grid::{
     Coord, DetectionParams, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind,
-    PointFeature, detect_grid_all, expert::lattice::GridTransform,
+    PointFeature, detect_grid, expert::lattice::GridTransform,
 };
 
 use crate::conic::RansacConfig;
@@ -44,38 +44,8 @@ pub(crate) struct GridAssignment {
     pub unlabeled: Vec<MarkerRecord>,
 }
 
-/// One labeled grid component: canonical relative-frame cells of its
-/// frame-homography inliers (marker index, cell), and that homography.
-pub(crate) struct GridComponent {
-    labels: Vec<(usize, Coord)>,
-    h: Matrix3<f64>,
-    ransac: RansacStats,
-}
-
-impl GridComponent {
-    /// Number of labeled (inlier) markers.
-    pub(crate) fn len(&self) -> usize {
-        self.labels.len()
-    }
-
-    /// Write this component's labels into `markers`, keeping its markers only;
-    /// every other marker is returned unlabeled.
-    pub(crate) fn apply(
-        self,
-        markers: &mut Vec<MarkerRecord>,
-        target: &TargetLayout,
-    ) -> GridAssignment {
-        let unlabeled = apply_labels(markers, &self.labels, target);
-        GridAssignment {
-            h: self.h,
-            ransac: self.ransac,
-            unlabeled,
-        }
-    }
-}
-
 /// Label plain-ring centers with lattice coordinates and fit the frame
-/// homography, from the primary (largest) grid component.
+/// homography.
 ///
 /// On success, labeled homography-inlier markers survive with
 /// `grid_coord` set (canonical relative frame) and `board_xy_mm` set to the
@@ -88,36 +58,6 @@ pub(crate) fn assign_plain_grid(
     target: &TargetLayout,
     config: &RansacConfig,
 ) -> Option<GridAssignment> {
-    let primary = detect_components(markers, target, config)?
-        .into_iter()
-        .next()?;
-    let component = fit_component(markers, primary, target, config)?;
-    Some(component.apply(markers, target))
-}
-
-/// Every labeled grid component, largest first, each with its own canonical
-/// relative frame and frame homography. Components that cannot be fitted are
-/// skipped. A view the lattice labeler fragments (holes, occluders) yields
-/// several; each one can be anchored on its own evidence.
-pub(crate) fn grid_components(
-    markers: &[MarkerRecord],
-    target: &TargetLayout,
-    config: &RansacConfig,
-) -> Vec<GridComponent> {
-    detect_components(markers, target, config)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|entries| fit_component(markers, entries, target, config))
-        .collect()
-}
-
-/// Run the lattice labeler; one canonicalized entry list per component,
-/// largest first. `None` when there are too few centers or no grid.
-fn detect_components(
-    markers: &[MarkerRecord],
-    target: &TargetLayout,
-    config: &RansacConfig,
-) -> Option<Vec<Vec<GridEntry>>> {
     let features: Vec<PointFeature> = markers
         .iter()
         .enumerate()
@@ -153,44 +93,27 @@ fn detect_components(
     }
     .with_params(params);
 
-    let solutions = match detect_grid_all(request) {
-        Ok(s) if !s.is_empty() => s,
-        Ok(_) => {
-            tracing::warn!("plain grid labeling failed: no grid");
-            return None;
-        }
+    let solution = match detect_grid(request) {
+        Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, "plain grid labeling failed");
             return None;
         }
     };
-    Some(
-        solutions
-            .iter()
-            .map(|solution| {
-                let mut entries = solution.grid().entries().to_vec();
-                // projective-grid labels are only defined up to its lattice
-                // symmetry group *including reflections* (hex labels come out
-                // uniformly mirrored; square labels are image-axis normalized,
-                // which does not guarantee handedness by construction). The
-                // relative frame's orientation is decided here, once, for both
-                // lattice families.
-                canonicalize_entries(target.lattice_kind(), &mut entries);
-                entries
-            })
-            .collect(),
-    )
-}
 
-/// Fit one component's frame homography in `f64` and keep its inliers.
-fn fit_component(
-    markers: &[MarkerRecord],
-    entries: Vec<GridEntry>,
-    target: &TargetLayout,
-    config: &RansacConfig,
-) -> Option<GridComponent> {
+    let mut entries = solution.grid().entries().to_vec();
+    // projective-grid labels are only defined up to its lattice symmetry group
+    // *including reflections* (hex labels come out uniformly mirrored; square
+    // labels are image-axis normalized, which does not guarantee handedness by
+    // construction). The relative frame's orientation is decided here, once,
+    // for both lattice families.
+    canonicalize_entries(target.lattice_kind(), &mut entries);
+
     let labeled: Vec<(usize, Coord)> = entries.iter().map(|e| (e.source_index, e.coord)).collect();
     let n_labeled = labeled.len();
+    // Rejection details moved to projective-grid's opt-in diagnostics API in
+    // 0.12. The aggregate count remains derivable from our unique input list.
+    let n_rejected = n_input.saturating_sub(n_labeled);
     if n_labeled < 4 {
         tracing::warn!(
             n_labeled,
@@ -211,36 +134,42 @@ fn fit_component(
             return None;
         }
     };
+
     let ransac = RansacStats::from_ransac(&result, n_labeled, config.inlier_threshold);
-    let labels: Vec<(usize, Coord)> = labeled
-        .into_iter()
-        .zip(&result.inlier_mask)
-        .filter_map(|(l, &inlier)| inlier.then_some(l))
-        .collect();
+
+    let unlabeled = apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
 
     tracing::info!(
-        n_input = markers.len(),
+        n_input,
         n_labeled,
+        n_rejected,
         n_inliers = result.n_inliers,
         mean_err_px = ransac.mean_err_px,
         "plain grid assignment complete"
     );
-    Some(GridComponent {
-        labels,
+
+    Some(GridAssignment {
         h: result.h,
         ransac,
+        unlabeled,
     })
 }
 
-/// Keep the labeled markers only, writing each one's `grid_coord` and
-/// assignment-frame `board_xy_mm` in place; all other markers are removed
+/// Keep labeled homography inliers only, writing each survivor's `grid_coord`
+/// and assignment-frame `board_xy_mm` in place; all other markers are removed
 /// (the coded global filter drops its outliers the same way) and returned.
-fn apply_labels(
+fn apply_inlier_labels(
     markers: &mut Vec<MarkerRecord>,
-    labels: &[(usize, Coord)],
+    labeled: &[(usize, Coord)],
+    inlier_mask: &[bool],
     target: &TargetLayout,
 ) -> Vec<MarkerRecord> {
-    let keep: HashMap<usize, Coord> = labels.iter().copied().collect();
+    let keep: HashMap<usize, Coord> = labeled
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| inlier_mask.get(*j).copied().unwrap_or(false))
+        .map(|(_, (i, c))| (*i, *c))
+        .collect();
     let mut dropped = Vec::new();
     for (i, mut m) in std::mem::take(markers).into_iter().enumerate() {
         match keep.get(&i) {

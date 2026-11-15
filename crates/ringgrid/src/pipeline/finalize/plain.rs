@@ -65,7 +65,7 @@ fn phase_plain_completion(
         anchored,
         mapper,
     );
-    if config.circle_refinement.uses_projective_center() && markers.len() > n_before {
+    if markers.len() > n_before {
         apply_projective_centers(&mut markers[n_before..], config);
     }
     stats

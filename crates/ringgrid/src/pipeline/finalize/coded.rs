@@ -25,15 +25,9 @@ struct FilterPhaseOutput {
     ransac_stats: Option<RansacStats>,
 }
 
+/// Global RANSAC homography filter. Only reached when
+/// `advanced.use_global_filter` is on — `finalize_postmerge` owns that switch.
 fn filter_with_h(fit_markers: Vec<MarkerRecord>, config: &DetectConfig) -> FilterPhaseOutput {
-    if !config.advanced.use_global_filter {
-        return FilterPhaseOutput {
-            markers: fit_markers,
-            h_current: None,
-            ransac_stats: None,
-        };
-    }
-
     let (filtered, h_result, stats) = global_filter(
         &fit_markers,
         &config.advanced.ransac_homography,
@@ -55,10 +49,6 @@ fn phase_completion(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> CompletionStats {
-    if !config.advanced.completion.enable {
-        return CompletionStats::default();
-    }
-
     let Some(h) = h_current else {
         return CompletionStats::default();
     };
@@ -190,9 +180,7 @@ pub(super) fn finalize_global_filter_result(
     let completion_elapsed = completion_start.elapsed();
     let markers_after_completion = final_markers.len();
 
-    if config.circle_refinement.uses_projective_center()
-        && final_markers.len() > n_before_completion
-    {
+    if final_markers.len() > n_before_completion {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);

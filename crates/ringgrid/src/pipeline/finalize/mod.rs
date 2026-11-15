@@ -94,10 +94,11 @@ pub(super) fn finalize_premerge(
 ) -> Vec<MarkerRecord> {
     let mut corrected_markers = fit_markers;
 
-    if config.circle_refinement.uses_projective_center() {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
+    let projective_center_start = Instant::now();
+    apply_projective_centers(&mut corrected_markers, config);
+    let projective_center_elapsed = projective_center_start.elapsed();
 
+    let id_correction_start = Instant::now();
     if id_correction_applies(config) {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
@@ -107,6 +108,12 @@ pub(super) fn finalize_premerge(
         );
         log_id_correction_summary(&stats);
     }
+    tracing::debug!(
+        markers = corrected_markers.len(),
+        projective_center_ms = duration_ms(projective_center_elapsed),
+        id_correction_ms = duration_ms(id_correction_start.elapsed()),
+        "finalize premerge timing summary"
+    );
 
     corrected_markers
 }
@@ -163,6 +170,8 @@ pub(super) fn finalize_postmerge(
     )
 }
 
+/// Single-scale finalize: [`finalize_premerge`] followed directly by
+/// [`finalize_postmerge`] (there is no tier merge in between).
 pub(super) fn run(
     gray: &GrayImage,
     fit_markers: Vec<MarkerRecord>,
@@ -170,81 +179,20 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
 ) -> PipelineResult {
     let total_start = Instant::now();
-    let (w, h) = gray.dimensions();
-    let image_size = [w, h];
-    let homography_frame = if mapper.is_some() {
-        DetectionFrame::Working
-    } else {
-        DetectionFrame::Image
-    };
     let markers_in = fit_markers.len();
 
     warn_center_correction_without_intrinsics(config, mapper.is_some());
 
-    let mut corrected_markers = fit_markers;
-    let projective_center_start = Instant::now();
-    if config.circle_refinement.uses_projective_center() {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
-    let projective_center_elapsed = projective_center_start.elapsed();
-
-    let id_correction_start = Instant::now();
-    if id_correction_applies(config) {
-        let stats = verify_and_correct_ids(
-            &mut corrected_markers,
-            &config.target,
-            &config.advanced.id_correction,
-            config.advanced.decode.codebook_profile,
-        );
-        log_id_correction_summary(&stats);
-    }
-    let id_correction_elapsed = id_correction_start.elapsed();
+    let premerge_start = Instant::now();
+    let corrected_markers = finalize_premerge(fit_markers, config);
+    let premerge_elapsed = premerge_start.elapsed();
 
     let tail_start = Instant::now();
-    if !config.advanced.use_global_filter {
-        let result = finalize_no_global_filter_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        );
-        tracing::info!(
-            markers_in,
-            markers_out = result.markers.len(),
-            projective_center_ms = duration_ms(projective_center_elapsed),
-            id_correction_ms = duration_ms(id_correction_elapsed),
-            tail_ms = duration_ms(tail_start.elapsed()),
-            total_ms = duration_ms(total_start.elapsed()),
-            "finalize stage timing summary"
-        );
-        return result;
-    }
-    let result = if config.target.is_coded() {
-        finalize_global_filter_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        )
-    } else {
-        finalize_plain_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        )
-    };
+    let result = finalize_postmerge(gray, corrected_markers, config, mapper);
     tracing::info!(
         markers_in,
         markers_out = result.markers.len(),
-        projective_center_ms = duration_ms(projective_center_elapsed),
-        id_correction_ms = duration_ms(id_correction_elapsed),
+        premerge_ms = duration_ms(premerge_elapsed),
         tail_ms = duration_ms(tail_start.elapsed()),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize stage timing summary"

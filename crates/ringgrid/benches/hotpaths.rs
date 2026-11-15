@@ -629,6 +629,54 @@ fn bench_ellipse_fit(c: &mut Criterion) {
     });
 }
 
+/// Observed code words for the codebook-match benches: seeded random words
+/// (mostly far from any codeword, like a mis-fitted hypothesis) mixed with
+/// exact and 1-bit-corrupted rotated codewords (a well-fitted marker).
+fn make_codeword_fixture(profile: ringgrid::CodebookProfile, n: usize) -> Vec<u16> {
+    let mut rng = StdRng::seed_from_u64(4242);
+    (0..n)
+        .map(|i| {
+            let random = rng.random::<u16>();
+            if i % 3 == 0 {
+                return random;
+            }
+            // A codeword (the nearest one to a random word), rotated, exact or
+            // with one flipped bit.
+            let cw = ringgrid::codebook::decode_word(random, profile)
+                .codeword
+                .unwrap_or(random);
+            let flip = if i % 3 == 2 {
+                1u16 << rng.random_range(0u32..16)
+            } else {
+                0
+            };
+            cw.rotate_left(rng.random_range(0u32..16)) ^ flip
+        })
+        .collect()
+}
+
+fn bench_codebook_match(c: &mut Criterion) {
+    for (name, profile) in [
+        (
+            "codebook_match_base_64words",
+            ringgrid::CodebookProfile::Base,
+        ),
+        (
+            "codebook_match_extended_64words",
+            ringgrid::CodebookProfile::Extended,
+        ),
+    ] {
+        let words = make_codeword_fixture(profile, 64);
+        c.bench_function(name, |b| {
+            b.iter(|| {
+                for &w in black_box(&words) {
+                    black_box(ringgrid::codebook::decode_word(w, profile));
+                }
+            })
+        });
+    }
+}
+
 criterion_group!(
     hotpaths,
     bench_proposal,
@@ -636,6 +684,7 @@ criterion_group!(
     bench_outer_estimate,
     bench_inner_estimate,
     bench_inner_fit,
-    bench_ellipse_fit
+    bench_ellipse_fit,
+    bench_codebook_match
 );
 criterion_main!(hotpaths);

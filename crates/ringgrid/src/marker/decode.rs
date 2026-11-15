@@ -514,8 +514,7 @@ fn threshold_and_match_codebook(
     }
 
     let cb = Codebook::from_profile(config.codebook_profile);
-    let m_normal = cb.match_word(word);
-    let m_inverted = cb.match_word(!word);
+    let [m_normal, m_inverted] = cb.match_word_both_polarities(word);
 
     let (best_match, used_word, inverted) = if m_normal.confidence >= m_inverted.confidence {
         (m_normal, word, false)

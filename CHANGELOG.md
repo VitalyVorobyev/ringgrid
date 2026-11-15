@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Codebook matching is ~9× faster, with identical results.** Decoding used to
+  scan every rotation of every codeword twice (observed word, then its
+  complement) with a branchy best/second-best update. One branchless pass now
+  keeps per-rotation lanes for both polarities (the complement's distance is
+  `16 − d`) and merges them into exactly the sequential scan's result, checked
+  against the old scan in a unit test. Per decode: Base 17.4 → 1.8 µs,
+  Extended 38 → 4.3 µs; single-pass detect on the 1239-cell Extended board
+  585 → 502 ms per image. Benchmarks `codebook_match_{base,extended}_64words`.
 - **Completion markers use the same `confidence` formula as every other
   marker.** Completed markers used to report the raw decode confidence
   (distance × margin), or arc coverage × inlier ratio when undecoded; they now

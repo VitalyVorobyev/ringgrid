@@ -67,7 +67,7 @@ is used for all final fits. The estimate is reported in
 | Output | Where |
 |---|---|
 | Refined center | `DetectedMarker::center` |
-| Which estimator produced the center | `DetectedMarker::center_source` (`outer_ellipse`, `projective_center`, `outer_with_homography`, `photometric`) |
+| Which estimator produced the center | `DetectedMarker::center_source` (`outer_ellipse`, `projective_center`, `photometric`) |
 | 2×2 center covariance (px²) | `DetectedMarker::center_cov` (photometric centers only) |
 | Fitted blur, contrast, residual, center shift, status | `MarkerDiagnostics::photometric` |
 | Homography and RANSAC statistics, refit from the refined centers | `DetectionResult::homography`, `DetectionDiagnostics::ransac` |

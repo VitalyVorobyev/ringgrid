@@ -37,7 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     them and restores it (catalogue).
   - Geometric verify tightens its global floor to 2 px and gains an
     ellipse-shape test (axis ratio vs the homography's prediction).
-  See ADR-024.
+  See ADR-024. A homography-based centre for outer-only markers (the pole of
+  the vanishing line w.r.t. the outer ellipse) was measured and not adopted:
+  it moves centres by under 0.2 px while their error is the outer edge fit
+  (share beyond 1 px stays 2–5× the two-conic centre's on the grid, ~16× on
+  steep tilt) and it reported 3 new
+  wrong IDs on second-board views (ADR-024).
 
 - **With `CircleRefinementMethod::Photometric`, the returned homography is
   refit from the refined centres.** It used to stay the one fitted to the

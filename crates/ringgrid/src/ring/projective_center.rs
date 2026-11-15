@@ -418,43 +418,6 @@ pub fn ring_center_projective_with_debug(
     })
 }
 
-/// Image of a circle's centre from one conic and the plane's vanishing line.
-///
-/// In the target plane the centre of a circle is the pole of the line at
-/// infinity with respect to the circle; pole and polar are projectively
-/// invariant, so the image of the centre is the pole of the image vanishing
-/// line `l` with respect to the circle's image `ellipse`: `c ~ C⁻¹ l`.
-///
-/// Evaluated in the ellipse-centred frame, where `C = diag(Q, −1)` with
-/// `Q⁻¹ = R diag(a², b²) Rᵀ`: the centre is the ellipse centre shifted by
-/// `−Q⁻¹ n / l(c₀)` (`n` the line normal, `l(c₀)` the line evaluated at the
-/// ellipse centre). `None` when the line meets the ellipse — a visible circle
-/// lies entirely on one side of its plane's vanishing line, so that is a
-/// wrong line or a wrong conic — or on non-finite input.
-pub(crate) fn ring_center_from_vanishing_line(
-    ellipse: &crate::conic::Ellipse,
-    vanishing_line: &Vector3<f64>,
-) -> Option<[f64; 2]> {
-    let n = [vanishing_line[0], vanishing_line[1]];
-    let l_c0 = n[0] * ellipse.cx + n[1] * ellipse.cy + vanishing_line[2];
-    let (sin, cos) = ellipse.angle.sin_cos();
-    // Q⁻¹ n through the ellipse's principal axes.
-    let u = [
-        ellipse.a * ellipse.a * (cos * n[0] + sin * n[1]),
-        ellipse.b * ellipse.b * (-sin * n[0] + cos * n[1]),
-    ];
-    let q_inv_n = [cos * u[0] - sin * u[1], sin * u[0] + cos * u[1]];
-    // The line misses the ellipse iff its support nᵀQ⁻¹n is below l(c₀)².
-    let support = n[0] * q_inv_n[0] + n[1] * q_inv_n[1];
-    if !(support.is_finite() && l_c0.is_finite() && support < l_c0 * l_c0) {
-        return None;
-    }
-    Some([
-        ellipse.cx - q_inv_n[0] / l_c0,
-        ellipse.cy - q_inv_n[1] / l_c0,
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,47 +478,6 @@ mod tests {
             "expected near-exact center, got err={:.3e} px",
             err
         );
-    }
-
-    fn image_ellipse(q_plane: &Matrix3<f64>, h: &Matrix3<f64>) -> crate::conic::Ellipse {
-        let q = project_conic(q_plane, h);
-        let coeffs = crate::conic::ConicCoeffs([
-            q[(0, 0)],
-            2.0 * q[(0, 1)],
-            q[(1, 1)],
-            2.0 * q[(0, 2)],
-            2.0 * q[(1, 2)],
-            q[(2, 2)],
-        ]);
-        coeffs.to_ellipse().expect("image ellipse")
-    }
-
-    fn vanishing_line(h: &Matrix3<f64>) -> Vector3<f64> {
-        h.try_inverse().expect("invertible").transpose() * Vector3::new(0.0, 0.0, 1.0)
-    }
-
-    #[test]
-    fn vanishing_line_center_is_exact_under_homography() {
-        let h = synthetic_h();
-        let e = image_ellipse(&circle_conic(7.0), &h);
-        let gt = gt_center(&h);
-        let bias = (e.cx - gt.x).hypot(e.cy - gt.y);
-        assert!(bias > 1e-3, "test needs a biased ellipse centre ({bias})");
-        // The line's scale and sign are irrelevant.
-        for scale in [1.0, -3.5] {
-            let c =
-                ring_center_from_vanishing_line(&e, &(vanishing_line(&h) * scale)).expect("centre");
-            let err = (c[0] - gt.x).hypot(c[1] - gt.y);
-            assert!(err < 1e-8, "scale {scale}: err {err:.3e} px");
-        }
-    }
-
-    #[test]
-    fn vanishing_line_through_ellipse_is_rejected() {
-        let h = synthetic_h();
-        let e = image_ellipse(&circle_conic(7.0), &h);
-        let through_centre = Vector3::new(1.0, 0.5, -(e.cx + 0.5 * e.cy));
-        assert!(ring_center_from_vanishing_line(&e, &through_centre).is_none());
     }
 
     #[test]

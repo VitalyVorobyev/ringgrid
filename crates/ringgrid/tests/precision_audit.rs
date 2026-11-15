@@ -450,26 +450,6 @@ fn precision_centre_sources() {
             let e = table.entry(key).or_default();
             e.0.push(err);
             e.1 += usize::from(err > loose);
-            // The same markers' outer-ellipse centres, before the
-            // vanishing-line correction (no camera model: image frame).
-            if m.center_source == ringgrid::CenterSource::OuterWithHomography
-                && let Some(o) = &m.ellipse_outer
-            {
-                let raw = (cell.px[0] - o.cx).hypot(cell.px[1] - o.cy);
-                let key = (
-                    format!("{}-{}", truth.board, truth.group),
-                    "(its outer centre)".to_string(),
-                );
-                let e = table.entry(key).or_default();
-                e.0.push(raw);
-                e.1 += usize::from(raw > loose);
-                let shift = (m.center[0] - o.cx).hypot(m.center[1] - o.cy);
-                let key = (
-                    format!("{}-{}", truth.board, truth.group),
-                    "(correction shift)".to_string(),
-                );
-                table.entry(key).or_default().0.push(shift);
-            }
         }
     }
     for ((group, source), (mut errs, n_loose)) in table {
@@ -712,7 +692,9 @@ fn h_offset_px(result: &ringgrid::DetectionResult, m: &ringgrid::DetectedMarker)
 
 /// Why a visible cell surrounded by correctly reported neighbours is missing,
 /// from ablated runs of the same detector on the same image (first match):
-/// reported without the corrected-centre contract → `uncorrected centre`;
+/// reported without the corrected-centre contract → `uncorrected` (split by
+/// whether that ring has an inner ellipse: `correction rejected` or `no
+/// inner ellipse`);
 /// reported without geometric verify → `verify` (split by the reported
 /// centre's distance to the result homography's projection: `position`
 /// beyond 2 px, else `shape`); reported with neither → `uncorrected+verify`;
@@ -737,7 +719,8 @@ fn classify_missing(
         d.detect(image).expect("detect")
     };
     let none = Some(CircleRefinementMethod::None);
-    let uncorrected = correct_cells(truth, &run(none, true, true));
+    let uncorrected_result = run(none, true, true);
+    let uncorrected = correct_cells(truth, &uncorrected_result);
     let no_verify_result = run(None, false, true);
     let no_verify = correct_cells(truth, &no_verify_result);
     let neither = correct_cells(truth, &run(none, false, true));
@@ -750,7 +733,16 @@ fn classify_missing(
         .iter()
         .map(|c| {
             if uncorrected.contains(&c.coord) {
-                return "uncorrected centre";
+                let has_inner = uncorrected_result
+                    .detected_markers
+                    .iter()
+                    .find(|m| near(m.center, c))
+                    .is_some_and(|m| m.ellipse_inner.is_some());
+                return if has_inner {
+                    "uncorrected: correction rejected"
+                } else {
+                    "uncorrected: no inner ellipse"
+                };
             }
             if no_verify.contains(&c.coord) {
                 let off = no_verify_result

@@ -1188,12 +1188,7 @@ def test_detect_with_photometric_refinement_reports_center_source() -> None:
     cfg.circle_refinement = ringgrid.CircleRefinementMethod.PHOTOMETRIC
     detector = ringgrid.Detector(cfg)
 
-    allowed = {
-        "outer_ellipse",
-        "projective_center",
-        "outer_with_homography",
-        "photometric",
-    }
+    allowed = {"outer_ellipse", "projective_center", "photometric"}
     for result, diagnostics in (
         detector.detect_with_diagnostics(SAMPLE_IMAGE),
         detector.detect_adaptive_with_diagnostics(SAMPLE_IMAGE),

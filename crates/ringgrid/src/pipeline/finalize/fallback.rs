@@ -23,8 +23,7 @@ use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{
     CompletionScope, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
-    apply_vanishing_line_centres, complete_with_h, global_filter, matrix3_to_array,
-    verify_and_correct_ids,
+    complete_with_h, global_filter, matrix3_to_array, verify_and_correct_ids,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -196,7 +195,6 @@ pub(super) fn finalize_decode_anchored_fallback(
 
     apply_marker_fixup(gray, &mut final_markers, config, mapper);
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
-    apply_vanishing_line_centres(&mut final_markers, &h_current, config);
 
     let (final_h_mat, final_ransac) = phase_final_h(
         &final_markers,

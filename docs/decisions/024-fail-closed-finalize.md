@@ -89,6 +89,37 @@ all of it the corrected-centre contract; before it: 0.797 / 0.866 / 0.847 /
 pre-contract level (hex blur 0.878, rect blur 0.865, Extended blur 0.941) at 0
 wrong outputs. 1–6 isolated markers are reported without IDs.
 
+### Outer-only centres from the homography (measured, rejected)
+
+Of the visible cells missing while most lattice neighbours are reported
+(hex ≥ 4 of 6, rect ≥ 6 of 8; `precision_surrounded_missing`, in-range
+catalogue + grid: 7791 cells), 7358 (94 %) are reported once the
+corrected-centre contract is lifted: fitted, identified and verified, dropped
+for their outer-ellipse centre alone — 5645 without an inner ellipse, 1713
+with one whose two-conic correction was rejected. The rest: 88 geometric verify (74 shape, 14 position), 96
+uncorrected + verify, 130 no outer fit, 36 never proposed, 65 a decode
+contradicting the cell, 18 fitted but not labeled.
+
+Tried: give such a labeled marker the pole of the homography's vanishing line
+`H⁻ᵀ(0,0,1)ᵀ` with respect to its outer conic (exact under a homography; unit
+tested), before the final refit and verify. Recall rose (grid: hex 0.694 →
+0.789, Extended 0.708 → 0.860, rect 0.697 → 0.839, plain hex 0.410 → 0.430,
+plain rect 0.498 → 0.604), but the correction moves the centre by a median
+0.03–0.11 px (p95 ≤ 0.17 px): perspective is not what is wrong with these
+centres — the outer edge fit is. Grid share beyond 1 px, new vs two-conic:
+hex 10.8 % vs 2.7 %, Extended 6.5 % vs 1.6 %, rect 7.6 % vs 1.6 %, plain rect
+3.3 % vs 0.9 % (median 0.25–0.37 vs 0.15–0.21 px); tilt groups 38–41 % vs
+1.6–2.5 %; distortion median 0.76–1.08 vs 0.12 px. It also reported 3 new
+wrong IDs on second-board scenes (hex/rect/Extended `foreign-same`): the
+contract had been hiding rings of a second board labeled into this one. A
+vanishing line from a DLT over each marker's two-conic neighbours (≥ 8 within
+2 spacings) corrected no better (it only covered fewer, better-surrounded
+markers; 2 of the 3 wrong IDs remained). Not shipped (the experiment is
+commit `f91c764f`). The recall lever is the
+centre measurement itself — inner-ellipse coverage first (77 % of these
+cells), then the two-conic gates (23 %), or the photometric fit — not the
+homography.
+
 Follow-ups: projective-centre coverage at small, tilted rings (20 px at 55°:
 143 of 390 identified rings have a corrected centre); a shape/size test for
 rings of a second board of the same layout; a spacing-vs-ring-size check for

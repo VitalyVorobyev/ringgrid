@@ -75,7 +75,6 @@ fn print_row(label: &str, blur: f64, s: &CenterStats) {
     for src in [
         CenterSource::OuterEllipse,
         CenterSource::ProjectiveCenter,
-        CenterSource::OuterWithHomography,
         CenterSource::Photometric,
     ] {
         let e: Vec<f64> = s

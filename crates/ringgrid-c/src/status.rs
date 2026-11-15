@@ -17,7 +17,7 @@ pub enum RinggridStatus {
     ErrBadJson = 2,
     /// Image dimensions were zero, overflowed, or the buffer did not match.
     ErrBadImage = 3,
-    /// Detection failed (e.g. an unsupported target or a strict-mode gate).
+    /// Detection failed (the strict `require_complete_board` gate).
     ErrDetect = 4,
     /// Serializing the result to JSON failed (should not happen in practice).
     ErrSerialize = 5,

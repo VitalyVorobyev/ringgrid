@@ -8,11 +8,6 @@ use crate::pipeline::geometric_verify::{
 use crate::pixelmap::PixelMapper;
 use crate::target::TargetLayout;
 
-#[inline]
-pub(super) fn duration_ms(duration: std::time::Duration) -> f64 {
-    duration.as_secs_f64() * 1_000.0
-}
-
 /// Run the geometric verification gate, or — when it is disabled — only annotate
 /// the reprojection diagnostic so opt-out callers can filter on it themselves.
 /// Returns the gate stats (empty when disabled).

@@ -46,8 +46,11 @@ lattice-labeled correspondences:
    **orientation-preserving** (the image-frame cross product of the `+u` and
    `+v` steps has the sign of the lattice model basis, i.e. the labels relate to
    the board by a rotation + translation, never a reflection) and, among those,
-   best aligns `+u` with image `+x` and `+v` with image `+y`. This is the one
-   place the relative frame's handedness is decided.
+   best aligns `+u` with image `+x` and `+v` with image `+y`. When no symmetry
+   yields both a `+u` and a `+v` neighbor pair (e.g. a patch of two non-adjacent
+   rows) the handedness cannot be measured and the labels are left as
+   `detect_grid` produced them — possibly mirrored; origin resolution below
+   still recovers the correct handedness in that case.
 5. Refit the frame homography in `f64` with ringgrid's `fit_homography_ransac`
    over the labeled correspondences, keeping only homography inliers — mirroring
    the coded [global filter](projective-center.md#global-filter).
@@ -69,8 +72,9 @@ the relative labeling to an **absolute** board frame:
 2. **Fit and gate each candidate.** For each map, fit a board→image homography by
    DLT and reject it if the Jacobian determinant is ≤ 0 at the patch center
    (a folded / reflected mapping). This physical check is what excludes
-   reflections: since the relative frame is already orientation-preserving,
-   every reflected candidate fails it.
+   reflections: when the relative frame is orientation-preserving (the normal
+   case) every reflected candidate fails it, and when canonicalization could not
+   fix the handedness the reflected candidates are the ones that pass.
 3. **Score by dot darkness.** Project each fiducial dot through the candidate
    homography and measure normalized `(background − dot)` contrast with a
    distortion-aware disk-vs-annulus sample. A candidate's score is its *weakest*

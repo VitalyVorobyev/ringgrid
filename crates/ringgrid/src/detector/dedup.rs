@@ -62,14 +62,14 @@ fn dedup_by_id_core(markers: Vec<MarkerRecord>) -> Vec<MarkerRecord> {
 }
 
 /// Remove duplicate detections: keep the highest-confidence marker within `radius`.
-pub fn dedup_markers(markers: Vec<MarkerRecord>, radius: f64) -> Vec<MarkerRecord> {
+pub(crate) fn dedup_markers(markers: Vec<MarkerRecord>, radius: f64) -> Vec<MarkerRecord> {
     let markers = sort_by_confidence(markers);
     dedup_by_proximity(markers, radius)
 }
 
 /// Dedup by ID: if the same decoded ID appears multiple times, keep the
 /// one with the highest confidence.
-pub fn dedup_by_id(markers: &mut Vec<MarkerRecord>) {
+pub(crate) fn dedup_by_id(markers: &mut Vec<MarkerRecord>) {
     let input = std::mem::take(markers);
     *markers = dedup_by_id_core(input);
 }

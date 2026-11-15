@@ -1,9 +1,10 @@
 //! Origin resolution for plain targets.
 //!
 //! Plain-grid labeling (`pipeline::assign`) produces cell coordinates in a
-//! canonical *relative* frame: the true board labeling differs by a rotation
-//! from the lattice symmetry group plus a lattice translation (the relative
-//! frame is orientation-preserving by construction). When the target
+//! canonical *relative* frame: the true board labeling differs by an element
+//! of the lattice symmetry group plus a lattice translation — a rotation
+//! whenever canonicalization could measure the handedness, see
+//! [`enumerate_candidates`]. When the target
 //! carries origin fiducials (small filled dots at known board positions), each
 //! candidate (symmetry × translation) labeling is scored by projecting the dot
 //! positions through the candidate's board→image homography and measuring dot
@@ -27,6 +28,7 @@ use nalgebra::Matrix3;
 use projective_grid::{Coord, expert::lattice::GridTransform};
 
 use crate::detector::MarkerRecord;
+use crate::detector::completion::coord_bbox;
 use crate::homography::{estimate_homography_dlt, homography_project};
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
@@ -178,9 +180,14 @@ pub(crate) fn resolve_origin(
 ///
 /// The full dihedral group is enumerated — rotations **and** reflections. The
 /// physical orientation-preserving constraint is enforced downstream by
-/// [`score_candidate`]'s Jacobian check on the fitted homography; since the
+/// [`score_candidate`]'s Jacobian check on the fitted homography. Normally the
 /// relative frame is already orientation-preserving
-/// (`assign::canonicalize_entries`), reflected candidates always fail it.
+/// (`assign::canonicalize_entries`) and every reflected candidate fails it, but
+/// canonicalization leaves the labels untouched when no symmetry yields both a
+/// `+u` and a `+v` neighbor pair (e.g. two non-adjacent rows), so a mirrored
+/// relative frame can reach this stage; then the reflected candidates are the
+/// physically valid ones. Do not narrow this to rotations without closing that
+/// fallback first.
 fn enumerate_candidates(
     entries: &[(Coord, [f64; 2])],
     board_coords: &HashSet<Coord>,
@@ -215,19 +222,6 @@ fn enumerate_candidates(
         }
     }
     Some(candidates)
-}
-
-fn coord_bbox(coords: impl Iterator<Item = Coord>) -> Option<(Coord, Coord)> {
-    let mut it = coords;
-    let first = it.next()?;
-    let (mut min, mut max) = (first, first);
-    for c in it {
-        min.u = min.u.min(c.u);
-        min.v = min.v.min(c.v);
-        max.u = max.u.max(c.u);
-        max.v = max.v.max(c.v);
-    }
-    Some((min, max))
 }
 
 /// Fit the candidate's board→image homography and score its fiducial dots.

@@ -7,11 +7,6 @@
 #[serde(default)]
 #[non_exhaustive]
 pub struct SeedProposalConfig {
-    /// Radius (pixels) within which an injected seed center is merged with a detector proposal.
-    #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
-    pub merge_radius_px: f32,
-    /// Score assigned to injected seed proposals (dimensionless).
-    pub seed_score: f32,
     /// Maximum number of seeds consumed in one run; `null` means no cap.
     pub max_seeds: Option<usize>,
 }
@@ -19,8 +14,6 @@ pub struct SeedProposalConfig {
 impl Default for SeedProposalConfig {
     fn default() -> Self {
         Self {
-            merge_radius_px: 3.0,
-            seed_score: 1.0e12,
             max_seeds: Some(512),
         }
     }

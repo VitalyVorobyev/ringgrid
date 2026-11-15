@@ -6,9 +6,10 @@ use crate::target::TargetLayout;
 use crate::conic::RansacConfig;
 
 use super::core::{RansacStats, fit_homography_ransac};
+use super::correspondence::mean_and_p95;
 use super::{
     CorrespondenceDestinationFrame, DuplicateIdPolicy, collect_marker_correspondences,
-    collect_masked_inlier_errors, mean_and_p95, reprojection_errors,
+    reprojection_errors,
 };
 
 pub(crate) fn refit_homography(
@@ -45,18 +46,11 @@ pub(crate) fn refit_homography(
         &light_config,
     ) {
         Ok(result) => {
-            let mut inlier_errors =
-                collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
-            let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
-
-            let stats = RansacStats {
-                n_candidates: correspondences.len(),
-                n_inliers: result.n_inliers,
-                threshold_px: light_config.inlier_threshold,
-                mean_err_px: mean_err,
-                p95_err_px: p95_err,
-            };
-
+            let stats = RansacStats::from_ransac(
+                &result,
+                correspondences.len(),
+                light_config.inlier_threshold,
+            );
             Some((result.h, stats))
         }
         Err(_) => None,

@@ -18,9 +18,7 @@ use projective_grid::{
 
 use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
-use crate::homography::{
-    RansacStats, collect_masked_inlier_errors, fit_homography_ransac, mean_and_p95,
-};
+use crate::homography::{RansacStats, fit_homography_ransac};
 use crate::target::{LatticeGeometry, TargetLayout};
 
 /// Assignment-frame position (mm) of a lattice coordinate.
@@ -127,15 +125,7 @@ pub(crate) fn assign_plain_grid(
         }
     };
 
-    let mut inlier_errors = collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
-    let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
-    let ransac = RansacStats {
-        n_candidates: n_labeled,
-        n_inliers: result.n_inliers,
-        threshold_px: config.inlier_threshold,
-        mean_err_px: mean_err,
-        p95_err_px: p95_err,
-    };
+    let ransac = RansacStats::from_ransac(&result, n_labeled, config.inlier_threshold);
 
     apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
 
@@ -144,7 +134,7 @@ pub(crate) fn assign_plain_grid(
         n_labeled,
         n_rejected,
         n_inliers = result.n_inliers,
-        mean_err_px = mean_err,
+        mean_err_px = ransac.mean_err_px,
         "plain grid assignment complete"
     );
 

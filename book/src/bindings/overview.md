@@ -25,8 +25,8 @@ pip install "ringgrid[viz]"   # + optional matplotlib/Pillow visualization helpe
 ```python
 import ringgrid
 
-detector = ringgrid.Detector.from_target(ringgrid.TargetLayout.coded_hex())
-result = detector.detect_path("photo.png")
+detector = ringgrid.Detector.from_target(ringgrid.TargetLayout.default_hex())
+result = detector.detect("photo.png")  # a path or a 2-D uint8 numpy array
 for m in result.detected_markers:
     print(m.id, m.center)
 ```

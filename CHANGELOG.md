@@ -19,8 +19,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (any v6 target spec; coded markers rendered like the printed target), and
   `tools/ci/check_regression_baseline.py` checks all benchmark outputs against
   `tools/ci/regression_baseline.json`.
+- **Dev CLI (`ringgrid-dev detect`): flags no longer clobber `--config`.**
+  `--ransac-thresh-px`, `--ransac-iters`, `--complete-reproj-gate`,
+  `--complete-min-conf`, `--circle-refine-method`, `--proj-center-max-residual`,
+  `--proj-center-min-eig-sep`, `--proposal-downscale`,
+  `--self-undistort-lambda-min/-max` and `--self-undistort-min-markers` used to
+  carry their own clap defaults and overwrite the config file's values even when
+  not passed; the switch flags (`--no-global-filter`, `--no-complete`,
+  `--complete-require-perfect-decode`, `--require-inner-fit`,
+  `--self-undistort`) likewise reset the file's setting. Every tuning flag is now
+  an override applied only when given, so the core crate owns all defaults
+  (unchanged output when no `--config` is passed). The camera-vs-self-undistort
+  conflict is now checked on the resolved config, so it also catches
+  `self_undistort.enable` set in the file. The binary now names itself
+  `ringgrid-dev`, its about text covers rect and plain targets, and
+  `--dump-config` honours `--target`.
+- **`crates/ringgrid-cli/config_sample.json` is a real overlay.** Its stage
+  sections sat at the top level, where `DetectConfig` silently ignores them; they
+  now nest under `advanced` (values unchanged in effect: they equal the current
+  defaults, so runs using the file detect identically). The diverged duplicate
+  `tools/config_sample.json` was removed.
+
+### Removed
+
+- **`SeedProposalConfig::merge_radius_px` and `SeedProposalConfig::seed_score`**
+  (Rust, Python, JSON schema). Neither was ever read: pass 2 uses the pass-1
+  centers as its only proposals, scored by marker confidence. Configs that still
+  carry the keys keep loading (unknown keys are ignored).
+- **`DetectError::UnsupportedTarget`.** No longer constructed since every
+  lattice × coding combination detects; `IncompleteBoard` is the only variant.
 
 ### Fixed
+
+- **Documentation snippets that no longer worked.** Recipe TOML examples in the
+  README and book used `coding = "coded"` / `"plain"` and `[render] margin_mm`
+  (now `coding = { kind = "coded" }` and `[render.page] margin_mm`); the crate
+  README and target-generation chapter used the removed
+  `SvgTargetOptions` / `PngTargetOptions` (now `TargetRenderOptions`) and pinned
+  `ringgrid = "0.11"`; the Python bindings overview called a no-argument
+  `TargetLayout.coded_hex()` and a non-existent `Detector.detect_path`; the
+  pipeline chapters described a `detect_with_self_undistort` method (self-undistort
+  runs through `detect` with `self_undistort.enable`).
 
 - **Mirrored relative-frame labels on hex plain targets without origin dots.**
   `projective_grid::detect_grid` labels a lattice only up to its full symmetry
@@ -31,7 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the target-matrix benchmark). Plain-grid canonicalization now picks, for
   both lattices, the symmetry that makes the labeling orientation-preserving
   before aligning it with the image axes, so relative labels differ from the
-  board by a rotation + translation only (`hex_plain_nodots` coord accuracy
+  board by a rotation + translation only whenever the labelled patch has
+  neighbours along both lattice axes (`hex_plain_nodots` coord accuracy
   1.0; every other benchmark mode unchanged).
 
 ---

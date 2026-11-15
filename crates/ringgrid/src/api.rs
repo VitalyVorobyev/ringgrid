@@ -38,17 +38,6 @@ pub type PhotometricResiduals = (
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DetectError {
-    /// The configured target layout is not supported by the detection
-    /// pipeline in this release.
-    #[non_exhaustive]
-    UnsupportedTarget {
-        /// Name of the configured target layout.
-        target_name: String,
-        /// Lattice kind of the unsupported combination (`"hex"` or `"rect"`).
-        lattice: &'static str,
-        /// Coding kind of the unsupported combination (`"coded16"` or `"plain"`).
-        coding: &'static str,
-    },
     /// The board was not fully detected while
     /// [`DetectConfig::require_complete_board`](crate::DetectConfig::require_complete_board)
     /// was set. Returned only under the strict gate; otherwise incompleteness is
@@ -65,15 +54,6 @@ pub enum DetectError {
 impl std::fmt::Display for DetectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedTarget {
-                target_name,
-                lattice,
-                coding,
-            } => write!(
-                f,
-                "target '{target_name}' ({lattice} lattice, {coding} coding) is not supported by \
-                 the detection pipeline in this release"
-            ),
             Self::IncompleteBoard { found, expected } => write!(
                 f,
                 "incomplete board: {found} of {expected} target cells detected \
@@ -722,9 +702,8 @@ mod tests {
 
     #[test]
     fn plain_rect_target_detects_without_error() {
-        // The transitional UnsupportedTarget gate is gone: every built-in
-        // lattice × coding combination runs the pipeline end-to-end. An empty
-        // image simply yields an empty result.
+        // Every built-in lattice × coding combination runs the pipeline
+        // end-to-end. An empty image simply yields an empty result.
         let det = Detector::new(TargetLayout::rect_24x24());
         let img = GrayImage::new(64, 64);
         let result = det.detect(&img).expect("plain rect target must detect");

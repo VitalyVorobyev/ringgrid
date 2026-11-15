@@ -38,7 +38,7 @@ typedef enum {
      */
     RINGGRID_STATUS_ERR_BAD_IMAGE = 3,
     /**
-     * Detection failed (e.g. an unsupported target or a strict-mode gate).
+     * Detection failed (the strict `require_complete_board` gate).
      */
     RINGGRID_STATUS_ERR_DETECT = 4,
     /**

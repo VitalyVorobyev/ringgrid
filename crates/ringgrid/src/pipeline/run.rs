@@ -1,6 +1,6 @@
 //! Top-level pipeline orchestrator: fit_decode → finalize.
 
-use super::time_compat::Instant;
+use super::time_compat::{Instant, duration_ms};
 use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::{MERGE_SIZE_K_NEIGHBORS, merge_multiscale_markers};
@@ -12,11 +12,6 @@ use crate::proposal::{
 };
 use image::{ImageBuffer, Luma};
 use std::collections::HashSet;
-
-#[inline]
-fn duration_ms(duration: std::time::Duration) -> f64 {
-    duration.as_secs_f64() * 1_000.0
-}
 
 pub(super) fn run(
     gray: &GrayImage,

@@ -1,14 +1,14 @@
 //! Coded-target finalize path: global RANSAC homography filter, completion at
 //! missing IDs, and final H refit.
 
-use crate::pipeline::time_compat::Instant;
+use crate::pipeline::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
 use super::apply_post_filter_fixup;
 use super::common::{
-    drop_unmappable_markers_with_warning, duration_ms, map_centers_to_image,
-    phase_geometric_verify, sync_marker_board_correspondence_with_logging,
+    drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
+    sync_marker_board_correspondence_with_logging,
 };
 use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;

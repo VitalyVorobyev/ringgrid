@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::time_compat::Instant;
+use super::time_compat::{Instant, duration_ms};
 
 use super::inner_fit;
 use super::marker_build::{
@@ -16,11 +16,6 @@ use crate::detector::marker_build::DetectionSource;
 use crate::pixelmap::PixelMapper;
 use crate::proposal::Proposal;
 use crate::ring::edge_sample::DistortionAwareSampler;
-
-#[inline]
-fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1_000.0
-}
 
 #[inline]
 fn mean_duration_ms(duration: Duration, n: usize) -> f64 {

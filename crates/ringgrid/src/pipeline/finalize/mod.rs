@@ -5,7 +5,7 @@ mod coded;
 mod common;
 mod plain;
 
-use super::time_compat::Instant;
+use super::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
@@ -19,7 +19,7 @@ use crate::pipeline::{DetectionFrame, PipelineResult};
 use crate::pixelmap::PixelMapper;
 
 use coded::{finalize_global_filter_result, finalize_no_global_filter_result};
-use common::{duration_ms, sync_marker_board_correspondence};
+use common::sync_marker_board_correspondence;
 use plain::finalize_plain_result;
 
 /// Runs `annotate_neighbor_radius_ratios`, then optionally runs

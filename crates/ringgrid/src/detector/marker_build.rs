@@ -1,5 +1,6 @@
 use crate::conic::{self, Ellipse};
 use crate::marker::DecodeMetrics;
+use crate::marker::codec::distance_confidence;
 use crate::marker::decode::DecodeResult;
 use crate::ring::edge_sample::EdgeSampleResult;
 
@@ -407,7 +408,7 @@ pub(crate) fn compute_marker_confidence(
     // distance alone keeps this factor consistent while still penalising close
     // calls.
     let decode_conf = decode_result
-        .map(|d| (1.0 - d.dist as f32 / 6.0).clamp(0.0, 1.0))
+        .map(|d| distance_confidence(d.dist))
         .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));
 
     // 2. Outer angular coverage: linear map gap -> [0, 1]

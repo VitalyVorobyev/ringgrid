@@ -161,16 +161,13 @@ fn evaluate_hypothesis(
         return None;
     }
 
-    let mut edge = EdgeSampleResult {
+    // The outer edge sampler only records rays where an outer edge is found.
+    let edge = EdgeSampleResult {
+        n_good_rays: outer_points.len(),
         outer_points,
-        inner_points: Vec::new(),
         outer_radii,
-        inner_radii: Vec::new(),
-        n_good_rays: 0,
         n_total_rays: ctx.edge_cfg.n_rays.max(8),
     };
-    // The outer edge sampler only records rays where an outer edge is found.
-    edge.n_good_rays = edge.outer_points.len();
 
     let (outer, outer_ransac) = solver::fit_outer_ellipse_with_reason(&edge, ctx.config).ok()?;
 

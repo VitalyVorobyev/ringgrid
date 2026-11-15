@@ -36,6 +36,9 @@
 use image::GrayImage;
 use nalgebra::{DMatrix, DVector};
 
+use super::MAD_TO_SIGMA;
+use crate::homography::homography_project_rows;
+
 /// Number of sectors in the coded band.
 const CODE_SECTORS: usize = 16;
 /// Nonlinear geometric parameters: p (2), C (4), log sigma (1).
@@ -274,18 +277,6 @@ fn mat3_inverse(m: &Mat3) -> Option<Mat3> {
             -c(0, 2, 0, 1) / det,
             c(0, 1, 0, 1) / det,
         ],
-    ])
-}
-
-#[inline]
-fn project(h: &Mat3, p: [f64; 2]) -> Option<[f64; 2]> {
-    let w = h[2][0] * p[0] + h[2][1] * p[1] + h[2][2];
-    if w.abs() < 1e-12 {
-        return None;
-    }
-    Some([
-        (h[0][0] * p[0] + h[0][1] * p[1] + h[0][2]) / w,
-        (h[1][0] * p[0] + h[1][1] * p[1] + h[1][2]) / w,
     ])
 }
 
@@ -685,7 +676,7 @@ impl CodeBand {
 
 fn build_model<'a>(problem: &'a PhotometricProblem<'_>) -> Option<Model<'a>> {
     let h_inv = mat3_inverse(&problem.local_map)?;
-    let h0 = project(&problem.local_map, [0.0, 0.0])?;
+    let h0 = homography_project_rows(&problem.local_map, [0.0, 0.0])?;
     Some(Model {
         h_inv,
         h0,
@@ -704,7 +695,9 @@ fn collect_patch(problem: &PhotometricProblem<'_>, model: &Model<'_>) -> (Vec<Pa
     let mut reach = 0.0f64;
     for k in 0..16 {
         let a = k as f64 * std::f64::consts::PI / 8.0;
-        if let Some(q) = project(&problem.local_map, [r_max * a.cos(), r_max * a.sin()]) {
+        if let Some(q) =
+            homography_project_rows(&problem.local_map, [r_max * a.cos(), r_max * a.sin()])
+        {
             reach = reach.max((q[0] - model.h0[0]).hypot(q[1] - model.h0[1]));
         }
     }
@@ -1071,7 +1064,7 @@ impl Fitting<'_> {
     ) -> Result<Solution, PhotometricFailure> {
         let n = self.layout.n();
         let initial = self.accumulate(&prm, 1.0)?;
-        let mut scale = (1.4826 * median_abs(&initial.residuals)).max(0.5);
+        let mut scale = (MAD_TO_SIGMA * median_abs(&initial.residuals)).max(0.5);
         let mut acc = self.accumulate(&prm, scale)?;
         let mut x = self.layout.pack(&prm);
         let mut cost = acc.robust_cost / (scale * scale) + self.prior_cost(&x);
@@ -1124,7 +1117,7 @@ impl Fitting<'_> {
                 // No downhill step: at a minimum to numerical precision.
                 converged = true;
             }
-            let new_scale = (1.4826 * median_abs(&acc.residuals)).max(0.5);
+            let new_scale = (MAD_TO_SIGMA * median_abs(&acc.residuals)).max(0.5);
             if iterations <= SCALE_UPDATE_ITERATIONS && (new_scale - scale).abs() > 0.02 * scale {
                 scale = new_scale;
                 acc = self.accumulate(&prm, scale)?;
@@ -1917,7 +1910,7 @@ pub(super) mod tests {
                     for sx in 0..ss {
                         let px = (x - pad) as f64 + (sx as f64 + 0.5) / ss as f64 - 0.5;
                         let py = (y - pad) as f64 + (sy as f64 + 0.5) / ss as f64 - 0.5;
-                        acc += ink(project(&inv, [px, py]).unwrap(), code);
+                        acc += ink(homography_project_rows(&inv, [px, py]).unwrap(), code);
                     }
                 }
                 cov[(y * n + x) as usize] = acc / (ss * ss) as f64;

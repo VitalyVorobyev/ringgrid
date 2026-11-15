@@ -9,9 +9,8 @@
 //! - **fiducials** ([`OriginFiducials`]): optional origin/orientation dots,
 //!   whose positions are derived from the lattice rather than stored.
 //!
-//! Targets round-trip through the `ringgrid.target.v6` JSON schema; the
-//! `v5` schema (absolute fiducial coordinates) and the legacy flat
-//! `ringgrid.target.v4` schema are auto-migrated on load.
+//! Targets round-trip through the `ringgrid.target.v6` JSON schema, the only
+//! one the loaders accept.
 
 mod error;
 mod fiducials;

@@ -74,7 +74,7 @@ crates/ringgrid/src/
 │   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain), CodebookProfile
 │   ├── page.rs         # PageSpec/PageSize/PageOrientation (printed sheet)
 │   ├── fiducials.rs    # OriginFiducials (validation: rotation-asymmetry, clearance)
-│   ├── schema.rs       # JSON v6 (canonical) + v5/v4 auto-migration
+│   ├── schema.rs       # JSON v6 (the only supported schema)
 │   └── error.rs        # TargetValidationError, TargetLoadError
 ├── target_generation.rs # SVG/PNG/DXF rendering + TargetRenderOptions/TargetArtifacts
 ├── proposal/           # Center proposal generation (delegates to radsym)
@@ -189,7 +189,7 @@ Key public types (root tier):
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
 - `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
-- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (legacy v5/v4 `board_spec.json` still loads via `TargetLayout::from_json_*` auto-migration; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
+- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (JSON is `ringgrid.target.v6` only: v4/v5 files are rejected with an "unsupported schema" error, convert them by loading with 0.15 and re-saving; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
 - `TargetRenderOptions`, `TargetArtifacts`, `PageSpec`/`PageSize`/`PageOrientation`, `TargetGenerationError` — target rendering. `render_target_artifacts` returns all four formats in memory and works without the `std` feature, so every binding shares one contract.
 - `CodebookProfile` — `Base` (893) or `Extended` (2180). Lives on `CodedRingSpec`, i.e. on the **target**: rendering draws from it and `DetectConfig::with_target` derives `advanced.decode.codebook_profile` from it, so a printed target can never be decoded against a different table.
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion

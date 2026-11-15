@@ -264,7 +264,7 @@ RinggridStatus ringgrid_detect_with_mapper_diagnostics_rgba(const RinggridDetect
                                                             char **out);
 
 /**
- * Create a detector from a target layout JSON string (`v5`, or legacy `v4`).
+ * Create a detector from a target layout JSON string (`ringgrid.target.v6`).
  *
  * # Safety
  * `target_json` must be a valid NUL-terminated C string; `out` must point to a

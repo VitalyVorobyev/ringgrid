@@ -323,7 +323,7 @@ fn target_schema_rejects_invalid_documents() {
     };
     for (what, doc) in [
         (
-            "legacy v5 schema string",
+            "earlier (v5) schema string",
             mutate(&|d| d["schema"] = json!("ringgrid.target.v5")),
         ),
         (

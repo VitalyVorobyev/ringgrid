@@ -66,7 +66,7 @@ enum GenTargetCommands {
     Rect(CliGenRectArgs),
     /// A built-in target preset.
     Preset(CliGenPresetArgs),
-    /// Render from an existing target spec JSON (v6, or legacy v5/v4).
+    /// Render from an existing target spec JSON (`ringgrid.target.v6`).
     FromSpec(CliGenFromSpecArgs),
 }
 

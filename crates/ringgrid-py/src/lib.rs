@@ -85,8 +85,7 @@ fn py_target_generation_error(err: ringgrid::TargetGenerationError) -> PyErr {
     }
 }
 
-/// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
-/// legacy `ringgrid.target.v5` / `v4` auto-migrated).
+/// Parse a target spec (compositional `ringgrid.target.v6`).
 fn target_from_spec_json(spec_json: &str) -> PyResult<ringgrid::TargetLayout> {
     ringgrid::TargetLayout::from_json_str(spec_json).map_err(py_value_error)
 }
@@ -743,8 +742,7 @@ fn origin_dots(dots: bool) -> ringgrid::OriginDots {
     }
 }
 
-/// Validate a target spec (`ringgrid.target.v6`, or legacy `v5` / `v4`, auto-migrated)
-/// and return its canonical `v5` JSON. Validation failures surface as
+/// Validate a target spec (`ringgrid.target.v6`) and return its canonical `v6` JSON. Validation failures surface as
 /// `ValueError` carrying the Rust error message.
 #[pyfunction]
 fn canonical_target_spec_json(spec_json: &str) -> PyResult<String> {

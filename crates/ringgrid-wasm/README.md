@@ -125,8 +125,7 @@ it (Ajv: `ajv.addVocabulary(["x-unit"])`).
 The detector config's defaults depend on the board (scale- and geometry-coupled
 values are derived from it), so seed a form from `default_config_json(board_json)`
 rather than from the defaults embedded in the schema. The target schema covers
-the canonical `ringgrid.target.v6` form; legacy v5/v4 files are migrated by
-`canonical_target_spec_json`.
+the `ringgrid.target.v6` form, the only schema the loaders accept.
 
 ## API
 
@@ -188,7 +187,7 @@ the canonical `ringgrid.target.v6` form; legacy v5/v4 files are migrated by
 | `coded_rect_target_json(pitch_mm, rows, cols, outer_mm, inner_mm, ring_mm)` | Coded rect target JSON |
 | `plain_hex_target_json(pitch_mm, rows, long_row_cols, outer_mm, inner_mm, origin_dots)` | Plain hex target JSON |
 | `plain_rect_target_json(pitch_mm, rows, cols, outer_mm, inner_mm, origin_dots)` | Plain rect target JSON |
-| `canonical_target_spec_json(target_json)` | Re-serialize any accepted spec as canonical `v6` |
+| `canonical_target_spec_json(target_json)` | Validate a v6 spec and re-serialize it in canonical form |
 | `target_fiducial_dots_mm(target_json)` | Origin-dot centers in board mm, as JSON `[x, y]` pairs |
 | `render_target_bundle_json(target_json, options_json)` | `TargetBundle` — see [Target rendering](#target-rendering) |
 | `target_page_size_mm(target_json, options_json)` | JSON `[width_mm, height_mm]` of the printed page |

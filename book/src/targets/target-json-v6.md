@@ -2,14 +2,13 @@
 
 `ringgrid.target.v6` is the canonical, compositional target schema. It mirrors
 the [target model](target-model.md) one-to-one: a top-level object with
-`lattice`, `marker`, `coding`, and optional `fiducials` sections. Loaders also
-accept `ringgrid.target.v6` and the legacy flat `ringgrid.target.v4` schema and
-migrate them on the fly; writers always emit v6.
+`lattice`, `marker`, `coding`, and optional `fiducials` sections. It is the only
+schema the loaders accept and the only one writers emit; an earlier v4 or v5
+file is rejected (see [Older schemas](#older-schemas)).
 
-**What changed in v6:** `fiducials` no longer stores dot *coordinates*. Only
-`dot_radius_mm` is written; positions are derived from the lattice, so they
-cannot fall out of step when the board's dimensions change. See
-[migration](#migrating-from-v5) below.
+`fiducials` stores only the dot *size*, `dot_radius_mm`. Positions are derived
+from the lattice, so they cannot fall out of step when the board's dimensions
+change.
 
 ## Annotated example — plain rect with origin dots
 
@@ -72,7 +71,7 @@ Produced by `TargetLayout::default_hex()` (shown here for a small 3-row lattice)
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema` | string | `"ringgrid.target.v6"` (or legacy `"ringgrid.target.v4"` on input). |
+| `schema` | string | Must be `"ringgrid.target.v6"`; any other value is rejected. |
 | `name` | string | Non-empty. Presets and CLI use a deterministic geometry-derived name. |
 | `lattice` | object | Tagged by `kind`. |
 | `marker` | object | Ring radii. |
@@ -109,52 +108,22 @@ form and omitted on write.
 `lattice` at load time and exposed through `TargetLayout::fiducial_dots_mm()`.
 See [Origin Fiducials](origin-fiducials.md).
 
-## Migrating from v5
+## Older schemas
 
-A v5 file differs only in the schema tag and a `fiducials.dots_mm` array.
-Loading one is automatic, with one guard: the stored coordinates are **compared
-against** the derived ones, and a mismatch is an error rather than a silent
-override. If they differed, the file describes a board whose dots are printed
-somewhere this build would not look for them — regenerating the target (and
-re-printing it) is the only correct fix.
-
-In practice only rect targets generated with `fiducials = "auto"` by ringgrid
-0.10.x are affected; their third dot moved by one pitch. Hex targets, the
-`rect_24x24` preset, and every hand-authored L are unchanged and migrate
-silently.
-
-## v4 auto-migration
-
-The pre-0.8 flat schema described a hex coded target with top-level
-`pitch_mm`, `rows`, `long_row_cols`, `marker_outer_radius_mm`,
-`marker_inner_radius_mm`, `marker_ring_width_mm`, and optional `id_assignment`:
-
-```json
-{
-  "schema": "ringgrid.target.v4",
-  "name": "legacy",
-  "pitch_mm": 8.0,
-  "rows": 15,
-  "long_row_cols": 14,
-  "marker_outer_radius_mm": 4.8,
-  "marker_inner_radius_mm": 3.2,
-  "marker_ring_width_mm": 1.152
-}
-```
-
-Every loader — `TargetLayout::from_json_str` / `from_json_file`, the CLI
-`--target` flag, the CLI `gen-target from-spec`, and the Python / WASM detector
-constructors — accepts this and migrates it to a `Hex` + `Coded16` layout.
-Writers only ever emit v5, so re-serializing a migrated target upgrades it:
+The flat `ringgrid.target.v4` schema (hex coded targets only) and
+`ringgrid.target.v5` (v6 with stored `dots_mm`) are no longer loaded. Loading
+one fails with an `unsupported target schema` error that names the supported
+version. To convert a file, load it with ringgrid 0.15, which still reads both,
+and save it again:
 
 ```rust
-let target = ringgrid::TargetLayout::from_json_str(v4_json)?; // accepts v4
-let v5_json = target.to_json_string();                        // emits v5
+// with ringgrid 0.15
+let target = ringgrid::TargetLayout::from_json_file(std::path::Path::new("old.json"))?;
+target.write_json_file(std::path::Path::new("new.json"))?;
 ```
 
-The checked-in `tools/board/board_spec*.json` fixtures are still v4 and load
-unchanged, including their optimized `id_assignment`. An unknown or unsupported
-schema tag is rejected with `TargetValidationError::UnsupportedSchema`.
+or `ringgrid.TargetLayout.from_json("old.json").to_spec_json()` from the 0.15
+Python package. The result is the v6 file described above.
 
 ## Generating target JSON from the CLI
 
@@ -182,7 +151,7 @@ ringgrid-dev gen-target rect \
 ringgrid-dev gen-target preset default-hex --out_dir tools/out/target
 ringgrid-dev gen-target preset rect24x24   --out_dir tools/out/target
 
-# Re-render (and upgrade) an existing spec, v5 or legacy v4
+# Re-render an existing v6 spec
 ringgrid-dev gen-target from-spec --spec path/to/target_spec.json --out_dir tools/out/target
 ```
 

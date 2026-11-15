@@ -279,11 +279,9 @@ against a recipe without generating the spec first.
 
 The canonical schema is [`ringgrid.target.v6`](targets/target-json-v6.md), a
 compositional document with `lattice`, `marker`, `coding`, and optional
-`fiducials` sections. The `v5` schema (absolute fiducial
-coordinates) and the pre-0.8 flat `ringgrid.target.v4` schema are still accepted
-on input and migrated on load; writers always emit v6. The full field
-reference, both annotated examples (coded hex and plain rect), and the v4
-auto-migration rules live in [Target JSON (schema v6)](targets/target-json-v6.md)
+`fiducials` sections; it is the only schema the loaders accept. The full field
+reference, both annotated examples (coded hex and plain rect), and the notes on
+converting older files live in [Target JSON (schema v6)](targets/target-json-v6.md)
 — this page does not duplicate them.
 
 ## Printing

@@ -163,8 +163,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// Parse a target spec (compositional `ringgrid.target.v6`, or legacy
-/// legacy `ringgrid.target.v5` / `v4` auto-migrated).
+/// Parse a target spec (compositional `ringgrid.target.v6`).
 fn parse_target(target_json: &str) -> Result<ringgrid::TargetLayout, JsValue> {
     ringgrid::TargetLayout::from_json_str(target_json)
         .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -203,7 +202,7 @@ impl Default for RinggridDetector {
 
 #[wasm_bindgen]
 impl RinggridDetector {
-    /// Create a detector from a target layout JSON string (`v6`, or legacy `v5` / `v4`).
+    /// Create a detector from a target layout JSON string (`ringgrid.target.v6`).
     #[wasm_bindgen(constructor)]
     pub fn new(board_json: &str) -> Result<RinggridDetector, JsValue> {
         let target = parse_target(board_json)?;
@@ -686,10 +685,8 @@ pub fn plain_rect_target_json(
     .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Re-serialize any accepted target JSON into the canonical `v6` form.
-///
-/// Legacy `v4` and `v5` specs are migrated on the way through, so this is how a
-/// consumer upgrades a stored target file.
+/// Validate a `ringgrid.target.v6` target JSON and re-serialize it in the
+/// canonical form (normalized key order, defaults omitted).
 #[wasm_bindgen]
 pub fn canonical_target_spec_json(target_json: &str) -> Result<String, JsValue> {
     Ok(parse_target(target_json)?.to_json_string())
@@ -931,9 +928,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_target_accepts_v5_json() {
-        let v5 = ringgrid::TargetLayout::default_hex().to_json_string();
-        assert!(parse_target(&v5).is_ok());
+    fn parse_target_accepts_v6_json() {
+        let v6 = ringgrid::TargetLayout::default_hex().to_json_string();
+        assert!(parse_target(&v6).is_ok());
     }
 
     #[test]

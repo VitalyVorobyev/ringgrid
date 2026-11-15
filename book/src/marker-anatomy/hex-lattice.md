@@ -125,7 +125,7 @@ Key methods (hex-relevant):
 |--------|---------|-------------|
 | `default_hex()` | `TargetLayout` | Classic 15×14 hex board, 203 coded markers |
 | `coded_hex(pitch, rows, long_row_cols, outer, inner, ring_width)` | `Result<TargetLayout, _>` | Coded hex from direct geometry |
-| `from_json_file(path)` | `Result<TargetLayout, TargetLoadError>` | Load a target spec (v6, or legacy v5/v4) |
+| `from_json_file(path)` | `Result<TargetLayout, TargetLoadError>` | Load a target spec (`ringgrid.target.v6`) |
 | `cells()` | `&[TargetCell]` | All marker cells in generation order |
 | `n_cells()` | `usize` | Total number of marker cells |
 | `cell_xy_mm(coord)` | `Option<[f32; 2]>` | Cell center by axial coordinate |
@@ -162,10 +162,8 @@ in that order unless the target carries an explicit `id_assignment`.
 
 Targets are specified in JSON. The canonical schema is
 [`ringgrid.target.v6`](../targets/target-json-v6.md), whose `lattice` section is
-tagged `"kind": "hex"` for a hex board. The pre-0.8 flat `ringgrid.target.v4`
-schema (top-level `pitch_mm`, `rows`, `long_row_cols`, `marker_*_mm`) and the
-`v5` schema are still accepted on input and migrated on load; writers always
-emit v6.
+tagged `"kind": "hex"` for a hex board. It is the only schema the loaders
+accept.
 
 A minimal v6 hex spec:
 
@@ -180,7 +178,7 @@ A minimal v6 hex spec:
 ```
 
 See [Target JSON (schema v6)](../targets/target-json-v6.md) for the full field
-reference and v4 auto-migration.
+reference.
 
 ## Validation rules
 

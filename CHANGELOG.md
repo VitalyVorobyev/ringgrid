@@ -104,6 +104,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Loading v4 and v5 target JSON.** `TargetLayout::from_json_*` (and everything
+  built on it: `Detector::from_target_json_file*`, the CLIs' `--target`, the
+  Python / WASM / C detector constructors) accepts only `ringgrid.target.v6`.
+  A `ringgrid.target.v4` or `v5` file fails with an `unsupported target schema`
+  error that names the supported version. To convert a file, load it with
+  ringgrid 0.15 and save it again. Also gone:
+  `TargetValidationError::LegacyDotsMismatch`, and the `expected` field of
+  `TargetValidationError::UnsupportedSchema`. The checked-in fixtures
+  (`tools/board/board_spec*.json`, `testdata/board_ringgrid.json`,
+  `crates/ringgrid/examples/target.json`) are v6;
+  `board_spec_extended_opt.json`, which never loaded as v4, is now a valid v6
+  file with `codebook_profile: "extended"`. `tools/gen_board_spec.py` is
+  removed (use `ringgrid example --name hex_coded` and `ringgrid gen`); the
+  ID-optimization tools read and write v6. See
+  [`docs/migrations/0.15-to-0.16.md`](docs/migrations/0.15-to-0.16.md).
 - **`PhotometricMetrics::covariance_inflation` and
   `PhotometricMetrics::residual_autocorrelation`, and `ResidualAutocorrelation`**
   (Rust diagnostics, Python). They are research diagnostics: they moved to the

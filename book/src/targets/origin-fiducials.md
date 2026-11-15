@@ -28,8 +28,8 @@ axial lattice already used. Read the resulting positions back with
 board's rows, columns, or pitch and a stored triad silently describes points
 that no longer sit in the lattice gaps — or lie off the marker field entirely,
 where the anchoring homography must extrapolate to reach them. Deriving them
-makes that unrepresentable. (Schema v5 stored `dots_mm`; see
-[Target JSON](target-json-v6.md#migrating-from-v5).)
+makes that unrepresentable. (The retired v5 schema stored `dots_mm`; see
+[Target JSON](target-json-v6.md#older-schemas).)
 
 Two properties make this placement the right one:
 

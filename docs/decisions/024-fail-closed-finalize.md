@@ -90,6 +90,72 @@ all of it the corrected-centre contract; before it: 0.797 / 0.866 / 0.847 /
 pre-contract level (hex blur 0.878, rect blur 0.865, Extended blur 0.941) at 0
 wrong outputs. 1–6 isolated markers are reported without IDs.
 
+**Scope: one board per image.** A second board in view is not a supported
+scenario (owner decision). The `foreign` scenes stay in the harness, scored
+and printed but not gating; known limits at the time of writing:
+`plainrect-foreign-same` 1 wrong ID (on a second-board ring).
+
+### Per-marker confidence and `min_confidence` (accepted)
+
+Owner request: a quality measure to trade recall for centre accuracy. The
+owner's review of real images (11 wrong centres out of ~470, all two-conic)
+found them low in `confidence`, near the image border and in the blurriest
+fifth. `precision_quality_dump` (in-range and dark single-board scenes,
+130 k reported markers, 1.6 % beyond 1 px) measured candidate predictors —
+ROC AUC for a centre error beyond 1 px (beyond 0.5 px):
+
+| predictor | AUC > 1 px | AUC > 0.5 px | bad removed at 10 % removed |
+|---|---|---|---|
+| reprojection residual vs final H | 0.950 | 0.913 | 0.96 |
+| outer max angular gap | 0.926 | 0.781 | 0.75 |
+| outer arc coverage | 0.902 | 0.763 | 0.70 |
+| previous `confidence` | 0.893 | 0.771 | 0.71 |
+| inner-edge theta consistency | 0.761 | 0.691 | 0.30 |
+| border distance (radii) | 0.733 | 0.644 | 0.38 |
+| shape residual vs H | 0.723 | 0.680 | 0.39 |
+| inner/outer ratio vs view median | 0.705 | 0.637 | 0.32 |
+| two-conic shift / radius | 0.666 | 0.617 | 0.28 |
+| outer edge width (px) | 0.646 | 0.632 | 0.25 |
+| contrast-to-noise, step, fit RMS, inliers, decode distance | 0.51–0.66 | — | ≤ 0.23 |
+
+The reprojection residual is near-oracle on synthetic views (the homography
+is exact there) and weaker on real ones (the owner's 11: 6 in the worst
+10 %); it is not available when the marker is built, and was left out.
+Logistic combinations (scene-split cross-validation): coverage + edge width
+0.936; + border 0.941; + inner agreement 0.954 — each factor adds. The
+closed form adopted (`marker_build::compute_marker_confidence`):
+evidence × outer inliers × `1/(1 + rms/2)` × `exp(−gap/(π/4))` × inner
+agreement × `1/(1 + (w/3 px)²)` × `min(1, d/2)`. AUC 0.950 (0.835 for
+0.5 px), bad centres removed at 5 / 10 / 20 % of markers 0.64 / 0.87 / 0.95
+(previous: 0.47 / 0.71 / 0.84); dark scenes 0.928 vs 0.823; tilt 0.930 vs
+0.920. Redefining `confidence` also re-ranks dedup and ID votes: grid recall
+moved −0.9 to +0.9 points, no single-board wrong output.
+
+`DetectConfig::min_confidence` drops markers below it on the finished result
+(with the corrected-centre rule; homography refit). Default 0.03 from the
+curve (`precision_quality_dump`, recall / > 1 px / > 0.5 px / median):
+
+| min_confidence | hex | Extended | rect | plain hex | plain rect |
+|---|---|---|---|---|---|
+| 0 | 0.679 / 2.5% / 15.5% / 0.20 | 0.688 / 1.6% / 11.2% / 0.18 | 0.688 / 1.6% / 11.2% / 0.18 | 0.410 / 2.0% / 11.0% / 0.16 | 0.478 / 0.9% / 6.6% / 0.15 |
+| 0.02 | 0.672 / 2.0% / 14.7% / 0.20 | 0.683 / 1.3% / 10.6% / 0.18 | 0.681 / 1.0% / 10.3% / 0.18 | 0.407 / 1.4% / 10.1% / 0.16 | 0.474 / 0.5% / 5.7% / 0.15 |
+| **0.03** | 0.661 / 1.5% / 13.7% / 0.20 | 0.675 / 1.0% / 10.0% / 0.18 | 0.672 / 0.7% / 9.5% / 0.18 | 0.402 / 1.0% / 9.3% / 0.16 | 0.469 / 0.4% / 5.2% / 0.15 |
+| 0.05 | 0.642 / 0.8% / 11.9% / 0.19 | 0.655 / 0.6% / 8.7% / 0.17 | 0.651 / 0.4% / 8.0% / 0.17 | 0.395 / 0.6% / 7.9% / 0.15 | 0.461 / 0.2% / 4.3% / 0.14 |
+| 0.08 | 0.593 / 0.3% / 9.0% / 0.17 | 0.606 / 0.2% / 6.3% / 0.16 | 0.601 / 0.1% / 5.7% / 0.16 | 0.378 / 0.1% / 5.9% / 0.14 | 0.434 / 0.1% / 3.0% / 0.14 |
+
+Dark scenes, same columns:
+
+| min_confidence | hex | Extended | rect | plain hex | plain rect |
+|---|---|---|---|---|---|
+| 0 | 0.564 / 1.5% / 16.2% / 0.27 | 0.533 / 1.7% / 14.3% / 0.26 | 0.539 / 1.7% / 12.1% / 0.25 | 0.214 / 0.9% / 8.3% / 0.21 | 0.173 / 0.7% / 6.5% / 0.21 |
+| **0.03** | 0.528 / 0.6% / 13.9% / 0.26 | 0.498 / 0.6% / 11.7% / 0.25 | 0.495 / 0.6% / 9.1% / 0.23 | 0.189 / 0.0% / 5.6% / 0.21 | 0.172 / 0.2% / 4.5% / 0.20 |
+| 0.05 | 0.446 / 0.3% / 11.4% / 0.24 | 0.440 / 0.3% / 9.3% / 0.24 | 0.437 / 0.3% / 7.6% / 0.22 | 0.172 / 0.0% / 5.5% / 0.21 | 0.171 / 0.0% / 4.0% / 0.20 |
+
+Full sweep at the default: centres beyond 1 px on the operating-range grid
+hex 314 → 182, Extended 435 → 272, rect 299 → 133, plain hex 231 → 118,
+plain rect 215 → 81; grid recall −0.7 to −2.6 points, contrast groups −3 to
+−9; recall floors re-measured.
+
 ### Outer-only centres from the homography (measured, rejected)
 
 Of the visible cells missing while most lattice neighbours are reported

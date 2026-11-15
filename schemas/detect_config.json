@@ -1357,6 +1357,11 @@
       },
       "description": "Expected marker outer-diameter range `[diameter_min_px, diameter_max_px]` in working-frame pixels; scale-dependent stage parameters are derived from it."
     },
+    "min_confidence": {
+      "default": 0.03,
+      "description": "Minimum `DetectedMarker::confidence` (0 to 1) of a reported marker: the one knob trading recall for centre accuracy. Applied once, to the finished result (after any refinement); markers below it are not reported and the homography is refit from those kept. `0` reports every marker that passed the detector's gates. Rings below it still serve as lattice evidence (labeling, anchoring, homography support).",
+      "type": "number"
+    },
     "require_complete_board": {
       "default": false,
       "description": "Require the full board for detection success.\n\nWhen `true`, `Detector::detect` returns\n`DetectError::IncompleteBoard` if\ngrid assignment ran but not every target cell was labeled. Default\n`false`: an incomplete board is reported non-fatally via\n`DetectionResult::board_complete`,\nwith the partial marker set still returned. Most meaningful for plain\n(uncoded) targets without origin dots, whose only success criterion is\nfull-board detection.",

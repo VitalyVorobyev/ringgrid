@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`DetectedMarker::confidence` now predicts centre accuracy, and
+  `DetectConfig::min_confidence` (default `0.03`) is the one knob trading
+  recall for it.** Confidence = decode / fit evidence × outer inlier ratio ×
+  `1/(1 + rms/2)` × rim coverage `exp(−gap/(π/4))` × inner-edge ray agreement
+  × sharpness `1/(1 + (w/3 px)²)` (`w`, the outer edge width, is new in
+  `FitMetrics::outer_edge_width_px`) × border `min(1, d/2)` (`d` in outer
+  radii). Precision harness, single-board in-range scenes: ROC AUC for a
+  centre error beyond 1 px 0.95 (previous confidence: 0.89). Markers below
+  `min_confidence` are dropped once on the finished result and the
+  homography is refit. At the default, centres beyond 1 px roughly halve
+  (operating-range grid: hex 314 → 182, Extended 435 → 272, rect 299 → 133,
+  plain hex 231 → 118, plain rect 215 → 81) for 1–3 recall points (contrast
+  scenes: 3–9); ADR-024 has the full threshold table. `0` restores the old
+  output set (with the new confidence values). Values of `confidence`
+  change for every marker.
+- **One board per image is the supported case.** Scenes with a second board
+  in view stay in the precision harness as a reported, non-gating group.
 - **Detection fails closed: it reports less rather than a wrong ID, board
   position or centre.** Measured on a new ground-truth harness
   (`tests/precision_audit.rs`, 678 synthetic scenes of every target kind; the

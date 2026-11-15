@@ -947,6 +947,9 @@ class FitMetrics:
     inner_fit_reason: str | None = None
     neighbor_radius_ratio: float | None = None
     inner_theta_consistency: float | None = None
+    #: Outer edge width (px): paper-to-ink step / peak radial gradient,
+    #: about 2.5 sigma of the blur. A factor of the marker confidence.
+    outer_edge_width_px: float | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "FitMetrics":
@@ -965,6 +968,7 @@ class FitMetrics:
             inner_fit_reason=_optional_str(data.get("inner_fit_reason")),
             neighbor_radius_ratio=_optional_float(data.get("neighbor_radius_ratio")),
             inner_theta_consistency=_optional_float(data.get("inner_theta_consistency")),
+            outer_edge_width_px=_optional_float(data.get("outer_edge_width_px")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -984,6 +988,7 @@ class FitMetrics:
         _set_optional(out, "inner_fit_reason", self.inner_fit_reason)
         _set_optional(out, "neighbor_radius_ratio", self.neighbor_radius_ratio)
         _set_optional(out, "inner_theta_consistency", self.inner_theta_consistency)
+        _set_optional(out, "outer_edge_width_px", self.outer_edge_width_px)
         return out
 
 
@@ -2353,6 +2358,15 @@ class DetectConfig:
     @circle_refinement.setter
     def circle_refinement(self, value: CircleRefinementMethod) -> None:
         self._apply_overlay({"circle_refinement": _circle_refinement_to_wire(value)})
+
+    @property
+    def min_confidence(self) -> float:
+        """Minimum marker confidence (0 to 1) reported: the recall/accuracy knob."""
+        return float(self._resolved()["min_confidence"])
+
+    @min_confidence.setter
+    def min_confidence(self, value: float) -> None:
+        self._apply_overlay({"min_confidence": float(value)})
 
     @property
     def dedup_radius(self) -> float:

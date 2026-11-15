@@ -13,9 +13,9 @@ use super::common::{
 use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{
-    CompletionStats, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
-    complete_with_h, compute_h_stats, global_filter, matrix3_to_array, mean_reproj_error_px,
-    refit_homography,
+    CompletionScope, CompletionStats, DetectConfig, DetectionFrame, PipelineResult,
+    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
+    mean_reproj_error_px, refit_homography,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -53,7 +53,14 @@ fn phase_completion(
         return CompletionStats::default();
     };
 
-    complete_with_h(gray, h, final_markers, config, &config.target, mapper)
+    complete_with_h(
+        gray,
+        h,
+        final_markers,
+        config,
+        CompletionScope::Coded,
+        mapper,
+    )
 }
 
 pub(super) fn phase_final_h(

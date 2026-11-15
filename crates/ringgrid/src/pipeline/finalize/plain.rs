@@ -12,8 +12,8 @@ use super::common::{
 };
 use crate::detector::MarkerRecord;
 use crate::pipeline::{
-    CompletionStats, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
-    complete_plain_with_h, matrix3_to_array,
+    CompletionScope, CompletionStats, DetectConfig, DetectionFrame, PipelineResult,
+    apply_projective_centers, complete_with_h, matrix3_to_array,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -56,13 +56,12 @@ fn phase_plain_completion(
     mapper: Option<&dyn PixelMapper>,
 ) -> CompletionStats {
     let n_before = markers.len();
-    let stats = complete_plain_with_h(
+    let stats = complete_with_h(
         gray,
         h_current,
         markers,
         config,
-        &config.target,
-        anchored,
+        CompletionScope::plain(anchored),
         mapper,
     );
     if markers.len() > n_before {

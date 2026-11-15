@@ -52,7 +52,11 @@ pub struct DetectedMarker {
     /// canonical relative frame when `RelativeCanonical`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_coord: Option<[i32; 2]>,
-    /// Combined detection + decode confidence in [0, 1].
+    /// How far this marker's centre can be trusted, in [0, 1]: a product of
+    /// decode / fit evidence, rim coverage, inner-edge agreement, outer-edge
+    /// sharpness and distance to the image border (see the book's
+    /// `DetectedMarker` page). Markers below
+    /// [`DetectConfig::min_confidence`](crate::DetectConfig::min_confidence) are not reported.
     ///
     /// One formula for every [`DetectionSource`]: the decode score (normalised
     /// Hamming distance, or arc coverage × RANSAC inlier ratio when no ID was

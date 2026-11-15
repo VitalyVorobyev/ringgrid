@@ -15,6 +15,20 @@ plain (uncoded) rings, and origin-fiducial resolution, see the book's
 
 ---
 
+## 0. Recall vs centre accuracy: `min_confidence`
+
+Every marker carries a `confidence` that predicts how far its centre can be
+trusted (blur, rim coverage, inner-edge agreement, image border). The
+top-level `min_confidence` (default `0.03`) drops markers below it; raise it
+(0.05–0.08) for fewer, more accurate centres, lower it (0–0.02) for more
+markers. ADR-024 has the measured recall / centre-error table per threshold.
+
+```json
+{ "min_confidence": 0.05 }
+```
+
+---
+
 ## 1. Blurred / Defocused Images
 
 Blur reduces the sharpness of the inner ring transition, causing theta-consistency

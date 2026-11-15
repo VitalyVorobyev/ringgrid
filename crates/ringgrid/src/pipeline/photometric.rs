@@ -24,7 +24,7 @@ thread_local! {
 
 /// Refine the centres of a finished result when the configuration asks for
 /// it, then apply the corrected-centre output contract
-/// ([`finalize::drop_uncorrected_centres`](super::finalize)).
+/// ([`finalize::apply_output_contract`](super::finalize)).
 ///
 /// `mapper` is the caller's external mapper, if any; a self-undistort model
 /// the result applied is used when there is none. `residuals`, when given
@@ -34,22 +34,41 @@ pub(super) fn finish(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     mut result: PipelineResult,
-    residuals: ResidualSink<'_>,
+    mut residuals: ResidualSink<'_>,
 ) -> PipelineResult {
     if config.circle_refinement.uses_photometric() {
         #[cfg(test)]
         RUNS.with(|n| n.set(n.get() + 1));
 
         let start = Instant::now();
-        refine(gray, config, mapper, &mut result, residuals);
+        refine(gray, config, mapper, &mut result, residuals.as_deref_mut());
         // The stage is part of the end-to-end total.
         if let Some(timings) = result.timings.as_mut() {
             timings.total_ms += duration_ms(start.elapsed());
         }
     }
-    super::finalize::drop_uncorrected_centres(&mut result, config);
+    let new_index = super::finalize::apply_output_contract(&mut result, config);
+    reindex_residuals(residuals, &new_index);
     result
 }
+
+/// Point the collected residuals at the markers' indices in the reported
+/// result, dropping those of markers the output contract removed.
+#[cfg(feature = "study")]
+fn reindex_residuals(residuals: ResidualSink<'_>, new_index: &[Option<usize>]) {
+    if let Some(sink) = residuals {
+        sink.retain_mut(|r| match new_index.get(r.marker_index).copied().flatten() {
+            Some(i) => {
+                r.marker_index = i;
+                true
+            }
+            None => false,
+        });
+    }
+}
+
+#[cfg(not(feature = "study"))]
+fn reindex_residuals(_: ResidualSink<'_>, _: &[Option<usize>]) {}
 
 fn refine(
     gray: &GrayImage,

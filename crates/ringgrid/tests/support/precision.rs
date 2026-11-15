@@ -461,6 +461,21 @@ pub fn board_cases(board: Board) -> Vec<Case> {
             },
         );
     }
+    // Dark, low-dynamic-range frames (an underexposed camera): paper at
+    // 55–75 grey levels over a dark offset, 1.5 levels of noise, rings
+    // across the scale range. Contrast 20 is the edge-gradient level of the
+    // real frames that failed (99th-percentile gradient 6–10 vs ~24).
+    for d in [32.0, 56.0, 66.0, 72.0] {
+        for (white, contrast, blur) in [(75.0, 45.0, 1.5), (60.0, 30.0, 1.5), (55.0, 20.0, 2.0)] {
+            let spec = SceneSpec {
+                white,
+                contrast,
+                noise_sigma: 1.5,
+                ..b.spec(d, blur, 20.0)
+            };
+            b.push("dark", &format!("d{d}-c{contrast}"), d, spec, Overlay::None);
+        }
+    }
     b.cases
 }
 

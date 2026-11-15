@@ -66,6 +66,7 @@ let result = det.detect_adaptive_with_hint(&image, Some(32.0)).unwrap();
 - `target` — target geometry (`TargetLayout`)
 - `marker_scale` — expected marker diameter range
 - `circle_refinement` — post-fit center-correction method
+- `min_confidence` — minimum marker confidence reported (recall vs centre accuracy)
 - `self_undistort` — division-model self-undistort policy
 - `advanced` — an `AdvancedDetectConfig` holding every per-stage tuning knob
 
@@ -98,6 +99,7 @@ knobs are reached through the `advanced` sub-config.
 | `target` | `TargetLayout` | default hex | Target layout defining marker positions and geometry. Not serialized — re-attach via `with_target` when loading a config from JSON. |
 | `marker_scale` | `MarkerScalePrior` | 14.0--66.0 px | Expected marker diameter range in pixels. Drives derivation of many downstream parameters. |
 | `circle_refinement` | `CircleRefinementMethod` | `ProjectiveCenter` | Center correction strategy selector: `None`, `ProjectiveCenter` or `Photometric` (blur-robust, adds a center covariance). |
+| `min_confidence` | `f32` | `0.03` | Minimum `DetectedMarker::confidence` reported, applied once on the finished result (homography refit from the markers kept). The one knob trading recall for centre accuracy; see the trade-off table in ADR-024. `0` reports every marker that passed the gates. |
 | `self_undistort` | `SelfUndistortConfig` | disabled | Self-undistort estimation from conic consistency of detected ring edges. |
 | `advanced.outer_estimation` | `OuterEstimationConfig` | (see sub-configs) | Outer-edge radius hypothesis generation from radial profile peaks. |
 | `advanced.proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |

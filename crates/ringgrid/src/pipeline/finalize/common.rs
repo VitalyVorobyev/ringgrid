@@ -18,12 +18,7 @@ pub(super) fn phase_geometric_verify(
     config: &DetectConfig,
 ) -> GeometricVerifyStats {
     if config.advanced.geometric_verify {
-        geometric_verify_filter(
-            markers,
-            final_h,
-            &config.target,
-            config.advanced.ransac_homography.inlier_threshold,
-        )
+        geometric_verify_filter(markers, final_h, &config.target)
     } else {
         annotate_h_reproj_err_px(markers, final_h);
         GeometricVerifyStats::default()

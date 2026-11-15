@@ -56,9 +56,14 @@ const MIN_SAMPLES: usize = 8;
 const FLOOR_LOCAL_PX: f64 = 2.0;
 /// MAD multiplier (~4σ, one-sided) for the local lattice-midpoint test.
 const K_LOCAL: f64 = 4.0;
-/// Floor multiplier (× RANSAC inlier threshold) for the global final-H residual
-/// test. Default `2 × 5px = 10px` — a deliberately loose gross-blunder backstop.
-const C1_GLOBAL: f64 = 2.0;
+/// Floor (px) for the global final-H residual threshold, the same as the local
+/// floor: on a homography that fits (median residual well under a pixel) a
+/// ring 2–8 px off its cell's projection is not that cell's ring — a ring of a
+/// second board in view that happens to lie near a hidden cell passes every
+/// other test (precision harness: a 10 px floor let such rings through; 2 px
+/// removed them, and lens distortion still raises the threshold through the
+/// MAD term).
+const FLOOR_GLOBAL_PX: f64 = 2.0;
 /// MAD multiplier for the global final-H residual test. Looser than the local
 /// multiplier so legitimately distorted peripheral markers survive.
 const K_GLOBAL: f64 = 5.0;
@@ -160,7 +165,6 @@ pub(super) fn geometric_verify_filter(
     markers: &mut Vec<MarkerRecord>,
     final_h: Option<&Matrix3<f64>>,
     target: &TargetLayout,
-    ransac_inlier_threshold_px: f64,
 ) -> GeometricVerifyStats {
     let n_decoded_checked = markers
         .iter()
@@ -204,11 +208,7 @@ pub(super) fn geometric_verify_filter(
             })
             .collect();
         let global_residuals: Vec<f64> = global_by_coord.iter().map(|(_, r)| *r).collect();
-        let tg = adaptive_threshold(
-            &global_residuals,
-            C1_GLOBAL * ransac_inlier_threshold_px,
-            K_GLOBAL,
-        );
+        let tg = adaptive_threshold(&global_residuals, FLOOR_GLOBAL_PX, K_GLOBAL);
         flagged_global_coords = global_by_coord
             .iter()
             .filter(|(_, r)| *r > tg)
@@ -339,7 +339,7 @@ mod tests {
         let mut markers = clean_lattice(&board, &h);
         let n = markers.len();
         assert!(n > 20, "test board should expose a full lattice");
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
         assert_eq!(
             stats.n_removed_total, 0,
             "clean lattice must not be filtered"
@@ -370,7 +370,7 @@ mod tests {
             }
         }
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
         assert_eq!(
             stats.n_removed_total, 0,
             "distorted true markers must survive"
@@ -413,7 +413,7 @@ mod tests {
             }
         }
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
 
         assert!(
             !markers.iter().any(|m| m.id == Some(target)),
@@ -448,11 +448,11 @@ mod tests {
         let bxy_b = board.xy_mm_of_id(b).unwrap();
         let bad = marker_at(&board, a, {
             let p = project(&h, [bxy_a[0] as f64, bxy_a[1] as f64]);
-            [p[0] + 20.0, p[1]] // 20px ≫ 10px global floor
+            [p[0] + 20.0, p[1]] // 20px ≫ 2px global floor
         });
         let good = marker_at(&board, b, project(&h, [bxy_b[0] as f64, bxy_b[1] as f64]));
         let mut markers = vec![bad, good];
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
 
         assert_eq!(
             stats.n_removed_local, 0,
@@ -470,7 +470,7 @@ mod tests {
         let h = affine_h(5.0, 100.0, 100.0);
         let mut markers = clean_lattice(&board, &h);
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, None, &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, None, &board);
         assert!(stats.t_global_px.is_none());
         assert_eq!(
             stats.n_removed_total, 0,
@@ -496,7 +496,7 @@ mod tests {
                 m.center[1] += 30.0;
             }
         }
-        geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        geometric_verify_filter(&mut markers, Some(&h), &board);
         assert!(
             !markers.iter().any(|m| m.id == Some(target)),
             "off-lattice completion marker must be removed"
@@ -516,7 +516,7 @@ mod tests {
                     m.center[1] += 30.0;
                 }
             }
-            geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+            geometric_verify_filter(&mut markers, Some(&h), &board);
             markers.iter().filter_map(|m| m.id).collect::<Vec<_>>()
         };
         assert_eq!(build(), build(), "gate output must be order-independent");

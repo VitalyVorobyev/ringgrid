@@ -2,7 +2,7 @@ pub(crate) use image::GrayImage;
 
 pub(crate) use crate::detector::marker_build;
 pub(crate) use crate::detector::outer_fit;
-pub(crate) use crate::detector::{CompletionScope, CompletionStats, DetectConfig};
+pub(crate) use crate::detector::{CompletionScope, DetectConfig};
 
 pub(crate) use crate::homography::{
     compute_h_stats, matrix3_to_array, mean_reproj_error_px, refit_homography,

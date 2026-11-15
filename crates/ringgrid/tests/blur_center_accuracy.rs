@@ -148,7 +148,9 @@ fn acceptance_case(
 /// saturated glare blob and σ = 2 noise, photometric centres reach ≤ 0.03 px
 /// RMS at blur 0.8 (40 grey levels of contrast) and ≤ 0.05 px RMS at blur 3.0
 /// (80 grey levels: at 40 the decoder loses blur-3 markers for every centre
-/// method), and decode exactly the markers the default method decodes. Debug
+/// method), and report every marker the default method reports (and those
+/// whose outer-only centre the default method cannot report: photometry
+/// corrects them). Debug
 /// builds take about half a minute.
 #[test]
 fn photometric_centres_meet_accuracy_targets() {
@@ -167,9 +169,9 @@ fn photometric_centres_meet_accuracy_targets() {
             stats.rms(),
             stats.quantile(0.95)
         );
-        assert_eq!(
-            ids_baseline, ids_refined,
-            "refinement must not change decoding"
+        assert!(
+            ids_baseline.iter().all(|id| ids_refined.contains(id)),
+            "refinement must keep every marker the default method reports"
         );
         assert_eq!(stats.n_wrong_id, 0);
         assert!(

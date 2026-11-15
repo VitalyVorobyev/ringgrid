@@ -8,7 +8,8 @@
 //! at high density, then warped into the camera image by a homography with
 //! 4×4 supersampling per pixel. Pixel centres sit at integer coordinates, the
 //! detector's convention. The true projected centre of a marker is the
-//! homography image of its board position (no lens distortion).
+//! homography image of its board position, through the optional radial lens
+//! distortion ([`RadialDivision`]).
 //!
 //! Besides the Gaussian PSF the detector models, a scene can carry effects the
 //! photometric model cannot represent — an anisotropic Gaussian, a Gaussian
@@ -165,6 +166,9 @@ pub struct SceneSpec {
     pub noise_corr_px: f64,
     /// Sub-pixel samples per side when integrating the board reflectance.
     pub supersample: usize,
+    /// Radial lens distortion (division model, see [`RadialDivision`]); 0 is
+    /// a distortion-free pinhole.
+    pub radial_lambda: f64,
     pub seed: u64,
 }
 
@@ -201,6 +205,7 @@ impl SceneSpec {
             noise_sigma: 2.0,
             noise_corr_px: 0.0,
             supersample: SUPERSAMPLE,
+            radial_lambda: 0.0,
             seed,
         }
     }
@@ -417,16 +422,76 @@ impl BoardRaster {
     }
 }
 
+/// One-parameter radial division model about the image centre, in
+/// coordinates normalised by the half-diagonal `scale`: an image (distorted)
+/// point `d` sees the pinhole point `c + (d − c) / (1 + λ |q|²)`, `q = (d −
+/// c) / scale`. `λ < 0` is barrel distortion.
+#[derive(Debug, Clone, Copy)]
+pub struct RadialDivision {
+    pub lambda: f64,
+    pub center: [f64; 2],
+    pub scale: f64,
+}
+
+impl RadialDivision {
+    fn of(spec: &SceneSpec) -> Option<Self> {
+        (spec.radial_lambda != 0.0).then(|| {
+            let [w, h] = spec.image_size.map(f64::from);
+            Self {
+                lambda: spec.radial_lambda,
+                center: [0.5 * (w - 1.0), 0.5 * (h - 1.0)],
+                scale: 0.5 * w.hypot(h),
+            }
+        })
+    }
+
+    /// Image (distorted) point → pinhole point.
+    pub fn undistort(&self, d: [f64; 2]) -> [f64; 2] {
+        let q = [
+            (d[0] - self.center[0]) / self.scale,
+            (d[1] - self.center[1]) / self.scale,
+        ];
+        let f = 1.0 / (1.0 + self.lambda * (q[0] * q[0] + q[1] * q[1]));
+        [
+            self.center[0] + self.scale * q[0] * f,
+            self.center[1] + self.scale * q[1] * f,
+        ]
+    }
+
+    /// Pinhole point → image (distorted) point (fixed-point inverse of
+    /// [`undistort`](Self::undistort)).
+    pub fn distort(&self, u: [f64; 2]) -> [f64; 2] {
+        let qu = [
+            (u[0] - self.center[0]) / self.scale,
+            (u[1] - self.center[1]) / self.scale,
+        ];
+        let ru = qu[0].hypot(qu[1]);
+        let mut rd = ru;
+        for _ in 0..100 {
+            rd = ru * (1.0 + self.lambda * rd * rd);
+        }
+        let k = if ru > 0.0 { rd / ru } else { 1.0 };
+        [
+            self.center[0] + self.scale * qu[0] * k,
+            self.center[1] + self.scale * qu[1] * k,
+        ]
+    }
+}
+
 /// A rendered frame with its board → image homography.
 pub struct Scene {
     pub image: GrayImage,
-    /// Board mm → image pixels (row-major 3×3).
+    /// Board mm → pinhole image pixels (row-major 3×3).
     pub h: [[f64; 3]; 3],
+    /// Lens distortion between the pinhole image and the rendered image.
+    pub distortion: Option<RadialDivision>,
 }
 
 impl Scene {
+    /// Board point (mm) → image pixel, through the lens distortion.
     pub fn project(&self, xy_mm: [f64; 2]) -> [f64; 2] {
-        apply_h(&self.h, xy_mm)
+        let p = apply_h(&self.h, xy_mm);
+        self.distortion.map_or(p, |d| d.distort(p))
     }
 }
 
@@ -737,6 +802,7 @@ pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
     ];
     let h = scene_homography(spec, mid);
     let h_inv = inverse3(&h);
+    let lens = RadialDivision::of(spec);
     let (w, hh) = (spec.image_size[0] as usize, spec.image_size[1] as usize);
 
     // Reflectance, area-sampled.
@@ -749,7 +815,8 @@ pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
                 for sx in 0..spec.supersample {
                     let px = x as f64 + (sx as f64 + 0.5) / n - 0.5;
                     let py = y as f64 + (sy as f64 + 0.5) / n - 0.5;
-                    acc += board.reflectance(apply_h(&h_inv, [px, py]));
+                    let p = lens.map_or([px, py], |d| d.undistort([px, py]));
+                    acc += board.reflectance(apply_h(&h_inv, p));
                 }
             }
             buf[y * w + x] = acc / (n * n);
@@ -825,6 +892,7 @@ pub fn expose(radiance: &Radiance, spec: &SceneSpec, seed: u64) -> Scene {
     Scene {
         image,
         h: radiance.h,
+        distortion: RadialDivision::of(spec),
     }
 }
 

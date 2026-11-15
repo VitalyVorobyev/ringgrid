@@ -1,6 +1,7 @@
 # ADR-023: Grid-First Finalize for Every Target
 
-- **Status:** accepted
+- **Status:** accepted; anchor acceptance, contradicted decodes and the
+  fallback floor amended by ADR-024
 - **Date:** 2026-11-15
 - **Author role:** algorithm-engineer
 - **Supersedes:** the coded back half of ADR-017 (plain targets already ran

@@ -154,6 +154,45 @@ pub(super) fn refit_final_homography(result: &mut PipelineResult, config: &Detec
     result.ransac = ransac;
 }
 
+/// Output contract: when the configuration asks for a centre correction
+/// (projective or photometric), every reported marker carries a corrected
+/// centre. A marker whose correction failed (no inner ellipse, or every
+/// correction rejected by its gates) keeps the outer-ellipse centre, which
+/// perspective and blur bias (precision harness, operating range: median
+/// error 0.25–1.0 px against 0.12–0.21 px corrected, about half the centres
+/// beyond the loose tolerance); it is not reported. Such rings still served
+/// as lattice evidence (labeling, anchor votes, homography support) — their
+/// position is good to a pixel, their centre is not good to calibration
+/// accuracy. Runs on the finished result, after photometric refinement can
+/// still correct them; the homography is refit from the markers kept.
+pub(super) fn drop_uncorrected_centres(result: &mut PipelineResult, config: &DetectConfig) {
+    if !config.circle_refinement.uses_projective_center() {
+        return;
+    }
+    let before = result.markers.len();
+    result
+        .markers
+        .retain(|m| m.center_source != crate::detector::CenterSource::OuterEllipse);
+    if result.markers.len() == before {
+        return;
+    }
+    tracing::info!(
+        n_dropped = before - result.markers.len(),
+        "markers without a corrected centre not reported"
+    );
+    if result
+        .markers
+        .iter()
+        .any(|m| m.grid_coord.is_some() || m.id.is_some())
+    {
+        refit_final_homography(result, config);
+    } else {
+        result.homography = None;
+        result.ransac = None;
+        result.board_frame = None;
+    }
+}
+
 /// Correspondence-only copies of a result's markers, index-aligned, as
 /// finalize saw them when it fitted the homography: centre in the
 /// homography's frame, position in its source plane. A marker without a

@@ -13,6 +13,7 @@ use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;
+use crate::homography::homography_project;
 use crate::ring::MAD_TO_SIGMA;
 use crate::target::TargetLayout;
 
@@ -56,12 +57,24 @@ const MIN_SAMPLES: usize = 8;
 const FLOOR_LOCAL_PX: f64 = 2.0;
 /// MAD multiplier (~4σ, one-sided) for the local lattice-midpoint test.
 const K_LOCAL: f64 = 4.0;
-/// Floor multiplier (× RANSAC inlier threshold) for the global final-H residual
-/// test. Default `2 × 5px = 10px` — a deliberately loose gross-blunder backstop.
-const C1_GLOBAL: f64 = 2.0;
+/// Floor (px) for the global final-H residual threshold, the same as the local
+/// floor: on a homography that fits (median residual well under a pixel) a
+/// ring 2–8 px off its cell's projection is not that cell's ring — a ring of a
+/// second board in view that happens to lie near a hidden cell passes every
+/// other test (precision harness: a 10 px floor let such rings through; 2 px
+/// removed them, and lens distortion still raises the threshold through the
+/// MAD term).
+const FLOOR_GLOBAL_PX: f64 = 2.0;
 /// MAD multiplier for the global final-H residual test. Looser than the local
 /// multiplier so legitimately distorted peripheral markers survive.
 const K_GLOBAL: f64 = 5.0;
+/// Floor and MAD multiplier of the ellipse-shape test (see
+/// [`shape_outliers`]). Precision harness, operating range (104k correct,
+/// 46 wrong-centre markers; 7.1k correct under uncorrected distortion): a
+/// floor of 0.12 with 6 robust sigmas flags 38 of 46 wrong centres and 0.5 %
+/// of correct markers (0 % under distortion).
+const FLOOR_SHAPE: f64 = 0.12;
+const K_SHAPE: f64 = 6.0;
 
 /// Outcome of [`geometric_verify_filter`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -160,7 +173,6 @@ pub(super) fn geometric_verify_filter(
     markers: &mut Vec<MarkerRecord>,
     final_h: Option<&Matrix3<f64>>,
     target: &TargetLayout,
-    ransac_inlier_threshold_px: f64,
 ) -> GeometricVerifyStats {
     let n_decoded_checked = markers
         .iter()
@@ -204,17 +216,16 @@ pub(super) fn geometric_verify_filter(
             })
             .collect();
         let global_residuals: Vec<f64> = global_by_coord.iter().map(|(_, r)| *r).collect();
-        let tg = adaptive_threshold(
-            &global_residuals,
-            C1_GLOBAL * ransac_inlier_threshold_px,
-            K_GLOBAL,
-        );
+        let tg = adaptive_threshold(&global_residuals, FLOOR_GLOBAL_PX, K_GLOBAL);
         flagged_global_coords = global_by_coord
             .iter()
             .filter(|(_, r)| *r > tg)
             .map(|(c, _)| *c)
             .collect();
         t_global = Some(tg);
+    }
+    if let Some(h) = final_h {
+        flagged_global_coords.extend(shape_outliers(markers, h, target));
     }
 
     // --- Reject = union, single retain pass ---
@@ -256,6 +267,61 @@ pub(super) fn geometric_verify_filter(
         );
     }
     stats
+}
+
+/// Axis ratio (minor / major) of the ellipse `h` maps a small circle at board
+/// point `xy` to: the singular-value ratio of its local Jacobian.
+fn predicted_axis_ratio(h: &Matrix3<f64>, xy: [f64; 2]) -> Option<f64> {
+    let o = homography_project(h, xy[0], xy[1]);
+    let px = homography_project(h, xy[0] + 1.0, xy[1]);
+    let py = homography_project(h, xy[0], xy[1] + 1.0);
+    let (a, b, c, d) = (px[0] - o[0], py[0] - o[0], px[1] - o[1], py[1] - o[1]);
+    let t = a * a + b * b + c * c + d * d;
+    let det = (a * d - b * c).abs();
+    let disc = (t * t - 4.0 * det * det).max(0.0).sqrt();
+    let (s_max, s_min) = (((t + disc) / 2.0).sqrt(), ((t - disc) / 2.0).sqrt());
+    (s_max > 0.0 && s_min.is_finite()).then(|| s_min / s_max)
+}
+
+/// Ellipse-shape consistency: a planar target images each marker circle
+/// through the homography's local Jacobian, so its outer ellipse's axis ratio
+/// is predicted by `h` at its cell. Flags labeled markers whose fitted axis
+/// ratio departs from the prediction by more than
+/// `max(FLOOR_SHAPE, K_SHAPE · σ)` around the view's median residual (a robust
+/// σ absorbs fit noise and blur, the median a common offset). Catches rings
+/// whose ellipse is not the whole marker's — cut by the image border or an
+/// occluder, merged with a neighbour — whose centres are off.
+fn shape_outliers(
+    markers: &[MarkerRecord],
+    h: &Matrix3<f64>,
+    target: &TargetLayout,
+) -> HashSet<Coord> {
+    let residuals: Vec<(Coord, f64)> = markers
+        .iter()
+        .filter_map(|m| {
+            let e = m.ellipse_outer.as_ref()?;
+            let predicted = predicted_axis_ratio(h, m.board_xy_mm?)?;
+            Some((marker_cell_coord(m, target)?, e.b / e.a - predicted))
+        })
+        .filter(|(_, r)| r.is_finite())
+        .collect();
+    if residuals.len() < MIN_SAMPLES {
+        return HashSet::new();
+    }
+    let values: Vec<f64> = residuals.iter().map(|(_, r)| *r).collect();
+    let median = median_f64(values.clone()).unwrap_or(0.0);
+    let deviations: Vec<f64> = values.iter().map(|r| (r - median).abs()).collect();
+    let mad = median_f64(deviations).unwrap_or(0.0);
+    let threshold = FLOOR_SHAPE.max(K_SHAPE * MAD_TO_SIGMA * mad);
+    let flagged: HashSet<Coord> = residuals
+        .iter()
+        .filter(|(_, r)| (r - median).abs() > threshold)
+        .map(|(c, _)| *c)
+        .collect();
+    if !flagged.is_empty() {
+        tracing::info!(n = flagged.len(), threshold, "ellipse-shape outliers");
+    }
+    flagged
 }
 
 #[cfg(test)]
@@ -339,7 +405,7 @@ mod tests {
         let mut markers = clean_lattice(&board, &h);
         let n = markers.len();
         assert!(n > 20, "test board should expose a full lattice");
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
         assert_eq!(
             stats.n_removed_total, 0,
             "clean lattice must not be filtered"
@@ -370,7 +436,7 @@ mod tests {
             }
         }
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
         assert_eq!(
             stats.n_removed_total, 0,
             "distorted true markers must survive"
@@ -413,7 +479,7 @@ mod tests {
             }
         }
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
 
         assert!(
             !markers.iter().any(|m| m.id == Some(target)),
@@ -448,11 +514,11 @@ mod tests {
         let bxy_b = board.xy_mm_of_id(b).unwrap();
         let bad = marker_at(&board, a, {
             let p = project(&h, [bxy_a[0] as f64, bxy_a[1] as f64]);
-            [p[0] + 20.0, p[1]] // 20px ≫ 10px global floor
+            [p[0] + 20.0, p[1]] // 20px ≫ 2px global floor
         });
         let good = marker_at(&board, b, project(&h, [bxy_b[0] as f64, bxy_b[1] as f64]));
         let mut markers = vec![bad, good];
-        let stats = geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
 
         assert_eq!(
             stats.n_removed_local, 0,
@@ -470,7 +536,7 @@ mod tests {
         let h = affine_h(5.0, 100.0, 100.0);
         let mut markers = clean_lattice(&board, &h);
         let n = markers.len();
-        let stats = geometric_verify_filter(&mut markers, None, &board, 5.0);
+        let stats = geometric_verify_filter(&mut markers, None, &board);
         assert!(stats.t_global_px.is_none());
         assert_eq!(
             stats.n_removed_total, 0,
@@ -496,7 +562,7 @@ mod tests {
                 m.center[1] += 30.0;
             }
         }
-        geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+        geometric_verify_filter(&mut markers, Some(&h), &board);
         assert!(
             !markers.iter().any(|m| m.id == Some(target)),
             "off-lattice completion marker must be removed"
@@ -516,7 +582,7 @@ mod tests {
                     m.center[1] += 30.0;
                 }
             }
-            geometric_verify_filter(&mut markers, Some(&h), &board, 5.0);
+            geometric_verify_filter(&mut markers, Some(&h), &board);
             markers.iter().filter_map(|m| m.id).collect::<Vec<_>>()
         };
         assert_eq!(build(), build(), "gate output must be order-independent");

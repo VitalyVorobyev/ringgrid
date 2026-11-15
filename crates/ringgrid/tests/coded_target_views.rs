@@ -1,7 +1,7 @@
 //! Coded targets in hard views, end to end: the grid-first back half (grid
 //! labeling → decoded-ID anchor → cell identification) and its fallback
-//! ladder (no grid → decode-anchored homography with ≥ 4 decodes → markers
-//! without a homography).
+//! ladder (no grid → decode-anchored homography corroborated by the rings'
+//! own decodes → otherwise markers without IDs or homography).
 //!
 //! `cargo test --release -p ringgrid --test coded_target_views -- --nocapture`
 //! prints the per-scene counts.
@@ -59,7 +59,10 @@ fn decode_accepted(diag: &ringgrid::diagnostics::MarkerDiagnostics) -> Option<us
 fn coded_rect_tilted_55_identifies_undecoded_rings_from_the_grid() {
     // Strong perspective: the far side's code bands do not decode. The
     // decode-anchored homography identified 312 of 400 visible markers here;
-    // grid labeling identifies the undecoded rings directly (394).
+    // grid labeling identifies the undecoded rings directly (390). Only 143
+    // are reported: at 20 px and 55° most rings get no inner ellipse /
+    // projective centre, and a marker without a corrected centre is not
+    // reported (photometric refinement corrects them).
     let target = coded_rect();
     let spec = scene_spec(&target, 11.0, 55.0, 3);
     let scene = render(&BoardRaster::new(target.clone()), &spec);
@@ -68,34 +71,37 @@ fn coded_rect_tilted_55_identifies_undecoded_rings_from_the_grid() {
     report("coded rect, tilt 55", &stats);
     assert_eq!(stats.n_wrong_id, 0);
     assert!(
-        stats.n_decoded * 100 >= stats.n_visible * 95,
+        stats.n_decoded * 100 >= stats.n_visible * 33,
         "identified {} of {} visible",
         stats.n_decoded,
         stats.n_visible
     );
 
     // Fitted (not completed) rings whose own decode did not yield their ID
-    // contribute: undecoded rings take their cell's ID, and a decode that
-    // contradicts the anchored cell is overridden by the cell's ID (the
-    // scorer above already proved every ID correct).
-    let (mut undecoded, mut contradicted) = (0, 0);
+    // contribute: undecoded rings take their cell's ID, and a decode naming
+    // no board cell (a misread) is overridden by the cell's ID. A decode
+    // naming another board cell is never overridden — such a ring leaves the
+    // labeling (the scorer above already proved every ID correct).
+    let (mut undecoded, mut off_board, mut on_board) = (0, 0, 0);
     for (m, d) in result.detected_markers.iter().zip(&diag.markers) {
         if d.source != DetectionSource::FitDecoded || m.id.is_none() {
             continue;
         }
         match decode_accepted(d) {
             None => undecoded += 1,
-            Some(id) if Some(id) != m.id => contradicted += 1,
+            Some(id) if Some(id) != m.id && target.coord_of_id(id).is_some() => on_board += 1,
+            Some(id) if Some(id) != m.id => off_board += 1,
             Some(_) => {}
         }
     }
     println!(
-        "  undecoded fitted rings identified {undecoded}, contradicted decodes overridden {contradicted}"
+        "  undecoded fitted rings identified {undecoded}, off-board misreads overridden {off_board}"
     );
-    assert!(undecoded >= 20, "undecoded rings identified: {undecoded}");
-    assert!(
-        contradicted >= 1,
-        "contradicted decodes overridden: {contradicted}"
+    assert!(undecoded >= 10, "undecoded rings identified: {undecoded}");
+    assert!(off_board >= 1, "off-board misreads overridden: {off_board}");
+    assert_eq!(
+        on_board, 0,
+        "on-board contradicting decodes are not overridden"
     );
 }
 
@@ -149,8 +155,10 @@ fn coded_rect_corner_view() {
     let stats = score(&scene, &target, &result.detected_markers, false);
     report("coded rect, corner view", &stats);
     assert_eq!(stats.n_wrong_id, 0);
+    // 112 of 126: border-cut rings whose centres sit more than 2 px off the
+    // board homography fail geometric verify (117 at the former 10 px floor).
     assert!(
-        stats.n_decoded * 100 >= stats.n_visible * 90,
+        stats.n_decoded * 100 >= stats.n_visible * 85,
         "identified {} of {} visible",
         stats.n_decoded,
         stats.n_visible
@@ -233,22 +241,31 @@ fn no_grid_with_enough_decodes_falls_back_to_decode_anchored_homography() {
 }
 
 #[test]
-fn no_grid_with_fewer_than_four_decodes_returns_markers_without_homography() {
+fn no_grid_with_fewer_than_four_decodes_fails_closed() {
+    // Three isolated markers: no grid, no homography to corroborate the
+    // decodes — a lone decode can be a misread, so no ID is reported.
     let target = TargetLayout::default_hex();
     let cells = spread_cells(&target, 3, 2.5 * target.pitch_mm());
     let scene = sparse_scene(&target, &cells, 22.0);
     let (result, _) = detect(&target, &scene, 22.0);
-    let stats = score(&scene, &target, &result.detected_markers, false);
-    report("3 isolated markers", &stats);
-    assert_eq!(stats.n_wrong_id, 0);
-    assert!(stats.n_decoded >= 2, "identified {}", stats.n_decoded);
+    report(
+        "3 isolated markers",
+        &score(&scene, &target, &result.detected_markers, false),
+    );
+    assert!(
+        !result.detected_markers.is_empty(),
+        "the rings are reported"
+    );
+    assert!(result.detected_markers.iter().all(|m| m.id.is_none()));
     assert!(result.homography.is_none());
+    assert!(result.board_frame.is_none());
 }
 
 #[test]
-fn single_marker_keeps_its_id() {
-    // Fallback ladder floor: one decodable marker in view is returned with
-    // its ID (no grid can be labeled, no homography can be fit).
+fn single_marker_is_reported_without_id() {
+    // Fallback ladder floor: one decodable marker in view (no grid can be
+    // labeled, no homography can be fit) is returned, but without an ID —
+    // nothing corroborates its decode.
     let target = TargetLayout::default_hex();
     let cell = target.cells()[100];
     let xy = [f64::from(cell.xy_mm[0]), f64::from(cell.xy_mm[1])];
@@ -268,6 +285,9 @@ fn single_marker_keeps_its_id() {
     let (result, _) = detect(&target, &scene, 30.0);
     let markers = result.detected_markers;
     assert_eq!(markers.len(), 1, "exactly the one printed marker");
-    assert_eq!(markers[0].id, cell.id, "the marker keeps its decoded ID");
+    assert_eq!(
+        markers[0].id, None,
+        "an uncorroborated decode is not reported"
+    );
     assert!(result.homography.is_none());
 }

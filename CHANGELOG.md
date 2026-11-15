@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Detection fails closed: it reports less rather than a wrong ID, board
+  position or centre.** Measured on a new ground-truth harness
+  (`tests/precision_audit.rs`, 678 synthetic scenes of every target kind; the
+  same images run through 0.15.0): on the 450-scene operating-range grid
+  (blur σ ≤ 2 px, rings ≥ 20 px) wrong IDs 226 → 0, wrong homographies 2 → 0,
+  centres beyond `max(2 px, 10 % of the diameter)` 168 → 3. What changes for
+  users:
+  - IDs are reported only with a corroborated board placement. Without one —
+    1–6 isolated markers, an unreadable code band — markers come back without
+    IDs, board positions or homography (raw decodes there were 77 % wrong).
+  - The decoded-ID anchor accepts a placement whose agreeing decodes beat
+    chance and rejects ambiguous ones (a runner-up beyond chance), instead of
+    requiring a strict majority: more views anchor under heavy misreads.
+  - A ring whose own decode names another board cell no longer takes its
+    cell's ID; the decode-anchored fallback needs `min_inliers` of its
+    homography's inliers to carry their own decode, and grows completion from
+    the identified patch only.
+  - **Markers without a perspective-corrected centre are not reported** when
+    a centre correction is configured (default `ProjectiveCenter`): an
+    outer-ellipse-only centre was 1.5–8× less accurate. This costs recall
+    (operating-range grid, 0.15.0 / without this rule / now: hex 0.80 /
+    0.80 / 0.69, rect 0.74 / 0.85 / 0.70, Extended 0.82 / 0.87 / 0.71),
+    concentrated on small, tilted rings; `--refine photometric` corrects
+    them and restores it (catalogue).
+  - Geometric verify tightens its global floor to 2 px and gains an
+    ellipse-shape test (axis ratio vs the homography's prediction).
+  See ADR-024.
+
 - **With `CircleRefinementMethod::Photometric`, the returned homography is
   refit from the refined centres.** It used to stay the one fitted to the
   pre-refinement centres. After the photometric stage accepts any fit, the

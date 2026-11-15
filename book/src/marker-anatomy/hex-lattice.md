@@ -202,20 +202,17 @@ reference and v4 auto-migration.
 
 ## Board generation
 
-Hex board specs can be produced by the Python utility `tools/gen_board_spec.py`,
-which writes a v4 `board_spec.json` (loaders migrate it to v5 automatically):
+Hex board specs are produced by the `ringgrid` CLI from a recipe (the
+`hex_coded` example is the standard 15×14 board), which writes a canonical v6
+`target_spec.json`:
 
 ```bash
-.venv/bin/python tools/gen_board_spec.py \
-    --pitch_mm 8.0 \
-    --rows 15 \
-    --long_row_cols 14 \
-    --board_mm 200.0 \
-    --json_out tools/board/board_spec.json
+ringgrid example --name hex_coded --out board.toml
+ringgrid gen board.toml --out out --formats json
 ```
 
 Load the result at runtime with `TargetLayout::from_json_file()`, or skip the
 file entirely and use `TargetLayout::default_hex()` for the standard 15×14 board.
-For the pure-Rust CLI generator — which writes a v5 `target_spec.json` plus
-printable SVG/PNG and also handles rect and plain targets — see
+Without `--formats json` the same command also writes printable SVG/PNG/DXF, and
+recipes cover rect and plain targets too; see
 [Target Generation](../target-generation.md).

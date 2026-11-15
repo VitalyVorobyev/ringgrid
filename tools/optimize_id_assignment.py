@@ -27,6 +27,8 @@ from pathlib import Path
 
 import numpy as np
 
+from target_json import load_hex_coded_spec
+
 BITS = 16
 MASK = (1 << BITS) - 1
 
@@ -325,11 +327,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    with open(args.board) as f:
-        spec = json.load(f)
+    spec = load_hex_coded_spec(args.board)
 
-    rows = spec["rows"]
-    long_row_cols = spec["long_row_cols"]
+    rows = spec["lattice"]["rows"]
+    long_row_cols = spec["lattice"]["long_row_cols"]
     positions = generate_hex_positions(rows, long_row_cols)
     n_positions = len(positions)
 
@@ -373,7 +374,8 @@ def main() -> None:
     print(f"SA result: min_adj_dist = {opt_min}, sum_adj_dist = {opt_sum}", file=sys.stderr)
 
     # Write output
-    spec["id_assignment"] = optimized
+    spec["coding"]["id_assignment"] = optimized
+    spec["coding"]["codebook_profile"] = args.profile
     out_path = args.out or args.board.replace(".json", "_optimized.json")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:

@@ -19,6 +19,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from target_json import load_hex_coded_spec
+
 BITS = 16
 MASK = (1 << BITS) - 1
 
@@ -92,11 +94,10 @@ def main() -> None:
     parser.add_argument("--profile", choices=["base", "extended"], default="base")
     args = parser.parse_args()
 
-    with open(args.board) as f:
-        spec = json.load(f)
+    spec = load_hex_coded_spec(args.board)
 
-    rows = spec["rows"]
-    long_row_cols = spec["long_row_cols"]
+    rows = spec["lattice"]["rows"]
+    long_row_cols = spec["lattice"]["long_row_cols"]
     positions = generate_hex_positions(rows, long_row_cols)
     n_markers = len(positions)
 
@@ -104,7 +105,7 @@ def main() -> None:
     n_codewords = len(codewords)
 
     # Determine assignment
-    id_assignment = spec.get("id_assignment")
+    id_assignment = spec["coding"].get("id_assignment")
     if id_assignment is not None:
         if len(id_assignment) != n_markers:
             print(f"ERROR: id_assignment length {len(id_assignment)} != {n_markers} markers", file=sys.stderr)

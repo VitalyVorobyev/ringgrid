@@ -236,7 +236,10 @@ cargo run -p ringgrid-cli --bin ringgrid-dev -- detect --image <path> --target <
 
 # Regenerate embedded codebook/board constants (don't hand-edit these)
 .venv/bin/python tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/marker/codebook.rs
-.venv/bin/python tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
+# tools/board/board_spec.json is the `hex_coded` example recipe rendered with `--name ringgrid_200mm_hex`:
+cargo run -p ringgrid --features cli --bin ringgrid -- example --name hex_coded --out /tmp/board.toml
+cargo run -p ringgrid --features cli --bin ringgrid -- gen /tmp/board.toml --out tools/board --formats json --name ringgrid_200mm_hex
+mv tools/board/target_spec.json tools/board/board_spec.json
 cargo build  # rebuild after regenerating
 ```
 
@@ -344,7 +347,7 @@ list them at all.
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`
 - External JSON uses `serde` structs (see `DetectionResult` in `pipeline/result.rs`)
 - Never introduce OpenCV bindings
-- `marker/codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
+- `marker/codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via the generators / `ringgrid gen`, never hand-edit generated Rust
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - `lib.rs` is purely re-exports; type definitions live at their construction sites
 - Keep one source of truth for shared configs/defaults: if a config is used by multiple stages, define it once and reuse it directly.

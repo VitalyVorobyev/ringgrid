@@ -97,11 +97,11 @@ The committed codebook artifacts live in `tools/codebook.json` and `crates/ringg
   --out_json tools/codebook.json \
   --out_rs crates/ringgrid/src/marker/codebook.rs
 
-.venv/bin/python tools/gen_board_spec.py \
-  --pitch_mm 8.0 \
-  --rows 15 --long_row_cols 14 \
-  --board_mm 200.0 \
-  --json_out tools/board/board_spec.json
+# The board fixture is the `hex_coded` example recipe, named as below.
+cargo run -p ringgrid --features cli --bin ringgrid -- example --name hex_coded --out /tmp/board.toml
+cargo run -p ringgrid --features cli --bin ringgrid -- gen /tmp/board.toml \
+  --out tools/board --formats json --name ringgrid_200mm_hex
+mv tools/board/target_spec.json tools/board/board_spec.json
 ```
 
 Rebuild after regeneration:

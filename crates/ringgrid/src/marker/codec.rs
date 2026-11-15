@@ -81,15 +81,10 @@ impl CodebookProfile {
     }
 }
 
-/// An embedded codebook for marker ID matching — a whole profile, or the
-/// subset of it one target prints ([`Codebook::for_target`]).
-#[derive(Debug, Clone)]
+/// An embedded codebook for marker ID matching.
 pub struct Codebook {
     profile: CodebookProfile,
-    words: std::borrow::Cow<'static, [u16]>,
-    /// Codebook IDs of `words`, ascending, when restricted to a target; `None`
-    /// for a whole profile (the ID is the index).
-    ids: Option<Box<[u16]>>,
+    words: &'static [u16],
     min_cyclic_dist: usize,
     seed: u64,
 }
@@ -130,44 +125,17 @@ impl Codebook {
         match profile {
             CodebookProfile::Base => Self {
                 profile,
-                words: std::borrow::Cow::Borrowed(&CODEBOOK),
-                ids: None,
+                words: &CODEBOOK,
                 min_cyclic_dist: CODEBOOK_MIN_CYCLIC_DIST,
                 seed: CODEBOOK_SEED,
             },
             CodebookProfile::Extended => Self {
                 profile,
-                words: std::borrow::Cow::Borrowed(&CODEBOOK_EXTENDED),
-                ids: None,
+                words: &CODEBOOK_EXTENDED,
                 min_cyclic_dist: CODEBOOK_EXTENDED_MIN_CYCLIC_DIST,
                 seed: CODEBOOK_EXTENDED_SEED,
             },
         }
-    }
-
-    /// The codewords a coded target prints: its profile restricted to the IDs
-    /// on its cells (`None` for plain targets). Matching searches only these,
-    /// so a margin is measured against the words that can actually appear and
-    /// an ID the target does not carry is never returned. Confidence keeps the
-    /// profile's minimum-distance normalization.
-    pub(crate) fn for_target(target: &crate::target::TargetLayout) -> Option<Self> {
-        let crate::target::MarkerCoding::Coded16(spec) = target.coding() else {
-            return None;
-        };
-        let full = Self::from_profile(spec.codebook_profile);
-        let mut ids: Vec<u16> = target
-            .marker_ids()
-            .filter(|&id| id < full.words.len())
-            .map(|id| id as u16)
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        let words: Vec<u16> = ids.iter().map(|&id| full.words[usize::from(id)]).collect();
-        Some(Self {
-            words: std::borrow::Cow::Owned(words),
-            ids: Some(ids.into_boxed_slice()),
-            ..full
-        })
     }
 
     /// Selected embedded profile.
@@ -205,11 +173,7 @@ impl Codebook {
     /// Get the codeword for a given marker ID.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn word(&self, id: usize) -> Option<u16> {
-        let index = match &self.ids {
-            None => id,
-            Some(ids) => ids.binary_search(&u16::try_from(id).ok()?).ok()?,
-        };
-        self.words.get(index).copied()
+        self.words.get(id).copied()
     }
 
     /// Match an observed 16-bit word against the codebook.
@@ -245,17 +209,7 @@ impl Codebook {
         [normal.finish(self), inverted.finish(self)]
     }
 
-    fn match_from_search(
-        &self,
-        index: usize,
-        rotation: u8,
-        best_dist: u8,
-        second_dist: u8,
-    ) -> Match {
-        let id = self
-            .ids
-            .as_ref()
-            .map_or(index, |ids| usize::from(ids[index]));
+    fn match_from_search(&self, id: usize, rotation: u8, best_dist: u8, second_dist: u8) -> Match {
         let margin = second_dist.saturating_sub(best_dist);
         let conf_dist = distance_confidence(best_dist);
         let conf_margin = (margin as f32 / self.min_cyclic_dist as f32).clamp(0.0, 1.0);
@@ -678,26 +632,5 @@ mod tests {
         assert_eq!(canonical_16(0x8000), 0x0001); // rotation of 0x0001
         assert_eq!(canonical_16(0x0003), 0x0003);
         assert_eq!(canonical_16(0xC000), 0x0003); // rotation of 0x0003
-    }
-
-    #[test]
-    fn target_codebook_matches_only_target_ids_with_no_smaller_margin() {
-        let target = crate::target::TargetLayout::default_hex();
-        let on_board: HashSet<usize> = target.marker_ids().collect();
-        let full = Codebook::from_profile(CodebookProfile::Base);
-        let sub = Codebook::for_target(&target).expect("coded target");
-        assert_eq!(sub.len(), on_board.len());
-        // Every printed word decodes to its own ID, at no smaller margin.
-        for &id in &on_board {
-            let w = full.word(id).unwrap();
-            assert_eq!(sub.word(id), Some(w));
-            let (m_sub, m_full) = (sub.match_word(w), full.match_word(w));
-            assert_eq!((m_sub.id, m_sub.dist), (id, 0));
-            assert!(m_sub.margin >= m_full.margin);
-        }
-        // A word the target does not print never maps outside the target.
-        let off = (0..full.len()).find(|id| !on_board.contains(id)).unwrap();
-        assert!(on_board.contains(&sub.match_word(full.word(off).unwrap()).id));
-        assert_eq!(sub.word(off), None);
     }
 }

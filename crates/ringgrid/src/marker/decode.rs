@@ -112,13 +112,6 @@ pub struct DecodeConfig {
     /// Default: `1e-4` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_threshold_convergence_eps")]
     pub threshold_convergence_eps: f32,
-    /// The codewords the target prints — `codebook_profile` restricted to the
-    /// target's IDs. Derived from the target alongside `codebook_profile`
-    /// ([`Codebook::for_target`]), never set by hand; `None` (no target
-    /// attached) matches the whole profile.
-    #[serde(skip)]
-    #[cfg_attr(feature = "schemars", schemars(skip))]
-    pub(crate) target_codebook: Option<std::sync::Arc<Codebook>>,
 }
 
 impl DecodeConfig {
@@ -177,7 +170,6 @@ impl Default for DecodeConfig {
             min_decode_contrast: Self::DEFAULT_MIN_DECODE_CONTRAST,
             threshold_max_iters: Self::DEFAULT_THRESHOLD_MAX_ITERS,
             threshold_convergence_eps: Self::DEFAULT_THRESHOLD_CONVERGENCE_EPS,
-            target_codebook: None,
         }
     }
 }
@@ -521,14 +513,7 @@ fn threshold_and_match_codebook(
         }
     }
 
-    let profile_codebook;
-    let cb = match &config.target_codebook {
-        Some(cb) => cb.as_ref(),
-        None => {
-            profile_codebook = Codebook::from_profile(config.codebook_profile);
-            &profile_codebook
-        }
-    };
+    let cb = Codebook::from_profile(config.codebook_profile);
     let [m_normal, m_inverted] = cb.match_word_both_polarities(word);
 
     let (best_match, used_word, inverted) = if m_normal.confidence >= m_inverted.confidence {

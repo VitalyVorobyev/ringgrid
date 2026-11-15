@@ -242,7 +242,12 @@ fn resolve_by_decoded_ids(
 /// random cell, so two misreads vote for the same placement with probability
 /// about `R / n_cells`, and `v` of them with `R / n_cells^(v−1)`. Fewer than
 /// two votes are always at chance level (0).
-fn ln_chance_votes(n_decoded: usize, votes: usize, n_rotations: usize, n_cells: usize) -> f64 {
+pub(crate) fn ln_chance_votes(
+    n_decoded: usize,
+    votes: usize,
+    n_rotations: usize,
+    n_cells: usize,
+) -> f64 {
     if votes < 2 {
         return 0.0;
     }

@@ -58,7 +58,33 @@ fn filter_with_h(markers: &[MarkerRecord], config: &DetectConfig) -> Option<Filt
         n_inliers = filtered.len(),
         "fallback homography support"
     );
-    (n_own >= ransac.min_inliers).then_some(FilterPhaseOutput {
+    let accepted = match std::env::var("RINGGRID_EXP_CHANCE").as_deref() {
+        // Anchor's lattice formula, verbatim (first vote free).
+        Ok("anchor") => {
+            let n_decoded = markers.iter().filter(|m| id_is_own_decode(m)).count();
+            let n_rot = (config.target.lattice_kind().symmetry_transforms().len() / 2).max(1);
+            crate::pipeline::anchor::ln_chance_votes(
+                n_decoded,
+                n_own,
+                n_rot,
+                config.target.n_cells(),
+            ) <= 1e-3f64.ln()
+        }
+        // Homography-adapted: four votes are free (any four points fit).
+        Ok("homography") => {
+            let n_decoded = markers.iter().filter(|m| id_is_own_decode(m)).count();
+            n_own >= 4
+                && crate::pipeline::anchor::ln_chance_votes(
+                    n_decoded,
+                    n_own,
+                    1,
+                    config.target.n_cells(),
+                ) - 3.0 * (config.target.n_cells() as f64).ln()
+                    <= 1e-3f64.ln()
+        }
+        _ => n_own >= ransac.min_inliers,
+    };
+    accepted.then_some(FilterPhaseOutput {
         markers: filtered,
         h,
         ransac_stats: stats,

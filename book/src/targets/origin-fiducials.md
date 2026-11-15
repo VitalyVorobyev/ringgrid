@@ -68,8 +68,8 @@ An opaque planar target viewed by a camera always images through an
 reflected labeling would require an orientation-reversing map, which is
 physically impossible for a printed target. So reflections can never cause a
 labeling ambiguity, and the dot pattern only has to break rotational symmetry —
-not the full dihedral symmetry group. This is the same reason the origin
-resolver enumerates rotations only.
+not the full dihedral symmetry group. For the same reason the origin resolver
+discards every candidate whose board→image homography is orientation-reversing.
 
 ## Origin resolution (detection time)
 

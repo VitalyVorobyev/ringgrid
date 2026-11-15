@@ -54,7 +54,7 @@
   "target_matrix_benchmark": {
     "script": "tools/run_target_matrix_benchmark.sh",
     "output": "tools/out/target_matrix_benchmark/summary.json",
-    "description": "One synthetic case per target combination beyond the hex-coded benchmarks (rect/hex x plain/coded x dots, plus an Extended-codebook board), rendered like the library's printed target. rect_plain_* are the former rect_benchmark dots/no_dots modes with unchanged parameters and thresholds; their recall floor absorbs rare upstream detect_grid labeling variance. hex_plain_nodots: KNOWN BUG -- relative-frame hex labels are mirrored (orientation-reversing), so strict coord_accuracy is 0.074 (15/203) while coord_accuracy_up_to_mirror is 1.0; raise min_coord_accuracy to 1.0 once fixed. decoded_fraction = share of markers whose ID came from their own code band rather than completion.",
+    "description": "One synthetic case per target combination beyond the hex-coded benchmarks (rect/hex x plain/coded x dots, plus an Extended-codebook board), rendered like the library's printed target. rect_plain_* are the former rect_benchmark dots/no_dots modes with unchanged parameters and thresholds; their recall floor absorbs rare upstream detect_grid labeling variance. hex_plain_nodots also gates coord_accuracy_up_to_mirror so a regression to mirrored relative-frame labels (coord_accuracy drops, up_to_mirror stays 1.0) is distinguishable from inconsistent labels. decoded_fraction = share of markers whose ID came from their own code band rather than completion.",
     "modes": {
       "rect_plain_dots": {
         "min_precision": 1.0,
@@ -96,7 +96,7 @@
         "min_precision": 1.0,
         "min_recall": 1.0,
         "max_center_mean_px": 0.09,
-        "min_coord_accuracy": 0.073,
+        "min_coord_accuracy": 1.0,
         "min_coord_accuracy_up_to_mirror": 1.0,
         "max_origin_resolution_rate": 0.0
       },

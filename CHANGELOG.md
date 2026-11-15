@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/ci/check_regression_baseline.py` checks all benchmark outputs against
   `tools/ci/regression_baseline.json`.
 
+### Fixed
+
+- **Mirrored relative-frame labels on hex plain targets without origin dots.**
+  `projective_grid::detect_grid` labels a lattice only up to its full symmetry
+  group, reflections included, and its hex labels come out uniformly mirrored
+  (they inherit the Delaunay triangle winding); the hex canonicalization only
+  tried rotations, so `grid_coord` and the reported homography were
+  orientation-reversing in the `RelativeCanonical` frame (coord accuracy 0.074
+  on the target-matrix benchmark). Plain-grid canonicalization now picks, for
+  both lattices, the symmetry that makes the labeling orientation-preserving
+  before aligning it with the image axes, so relative labels differ from the
+  board by a rotation + translation only (`hex_plain_nodots` coord accuracy
+  1.0; every other benchmark mode unchanged).
+
 ---
 
 ## [0.15.0] - 2026-11-14

@@ -38,9 +38,16 @@ lattice-labeled correspondences:
 2. Build a `projective_grid::detect_grid` request carrying the lattice kind and,
    for rect, the `(cols, rows)` grid dimensions.
 3. Call `detect_grid` for **topological** labeling only (its facade is `f32`).
-4. Canonicalize the labels — `grid.normalize()` for a square lattice,
-   `canonicalize_hex_entries` for hex — so a given physical layout always yields
-   the same coordinate assignment.
+4. Canonicalize the labels with `canonicalize_entries` (both lattices) so a given
+   physical layout always yields the same coordinate assignment. `detect_grid`
+   labels are defined only up to the lattice's full symmetry group — reflections
+   included (hex labels come out mirrored) — so canonicalization picks, from the
+   whole dihedral group, the transform that makes the labeling
+   **orientation-preserving** (the image-frame cross product of the `+u` and
+   `+v` steps has the sign of the lattice model basis, i.e. the labels relate to
+   the board by a rotation + translation, never a reflection) and, among those,
+   best aligns `+u` with image `+x` and `+v` with image `+y`. This is the one
+   place the relative frame's handedness is decided.
 5. Refit the frame homography in `f64` with ringgrid's `fit_homography_ransac`
    over the labeled correspondences, keeping only homography inliers — mirroring
    the coded [global filter](projective-center.md#global-filter).
@@ -55,14 +62,15 @@ When the target carries [origin fiducials](../targets/origin-fiducials.md) and a
 least four markers are labeled, `pipeline/anchor.rs` (`resolve_origin`) upgrades
 the relative labeling to an **absolute** board frame:
 
-1. **Enumerate coordinate maps.** Consider every `(rotation × translation)` that
-   embeds the labeled patch into the board's cell set. Only rotations with
-   determinant `+1` are allowed — reflections are excluded because the fiducial
-   arrangement (and the whole target) is not mirror-symmetric. The candidate set
-   is capped at `MAX_CANDIDATES = 512`.
+1. **Enumerate coordinate maps.** Consider every `(symmetry × translation)` that
+   embeds the labeled patch into the board's cell set, over the lattice's full
+   dihedral group (rotations **and** reflections). The candidate set is capped at
+   `MAX_CANDIDATES = 512`.
 2. **Fit and gate each candidate.** For each map, fit a board→image homography by
    DLT and reject it if the Jacobian determinant is ≤ 0 at the patch center
-   (a folded / reflected mapping).
+   (a folded / reflected mapping). This physical check is what excludes
+   reflections: since the relative frame is already orientation-preserving,
+   every reflected candidate fails it.
 3. **Score by dot darkness.** Project each fiducial dot through the candidate
    homography and measure normalized `(background − dot)` contrast with a
    distortion-aware disk-vs-annulus sample. A candidate's score is its *weakest*

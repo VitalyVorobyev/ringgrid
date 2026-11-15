@@ -86,9 +86,9 @@ What the gated metrics mean:
   `id_accuracy` and `decoded_fraction` (share of markers decoded from their own
   code band rather than filled in by completion); Extended: `ext_recall` /
   `ext_decoded_rate` over IDs beyond the 893-word base table.
-  `hex_plain_nodots` gates `coord_accuracy` at its current 0.073 because of a
-  known bug — relative-frame hex labels come out mirrored — and
-  `coord_accuracy_up_to_mirror` at 1.0; raise the former to 1.0 once fixed.
+  The no-dots modes gate both `coord_accuracy` and
+  `coord_accuracy_up_to_mirror` at 1.0: a drop in the first only means the
+  relative frame came out mirrored, a drop in both means wrong labels.
 - **rtv3d** (`report.json`, per strategy): `total_decoded`.
 
 Collect all failures into a report table.

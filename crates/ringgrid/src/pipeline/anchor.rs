@@ -2,20 +2,23 @@
 //!
 //! Plain-grid labeling (`pipeline::assign`) produces cell coordinates in a
 //! canonical *relative* frame: the true board labeling differs by a rotation
-//! from the lattice symmetry group plus a lattice translation. When the target
+//! from the lattice symmetry group plus a lattice translation (the relative
+//! frame is orientation-preserving by construction). When the target
 //! carries origin fiducials (small filled dots at known board positions), each
-//! candidate (rotation × translation) labeling is scored by projecting the dot
+//! candidate (symmetry × translation) labeling is scored by projecting the dot
 //! positions through the candidate's board→image homography and measuring dot
 //! darkness against the local background — verify-at-predicted-positions, no
 //! separate dot detector needed. The winner must clear an absolute contrast
 //! threshold and a margin over the runner-up; otherwise the origin stays
 //! unresolved and outputs remain in the relative frame.
 //!
-//! Only rotations (determinant +1 elements of the coordinate symmetry group)
-//! are enumerated: an opaque planar target always images through an
-//! orientation-preserving homography, so reflected labelings are physically
-//! impossible. This is also why fiducial validation (`crate::target`) only
-//! rejects rotationally symmetric dot arrangements.
+//! Candidates span the full dihedral symmetry group (rotations and
+//! reflections), but every candidate whose fitted board→image homography is
+//! orientation-reversing (non-positive Jacobian determinant) is discarded: an
+//! opaque planar target always images through an orientation-preserving
+//! homography, so reflected labelings are physically impossible. This is also
+//! why fiducial validation (`crate::target`) only rejects rotationally
+//! symmetric dot arrangements.
 
 use std::collections::HashSet;
 
@@ -173,13 +176,11 @@ pub(crate) fn resolve_origin(
 /// coordinate into the board cell set. Returns `None` when the count exceeds
 /// [`MAX_CANDIDATES`].
 ///
-/// The full dihedral group is used — rotations **and** reflections — because the
-/// relative labeling frame's handedness relative to the board's axial frame is
-/// not guaranteed (hex canonicalization mirrors it). The physical
-/// orientation-preserving constraint is enforced downstream by
-/// [`score_candidate`]'s Jacobian check, which is what actually selects the
-/// correct handedness; pre-filtering to `det > 0` here would wrongly drop the
-/// only valid hex embeddings.
+/// The full dihedral group is enumerated — rotations **and** reflections. The
+/// physical orientation-preserving constraint is enforced downstream by
+/// [`score_candidate`]'s Jacobian check on the fitted homography; since the
+/// relative frame is already orientation-preserving
+/// (`assign::canonicalize_entries`), reflected candidates always fail it.
 fn enumerate_candidates(
     entries: &[(Coord, [f64; 2])],
     board_coords: &HashSet<Coord>,
@@ -248,8 +249,8 @@ fn score_candidate(
     }
     let h = estimate_homography_dlt(&src, &dst).ok()?;
 
-    // Physical filter: the board→image map must preserve orientation. This is
-    // also what disambiguates a mirrored candidate frame from the true one.
+    // Physical filter: the board→image map must preserve orientation, which
+    // rejects every reflected candidate.
     let center_mm = [
         src.iter().map(|p| p[0]).sum::<f64>() / src.len() as f64,
         src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,

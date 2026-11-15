@@ -304,6 +304,165 @@ fn plain_hex_detects_in_relative_frame() {
     assert!(result.homography.is_some());
 }
 
+/// Warp `img` through an orientation-preserving homography (rotation +
+/// mild perspective about the image center) into a canvas large enough to
+/// hold it, on a white background.
+fn warp_rotated_perspective(img: &GrayImage, angle_rad: f32, persp: [f32; 2]) -> GrayImage {
+    use imageproc::geometric_transformations::{Border, Interpolation, Projection, warp_into};
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (sin, cos) = angle_rad.sin_cos();
+    let center = Projection::translate(-0.5 * w, -0.5 * h);
+    let rot = Projection::from_matrix([cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0])
+        .expect("invertible rotation");
+    let tilt = Projection::from_matrix([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, persp[0], persp[1], 1.0])
+        .expect("invertible perspective");
+    let side = 1.6 * w.max(h);
+    let out_center = Projection::translate(0.5 * side, 0.5 * side);
+    let projection = center.and_then(rot).and_then(tilt).and_then(out_center);
+    let mut out = GrayImage::from_pixel(side as u32, side as u32, image::Luma([255]));
+    warp_into(
+        img,
+        projection,
+        Interpolation::Bilinear,
+        Border::Constant(image::Luma([255])),
+        &mut out,
+    );
+    out
+}
+
+/// Assert the reported labels (and homography) are orientation-preserving
+/// with respect to the library's own lattice convention.
+///
+/// The axial step vectors `e_u`, `e_v` are read off `target.cells()` (the
+/// single definition of where coordinates sit in board millimeters), so the
+/// test does not restate the convention. A printed target seen by a camera
+/// images through an orientation-preserving map, so at every labeled cell the
+/// image-frame cross product `(p(u+1,v) − p(u,v)) × (p(u,v+1) − p(u,v))` must
+/// carry the sign of `e_u × e_v`, and so must the Jacobian determinant of the
+/// reported homography at that cell's frame position (`u·e_u + v·e_v`, which
+/// the relative frame matches up to a translation).
+fn assert_labels_orientation_preserving(result: &DetectionResult, target: &TargetLayout) {
+    use std::collections::HashMap;
+    let cells: HashMap<(i32, i32), [f64; 2]> = target
+        .cells()
+        .iter()
+        .map(|c| {
+            (
+                (c.coord.u, c.coord.v),
+                [f64::from(c.xy_mm[0]), f64::from(c.xy_mm[1])],
+            )
+        })
+        .collect();
+    let (e_u, e_v) = cells
+        .iter()
+        .find_map(|(&(u, v), &o)| {
+            let pu = cells.get(&(u + 1, v))?;
+            let pv = cells.get(&(u, v + 1))?;
+            Some(([pu[0] - o[0], pu[1] - o[1]], [pv[0] - o[0], pv[1] - o[1]]))
+        })
+        .expect("target has a cell with both axial successors");
+    let cross = |a: [f64; 2], b: [f64; 2]| a[0] * b[1] - a[1] * b[0];
+    let model_sign = cross(e_u, e_v).signum();
+    assert!(model_sign != 0.0, "degenerate lattice basis");
+
+    let by_coord: HashMap<(i32, i32), [f64; 2]> = result
+        .detected_markers
+        .iter()
+        .filter_map(|m| m.grid_coord.map(|c| ((c[0], c[1]), m.center)))
+        .collect();
+    let (mut n_agree, mut n_reversed) = (0usize, 0usize);
+    for (&(u, v), &o) in &by_coord {
+        let (Some(pu), Some(pv)) = (by_coord.get(&(u + 1, v)), by_coord.get(&(u, v + 1))) else {
+            continue;
+        };
+        let img_cross = cross([pu[0] - o[0], pu[1] - o[1]], [pv[0] - o[0], pv[1] - o[1]]);
+        if img_cross.signum() == model_sign {
+            n_agree += 1;
+        } else {
+            n_reversed += 1;
+        }
+    }
+    assert!(
+        n_agree + n_reversed > 0,
+        "no labeled cell with both axial successors"
+    );
+    assert_eq!(
+        n_reversed, 0,
+        "grid_coord→image map is orientation-reversing at {n_reversed} cells \
+         ({n_agree} agree): labels are mirrored"
+    );
+
+    let h = result.homography.expect("homography must be fitted");
+    let apply_h = |p: [f64; 2]| -> [f64; 2] {
+        let x = h[0][0] * p[0] + h[0][1] * p[1] + h[0][2];
+        let y = h[1][0] * p[0] + h[1][1] * p[1] + h[1][2];
+        let z = h[2][0] * p[0] + h[2][1] * p[1] + h[2][2];
+        [x / z, y / z]
+    };
+    let (&(u, v), _) = by_coord.iter().next().expect("labeled marker");
+    let p = [
+        f64::from(u) * e_u[0] + f64::from(v) * e_v[0],
+        f64::from(u) * e_u[1] + f64::from(v) * e_v[1],
+    ];
+    let o = apply_h(p);
+    let du = apply_h([p[0] + e_u[0], p[1] + e_u[1]]);
+    let dv = apply_h([p[0] + e_v[0], p[1] + e_v[1]]);
+    let h_cross = cross([du[0] - o[0], du[1] - o[1]], [dv[0] - o[0], dv[1] - o[1]]);
+    assert_eq!(
+        h_cross.signum(),
+        model_sign,
+        "reported homography is orientation-reversing in the lattice frame"
+    );
+}
+
+/// Without origin dots the labels stay in the relative canonical frame, but
+/// that frame may only differ from the board by a rotation + translation —
+/// never a reflection. Exercised on both lattices under a rotated,
+/// perspective view so canonicalization cannot lean on image-axis alignment.
+#[test]
+fn plain_no_dots_relative_labels_preserve_orientation() {
+    let hex = TargetLayout::new(
+        "e2e_hex_plain_orient",
+        LatticeGeometry::Hex(HexGeometry {
+            rows: 7,
+            long_row_cols: 7,
+            pitch_mm: 8.0,
+        }),
+        RingGeometry {
+            outer_radius_mm: 4.8,
+            inner_radius_mm: 2.4,
+        },
+        MarkerCoding::Plain,
+        None,
+    )
+    .expect("valid plain hex target");
+    for (target, dpi) in [(hex, 66.0f32), (plain_rect_no_dots(), 56.0f32)] {
+        for angle_deg in [0.0f32, 25.0, -110.0] {
+            let img = warp_rotated_perspective(
+                &render(&target, dpi),
+                angle_deg.to_radians(),
+                [2.0e-4, -1.5e-4],
+            );
+            let detector =
+                Detector::with_marker_diameter_hint(target.clone(), diameter_hint_px(&target, dpi));
+            let result = detector.detect(&img).expect("detect");
+            assert_eq!(
+                result.board_frame,
+                Some(BoardFrame::RelativeCanonical),
+                "{} @ {angle_deg}°: no dots ⇒ relative frame",
+                target.name()
+            );
+            assert!(
+                labeled_count(&result) >= 20,
+                "{} @ {angle_deg}°: only {} labeled",
+                target.name(),
+                labeled_count(&result)
+            );
+            assert_labels_orientation_preserving(&result, &target);
+        }
+    }
+}
+
 #[test]
 fn coded_rect_detects_absolute_ids() {
     // Rect lattice with the default coded ring geometry (matches the hex

@@ -51,12 +51,12 @@
       "max_center_error": 0.472
     }
   },
-  "rect_benchmark": {
-    "script": "tools/run_rect_benchmark.sh",
-    "output": "tools/out/rect_benchmark/summary.json",
-    "description": "Rect-lattice plain-ring (24x24) synthetic benchmark. The recall floor absorbs rare upstream detect_grid labeling variance (completion recovers all cells in the common case); coord/origin metrics must be exact.",
+  "target_matrix_benchmark": {
+    "script": "tools/run_target_matrix_benchmark.sh",
+    "output": "tools/out/target_matrix_benchmark/summary.json",
+    "description": "One synthetic case per target combination beyond the hex-coded benchmarks (rect/hex x plain/coded x dots, plus an Extended-codebook board), rendered like the library's printed target. rect_plain_* are the former rect_benchmark dots/no_dots modes with unchanged parameters and thresholds; their recall floor absorbs rare upstream detect_grid labeling variance. hex_plain_nodots: KNOWN BUG -- relative-frame hex labels are mirrored (orientation-reversing), so strict coord_accuracy is 0.074 (15/203) while coord_accuracy_up_to_mirror is 1.0; raise min_coord_accuracy to 1.0 once fixed. decoded_fraction = share of markers whose ID came from their own code band rather than completion.",
     "modes": {
-      "dots": {
+      "rect_plain_dots": {
         "min_precision": 1.0,
         "min_recall": 0.95,
         "max_center_mean_px": 0.089,
@@ -65,18 +65,60 @@
         "min_origin_correct_rate": 1.0,
         "max_h_vs_gt_mean_px": 0.05
       },
-      "no_dots": {
+      "rect_plain_nodots": {
         "min_precision": 1.0,
         "min_recall": 0.95,
         "max_center_mean_px": 0.087,
         "min_coord_accuracy": 1.0,
         "max_origin_resolution_rate": 0.0
+      },
+      "rect_coded": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.083,
+        "min_coord_accuracy": 1.0,
+        "min_origin_resolution_rate": 1.0,
+        "min_origin_correct_rate": 1.0,
+        "max_h_vs_gt_mean_px": 0.045,
+        "min_id_accuracy": 1.0,
+        "min_decoded_fraction": 0.716
+      },
+      "hex_plain_dots": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.091,
+        "min_coord_accuracy": 1.0,
+        "min_origin_resolution_rate": 1.0,
+        "min_origin_correct_rate": 1.0,
+        "max_h_vs_gt_mean_px": 0.044
+      },
+      "hex_plain_nodots": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.09,
+        "min_coord_accuracy": 0.073,
+        "min_coord_accuracy_up_to_mirror": 1.0,
+        "max_origin_resolution_rate": 0.0
+      },
+      "hex_coded_extended": {
+        "min_precision": 1.0,
+        "min_recall": 1.0,
+        "max_center_mean_px": 0.086,
+        "min_coord_accuracy": 1.0,
+        "min_origin_resolution_rate": 1.0,
+        "min_origin_correct_rate": 1.0,
+        "max_h_vs_gt_mean_px": 0.043,
+        "min_id_accuracy": 1.0,
+        "min_decoded_fraction": 0.793,
+        "min_ext_recall": 1.0,
+        "min_ext_decoded_rate": 0.692
       }
     }
   },
   "rtv3d_benchmark": {
     "script": ".venv/bin/python tools/run_rtv3d_eval.py",
     "output": "tools/out/rtv3d_eval/report.json",
+    "requires": "data/rtv3d",
     "description": "Real-world rtv3d dataset: 20 strips x 6 cameras = 120 tiles. Strategy A is the primary regression target (narrow scale prior, most robust to radii subsampling).",
     "strategies": {
       "A_old_default_20_56": {

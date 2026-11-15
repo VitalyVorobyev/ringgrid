@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Regression gate covers every target combination.** The rect benchmark is
+  generalised into `tools/run_target_matrix_benchmark.sh`: rect plain with and
+  without dots (unchanged numbers), rect coded, hex plain with and without dots,
+  and a 1239-cell hex board on the Extended codebook. `gen_synth_rect.py` /
+  `score_detect_rect.py` became `gen_synth_target.py` / `score_detect_target.py`
+  (any v6 target spec; coded markers rendered like the printed target), and
+  `tools/ci/check_regression_baseline.py` checks all benchmark outputs against
+  `tools/ci/regression_baseline.json`.
+
 ---
 
 ## [0.15.0] - 2026-11-14

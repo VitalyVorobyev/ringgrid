@@ -19,7 +19,7 @@
 mod precision;
 mod support;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 use image::GrayImage;
@@ -450,6 +450,26 @@ fn precision_centre_sources() {
             let e = table.entry(key).or_default();
             e.0.push(err);
             e.1 += usize::from(err > loose);
+            // The same markers' outer-ellipse centres, before the
+            // vanishing-line correction (no camera model: image frame).
+            if m.center_source == ringgrid::CenterSource::OuterWithHomography
+                && let Some(o) = &m.ellipse_outer
+            {
+                let raw = (cell.px[0] - o.cx).hypot(cell.px[1] - o.cy);
+                let key = (
+                    format!("{}-{}", truth.board, truth.group),
+                    "(its outer centre)".to_string(),
+                );
+                let e = table.entry(key).or_default();
+                e.0.push(raw);
+                e.1 += usize::from(raw > loose);
+                let shift = (m.center[0] - o.cx).hypot(m.center[1] - o.cy);
+                let key = (
+                    format!("{}-{}", truth.board, truth.group),
+                    "(correction shift)".to_string(),
+                );
+                table.entry(key).or_default().0.push(shift);
+            }
         }
     }
     for ((group, source), (mut errs, n_loose)) in table {
@@ -654,5 +674,176 @@ fn precision_shape_consistency() {
             }
             println!("{line}");
         }
+    }
+}
+
+/// Board cells a result reports correctly: matched ring, right ID (coded) or
+/// right absolute position (plain).
+fn correct_cells(truth: &Truth, result: &ringgrid::DetectionResult) -> HashSet<[i32; 2]> {
+    let absolute = result.board_frame == Some(ringgrid::BoardFrame::Absolute);
+    result
+        .detected_markers
+        .iter()
+        .filter_map(|m| {
+            let c = matched_cell(truth, m.center)?;
+            let ok = if truth.coded {
+                m.id.is_some() && m.id == c.id
+            } else {
+                absolute
+                    && m.board_xy_mm
+                        .is_some_and(|xy| (xy[0] - c.xy_mm[0]).hypot(xy[1] - c.xy_mm[1]) < 0.01)
+            };
+            ok.then_some(c.coord)
+        })
+        .collect()
+}
+
+/// Distance (px) from a reported centre to its board position projected by
+/// the result's homography; NaN without either.
+fn h_offset_px(result: &ringgrid::DetectionResult, m: &ringgrid::DetectedMarker) -> f64 {
+    let (Some(h), Some(xy)) = (result.homography, m.board_xy_mm) else {
+        return f64::NAN;
+    };
+    let w = h[2][0] * xy[0] + h[2][1] * xy[1] + h[2][2];
+    let px = (h[0][0] * xy[0] + h[0][1] * xy[1] + h[0][2]) / w;
+    let py = (h[1][0] * xy[0] + h[1][1] * xy[1] + h[1][2]) / w;
+    (px - m.center[0]).hypot(py - m.center[1])
+}
+
+/// Why a visible cell surrounded by correctly reported neighbours is missing,
+/// from ablated runs of the same detector on the same image (first match):
+/// reported without the corrected-centre contract → `uncorrected centre`;
+/// reported without geometric verify → `verify` (split by the reported
+/// centre's distance to the result homography's projection: `position`
+/// beyond 2 px, else `shape`); reported with neither → `uncorrected+verify`;
+/// a fitted ring there (fit/decode/dedup + axis-ratio filter, no labeling)
+/// whose decode names another ID → `decode contradicts cell`, any other
+/// fitted ring → `fitted, not labeled/completed`; a proposal within a
+/// quarter diameter → `proposed, no outer fit`; else `never proposed`.
+fn classify_missing(
+    case: &Case,
+    image: &GrayImage,
+    truth: &Truth,
+    missing: &[&precision::GtCell],
+) -> Vec<&'static str> {
+    use ringgrid::CircleRefinementMethod;
+    let run = |refine: Option<CircleRefinementMethod>, verify: bool, global: bool| {
+        let mut d = case_detector(case);
+        if let Some(r) = refine {
+            d.config_mut().circle_refinement = r;
+        }
+        d.config_mut().advanced.geometric_verify = verify;
+        d.config_mut().advanced.use_global_filter = global;
+        d.detect(image).expect("detect")
+    };
+    let none = Some(CircleRefinementMethod::None);
+    let uncorrected = correct_cells(truth, &run(none, true, true));
+    let no_verify_result = run(None, false, true);
+    let no_verify = correct_cells(truth, &no_verify_result);
+    let neither = correct_cells(truth, &run(none, false, true));
+    let raw = run(none, true, false);
+    let proposals = case_detector(case).propose(image);
+    let near = |p: [f64; 2], c: &precision::GtCell| {
+        (p[0] - c.px[0]).hypot(p[1] - c.px[1]) <= 0.25 * c.diam_px
+    };
+    missing
+        .iter()
+        .map(|c| {
+            if uncorrected.contains(&c.coord) {
+                return "uncorrected centre";
+            }
+            if no_verify.contains(&c.coord) {
+                let off = no_verify_result
+                    .detected_markers
+                    .iter()
+                    .find(|m| near(m.center, c))
+                    .map_or(f64::NAN, |m| h_offset_px(&no_verify_result, m));
+                return if off > 2.0 {
+                    "verify: position"
+                } else {
+                    "verify: shape"
+                };
+            }
+            if neither.contains(&c.coord) {
+                return "uncorrected+verify";
+            }
+            if let Some(m) = raw.detected_markers.iter().find(|m| near(m.center, c)) {
+                return if m.id.is_some() && m.id != c.id {
+                    "decode contradicts cell"
+                } else {
+                    "fitted, not labeled/completed"
+                };
+            }
+            if proposals
+                .iter()
+                .any(|p| near([f64::from(p.x), f64::from(p.y)], c))
+            {
+                "proposed, no outer fit"
+            } else {
+                "never proposed"
+            }
+        })
+        .collect()
+}
+
+/// Visible cells missing from the result while most of their lattice
+/// neighbours are reported correctly (hex: ≥ 4 of 6; rect: ≥ 6 of 8), over
+/// the in-range catalogue and grid, classified by [`classify_missing`].
+#[test]
+#[ignore = "surrounded-missing-cell study (tens of minutes in release)"]
+fn precision_surrounded_missing() {
+    let cases: Vec<Case> = catalogue()
+        .into_iter()
+        .chain(explore_cases())
+        .filter(|c| c.group != "oor")
+        .collect();
+    let mut boards = Boards::default();
+    let hex_steps: &[[i32; 2]] = &[[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
+    let rect_steps: &[[i32; 2]] = &[
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+    ];
+    // (board, cause) -> count
+    let mut table: BTreeMap<(String, &'static str), usize> = BTreeMap::new();
+    let mut n_missing = 0usize;
+    for case in &cases {
+        let (image, truth) = render_case(case, &mut boards);
+        let result = case_detector(case).detect(&image).expect("detect");
+        let ok = correct_cells(&truth, &result);
+        let (steps, need) = if truth.hex {
+            (hex_steps, 4)
+        } else {
+            (rect_steps, 6)
+        };
+        let missing: Vec<&precision::GtCell> = truth
+            .cells
+            .iter()
+            .filter(|c| c.visible && !ok.contains(&c.coord))
+            .filter(|c| {
+                let k = c.coord;
+                steps
+                    .iter()
+                    .filter(|s| ok.contains(&[k[0] + s[0], k[1] + s[1]]))
+                    .count()
+                    >= need
+            })
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        n_missing += missing.len();
+        for cause in classify_missing(case, &image, &truth, &missing) {
+            *table.entry((truth.board.clone(), cause)).or_default() += 1;
+        }
+    }
+    println!("surrounded missing cells: {n_missing}");
+    for ((board, cause), n) in &table {
+        println!("{board:10} {cause:32} {n:5}");
     }
 }

@@ -1006,7 +1006,7 @@ class DetectedMarker:
     ellipse_outer: Ellipse | None = None
     ellipse_inner: Ellipse | None = None
     #: Which estimator produced ``center``: ``"outer_ellipse"``,
-    #: ``"projective_center"`` or ``"photometric"``.
+    #: ``"projective_center"``, ``"outer_with_homography"`` or ``"photometric"``.
     center_source: str = "outer_ellipse"
     #: 2x2 covariance of ``center`` (px^2); set for photometric centers only.
     center_cov: list[list[float]] | None = None

@@ -18,7 +18,8 @@ pub(crate) mod photometric_refine;
 pub(crate) mod config;
 
 pub(crate) use center_correction::{
-    apply_projective_centers, warn_center_correction_without_intrinsics,
+    apply_projective_centers, apply_vanishing_line_centres,
+    warn_center_correction_without_intrinsics,
 };
 pub(crate) use completion::{CompletionScope, complete_with_h};
 pub use config::{

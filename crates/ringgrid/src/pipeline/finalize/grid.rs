@@ -26,7 +26,7 @@ use crate::homography::fit_homography_ransac;
 use crate::pipeline::anchor::CoordMap;
 use crate::pipeline::{
     CompletionScope, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
-    complete_with_h, marker_cell_coord, matrix3_to_array,
+    apply_vanishing_line_centres, complete_with_h, marker_cell_coord, matrix3_to_array,
 };
 use crate::pixelmap::PixelMapper;
 use crate::target::TargetLayout;
@@ -356,6 +356,7 @@ pub(super) fn finalize_grid_result(
     // Coded only (ID-keyed recovery + axis-ratio filter), before the final H.
     apply_marker_fixup(gray, &mut final_markers, config, mapper);
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
+    apply_vanishing_line_centres(&mut final_markers, &h_current, config);
 
     let (final_h_mat, final_ransac) = phase_final_h(
         &final_markers,

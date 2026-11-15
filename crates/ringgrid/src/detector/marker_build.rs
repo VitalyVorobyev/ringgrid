@@ -50,6 +50,10 @@ pub enum CenterSource {
     OuterEllipse,
     /// Projective centre recovered from the inner and outer ellipses.
     ProjectiveCenter,
+    /// Projective centre recovered from the outer ellipse and the board
+    /// homography's vanishing line, for a labeled marker whose inner ellipse
+    /// is missing or whose two-conic correction was rejected.
+    OuterWithHomography,
     /// Photometric fit of the blurred marker pattern; the marker carries a
     /// centre covariance.
     Photometric,

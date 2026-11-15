@@ -336,7 +336,7 @@ pub(super) fn finalize_grid_result(
     let label_start = Instant::now();
     let Labeled {
         markers: mut final_markers,
-        unlabeled: mut unlabeled,
+        mut unlabeled,
         h: mut h_current,
         ransac,
         anchored,

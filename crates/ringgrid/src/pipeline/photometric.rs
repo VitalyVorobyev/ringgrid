@@ -3,10 +3,13 @@
 //! Each public entry point in [`super::run`] finishes its result here, exactly
 //! once per call. The per-marker fits cost milliseconds each, so the stage runs
 //! on the finished result only — after every pass, scale tier and adaptive
-//! candidate has been decided — never inside them.
+//! candidate has been decided — never inside them. Accepted fits move marker
+//! centres, so the final homography and its statistics are then refit from
+//! the refined centres.
 
 use super::time_compat::{Instant, duration_ms};
 use super::*;
+use crate::detector::CenterSource;
 use crate::detector::photometric_refine::{
     PhotometricResidualMarker, apply_photometric_centers, mark_unrefined,
 };
@@ -82,4 +85,12 @@ fn refine(
         config,
         residuals,
     );
+    // Accepted fits moved centres: the homography follows them.
+    if result
+        .markers
+        .iter()
+        .any(|m| m.center_source == CenterSource::Photometric)
+    {
+        super::finalize::refit_final_homography(result, config);
+    }
 }

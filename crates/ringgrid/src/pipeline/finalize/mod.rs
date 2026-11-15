@@ -12,13 +12,16 @@ use super::time_compat::{Instant, duration_ms};
 use image::GrayImage;
 
 use super::axis_ratio_filter::remove_axis_ratio_outliers;
+use super::geometric_verify::annotate_h_reproj_err_px;
 use super::{
     DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
     try_recover_inner_as_outer, warn_center_correction_without_intrinsics,
 };
 use crate::detector::MarkerRecord;
-use crate::pipeline::{DetectionFrame, PipelineResult};
+use crate::pipeline::{BoardFrame, DetectionFrame, PipelineResult, frame_xy_mm, matrix3_to_array};
 use crate::pixelmap::PixelMapper;
+use crate::target::TargetLayout;
+use projective_grid::Coord;
 
 use common::sync_marker_board_correspondence;
 use fallback::finalize_unlabeled_result;
@@ -121,6 +124,66 @@ pub(super) fn finalize_postmerge(
         homography_frame,
         image_size,
     )
+}
+
+/// Refit a finished result's homography and RANSAC statistics from the
+/// centres it now carries — for a stage that moves centres after finalize
+/// (photometric refinement) — and refresh each marker's `h_reproj_err_px`
+/// against the kept homography.
+///
+/// The refit is finalize's own final-H step ([`common::phase_final_h`]):
+/// refit over every labeled marker and keep whichever of the refit and the
+/// current homography reprojects the centres better. It runs where finalize
+/// ran it: in the homography's frame (working-frame `center_mapped` when that
+/// is `Working`) and source plane (a plain target's relative frame, whose
+/// assignment-frame positions the public contract cleared from
+/// `board_xy_mm`). A result without a homography is left as it is.
+pub(super) fn refit_final_homography(result: &mut PipelineResult, config: &DetectConfig) {
+    let Some(h) = result.homography else {
+        return;
+    };
+    let mut view = homography_frame_view(result, &config.target);
+    let h_current = nalgebra::Matrix3::from_fn(|r, c| h[r][c]);
+    let (h_final, ransac) =
+        common::phase_final_h(&view, Some(h_current), result.ransac.take(), config);
+    annotate_h_reproj_err_px(&mut view, h_final.as_ref());
+    for (marker, v) in result.markers.iter_mut().zip(&view) {
+        marker.fit.h_reproj_err_px = v.fit.h_reproj_err_px;
+    }
+    result.homography = h_final.as_ref().map(matrix3_to_array);
+    result.ransac = ransac;
+}
+
+/// Correspondence-only copies of a result's markers, index-aligned, as
+/// finalize saw them when it fitted the homography: centre in the
+/// homography's frame, position in its source plane. A marker without a
+/// centre in that frame carries no label and so takes no part.
+fn homography_frame_view(result: &PipelineResult, target: &TargetLayout) -> Vec<MarkerRecord> {
+    let working = result.homography_frame == DetectionFrame::Working;
+    let relative = result.board_frame == Some(BoardFrame::RelativeCanonical);
+    result
+        .markers
+        .iter()
+        .map(|m| {
+            let center = if working {
+                m.center_mapped
+            } else {
+                Some(m.center)
+            };
+            let board_xy_mm = match (relative, m.grid_coord) {
+                (true, Some(c)) => Some(frame_xy_mm(target, Coord::new(c[0], c[1]))),
+                _ => m.board_xy_mm,
+            };
+            MarkerRecord {
+                id: center.and(m.id),
+                grid_coord: center.and(m.grid_coord),
+                center: center.unwrap_or(m.center),
+                board_xy_mm,
+                confidence: m.confidence,
+                ..MarkerRecord::default()
+            }
+        })
+        .collect()
 }
 
 /// Single-scale finalize: [`finalize_premerge`] followed directly by

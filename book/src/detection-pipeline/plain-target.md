@@ -16,8 +16,8 @@ composition matrix](../targets/target-model.md#composition-matrix--how-each-comb
 
 ## Finalize stages (plain path)
 
-Orchestrated by `pipeline/finalize/plain.rs`, dispatched from `finalize/mod.rs`
-when the target is not coded and `advanced.use_global_filter` is `true`
+Orchestrated by `pipeline/finalize/grid.rs` (the back half every target runs; coded
+targets anchor by decoded IDs instead of dots) when `advanced.use_global_filter` is `true`
 (otherwise the shared no-homography passthrough runs and markers stay unlabeled):
 
 | Order | Stage | Description |
@@ -116,6 +116,6 @@ New completion markers receive their own projective-center correction.
 Coded targets always report `board_frame = absolute` (IDs are globally unique);
 the relative/absolute distinction only arises for plain targets.
 
-**Source:** `pipeline/finalize/plain.rs`, `pipeline/finalize/mod.rs`,
+**Source:** `pipeline/finalize/grid.rs`, `pipeline/finalize/mod.rs`,
 `pipeline/assign.rs`, `pipeline/anchor.rs`, `pipeline/result.rs`,
 `target/fiducials.rs`

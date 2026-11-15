@@ -85,6 +85,6 @@ The global filter produces:
 
 ### Short-Circuit
 
-When `use_global_filter = false`, finalization still applies projective center correction and structural ID correction, then returns without homography-based post-processing (no global filter/completion/final refit).
+When `use_global_filter = false`, finalization applies projective center correction, then returns without labeling or homography-based post-processing (no global filter/completion/final refit).
 
 **Source**: `detector/center_correction.rs`, `detector/global_filter.rs`, `homography/core.rs`

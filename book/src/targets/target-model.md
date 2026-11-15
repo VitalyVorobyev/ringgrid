@@ -77,20 +77,22 @@ codebook lookup; the plain path labels markers by their lattice position.
 
 | Lattice | Coding | Labeling path | ID correction | Output frame |
 |---|---|---|---|---|
-| Hex | Coded16 | decode → global filter → completion | hex-neighbor BFS consensus | Absolute |
-| Rect | Coded16 | decode → global filter → completion | — (global filter + geometric verify only) | Absolute |
+| Hex | Coded16 | `detect_grid` labeling → decoded-ID anchor → completion | fallback only (no grid) | Absolute |
+| Rect | Coded16 | `detect_grid` labeling → decoded-ID anchor → completion | — | Absolute |
 | Hex | Plain | `detect_grid` labeling → completion | — | Absolute if fiducials resolve, else RelativeCanonical |
 | Rect | Plain | `detect_grid` labeling → completion | — | Absolute if fiducials resolve, else RelativeCanonical |
 
 Key points:
 
-- **Coded targets** run the classic decode-anchored pipeline (see the
-  [Detection Pipeline](../detection-pipeline/overview.md)). Every decoded ID maps
-  to a physical board cell, so outputs are always in the absolute board frame.
+- **Coded targets** label every fitted ring with the lattice and anchor the
+  labeling by a vote of the decoded IDs (see the
+  [Detection Pipeline](../detection-pipeline/overview.md)); every labeled ring
+  takes its cell's ID, so outputs are in the absolute board frame.
 - **[ID correction](../detection-pipeline/id-correction.md)** is a
   hex-neighbor BFS consensus — its algorithmic domain — so it runs only for hex
-  coded targets. Rect coded targets rely on the global RANSAC homography filter
-  plus geometric verification instead.
+  coded targets, and only in the decode-anchored fallback for views where no grid
+  can be labeled and anchored. Rect coded fallbacks rely on the global RANSAC
+  homography filter plus geometric verification.
 - **Plain targets** skip decoding entirely. Fitted ring centers are labeled with
   lattice coordinates by `projective_grid::detect_grid` (labeling only; the
   frame homography is refit in `f64` by ringgrid's RANSAC), then completion grows

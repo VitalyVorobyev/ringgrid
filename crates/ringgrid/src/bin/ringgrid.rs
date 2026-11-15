@@ -7,6 +7,7 @@
 //! ringgrid gen     <recipe.toml>  --out DIR         # target artifacts
 //! ringgrid detect  --image P --target T --out J     # one image
 //! ringgrid batch   --images DIR --target T --out-dir D
+//!                  [--refine none|projective-center|photometric]
 //! ringgrid example --list | --name NAME [--out FILE]
 //! ```
 
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
+use ringgrid::CircleRefinementMethod;
 
 use ringgrid::cli::{
     self, BatchOutcome, Format, TargetRecipe, build_detector, decoded_count, detect_file,
@@ -90,6 +92,9 @@ struct DetectArgs {
     /// Require the complete board: fail if any cell is missing.
     #[arg(long)]
     strict: bool,
+    /// Center refinement (overrides `--config`; default from the config).
+    #[arg(long, value_enum)]
+    refine: Option<CircleRefinementMethod>,
 }
 
 #[derive(Args)]
@@ -115,6 +120,9 @@ struct BatchArgs {
     /// Require the complete board on every image.
     #[arg(long)]
     strict: bool,
+    /// Center refinement (overrides `--config`; default from the config).
+    #[arg(long, value_enum)]
+    refine: Option<CircleRefinementMethod>,
 }
 
 #[derive(Args)]
@@ -249,8 +257,14 @@ fn print_target_summary(target: &ringgrid::TargetLayout, render: &cli::RenderRec
 fn run_detect(args: DetectArgs) -> Result<(), String> {
     let target = load_target(&args.target).map_err(|e| e.to_string())?;
     let overlay = args.config.as_deref().map(load_overlay).transpose()?;
-    let detector = build_detector(target, args.marker_diameter, args.strict, overlay)
-        .map_err(|e| e.to_string())?;
+    let detector = build_detector(
+        target,
+        args.marker_diameter,
+        args.strict,
+        args.refine,
+        overlay,
+    )
+    .map_err(|e| e.to_string())?;
 
     let result = detect_file(&detector, &args.image, args.marker_diameter.is_some())
         .map_err(|e| e.to_string())?;
@@ -275,8 +289,14 @@ fn run_detect(args: DetectArgs) -> Result<(), String> {
 fn run_batch_cmd(args: BatchArgs) -> Result<(), String> {
     let target = load_target(&args.target).map_err(|e| e.to_string())?;
     let overlay = args.config.as_deref().map(load_overlay).transpose()?;
-    let detector = build_detector(target, args.marker_diameter, args.strict, overlay)
-        .map_err(|e| e.to_string())?;
+    let detector = build_detector(
+        target,
+        args.marker_diameter,
+        args.strict,
+        args.refine,
+        overlay,
+    )
+    .map_err(|e| e.to_string())?;
 
     let images = image_files_in_dir(&args.images).map_err(|e| e.to_string())?;
     if images.is_empty() {

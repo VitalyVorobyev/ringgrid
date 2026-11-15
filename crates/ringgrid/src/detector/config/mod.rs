@@ -216,7 +216,7 @@ pub struct DetectConfig {
     pub target: TargetLayout,
     /// Expected marker outer-diameter range `[diameter_min_px, diameter_max_px]` in working-frame pixels; scale-dependent stage parameters are derived from it.
     pub marker_scale: MarkerScalePrior,
-    /// Center-correction strategy applied after local fits are accepted: `None` disables it, `ProjectiveCenter` recovers unbiased centers from the inner/outer conics.
+    /// Center-correction strategy applied after local fits are accepted: `None` keeps the outer-ellipse centers; `ProjectiveCenter` (the default) recovers unbiased centers from the inner/outer conics; `Photometric` runs on top of projective-center correction and fits each marker's pixels with a model of the blurred printed pattern, which is opt-in because it costs milliseconds per marker. With `Photometric` the returned homography and its RANSAC statistics are refit from the refined centers.
     pub circle_refinement: CircleRefinementMethod,
     /// Self-undistort (division-model lens distortion) estimation controls; disabled by default.
     pub self_undistort: SelfUndistortConfig,

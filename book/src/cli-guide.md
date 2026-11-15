@@ -117,12 +117,16 @@ ringgrid detect \
 | `--marker-diameter <px>` | auto | Approximate marker outer diameter (px) for focused single-pass detection. |
 | `--config <path>` | none | Detection-config overlay (`.json`/`.toml`) — see [Configuration](configuration/detect-config.md). |
 | `--strict` | false | Require the complete board: fail unless every cell is detected. |
+| `--refine <method>` | from config | Center refinement: `none`, `projective-center` or `photometric` (overrides the `--config` overlay's `circle_refinement`). |
 
 `--strict` maps onto the same `require_complete_board` gate that plain targets
 without origin dots rely on (their identity comes from detecting the whole
-board). Fine-grained detection behavior — scale prior, RANSAC thresholds,
-completion gates, center refinement — is set through the `--config` overlay
-rather than dedicated flags; see [Configuration](configuration/detect-config.md).
+board). `--refine photometric` selects the blur-robust
+[photometric center refinement](detection-pipeline/photometric-center.md)
+(opt-in: it costs milliseconds per marker). Fine-grained detection behavior —
+scale prior, RANSAC thresholds, completion gates — is set through the
+`--config` overlay rather than dedicated flags; see
+[Configuration](configuration/detect-config.md).
 
 ## `ringgrid batch` — detect across a directory
 
@@ -145,6 +149,7 @@ ringgrid batch \
 | `--marker-diameter <px>` | auto | Approximate marker outer diameter (px). |
 | `--config <path>` | none | Detection-config overlay (`.json`/`.toml`). |
 | `--strict` | false | Require the complete board on every image. |
+| `--refine <method>` | from config | Center refinement: `none`, `projective-center` or `photometric`. |
 
 The `summary.json` records, per image, the marker count, decoded count, and
 `board_complete` flag.

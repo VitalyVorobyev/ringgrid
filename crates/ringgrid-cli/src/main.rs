@@ -466,10 +466,11 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_require_perfect_decode: bool,
 
-    /// Circle refinement method after local fits are accepted.
-    /// Default: from config.
-    #[arg(long, value_enum)]
-    circle_refine_method: Option<CircleRefineMethodArg>,
+    /// Center refinement after local fits are accepted (same flag as the
+    /// published `ringgrid` CLI; `--circle-refine-method` is kept as an
+    /// alias). Default: from config.
+    #[arg(long, value_enum, alias = "circle-refine-method")]
+    refine: Option<ringgrid::CircleRefinementMethod>,
 
     /// Projective center gate: maximum allowed correction shift (px).
     ///
@@ -755,25 +756,6 @@ impl CliCameraArgs {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum CircleRefineMethodArg {
-    None,
-    ProjectiveCenter,
-    /// Projective centre, then a photometric fit of every marker with a board
-    /// position, coded or plain (blur-robust; adds a centre covariance).
-    Photometric,
-}
-
-impl CircleRefineMethodArg {
-    fn to_core(self) -> ringgrid::CircleRefinementMethod {
-        match self {
-            Self::None => ringgrid::CircleRefinementMethod::None,
-            Self::ProjectiveCenter => ringgrid::CircleRefinementMethod::ProjectiveCenter,
-            Self::Photometric => ringgrid::CircleRefinementMethod::Photometric,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 enum CodebookProfileArg {
     Base,
     Extended,
@@ -928,9 +910,7 @@ impl CliDetectArgs {
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
             completion_require_perfect_decode: self.complete_require_perfect_decode,
             camera: self.camera.to_core()?,
-            circle_refinement: self
-                .circle_refine_method
-                .map(CircleRefineMethodArg::to_core),
+            circle_refinement: self.refine,
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
@@ -2032,6 +2012,20 @@ mod tests {
             cfg.circle_refinement,
             ringgrid::CircleRefinementMethod::None
         ));
+    }
+
+    /// `--refine` is the published CLI's spelling; the historical
+    /// `--circle-refine-method` stays an alias.
+    #[test]
+    fn refine_flag_and_its_alias_select_the_method() {
+        for flag in ["--refine", "--circle-refine-method"] {
+            let cfg = resolve_detect_config(&parse_detect_args(&[flag, "photometric"]));
+            assert_eq!(
+                cfg.circle_refinement,
+                ringgrid::CircleRefinementMethod::Photometric,
+                "{flag}"
+            );
+        }
     }
 
     /// Without `--config` and flags, the CLI resolves to the core defaults.

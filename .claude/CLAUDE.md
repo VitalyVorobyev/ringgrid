@@ -124,6 +124,7 @@ crates/ringgrid/src/
 │   ├── assign.rs       # Grid labeling (projective_grid::detect_grid) + f64 frame H
 │   ├── anchor.rs       # Origin resolution: decoded-ID vote (coded) or origin dots (plain)
 │   ├── geometric_verify.rs # Local/global geometric consistency checks
+│   ├── photometric.rs  # Last stage: photometric center refinement + final-H refit (once per call)
 │   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
 │   ├── axis_ratio_filter.rs # Ellipse axis-ratio gating
 │   ├── stats.rs        # Pipeline counters
@@ -247,11 +248,13 @@ cargo build  # rebuild after regenerating
 
 ## Center Correction Strategies
 
-Single-choice selector: `none` | `projective_center`
+Single-choice selector `DetectConfig::circle_refinement` (`CircleRefinementMethod`): `None` | `ProjectiveCenter` (default) | `Photometric`
 
-CLI: `--circle-refine-method {none,projective-center}`
+CLI (both `ringgrid` and `ringgrid-dev`): `--refine {none,projective-center,photometric}`; when absent the config/default applies. `ringgrid-dev` keeps `--circle-refine-method` as an alias (tools use it).
 
-Center correction is applied once per marker: before grid labeling for fit-decode markers, and after completion for newly refitted markers only. Logic is in `pipeline/finalize/`.
+Projective center correction is applied once per marker: before grid labeling for fit-decode markers, and after completion for newly refitted markers only. Logic is in `pipeline/finalize/`.
+
+`Photometric` runs on top of projective-center correction: a per-marker fit of the blurred printed pattern (`ring/photometric_center.rs`, stage wrapper `detector/photometric_refine.rs`). It is opt-in because it costs milliseconds per marker, and it is the pipeline's last stage (`pipeline/photometric.rs`): every public entry point in `pipeline/run.rs` runs it exactly once, on the finished result (after adaptive candidate selection, never per pass/tier/candidate), then refits the final homography and its `RansacStats` from the refined centers via finalize's `phase_final_h`. Its research-only API (per-pixel residuals, covariance diagnostics) is behind the non-default `study` cargo feature.
 
 ## Camera / Distortion Support
 
@@ -328,6 +331,7 @@ list them at all.
 - `std` (default) — file I/O only: `from_json_file`, `write_json_file`, `write_target_svg`/`_png`/`_dxf`. Disable for WASM targets.
 - WASM crate uses `default-features = false` to exclude `std`. Rendering is unaffected: `render_target_svg`/`_png`/`_dxf` and `render_target_artifacts` (PNG bytes included) work with the feature off, because `png` is a plain dependency — `image`'s png codec links it anyway, so it costs nothing.
 - `cli` — the published `ringgrid` binary (`gen` + `detect`). Off by default.
+- `study` — research-only photometric study API (`photometric_residuals`, `Detector::detect_*_with_photometric_residuals`). Off by default, not exposed by the bindings or schemas; `ringgrid-cli` enables it for its examples through a dev-dependency only, so `ringgrid-dev` is built without it.
 
 ## Decision-Making Rules
 

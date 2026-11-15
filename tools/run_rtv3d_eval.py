@@ -134,7 +134,8 @@ def count_result(data: dict) -> tuple[int, int, int]:
     markers = data.get("detected_markers", [])
     n_total = len(markers)
     n_decoded = sum(1 for m in markers if m.get("id") is not None)
-    ransac = data.get("ransac") or {}
+    # RANSAC stats live under `diagnostics` in the detection JSON.
+    ransac = (data.get("diagnostics") or {}).get("ransac") or {}
     n_inliers = ransac.get("n_inliers", 0) or 0
     return n_total, n_decoded, n_inliers
 

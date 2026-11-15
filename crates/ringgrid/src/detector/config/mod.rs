@@ -431,6 +431,8 @@ fn apply_target_geometry_priors(config: &mut DetectConfig) {
         MarkerCoding::Coded16(spec) => spec.codebook_profile,
         MarkerCoding::Plain => CodebookProfile::default(),
     };
+    config.advanced.decode.target_codebook =
+        crate::marker::codec::Codebook::for_target(&config.target).map(std::sync::Arc::new);
 
     let ring = config.target.ring();
     let outer = ring.outer_radius_mm;

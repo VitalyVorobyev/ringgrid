@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@import "@vitavision/ui/fonts.css";
+@import "@vitavision/ui/styles.css";
+@import "@vitavision/stage2d/styles.css";
+@import "@vitavision/workbench/styles.css";
+@import "@vitavision/charts/styles.css";
+
+@layer base {
+  /* A fixed frame, not a document: only the panels scroll. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+}

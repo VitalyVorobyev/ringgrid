@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local review UI for ringgrid detection results.
 
-Serves ``index.html`` plus a small JSON API on 127.0.0.1. Everything stays on
+Serves the review app (built into ``app/dist``; the single-file ``index.html``
+until it is built) plus a small JSON API on 127.0.0.1. Everything stays on
 the local machine: the server refuses to bind a non-loopback address, the page
 is served with a CSP that forbids any external request, and the output
 directory (feedback, tile cache, detection runs) must be git-ignored.
@@ -52,10 +53,32 @@ DEFAULT_MARKER_RADIUS_PX = 16.0
 # which a paired marker counts as "position differs" (pixels).
 DEFAULT_MATCH_PX = 10.0
 DEFAULT_POS_TOL_PX = 0.5
+# The page is the React app built into app/dist (`bun install && bun run build`
+# in tools/review/app). Every file it loads is in that bundle, so scripts,
+# styles and fonts come from 'self' only. Inline styles are allowed because the
+# components position layers with style attributes; no inline script is.
+APP_DIST = HERE / "app" / "dist"
 CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; "
+    "img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+# The single-file page (index.html) the bundle replaces: served only while the
+# bundle has not been built. Its script and styles are inline.
+LEGACY_CSP = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
     "img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'"
 )
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".txt": "text/plain; charset=utf-8",
+}
+BUILD_HINT = "the review app is not built: run `bun install && bun run build` in tools/review/app (serving the legacy page meanwhile)"
 
 
 def now_iso() -> str:
@@ -762,8 +785,27 @@ class App:
         }
 
 
-def make_handler(app: App, port_holder: list):
-    index_html = (HERE / "index.html").read_bytes()
+def app_built(app_dir: Path | None) -> bool:
+    return app_dir is not None and (app_dir / "index.html").is_file()
+
+
+def static_file(app_dir: Path, parts: list[str]) -> Path | None:
+    """The built app's file for URL path ``parts``, or None. Never a path
+    outside ``app_dir``, a directory, or a type the page does not load."""
+    if not parts or any(p in ("", ".", "..") or "/" in p or "\\" in p or "\x00" in p for p in parts):
+        return None
+    root = app_dir.resolve()
+    path = (root / Path(*parts)).resolve()
+    if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in STATIC_TYPES:
+        return None
+    return path
+
+
+def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
+    """Request handler. ``app_dir`` is the built front end; while it has no
+    index.html (not built yet) the legacy single-file page is served instead.
+    Checked per request, so building the app needs no server restart."""
+    legacy_html = (HERE / "index.html").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ringgrid-review"
@@ -772,13 +814,13 @@ def make_handler(app: App, port_holder: list):
             pass
 
         # -- helpers ---------------------------------------------------
-        def _send(self, status, body: bytes, ctype: str, extra=None):
+        def _send(self, status, body: bytes, ctype: str, extra=None, csp=CSP):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Content-Security-Policy", csp)
             self.send_header("Referrer-Policy", "no-referrer")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
@@ -826,7 +868,14 @@ def make_handler(app: App, port_holder: list):
             query = parse_qs(url.query)
             try:
                 if not parts:
-                    return self._send(200, index_html, "text/html; charset=utf-8")
+                    if app_built(app_dir):
+                        return self._send(200, (app_dir / "index.html").read_bytes(), STATIC_TYPES[".html"])
+                    return self._send(200, legacy_html, STATIC_TYPES[".html"], csp=LEGACY_CSP)
+                if parts[0] != "api":
+                    path = static_file(app_dir, parts) if app_built(app_dir) else None
+                    if path is None:
+                        return self._err(404, "not found")
+                    return self._send(200, path.read_bytes(), STATIC_TYPES[path.suffix.lower()])
                 if parts == ["api", "state"]:
                     return self._json(app.state())
                 if len(parts) == 4 and parts[:2] == ["api", "tile"] and parts[3] == "image":
@@ -920,7 +969,7 @@ def require_loopback(host: str) -> str:
     return host
 
 
-def make_server(app: App, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def make_server(app: App, host: str = "127.0.0.1", port: int = 8765, app_dir: Path | None = APP_DIST) -> ThreadingHTTPServer:
     host = require_loopback(host)
     holder = [port]
 
@@ -928,7 +977,7 @@ def make_server(app: App, host: str = "127.0.0.1", port: int = 8765) -> Threadin
         daemon_threads = True
         address_family = __import__("socket").AF_INET6 if ":" in host else __import__("socket").AF_INET
 
-    srv = Server((host, port), make_handler(app, holder))
+    srv = Server((host, port), make_handler(app, holder, app_dir))
     holder[0] = srv.server_address[1]
     return srv
 
@@ -1006,6 +1055,8 @@ def main(argv=None) -> int:
 
     srv = make_server(app, args.host, args.port)
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    if not app_built(APP_DIST):
+        print(f"note: {BUILD_HINT}", file=sys.stderr)
     print(f"{len(dataset.tiles)} tiles, {len(app.runs.runs)} runs; serving {url} (Ctrl-C to stop)")
     if args.open:
         webbrowser.open(url)

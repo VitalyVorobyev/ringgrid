@@ -377,6 +377,84 @@ class Http(unittest.TestCase):
 
 
 @unittest.skipIf(Image is None, "Pillow not available")
+class AppBundle(unittest.TestCase):
+    """The built front end is served from its directory only, with a CSP that
+    allows nothing but 'self'; without a build the legacy page is served."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp()).resolve()
+        data = cls.tmp / "data"
+        data.mkdir()
+        _png(data / "img.png")
+        out = cls.tmp / "out"
+        out.mkdir()
+        cls.dist = cls.tmp / "dist"
+        (cls.dist / "assets").mkdir(parents=True)
+        (cls.dist / "index.html").write_text('<!doctype html><script type="module" src="/assets/app.js"></script>')
+        (cls.dist / "assets" / "app.js").write_text("console.log(1)")
+        (cls.dist / "assets" / "plex.woff2").write_bytes(b"wOF2")
+        (cls.dist / "notes.json").write_text("{}")
+        (cls.tmp / "secret.js").write_text("secret")
+        cls.empty = cls.tmp / "empty"
+        cls.empty.mkdir()
+        app = srv.App(srv.Dataset(data, 1, out), out, {})
+        cls.servers = {}
+        for name, app_dir in (("built", cls.dist), ("unbuilt", cls.empty)):
+            server = srv.make_server(app, "127.0.0.1", 0, app_dir)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            cls.servers[name] = server
+
+    @classmethod
+    def tearDownClass(cls):
+        for server in cls.servers.values():
+            server.shutdown()
+            server.server_close()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def get(self, which, path):
+        url = f"http://127.0.0.1:{self.servers[which].server_address[1]}{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                return resp.status, resp.read(), resp.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers
+
+    def test_built_app_index_and_assets(self):
+        code, body, hdr = self.get("built", "/")
+        self.assertEqual(code, 200)
+        self.assertIn(b"/assets/app.js", body)
+        csp = hdr["Content-Security-Policy"]
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("script-src 'self';", csp)
+        self.assertIn("font-src 'self'", csp)
+        self.assertNotIn("http", csp)
+        code, body, hdr = self.get("built", "/assets/app.js")
+        self.assertEqual((code, body), (200, b"console.log(1)"))
+        self.assertTrue(hdr["Content-Type"].startswith("text/javascript"))
+        self.assertEqual(self.get("built", "/assets/plex.woff2")[2]["Content-Type"], "font/woff2")
+        self.assertEqual(self.get("built", "/api/state")[0], 200)
+
+    def test_built_app_never_serves_outside_or_unknown_files(self):
+        for path in (
+            "/assets/..%2f..%2fsecret.js", "/assets/../../secret.js", "/..%2fsecret.js", "/%2e%2e/secret.js",
+            "/assets", "/notes.json", "/missing.js", "/assets/app.js%00.js", "/assets%5c..%5c..%5csecret.js",
+        ):
+            code, body, _ = self.get("built", path)
+            self.assertEqual(code, 404, path)
+            self.assertNotIn(b"secret", body)
+
+    def test_unbuilt_app_falls_back_to_the_legacy_page(self):
+        code, body, hdr = self.get("unbuilt", "/")
+        self.assertEqual(code, 200)
+        self.assertIn(b"ringgrid review", body)
+        self.assertEqual(hdr["Content-Security-Policy"], srv.LEGACY_CSP)
+        self.assertEqual(self.get("unbuilt", "/assets/app.js")[0], 404)
+        self.assertFalse(srv.app_built(self.empty))
+        self.assertFalse(srv.app_built(None))
+
+
+@unittest.skipIf(Image is None, "Pillow not available")
 class SharedSplit(unittest.TestCase):
     def test_review_tiles_match_eval_split(self):
         tmp = Path(tempfile.mkdtemp())

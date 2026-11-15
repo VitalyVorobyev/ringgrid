@@ -1,0 +1,5 @@
+{
+  "extends": ["./node_modules/@vitavision/config-oxlint/oxlintrc.json"],
+  "ignorePatterns": ["dist/**", "public/**"],
+  "overrides": [{ "files": ["src/**"], "rules": { "vitavision/tokens-only": "error" } }]
+}

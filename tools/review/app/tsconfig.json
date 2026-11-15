@@ -1,0 +1,8 @@
+{
+  // Strict compiler options shared by every vitavision frontend (@vitavision/config-ts).
+  "extends": "@vitavision/config-ts/tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
+}

@@ -57,6 +57,7 @@ fn phase_completion(
         gray,
         h,
         final_markers,
+        &mut Vec::new(),
         config,
         CompletionScope::Coded,
         mapper,

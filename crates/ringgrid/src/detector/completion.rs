@@ -36,6 +36,9 @@ pub struct CompletionStats {
     /// Number of accepted completion markers whose re-decoded ID did not match
     /// the expected board ID (decode mismatch accepted).
     pub n_decode_mismatch: usize,
+    /// Cells filled by adopting an already-fitted unlabeled ring instead of
+    /// refitting (see [`complete_with_h`]'s `unlabeled` pool).
+    pub n_adopted: usize,
 }
 
 struct CandidateQuality {
@@ -172,6 +175,11 @@ const MAX_GROWTH_ROUNDS: usize = 32;
 pub(crate) enum CompletionScope {
     /// Coded target: every coded cell, board frame, one pass.
     Coded,
+    /// Coded target anchored from a labeled patch (grid-first): coded cells in
+    /// the identified patch's bounding box expanded by one lattice ring per
+    /// round, board frame. Growing outward keeps every seed next to identified
+    /// neighbors, which a one-pass sweep in board order cannot.
+    CodedPatch,
     /// Plain target with a resolved origin: every cell, board frame, one pass.
     PlainAnchored,
     /// Plain target without a resolved origin: grow the labeled patch in the
@@ -196,7 +204,7 @@ impl CompletionScope {
     /// relative assignment frame. `None` for a coordinate off the board.
     fn cell_xy(self, target: &TargetLayout, coord: Coord) -> Option<[f64; 2]> {
         match self {
-            Self::Coded | Self::PlainAnchored => target
+            Self::Coded | Self::CodedPatch | Self::PlainAnchored => target
                 .cell_xy_mm(coord)
                 .map(|xy| [f64::from(xy[0]), f64::from(xy[1])]),
             Self::PlainRelative => Some(crate::pipeline::frame_xy_mm(target, coord)),
@@ -225,15 +233,22 @@ impl CompletionScope {
         match self {
             Self::Coded => Some(board_cells(true)),
             Self::PlainAnchored => Some(board_cells(false)),
-            Self::PlainRelative => {
-                let (min, max) = coord_bbox(present.iter().copied())?;
-                Some(
-                    ((min.v - 1)..=(max.v + 1))
-                        .flat_map(|v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v)))
-                        .map(|coord| CompletionCell { coord, id: None })
-                        .collect(),
-                )
-            }
+            Self::CodedPatch => Some(
+                grown_bbox(present)?
+                    .filter_map(|coord| {
+                        let id = target.id_of(coord)?;
+                        Some(CompletionCell {
+                            coord,
+                            id: Some(id),
+                        })
+                    })
+                    .collect(),
+            ),
+            Self::PlainRelative => Some(
+                grown_bbox(present)?
+                    .map(|coord| CompletionCell { coord, id: None })
+                    .collect(),
+            ),
         }
     }
 
@@ -241,9 +256,18 @@ impl CompletionScope {
     fn max_rounds(self) -> usize {
         match self {
             Self::Coded | Self::PlainAnchored => 1,
-            Self::PlainRelative => MAX_GROWTH_ROUNDS,
+            Self::CodedPatch | Self::PlainRelative => MAX_GROWTH_ROUNDS,
         }
     }
+}
+
+/// Coordinates of the present set's bounding box expanded by one lattice ring.
+fn grown_bbox(present: &HashSet<Coord>) -> Option<impl Iterator<Item = Coord>> {
+    let (min, max) = coord_bbox(present.iter().copied())?;
+    Some(
+        ((min.v - 1)..=(max.v + 1))
+            .flat_map(move |v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v))),
+    )
 }
 
 fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
@@ -619,10 +643,15 @@ fn try_complete_marker(
 /// grows round by round with the labeled patch. Each cell is attempted at most
 /// once; completed markers carry their cell's `grid_coord`, frame
 /// `board_xy_mm`, and — on coded targets — its ID.
+///
+/// `unlabeled` holds already-fitted rings the labeling stage could not place.
+/// Before refitting a cell, the pool ring nearest the cell's seed is adopted
+/// instead when within `reproj_gate_px` — the gate a refit center must pass.
 pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<MarkerRecord>,
+    unlabeled: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     scope: CompletionScope,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
@@ -666,6 +695,12 @@ pub(crate) fn complete_with_h(
                 continue;
             };
             let seed = completion_seed(cell.coord, cell_xy, h, markers, &grid, target, scope);
+            if let Some(marker) = adopt_nearest(unlabeled, seed, params.reproj_gate_px) {
+                markers.push(adopt_into(marker, cell, cell_xy, &mut stats));
+                present.insert(cell.coord);
+                added_this_round += 1;
+                continue;
+            }
             if !is_center_in_bounds(seed, f64::from(w), f64::from(h_img), safe_margin) {
                 continue;
             }
@@ -700,6 +735,7 @@ pub(crate) fn complete_with_h(
 
     tracing::info!(
         ?scope,
+        n_adopted = stats.n_adopted,
         n_added = stats.n_added,
         n_attempted = stats.n_attempted,
         n_in_image = stats.n_in_image,
@@ -707,6 +743,41 @@ pub(crate) fn complete_with_h(
     );
 
     stats
+}
+
+/// Label an adopted pool ring with its cell (and the cell's ID, counting a
+/// contradicting decode in `n_decode_mismatch`). The ring keeps its fit,
+/// source and center correction.
+fn adopt_into(
+    marker: MarkerRecord,
+    cell: CompletionCell,
+    cell_xy: [f64; 2],
+    stats: &mut CompletionStats,
+) -> MarkerRecord {
+    if marker.id.is_some() && marker.id != cell.id {
+        stats.n_decode_mismatch += 1;
+    }
+    stats.n_adopted += 1;
+    MarkerRecord {
+        id: cell.id,
+        grid_coord: Some([cell.coord.u, cell.coord.v]),
+        board_xy_mm: Some(cell_xy),
+        ..marker
+    }
+}
+
+/// Remove and return the pool ring nearest `seed`, if within `gate_px`.
+fn adopt_nearest(
+    pool: &mut Vec<MarkerRecord>,
+    seed: [f64; 2],
+    gate_px: f32,
+) -> Option<MarkerRecord> {
+    let (i, d) = pool
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (i, (m.center[0] - seed[0]).hypot(m.center[1] - seed[1])))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    (d <= f64::from(gate_px)).then(|| pool.swap_remove(i))
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.

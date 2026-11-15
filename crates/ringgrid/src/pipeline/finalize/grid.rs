@@ -9,6 +9,8 @@
 
 use crate::pipeline::time_compat::{Instant, duration_ms};
 
+use std::collections::HashSet;
+
 use image::GrayImage;
 use projective_grid::Coord;
 
@@ -20,11 +22,12 @@ use super::common::{
     sync_marker_board_correspondence_with_logging,
 };
 use super::{annotate_radius_ratios, apply_marker_fixup};
-use crate::detector::MarkerRecord;
+use crate::detector::{DetectionSource, MarkerRecord};
+use crate::homography::fit_homography_ransac;
 use crate::pipeline::anchor::CoordMap;
 use crate::pipeline::{
-    CompletionScope, CompletionStats, DetectConfig, DetectionFrame, PipelineResult,
-    apply_projective_centers, complete_with_h, matrix3_to_array,
+    CompletionScope, DetectConfig, DetectionFrame, PipelineResult, apply_projective_centers,
+    complete_with_h, marker_cell_coord, matrix3_to_array,
 };
 use crate::pixelmap::PixelMapper;
 use crate::target::TargetLayout;
@@ -97,27 +100,113 @@ fn phase_anchor(
     true
 }
 
+/// Let decoded rings the labeler dropped join the anchored grid on the same
+/// terms the decode-anchored global filter accepts a decode: a RANSAC
+/// homography over every identified marker plus every dropped ring whose
+/// decoded cell is still free, at the configured inlier threshold. Dropped
+/// rings that are inliers join with their decoded cell, and the RANSAC
+/// homography (fit over the whole view, not just the labeled patch, whose
+/// homography extrapolates poorly) replaces `h`. Identified markers stay
+/// regardless — geometric verify judges them. Returns the number joined.
+fn join_decoded_unlabeled(
+    markers: &mut Vec<MarkerRecord>,
+    pool: &mut Vec<MarkerRecord>,
+    h: &mut nalgebra::Matrix3<f64>,
+    config: &DetectConfig,
+) -> usize {
+    let target = &config.target;
+    let mut present: HashSet<Coord> = markers
+        .iter()
+        .filter_map(|m| marker_cell_coord(m, target))
+        .collect();
+    // Pool candidates: decoded onto a free board cell (first claim wins).
+    let mut candidates: Vec<(usize, Coord, [f64; 2])> = Vec::new();
+    for (i, m) in pool.iter().enumerate() {
+        let Some(c) = m.id.and_then(|id| target.coord_of_id(id)) else {
+            continue;
+        };
+        if let Some(xy) = target.cell_xy_mm(c).filter(|_| present.insert(c)) {
+            candidates.push((i, c, [f64::from(xy[0]), f64::from(xy[1])]));
+        }
+    }
+    if candidates.is_empty() {
+        return 0;
+    }
+    let identified = markers
+        .iter()
+        .filter_map(|m| Some((m.board_xy_mm?, m.center)));
+    let (src, dst): (Vec<[f64; 2]>, Vec<[f64; 2]>) = identified
+        .chain(candidates.iter().map(|&(i, _, xy)| (xy, pool[i].center)))
+        .unzip();
+    let Ok(fit) = fit_homography_ransac(&src, &dst, &config.advanced.ransac_homography) else {
+        return 0;
+    };
+    *h = fit.h;
+    let n_identified = src.len() - candidates.len();
+    let mut joined: Vec<usize> = Vec::new();
+    for (k, &(i, c, xy)) in candidates.iter().enumerate() {
+        if fit
+            .inlier_mask
+            .get(n_identified + k)
+            .copied()
+            .unwrap_or(false)
+        {
+            pool[i].grid_coord = Some([c.u, c.v]);
+            pool[i].board_xy_mm = Some(xy);
+            joined.push(i);
+        }
+    }
+    // Remove back to front so pool indices stay valid.
+    joined.sort_unstable();
+    for &i in joined.iter().rev() {
+        markers.push(pool.swap_remove(i));
+    }
+    tracing::info!(
+        n_candidates = candidates.len(),
+        n_joined = joined.len(),
+        "grid-first: decoded unlabeled rings joined"
+    );
+    joined.len()
+}
+
 /// Coordinate-keyed completion plus projective-center correction for the newly
-/// completed markers only.
+/// refitted markers only (adopted rings were corrected before labeling).
+///
+/// Coded targets grow the identified patch outward first, adopting the rings
+/// the labeler dropped before refitting, then sweep the rest of the board once
+/// (a growth stall — a lattice ring with nothing fittable — must not hide the
+/// cells beyond it). Plain targets keep their pre-A/B behavior: one scope, no
+/// pool.
 fn phase_grid_completion(
     gray: &GrayImage,
     h_current: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<MarkerRecord>,
+    mut unlabeled: Vec<MarkerRecord>,
     config: &DetectConfig,
     anchored: bool,
     mapper: Option<&dyn PixelMapper>,
-) -> CompletionStats {
-    let scope = if config.target.is_coded() {
-        CompletionScope::Coded
-    } else {
-        CompletionScope::plain(anchored)
-    };
+) -> usize {
     let n_before = markers.len();
-    let stats = complete_with_h(gray, h_current, markers, config, scope, mapper);
-    if markers.len() > n_before {
-        apply_projective_centers(&mut markers[n_before..], config);
+    let mut complete = |scope, pool: &mut Vec<MarkerRecord>| {
+        complete_with_h(gray, h_current, markers, pool, config, scope, mapper)
+    };
+    if config.target.is_coded() {
+        complete(CompletionScope::CodedPatch, &mut unlabeled);
+        complete(CompletionScope::Coded, &mut unlabeled);
+    } else {
+        complete(CompletionScope::plain(anchored), &mut Vec::new());
     }
-    stats
+    // Refits first (stable: a pool-less run keeps its order), then correct them.
+    let added = &mut markers[n_before..];
+    added.sort_by_key(|m| m.source != DetectionSource::Completion);
+    let n_refit = added
+        .iter()
+        .take_while(|m| m.source == DetectionSource::Completion)
+        .count();
+    if n_refit > 0 {
+        apply_projective_centers(&mut added[..n_refit], config);
+    }
+    added.len()
 }
 
 /// Public board-frame contract: millimeter positions only in the absolute
@@ -213,11 +302,17 @@ pub(super) fn finalize_grid_result(
         );
     }
 
+    let mut unlabeled = assignment.unlabeled;
+    if config.target.is_coded() {
+        join_decoded_unlabeled(&mut final_markers, &mut unlabeled, &mut h_current, config);
+    }
+
     let completion_start = Instant::now();
-    let completion_stats = phase_grid_completion(
+    let n_completed = phase_grid_completion(
         gray,
         &h_current,
         &mut final_markers,
+        unlabeled,
         config,
         anchored,
         mapper,
@@ -259,7 +354,7 @@ pub(super) fn finalize_grid_result(
     tracing::info!(
         markers_in,
         markers_after_assign,
-        n_completed = completion_stats.n_added,
+        n_completed,
         n_geom_removed = geom_stats.n_removed_total,
         markers_out = result.markers.len(),
         anchored,

@@ -39,6 +39,9 @@ pub(crate) struct GridAssignment {
     pub h: Matrix3<f64>,
     /// RANSAC statistics of the frame homography fit.
     pub ransac: RansacStats,
+    /// Input markers the labeling dropped (unlabeled or homography outliers),
+    /// labels untouched.
+    pub unlabeled: Vec<MarkerRecord>,
 }
 
 /// Label plain-ring centers with lattice coordinates and fit the frame
@@ -47,8 +50,9 @@ pub(crate) struct GridAssignment {
 /// On success, labeled homography-inlier markers survive with
 /// `grid_coord` set (canonical relative frame) and `board_xy_mm` set to the
 /// assignment-frame mm position; unlabeled and RANSAC-outlier markers are
-/// removed — mirroring the coded global filter, which also keeps homography
-/// inliers only. On failure (`None`) `markers` is left untouched.
+/// moved to [`GridAssignment::unlabeled`] — mirroring the coded global filter,
+/// which also keeps homography inliers only. On failure (`None`) `markers` is
+/// left untouched.
 pub(crate) fn assign_plain_grid(
     markers: &mut Vec<MarkerRecord>,
     target: &TargetLayout,
@@ -127,7 +131,7 @@ pub(crate) fn assign_plain_grid(
 
     let ransac = RansacStats::from_ransac(&result, n_labeled, config.inlier_threshold);
 
-    apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
+    let unlabeled = apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
 
     tracing::info!(
         n_input,
@@ -141,35 +145,37 @@ pub(crate) fn assign_plain_grid(
     Some(GridAssignment {
         h: result.h,
         ransac,
+        unlabeled,
     })
 }
 
 /// Keep labeled homography inliers only, writing each survivor's `grid_coord`
 /// and assignment-frame `board_xy_mm` in place; all other markers are removed
-/// (the coded global filter drops its outliers the same way).
+/// (the coded global filter drops its outliers the same way) and returned.
 fn apply_inlier_labels(
     markers: &mut Vec<MarkerRecord>,
     labeled: &[(usize, Coord)],
     inlier_mask: &[bool],
     target: &TargetLayout,
-) {
+) -> Vec<MarkerRecord> {
     let keep: HashMap<usize, Coord> = labeled
         .iter()
         .enumerate()
         .filter(|(j, _)| inlier_mask.get(*j).copied().unwrap_or(false))
         .map(|(_, (i, c))| (*i, *c))
         .collect();
-    let old = std::mem::take(markers);
-    *markers = old
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, mut m)| {
-            let coord = keep.get(&i)?;
-            m.grid_coord = Some([coord.u, coord.v]);
-            m.board_xy_mm = Some(frame_xy_mm(target, *coord));
-            Some(m)
-        })
-        .collect();
+    let mut dropped = Vec::new();
+    for (i, mut m) in std::mem::take(markers).into_iter().enumerate() {
+        match keep.get(&i) {
+            Some(coord) => {
+                m.grid_coord = Some([coord.u, coord.v]);
+                m.board_xy_mm = Some(frame_xy_mm(target, *coord));
+                markers.push(m);
+            }
+            None => dropped.push(m),
+        }
+    }
+    dropped
 }
 
 /// Canonicalize lattice labels into the relative frame: apply the element of

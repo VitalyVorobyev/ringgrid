@@ -10,6 +10,6 @@ pub(crate) use crate::homography::{
 
 pub(crate) use crate::detector::{
     annotate_neighbor_radius_ratios, apply_projective_centers, complete_with_h, dedup_by_id,
-    dedup_markers, global_filter, try_recover_inner_as_outer, verify_and_correct_ids,
-    warn_center_correction_without_intrinsics,
+    dedup_markers, global_filter, recover_inner_from_neighbours, try_recover_inner_as_outer,
+    verify_and_correct_ids, warn_center_correction_without_intrinsics,
 };

@@ -784,48 +784,14 @@ fn classify_missing(
 #[test]
 #[ignore = "surrounded-missing-cell study (tens of minutes in release)"]
 fn precision_surrounded_missing() {
-    let cases: Vec<Case> = catalogue()
-        .into_iter()
-        .chain(explore_cases())
-        .filter(|c| c.group != "oor")
-        .collect();
     let mut boards = Boards::default();
-    let hex_steps: &[[i32; 2]] = &[[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
-    let rect_steps: &[[i32; 2]] = &[
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-        [1, 1],
-        [1, -1],
-        [-1, 1],
-        [-1, -1],
-    ];
     // (board, cause) -> count
     let mut table: BTreeMap<(String, &'static str), usize> = BTreeMap::new();
     let mut n_missing = 0usize;
-    for case in &cases {
+    for case in &in_range_cases() {
         let (image, truth) = render_case(case, &mut boards);
         let result = case_detector(case).detect(&image).expect("detect");
-        let ok = correct_cells(&truth, &result);
-        let (steps, need) = if truth.hex {
-            (hex_steps, 4)
-        } else {
-            (rect_steps, 6)
-        };
-        let missing: Vec<&precision::GtCell> = truth
-            .cells
-            .iter()
-            .filter(|c| c.visible && !ok.contains(&c.coord))
-            .filter(|c| {
-                let k = c.coord;
-                steps
-                    .iter()
-                    .filter(|s| ok.contains(&[k[0] + s[0], k[1] + s[1]]))
-                    .count()
-                    >= need
-            })
-            .collect();
+        let missing = surrounded_missing(&truth, &correct_cells(&truth, &result));
         if missing.is_empty() {
             continue;
         }
@@ -837,5 +803,220 @@ fn precision_surrounded_missing() {
     println!("surrounded missing cells: {n_missing}");
     for ((board, cause), n) in &table {
         println!("{board:10} {cause:32} {n:5}");
+    }
+}
+
+/// The in-range catalogue and grid (`oor` excluded).
+fn in_range_cases() -> Vec<Case> {
+    catalogue()
+        .into_iter()
+        .chain(explore_cases())
+        .filter(|c| c.group != "oor")
+        .collect()
+}
+
+/// Visible cells missing from `ok` while most of their lattice neighbours
+/// are in it (hex: ≥ 4 of 6; rect: ≥ 6 of 8).
+fn surrounded_missing<'a>(truth: &'a Truth, ok: &HashSet<[i32; 2]>) -> Vec<&'a precision::GtCell> {
+    const HEX: &[[i32; 2]] = &[[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
+    const RECT: &[[i32; 2]] = &[
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+    ];
+    let (steps, need) = if truth.hex { (HEX, 4) } else { (RECT, 6) };
+    truth
+        .cells
+        .iter()
+        .filter(|c| c.visible && !ok.contains(&c.coord))
+        .filter(|c| {
+            let k = c.coord;
+            steps
+                .iter()
+                .filter(|s| ok.contains(&[k[0] + s[0], k[1] + s[1]]))
+                .count()
+                >= need
+        })
+        .collect()
+}
+
+/// Condition bucket of a cell: ring diameter, blur, tilt, distortion.
+fn condition_bucket(case: &Case, cell: &precision::GtCell) -> String {
+    let d = match cell.diam_px {
+        x if x < 26.0 => "d<26",
+        x if x < 38.0 => "d26-38",
+        _ => "d>=38",
+    };
+    let blur = match case.spec.psf {
+        support::blur_scene::Psf::Gaussian { sigma } if sigma < 1.2 => "b<1.2",
+        support::blur_scene::Psf::Gaussian { sigma } if sigma < 1.8 => "b1.2-1.8",
+        _ => "b>=1.8",
+    };
+    let tilt = match case.spec.tilt_deg {
+        t if t < 25.0 => "t<25",
+        t if t < 45.0 => "t25-45",
+        _ => "t>=45",
+    };
+    let dist = if case.spec.radial_lambda != 0.0 {
+        " dist"
+    } else {
+        ""
+    };
+    format!("{d} {blur} {tilt}{dist}")
+}
+
+/// Inner-ellipse coverage of surrounded missing cells: why the inner fit
+/// failed (reason, by ring size / blur / tilt), and — for rings whose inner
+/// ellipse was fitted but whose two-conic correction was rejected — which
+/// projective-centre gate rejected it and the centre error had it been
+/// accepted.
+#[test]
+#[ignore = "inner-coverage study (tens of minutes in release)"]
+fn precision_inner_coverage() {
+    let mut boards = Boards::default();
+    let mut reasons: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut by_bucket: BTreeMap<(String, &'static str), usize> = BTreeMap::new();
+    let mut gates: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut accepted_err: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for case in &in_range_cases() {
+        let (image, truth) = render_case(case, &mut boards);
+        let result = case_detector(case).detect(&image).expect("detect");
+        let missing = surrounded_missing(&truth, &correct_cells(&truth, &result));
+        if missing.is_empty() {
+            continue;
+        }
+        let mut d = case_detector(case);
+        d.config_mut().circle_refinement = ringgrid::CircleRefinementMethod::None;
+        let (raw, diag) = d.detect_with_diagnostics(&image).expect("detect");
+        let gated = |f: &dyn Fn(&mut ringgrid::ProjectiveCenterConfig)| {
+            let mut d = case_detector(case);
+            f(&mut d.config_mut().advanced.projective_center);
+            d.detect(&image).expect("detect")
+        };
+        let no_residual = gated(&|p| p.max_selected_residual = None);
+        let no_eig = gated(&|p| p.min_eig_separation = None);
+        let no_shift = gated(&|p| p.max_correction_shift_px = Some(1e9));
+        let no_gate = gated(&|p| {
+            p.max_selected_residual = None;
+            p.min_eig_separation = None;
+            p.max_correction_shift_px = Some(1e9);
+        });
+        let near = |p: [f64; 2], c: &precision::GtCell| {
+            (p[0] - c.px[0]).hypot(p[1] - c.px[1]) <= 0.25 * c.diam_px
+        };
+        let reported = |r: &ringgrid::DetectionResult, c: &precision::GtCell| {
+            r.detected_markers
+                .iter()
+                .find(|m| near(m.center, c) && m.id == c.id)
+                .map(|m| (c.px[0] - m.center[0]).hypot(c.px[1] - m.center[1]))
+        };
+        let group = format!("{}-{}", truth.board, truth.group);
+        for c in missing {
+            let Some(i) = raw.detected_markers.iter().position(|m| near(m.center, c)) else {
+                continue;
+            };
+            if raw.detected_markers[i].ellipse_inner.is_none() {
+                let fit = &diag.markers[i].fit;
+                let theta = fit.inner_theta_consistency.map_or("-".to_string(), |t| {
+                    format!("{:.1}", (t * 10.0).floor() / 10.0)
+                });
+                let reason = format!("{:?} (theta {theta})", fit.inner_fit_reason);
+                *reasons.entry((truth.board.clone(), reason)).or_default() += 1;
+                *by_bucket
+                    .entry((condition_bucket(case, c), "no inner"))
+                    .or_default() += 1;
+                continue;
+            }
+            *by_bucket
+                .entry((condition_bucket(case, c), "rejected"))
+                .or_default() += 1;
+            let gate = match (
+                reported(&no_residual, c),
+                reported(&no_eig, c),
+                reported(&no_shift, c),
+            ) {
+                (Some(_), _, _) => "residual",
+                (_, Some(_), _) => "eig-sep",
+                (_, _, Some(_)) => "shift",
+                _ => "several / other",
+            };
+            *gates.entry(gate).or_default() += 1;
+            if let Some(err) = reported(&no_gate, c) {
+                accepted_err.entry(group.clone()).or_default().push(err);
+            }
+        }
+    }
+    println!("inner-fit failure (no inner ellipse), by board and reason:");
+    for ((board, reason), n) in &reasons {
+        println!("  {board:10} {reason:48} {n:5}");
+    }
+    println!("by condition:");
+    for ((bucket, kind), n) in &by_bucket {
+        println!("  {bucket:32} {kind:10} {n:5}");
+    }
+    println!("rejected two-conic correction, by gate: {gates:?}");
+    println!("centre error had the rejected correction been accepted:");
+    for (group, mut errs) in accepted_err {
+        errs.sort_by(f64::total_cmp);
+        let n1 = errs.iter().filter(|&&e| e > 1.0).count();
+        println!(
+            "  {group:22} n {:5} median {:.3} >1px {:5.1}%",
+            errs.len(),
+            errs[errs.len() / 2],
+            100.0 * n1 as f64 / errs.len() as f64
+        );
+    }
+}
+
+/// TEMPORARY A/B: centre error of cells the experiment adds (reported
+/// correctly with it, not without) vs cells both report, per group.
+#[test]
+#[ignore = "temporary A/B"]
+fn precision_exp_ab() {
+    let mut boards = Boards::default();
+    // (group, kind) -> errors, n beyond loose
+    let mut table: BTreeMap<(String, &'static str), (Vec<f64>, usize)> = BTreeMap::new();
+    for case in &in_range_cases() {
+        let (image, truth) = render_case(case, &mut boards);
+        // SAFETY: this study runs alone (single test, no other threads read
+        // the environment concurrently).
+        unsafe { std::env::set_var("RINGGRID_EXP_OFF", "1") };
+        let base = case_detector(case).detect(&image).expect("detect");
+        unsafe { std::env::remove_var("RINGGRID_EXP_OFF") };
+        let new = case_detector(case).detect(&image).expect("detect");
+        let base_ok = correct_cells(&truth, &base);
+        let new_ok = correct_cells(&truth, &new);
+        let group = format!("{}-{}", truth.board, truth.group);
+        for m in &new.detected_markers {
+            let Some(c) = matched_cell(&truth, m.center) else {
+                continue;
+            };
+            let kind = match (base_ok.contains(&c.coord), new_ok.contains(&c.coord)) {
+                (true, true) => "both",
+                (false, true) => "added",
+                _ => continue,
+            };
+            let err = (c.px[0] - m.center[0]).hypot(c.px[1] - m.center[1]);
+            let loose =
+                precision::CENTRE_LOOSE_MIN_PX.max(precision::CENTRE_LOOSE_FRACTION * c.diam_px);
+            let e = table.entry((group.clone(), kind)).or_default();
+            e.0.push(err);
+            e.1 += usize::from(err > loose);
+        }
+    }
+    for ((group, kind), (mut errs, n_loose)) in table {
+        errs.sort_by(f64::total_cmp);
+        let n1 = errs.iter().filter(|&&e| e > 1.0).count();
+        println!(
+            "{group:22} {kind:6} n {:6} median {:.3} >1px {:5.1}% >loose {n_loose}",
+            errs.len(),
+            errs[errs.len() / 2],
+            100.0 * n1 as f64 / errs.len() as f64
+        );
     }
 }

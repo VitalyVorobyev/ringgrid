@@ -75,8 +75,8 @@ class StrategyAggregate:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--data-dir", type=Path, default=Path("data/rtv3d"),
-                   help="Directory containing rtv3d strip images (default: data/rtv3d)")
+    p.add_argument("--data-dir", type=Path, default=Path("data/rtv3d_0"),
+                   help="Directory containing rtv3d strip images (default: data/rtv3d_0)")
     p.add_argument("--binary", type=Path, default=Path("target/release/ringgrid-dev"),
                    help="Path to ringgrid CLI binary (default: target/release/ringgrid-dev)")
     p.add_argument("--target", type=Path, default=None,

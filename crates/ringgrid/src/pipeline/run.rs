@@ -289,9 +289,9 @@ pub fn detect_with_mapper(
 // ---------------------------------------------------------------------------
 
 /// Run a single scale tier through fit/decode and per-tier finalization
-/// (projective centers + ID correction).
+/// (projective centers).
 ///
-/// Returns a raw marker list **without** global filter, completion, or final H
+/// Returns a raw marker list **without** grid labeling, completion, or final H
 /// refit. Call [`detect_multiscale`] to merge and finalize across tiers.
 pub(crate) fn detect_premerge(
     gray: &GrayImage,
@@ -307,12 +307,13 @@ pub(crate) fn detect_premerge(
 ///
 /// For each tier:
 /// 1. Clones `config` and applies the tier's scale prior.
-/// 2. Runs fit/decode + projective centers + ID correction (`detect_premerge`).
+/// 2. Runs fit/decode + projective centers (`detect_premerge`).
 ///
 /// After all tiers:
 /// 3. Merges results with size-consistency-aware dedup
 ///    ([`merge_multiscale_markers`]).
-/// 4. Runs global filter + completion + final H refit once on the merged pool.
+/// 4. Runs grid labeling + anchoring + completion + final H refit once on the
+///    merged pool.
 ///
 /// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
 /// `config.advanced.dedup_radius`.

@@ -1,10 +1,18 @@
-//! Coded-target finalize path: global RANSAC homography filter, completion at
-//! missing IDs, and final H refit.
+//! Fallbacks for views the grid-first path cannot label or anchor.
+//!
+//! - [`finalize_decode_anchored_fallback`] (coded targets): ID correction
+//!   (hex lattices), then a global RANSAC homography over decoded markers,
+//!   completion at missing IDs, final H refit and geometric verify. With fewer
+//!   than four consistent decodes it returns the markers without a homography.
+//! - [`finalize_unlabeled_result`]: markers pass through with their decoded IDs
+//!   and no homography (plain targets without a grid, and the
+//!   `use_global_filter = false` opt-out).
 
 use crate::pipeline::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
+use super::common::phase_final_h;
 use super::common::{
     drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
     sync_marker_board_correspondence_with_logging,
@@ -14,8 +22,8 @@ use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{
     CompletionScope, CompletionStats, DetectConfig, DetectionFrame, PipelineResult,
-    apply_projective_centers, complete_with_h, compute_h_stats, global_filter, matrix3_to_array,
-    mean_reproj_error_px, refit_homography,
+    apply_projective_centers, complete_with_h, global_filter, matrix3_to_array,
+    verify_and_correct_ids,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -64,53 +72,7 @@ fn phase_completion(
     )
 }
 
-pub(super) fn phase_final_h(
-    final_markers: &[MarkerRecord],
-    h_current: Option<nalgebra::Matrix3<f64>>,
-    mut ransac_stats: Option<RansacStats>,
-    config: &DetectConfig,
-) -> (Option<nalgebra::Matrix3<f64>>, Option<RansacStats>) {
-    let final_h_matrix = if final_markers.len() >= 10 {
-        let h_refit = refit_homography(
-            final_markers,
-            &config.advanced.ransac_homography,
-            &config.target,
-        )
-        .map(|(h, _)| h);
-        match (h_current, h_refit) {
-            (Some(h_cur), Some(h_new)) => {
-                let cur_err = mean_reproj_error_px(&h_cur, final_markers, &config.target);
-                let new_err = mean_reproj_error_px(&h_new, final_markers, &config.target);
-                if new_err.is_finite() && (new_err < cur_err || !cur_err.is_finite()) {
-                    Some(h_new)
-                } else {
-                    Some(h_cur)
-                }
-            }
-            (None, Some(h_new)) => Some(h_new),
-            (Some(h_cur), None) => Some(h_cur),
-            (None, None) => None,
-        }
-    } else {
-        h_current
-    };
-
-    let final_ransac = final_h_matrix
-        .as_ref()
-        .and_then(|h| {
-            compute_h_stats(
-                h,
-                final_markers,
-                config.advanced.ransac_homography.inlier_threshold,
-                &config.target,
-            )
-        })
-        .or_else(|| ransac_stats.take());
-
-    (final_h_matrix, final_ransac)
-}
-
-pub(super) fn finalize_no_global_filter_result(
+pub(super) fn finalize_unlabeled_result(
     gray: &GrayImage,
     mut corrected_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
@@ -157,15 +119,19 @@ pub(super) fn finalize_no_global_filter_result(
         sync_board_ms = duration_ms(sync_elapsed),
         fixup_ms = duration_ms(fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
-        "finalize(no global filter) timing summary"
+        "finalize(unlabeled) timing summary"
     );
 
     result
 }
 
-pub(super) fn finalize_global_filter_result(
+/// Decode-anchored fallback for coded views without an anchored grid. ID
+/// correction runs here only: it is the one stage that can still recover IDs
+/// when the lattice labeler finds no grid (hex targets only — it is a
+/// hex-neighbor consensus).
+pub(super) fn finalize_decode_anchored_fallback(
     gray: &GrayImage,
-    corrected_markers: Vec<MarkerRecord>,
+    mut corrected_markers: Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     homography_frame: DetectionFrame,
@@ -173,6 +139,16 @@ pub(super) fn finalize_global_filter_result(
 ) -> PipelineResult {
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
+
+    if id_correction_applies(config) {
+        let stats = verify_and_correct_ids(
+            &mut corrected_markers,
+            &config.target,
+            &config.advanced.id_correction,
+            config.advanced.decode.codebook_profile,
+        );
+        log_id_correction_summary(&stats);
+    }
 
     let filter_start = Instant::now();
     let mut filter_phase = filter_with_h(corrected_markers, config);
@@ -272,8 +248,42 @@ pub(super) fn finalize_global_filter_result(
         map_to_image_ms = duration_ms(map_to_image_elapsed),
         fixup_ms = duration_ms(fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
-        "finalize(global filter) timing summary"
+        "finalize(decode-anchored fallback) timing summary"
     );
 
     result
+}
+
+/// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies
+/// only to hex coded targets (rect coded fallbacks rely on the global filter +
+/// geometric verify alone, plain targets carry no IDs).
+fn id_correction_applies(config: &DetectConfig) -> bool {
+    config.advanced.id_correction.enable
+        && config.target.is_coded()
+        && matches!(
+            config.target.lattice_kind(),
+            projective_grid::LatticeKind::Hex
+        )
+}
+
+fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
+    tracing::info!(
+        n_ids_corrected = stats.n_ids_corrected,
+        n_ids_recovered = stats.n_ids_recovered,
+        n_recovered_local = stats.n_recovered_local,
+        n_recovered_homography = stats.n_recovered_homography,
+        n_homography_seeded = stats.n_homography_seeded,
+        n_ids_cleared = stats.n_ids_cleared,
+        n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
+        n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
+        n_soft_locked_cleared = stats.n_soft_locked_cleared,
+        n_verified = stats.n_verified,
+        n_inconsistent_remaining = stats.n_inconsistent_remaining,
+        n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
+        n_unverified_no_votes = stats.n_unverified_no_votes,
+        n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
+        n_iterations = stats.n_iterations,
+        pitch_px = stats.pitch_px_estimated,
+        "id_correction complete"
+    );
 }

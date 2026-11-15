@@ -1,8 +1,10 @@
-//! Finalize stage: projective centers → ID correction → global filter /
-//! grid assignment → completion → final H refit → geometric verify.
+//! Finalize stage: projective centers → grid labeling → origin anchor → cell
+//! identification → completion → final H refit → geometric verify, with a
+//! decode-anchored fallback (ID correction + global filter) for views where no
+//! grid can be labeled or anchored.
 
-mod coded;
 mod common;
+mod fallback;
 mod grid;
 
 use super::time_compat::{Instant, duration_ms};
@@ -12,33 +14,21 @@ use image::GrayImage;
 use super::axis_ratio_filter::remove_axis_ratio_outliers;
 use super::{
     DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
-    try_recover_inner_as_outer, verify_and_correct_ids, warn_center_correction_without_intrinsics,
+    try_recover_inner_as_outer, warn_center_correction_without_intrinsics,
 };
 use crate::detector::MarkerRecord;
 use crate::pipeline::{DetectionFrame, PipelineResult};
 use crate::pixelmap::PixelMapper;
 
-use coded::{finalize_global_filter_result, finalize_no_global_filter_result};
 use common::sync_marker_board_correspondence;
+use fallback::finalize_unlabeled_result;
 use grid::finalize_grid_result;
-
-/// TEMPORARY A/B scaffolding for the grid-first adoption study — remove at the
-/// adoption decision, together with whichever coded finalize path loses.
-///
-/// `RINGGRID_GRID_FIRST=1` routes coded targets through the grid-first path
-/// (`grid.rs`: grid labeling → decoded-ID origin vote → cell identification)
-/// instead of ID correction + the decode-anchored global filter. Read from the
-/// environment, once per process, so the CLI and the Python bindings pick it
-/// up without any API or config change. This is the only read site.
-fn grid_first_enabled() -> bool {
-    static GRID_FIRST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GRID_FIRST.get_or_init(|| std::env::var_os("RINGGRID_GRID_FIRST").is_some_and(|v| v == "1"))
-}
 
 /// Inner-as-outer recovery (when enabled) followed by the axis-ratio
 /// consistency filter, on working-frame markers (centers not yet mapped to
-/// the image). The coded paths run it before the final H refit and geometric
-/// verify, so recovered markers are verified and feed the final homography.
+/// the image). Both coded paths (grid-first and the decode-anchored fallback)
+/// run it before the final H refit and geometric verify, so recovered markers
+/// are verified and feed the final homography.
 fn apply_marker_fixup(
     gray: &GrayImage,
     markers: &mut Vec<MarkerRecord>,
@@ -69,44 +59,10 @@ fn annotate_radius_ratios(markers: &mut [MarkerRecord], config: &DetectConfig) {
     annotate_neighbor_radius_ratios(markers, recovery.k_neighbors, recovery.ratio_threshold);
 }
 
-/// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies
-/// only to hex coded targets. Rect coded targets rely on the global filter +
-/// geometric verify instead, and plain targets carry no IDs at all.
-fn id_correction_applies(config: &DetectConfig) -> bool {
-    config.advanced.id_correction.enable
-        && config.target.is_coded()
-        && matches!(
-            config.target.lattice_kind(),
-            projective_grid::LatticeKind::Hex
-        )
-}
-
-fn log_id_correction_summary(stats: &crate::detector::id_correction::IdCorrectionStats) {
-    tracing::info!(
-        n_ids_corrected = stats.n_ids_corrected,
-        n_ids_recovered = stats.n_ids_recovered,
-        n_recovered_local = stats.n_recovered_local,
-        n_recovered_homography = stats.n_recovered_homography,
-        n_homography_seeded = stats.n_homography_seeded,
-        n_ids_cleared = stats.n_ids_cleared,
-        n_ids_cleared_inconsistent_pre = stats.n_ids_cleared_inconsistent_pre,
-        n_ids_cleared_inconsistent_post = stats.n_ids_cleared_inconsistent_post,
-        n_soft_locked_cleared = stats.n_soft_locked_cleared,
-        n_verified = stats.n_verified,
-        n_inconsistent_remaining = stats.n_inconsistent_remaining,
-        n_unverified_no_neighbors = stats.n_unverified_no_neighbors,
-        n_unverified_no_votes = stats.n_unverified_no_votes,
-        n_unverified_gate_rejects = stats.n_unverified_gate_rejects,
-        n_iterations = stats.n_iterations,
-        pitch_px = stats.pitch_px_estimated,
-        "id_correction complete"
-    );
-}
-
-/// Apply projective-center correction and ID correction to `fit_markers`.
+/// Apply projective-center correction to `fit_markers`.
 ///
-/// Returns the corrected marker list **without** running global filter,
-/// completion, or final H refit. These post-merge stages are deferred to
+/// Returns the corrected marker list **without** labeling, completion, or
+/// final H refit. These post-merge stages are deferred to
 /// [`finalize_postmerge`] after all tier outputs have been merged by
 /// `merge_multiscale_markers`.
 ///
@@ -116,38 +72,22 @@ pub(super) fn finalize_premerge(
     config: &DetectConfig,
 ) -> Vec<MarkerRecord> {
     let mut corrected_markers = fit_markers;
-
     let projective_center_start = Instant::now();
     apply_projective_centers(&mut corrected_markers, config);
-    let projective_center_elapsed = projective_center_start.elapsed();
-
-    let id_correction_start = Instant::now();
-    // Grid-first identifies cells by lattice labeling after the merge.
-    if id_correction_applies(config) && !grid_first_enabled() {
-        let stats = verify_and_correct_ids(
-            &mut corrected_markers,
-            &config.target,
-            &config.advanced.id_correction,
-            config.advanced.decode.codebook_profile,
-        );
-        log_id_correction_summary(&stats);
-    }
     tracing::debug!(
         markers = corrected_markers.len(),
-        projective_center_ms = duration_ms(projective_center_elapsed),
-        id_correction_ms = duration_ms(id_correction_start.elapsed()),
+        projective_center_ms = duration_ms(projective_center_start.elapsed()),
         "finalize premerge timing summary"
     );
-
     corrected_markers
 }
 
-/// Apply global RANSAC homography filter, completion, and final H refit to
-/// the merged marker pool.
+/// Grid-first labeling, anchoring, completion, final H refit and geometric
+/// verify on the merged marker pool (see `grid.rs`; fallbacks in
+/// `fallback.rs`).
 ///
 /// Called once after all tier outputs have been merged by
-/// `merge_multiscale_markers`. Uses `config` for the board, RANSAC
-/// homography, and completion parameters.
+/// `merge_multiscale_markers`.
 pub(super) fn finalize_postmerge(
     gray: &GrayImage,
     merged_markers: Vec<MarkerRecord>,
@@ -163,7 +103,7 @@ pub(super) fn finalize_postmerge(
     };
 
     if !config.advanced.use_global_filter {
-        return finalize_no_global_filter_result(
+        return finalize_unlabeled_result(
             gray,
             merged_markers,
             config,
@@ -173,18 +113,7 @@ pub(super) fn finalize_postmerge(
         );
     }
 
-    if !config.target.is_coded() || grid_first_enabled() {
-        return finalize_grid_result(
-            gray,
-            merged_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        );
-    }
-
-    finalize_global_filter_result(
+    finalize_grid_result(
         gray,
         merged_markers,
         config,

@@ -1,11 +1,11 @@
-//! Grid-first finalize path: grid labeling, origin anchoring, cell
-//! identification, coordinate-keyed completion, and the board-frame output
-//! contract.
+//! Grid-first finalize path, for every target: grid labeling, origin
+//! anchoring, cell identification, coordinate-keyed completion, and the
+//! board-frame output contract.
 //!
-//! Plain targets always take this path. Coded targets take it under the
-//! temporary grid-first A/B switch (`super::grid_first_enabled`): every fitted
-//! ring — decoded or not — is labeled by the lattice, decoded IDs serve only as
-//! origin evidence, and each anchored marker takes its ID from its cell.
+//! Every fitted ring — decoded or not — is labeled by the lattice; decoded IDs
+//! serve only as origin evidence (dots on plain targets), and each anchored
+//! marker takes its ID from its cell. Views without a labeled (coded: and
+//! anchored) grid go to [`super::fallback`].
 
 use crate::pipeline::time_compat::{Instant, duration_ms};
 
@@ -14,13 +14,11 @@ use std::collections::HashSet;
 use image::GrayImage;
 use projective_grid::Coord;
 
-use super::coded::{
-    finalize_global_filter_result, finalize_no_global_filter_result, phase_final_h,
-};
 use super::common::{
-    drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
-    sync_marker_board_correspondence_with_logging,
+    drop_unmappable_markers_with_warning, map_centers_to_image, phase_final_h,
+    phase_geometric_verify, sync_marker_board_correspondence_with_logging,
 };
+use super::fallback::{finalize_decode_anchored_fallback, finalize_unlabeled_result};
 use super::{annotate_radius_ratios, apply_marker_fixup};
 use crate::detector::{DetectionSource, MarkerRecord};
 use crate::homography::fit_homography_ransac;
@@ -237,9 +235,9 @@ fn unlabeled_fallback(
     image_size: [u32; 2],
 ) -> PipelineResult {
     let finalize = if config.target.is_coded() {
-        finalize_global_filter_result
+        finalize_decode_anchored_fallback
     } else {
-        finalize_no_global_filter_result
+        finalize_unlabeled_result
     };
     finalize(gray, markers, config, mapper, homography_frame, image_size)
 }
@@ -292,7 +290,7 @@ pub(super) fn finalize_grid_result(
     let anchor_elapsed = anchor_start.elapsed();
     if let (false, Some(input)) = (anchored, fallback_input) {
         tracing::info!("grid-first: origin unresolved; decode-anchored fallback");
-        return finalize_global_filter_result(
+        return finalize_decode_anchored_fallback(
             gray,
             input,
             config,

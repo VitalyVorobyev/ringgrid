@@ -244,8 +244,9 @@ pub struct StageTimings {
     /// Fit + decode stage (outer/inner ellipse fit, codebook decode, dedup),
     /// in milliseconds.
     pub fit_decode_ms: f64,
-    /// Finalize stage (center correction, ID correction, global homography
-    /// filter, completion, final H refit) wall-clock, in milliseconds.
+    /// Finalize stage (center correction, grid labeling and anchoring,
+    /// completion, final H refit, geometric verify) wall-clock, in
+    /// milliseconds.
     pub finalize_ms: f64,
     /// End-to-end wall-clock for the whole single-pass detection, in milliseconds.
     pub total_ms: f64,

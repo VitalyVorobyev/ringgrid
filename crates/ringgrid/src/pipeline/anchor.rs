@@ -188,25 +188,33 @@ fn resolve_by_decoded_ids(
             *tally.entry((k, [cell.u - r.u, cell.v - r.v])).or_default() += 1;
         }
     }
-    // Deterministic ranking: votes descending, then the placement key.
+    // Deterministic ranking: votes descending, then the placement key. Only
+    // placements with a physically valid (orientation-preserving) homography
+    // compete: two decodes along a lattice line vote equally for the true
+    // rotation and its mirror image, and that tie is no ambiguity. A placement
+    // needs MIN_AGREEING_DECODES votes to win, so only those are checked.
     let mut ranked: Vec<((usize, [i32; 2]), usize)> = tally.into_iter().collect();
     ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let &((k, offset), votes) = ranked.first()?;
-    let runner_up = ranked.get(1).map_or(0, |r| r.1);
-
+    let mut valid = ranked.iter().filter_map(|&((k, offset), votes)| {
+        if votes < MIN_AGREEING_DECODES {
+            return Some((None, votes));
+        }
+        let coord_map = CoordMap::new(transforms[k], offset);
+        let h = placement_homography(entries, coord_map, target)?;
+        Some((Some((coord_map, h)), votes))
+    });
+    let (best, votes) = valid.next()?;
+    let runner_up = valid.next().map_or(0, |(_, v)| v);
     let accepted = votes >= MIN_AGREEING_DECODES && 2 * votes > n_decoded && votes > runner_up;
-    let coord_map = CoordMap::new(transforms[k], offset);
-    let h = accepted
-        .then(|| placement_homography(entries, coord_map, target))
-        .flatten();
     tracing::info!(
         n_decoded,
         votes,
         runner_up,
-        resolved = h.is_some(),
+        resolved = accepted,
         "origin anchor (decoded ids)"
     );
-    Some(OriginResolution { coord_map, h: h? })
+    let (coord_map, h) = best.filter(|_| accepted)?;
+    Some(OriginResolution { coord_map, h })
 }
 
 /// Dot anchoring: score every placement candidate by its fiducial-dot

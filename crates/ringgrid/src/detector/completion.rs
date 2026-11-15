@@ -766,7 +766,12 @@ fn adopt_into(
     }
 }
 
-/// Remove and return the pool ring nearest `seed`, if within `gate_px`.
+/// Remove and return the pool ring nearest `seed` when it lies within
+/// `gate_px` or within half its own outer radius of it. Rings never overlap,
+/// so a neighboring cell's center is at least two outer radii away: a ring
+/// within half a radius is unambiguously this cell's, at any marker scale (a
+/// fixed pixel gate is far tighter than the lattice prediction error on large
+/// markers).
 fn adopt_nearest(
     pool: &mut Vec<MarkerRecord>,
     seed: [f64; 2],
@@ -777,7 +782,11 @@ fn adopt_nearest(
         .enumerate()
         .map(|(i, m)| (i, (m.center[0] - seed[0]).hypot(m.center[1] - seed[1])))
         .min_by(|a, b| a.1.total_cmp(&b.1))?;
-    (d <= f64::from(gate_px)).then(|| pool.swap_remove(i))
+    let half_radius = pool[i]
+        .ellipse_outer
+        .as_ref()
+        .map_or(0.0, |e| 0.25 * (e.a + e.b));
+    (d <= f64::from(gate_px).max(half_radius)).then(|| pool.swap_remove(i))
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.

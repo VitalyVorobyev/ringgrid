@@ -13,6 +13,7 @@ use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;
+use crate::homography::homography_project;
 use crate::ring::MAD_TO_SIGMA;
 use crate::target::TargetLayout;
 
@@ -67,6 +68,13 @@ const FLOOR_GLOBAL_PX: f64 = 2.0;
 /// MAD multiplier for the global final-H residual test. Looser than the local
 /// multiplier so legitimately distorted peripheral markers survive.
 const K_GLOBAL: f64 = 5.0;
+/// Floor and MAD multiplier of the ellipse-shape test (see
+/// [`shape_outliers`]). Precision harness, operating range (104k correct,
+/// 46 wrong-centre markers; 7.1k correct under uncorrected distortion): a
+/// floor of 0.12 with 6 robust sigmas flags 38 of 46 wrong centres and 0.5 %
+/// of correct markers (0 % under distortion).
+const FLOOR_SHAPE: f64 = 0.12;
+const K_SHAPE: f64 = 6.0;
 
 /// Outcome of [`geometric_verify_filter`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -216,6 +224,9 @@ pub(super) fn geometric_verify_filter(
             .collect();
         t_global = Some(tg);
     }
+    if let Some(h) = final_h {
+        flagged_global_coords.extend(shape_outliers(markers, h, target));
+    }
 
     // --- Reject = union, single retain pass ---
     let n_before = markers.len();
@@ -256,6 +267,61 @@ pub(super) fn geometric_verify_filter(
         );
     }
     stats
+}
+
+/// Axis ratio (minor / major) of the ellipse `h` maps a small circle at board
+/// point `xy` to: the singular-value ratio of its local Jacobian.
+fn predicted_axis_ratio(h: &Matrix3<f64>, xy: [f64; 2]) -> Option<f64> {
+    let o = homography_project(h, xy[0], xy[1]);
+    let px = homography_project(h, xy[0] + 1.0, xy[1]);
+    let py = homography_project(h, xy[0], xy[1] + 1.0);
+    let (a, b, c, d) = (px[0] - o[0], py[0] - o[0], px[1] - o[1], py[1] - o[1]);
+    let t = a * a + b * b + c * c + d * d;
+    let det = (a * d - b * c).abs();
+    let disc = (t * t - 4.0 * det * det).max(0.0).sqrt();
+    let (s_max, s_min) = (((t + disc) / 2.0).sqrt(), ((t - disc) / 2.0).sqrt());
+    (s_max > 0.0 && s_min.is_finite()).then(|| s_min / s_max)
+}
+
+/// Ellipse-shape consistency: a planar target images each marker circle
+/// through the homography's local Jacobian, so its outer ellipse's axis ratio
+/// is predicted by `h` at its cell. Flags labeled markers whose fitted axis
+/// ratio departs from the prediction by more than
+/// `max(FLOOR_SHAPE, K_SHAPE · σ)` around the view's median residual (a robust
+/// σ absorbs fit noise and blur, the median a common offset). Catches rings
+/// whose ellipse is not the whole marker's — cut by the image border or an
+/// occluder, merged with a neighbour — whose centres are off.
+fn shape_outliers(
+    markers: &[MarkerRecord],
+    h: &Matrix3<f64>,
+    target: &TargetLayout,
+) -> HashSet<Coord> {
+    let residuals: Vec<(Coord, f64)> = markers
+        .iter()
+        .filter_map(|m| {
+            let e = m.ellipse_outer.as_ref()?;
+            let predicted = predicted_axis_ratio(h, m.board_xy_mm?)?;
+            Some((marker_cell_coord(m, target)?, e.b / e.a - predicted))
+        })
+        .filter(|(_, r)| r.is_finite())
+        .collect();
+    if residuals.len() < MIN_SAMPLES {
+        return HashSet::new();
+    }
+    let values: Vec<f64> = residuals.iter().map(|(_, r)| *r).collect();
+    let median = median_f64(values.clone()).unwrap_or(0.0);
+    let deviations: Vec<f64> = values.iter().map(|r| (r - median).abs()).collect();
+    let mad = median_f64(deviations).unwrap_or(0.0);
+    let threshold = FLOOR_SHAPE.max(K_SHAPE * MAD_TO_SIGMA * mad);
+    let flagged: HashSet<Coord> = residuals
+        .iter()
+        .filter(|(_, r)| (r - median).abs() > threshold)
+        .map(|(c, _)| *c)
+        .collect();
+    if !flagged.is_empty() {
+        tracing::info!(n = flagged.len(), threshold, "ellipse-shape outliers");
+    }
+    flagged
 }
 
 #[cfg(test)]

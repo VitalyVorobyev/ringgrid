@@ -23,7 +23,8 @@ thread_local! {
 }
 
 /// Refine the centres of a finished result when the configuration asks for
-/// it; otherwise return it unchanged.
+/// it, then apply the corrected-centre output contract
+/// ([`finalize::drop_uncorrected_centres`](super::finalize)).
 ///
 /// `mapper` is the caller's external mapper, if any; a self-undistort model
 /// the result applied is used when there is none. `residuals`, when given
@@ -35,18 +36,18 @@ pub(super) fn finish(
     mut result: PipelineResult,
     residuals: ResidualSink<'_>,
 ) -> PipelineResult {
-    if !config.circle_refinement.uses_photometric() {
-        return result;
-    }
-    #[cfg(test)]
-    RUNS.with(|n| n.set(n.get() + 1));
+    if config.circle_refinement.uses_photometric() {
+        #[cfg(test)]
+        RUNS.with(|n| n.set(n.get() + 1));
 
-    let start = Instant::now();
-    refine(gray, config, mapper, &mut result, residuals);
-    // The stage is part of the end-to-end total.
-    if let Some(timings) = result.timings.as_mut() {
-        timings.total_ms += duration_ms(start.elapsed());
+        let start = Instant::now();
+        refine(gray, config, mapper, &mut result, residuals);
+        // The stage is part of the end-to-end total.
+        if let Some(timings) = result.timings.as_mut() {
+            timings.total_ms += duration_ms(start.elapsed());
+        }
     }
+    super::finalize::drop_uncorrected_centres(&mut result, config);
     result
 }
 

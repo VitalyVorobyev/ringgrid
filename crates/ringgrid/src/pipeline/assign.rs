@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use nalgebra::Matrix3;
 use projective_grid::{
-    Coord, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind, PointFeature,
-    detect_grid, expert::lattice::GridTransform,
+    Coord, DetectionParams, DetectionRequest, Evidence, GridDimensions, GridEntry, LatticeKind,
+    PointFeature, detect_grid, expert::lattice::GridTransform,
 };
 
 use crate::conic::RansacConfig;
@@ -75,6 +75,11 @@ pub(crate) fn assign_plain_grid(
         return None;
     }
 
+    // Label-residual gate: the same threshold the f64 frame-homography RANSAC
+    // below applies. projective-grid's own default (2 px) is checked against
+    // its f32, unnormalized DLT, which on large perspective boards leaves
+    // residuals of several px on exact positions and drops correct labels.
+    let params = DetectionParams::new(config.inlier_threshold as f32);
     let request = match target.lattice() {
         LatticeGeometry::Rect(r) => {
             DetectionRequest::new(target.lattice_kind(), Evidence::Positions(&features))
@@ -85,7 +90,8 @@ pub(crate) fn assign_plain_grid(
         LatticeGeometry::Hex(_) => {
             DetectionRequest::new(target.lattice_kind(), Evidence::Positions(&features))
         }
-    };
+    }
+    .with_params(params);
 
     let solution = match detect_grid(request) {
         Ok(s) => s,

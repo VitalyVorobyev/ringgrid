@@ -21,7 +21,7 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::{
     CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
-    marker_build::{ConfidenceModel, fit_support_score, marker_from_outer_fit},
+    marker_build::{fit_support_score, marker_from_outer_fit},
     median_neighbor_outer_radius_px,
 };
 
@@ -502,7 +502,7 @@ fn evaluate_completion_candidate(
 /// Build the final `MarkerRecord` for an accepted completion candidate.
 ///
 /// Only a decode that agrees with the target cell's ID is attributed to the
-/// marker; confidence uses [`ConfidenceModel::DecodeOrFitSupport`].
+/// marker.
 fn assemble_completion_marker(
     gray: &GrayImage,
     target_cell: CompletionCell,
@@ -512,13 +512,7 @@ fn assemble_completion_marker(
 ) -> MarkerRecord {
     let marker_id = target_cell.id;
     cand.decode_result = cand.decode_result.filter(|d| marker_id == Some(d.id));
-    let marker = marker_from_outer_fit(
-        gray,
-        cand,
-        config,
-        mapper,
-        ConfidenceModel::DecodeOrFitSupport,
-    );
+    let marker = marker_from_outer_fit(gray, cand, config, mapper);
     MarkerRecord {
         id: marker_id,
         grid_coord: Some([target_cell.coord.u, target_cell.coord.v]),

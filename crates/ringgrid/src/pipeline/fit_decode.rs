@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::time_compat::{Instant, duration_ms};
 
-use super::marker_build::{ConfidenceModel, marker_from_outer_fit};
+use super::marker_build::marker_from_outer_fit;
 use super::outer_fit::{OuterFitRejectReason, fit_outer_candidate_from_prior};
 use super::{DetectConfig, dedup_by_id, dedup_markers};
 use crate::detector::MarkerRecord;
@@ -116,13 +116,7 @@ fn process_candidate(
     // Inner fit + metrics + confidence + record assembly.
     timing.n_inner_fit_attempted += 1;
     let inner_fit_start = Instant::now();
-    let marker = marker_from_outer_fit(
-        ctx.gray,
-        fit,
-        ctx.config,
-        ctx.mapper,
-        ConfidenceModel::Composite,
-    );
+    let marker = marker_from_outer_fit(ctx.gray, fit, ctx.config, ctx.mapper);
     timing.inner_fit += inner_fit_start.elapsed();
     if ctx.config.advanced.inner_fit.require_inner_fit && marker.ellipse_inner.is_none() {
         return Err(CandidateRejectReason::InnerFitRequired);

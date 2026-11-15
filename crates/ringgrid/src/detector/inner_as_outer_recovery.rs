@@ -19,7 +19,7 @@ use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 use super::{
     DetectConfig,
-    marker_build::{ConfidenceModel, DetectionSource, marker_from_outer_fit},
+    marker_build::{DetectionSource, marker_from_outer_fit},
     median_neighbor_outer_radius_px, outer_fit,
 };
 
@@ -221,7 +221,7 @@ fn recover_marker_at_index(
     )?;
     candidate.decode_result = decode_result;
 
-    let marker = marker_from_outer_fit(gray, candidate, config, mapper, ConfidenceModel::Composite);
+    let marker = marker_from_outer_fit(gray, candidate, config, mapper);
 
     // `center` stays in the working frame like every marker at this stage;
     // finalize maps all centers to the image afterwards.

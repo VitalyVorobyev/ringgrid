@@ -389,13 +389,6 @@ pub(crate) fn fit_support_score(
     (arc_cov * inlier_ratio).clamp(0.0, 1.0)
 }
 
-fn fallback_fit_confidence(
-    edge: &EdgeSampleResult,
-    outer_ransac: Option<&conic::RansacResult>,
-) -> f32 {
-    fit_support_score(edge, outer_ransac)
-}
-
 /// Composite confidence score incorporating decode quality, angular coverage,
 /// RANSAC inlier ratio, inner fit quality, and RMS residual. Each factor is
 /// in [0, 1]; multiplicative composition ensures any single failing dimension
@@ -415,7 +408,7 @@ pub(crate) fn compute_marker_confidence(
     // calls.
     let decode_conf = decode_result
         .map(|d| distance_confidence(d.dist))
-        .unwrap_or_else(|| fallback_fit_confidence(edge, outer_ransac));
+        .unwrap_or_else(|| fit_support_score(edge, outer_ransac));
 
     // 2. Outer angular coverage: linear map gap -> [0, 1]
     let outer_gap = fit_metrics
@@ -447,21 +440,10 @@ pub(crate) fn compute_marker_confidence(
     (decode_conf * angular_outer * inlier_factor * inner_factor * rms_factor).clamp(0.0, 1.0)
 }
 
-/// How [`marker_from_outer_fit`] scores a marker's `confidence`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConfidenceModel {
-    /// [`compute_marker_confidence`]: decode-distance (or fit-support) score
-    /// times outer angular coverage, RANSAC inlier ratio, inner-fit and RMS
-    /// residual factors. Used by fit-decode and inner-as-outer recovery.
-    Composite,
-    /// The attributed decode's own `confidence` (distance × margin), else
-    /// [`fit_support_score`]. Used by completion.
-    DecodeOrFitSupport,
-}
-
 /// Turn an accepted outer-fit candidate into a marker: fit the inner ring from
 /// the outer hint, derive fit / decode metrics and the confidence, and
-/// assemble the record.
+/// assemble the record. Confidence is [`compute_marker_confidence`] for every
+/// source (fit-decode, inner-as-outer recovery and completion).
 ///
 /// `cand.decode_result` is the decode attributed to the marker — callers
 /// filter or replace it before the call. The record's `id` is that decode's
@@ -473,7 +455,6 @@ pub(crate) fn marker_from_outer_fit(
     cand: OuterFitCandidate,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
-    confidence_model: ConfidenceModel,
 ) -> MarkerRecord {
     let OuterFitCandidate {
         edge,
@@ -505,20 +486,14 @@ pub(crate) fn marker_from_outer_fit(
 
     let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
     let decode = decode_metrics_from_result(decode_result.as_ref());
-    let confidence = match confidence_model {
-        ConfidenceModel::Composite => compute_marker_confidence(
-            decode_result.as_ref(),
-            &edge,
-            outer_ransac.as_ref(),
-            &inner,
-            &fit,
-            &config.advanced.inner_fit,
-        ),
-        ConfidenceModel::DecodeOrFitSupport => decode
-            .as_ref()
-            .map(|d| d.decode_confidence)
-            .unwrap_or_else(|| fit_support_score(&edge, outer_ransac.as_ref())),
-    };
+    let confidence = compute_marker_confidence(
+        decode_result.as_ref(),
+        &edge,
+        outer_ransac.as_ref(),
+        &inner,
+        &fit,
+        &config.advanced.inner_fit,
+    );
 
     MarkerRecord {
         id: decode_result.as_ref().map(|d| d.id),

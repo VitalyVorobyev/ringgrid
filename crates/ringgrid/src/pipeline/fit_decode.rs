@@ -5,11 +5,8 @@ use std::time::Duration;
 
 use super::time_compat::{Instant, duration_ms};
 
-use super::inner_fit;
-use super::marker_build::{
-    compute_marker_confidence, decode_metrics_from_result, fit_metrics_with_inner,
-};
-use super::outer_fit::{OuterFitCandidate, OuterFitRejectReason, fit_outer_candidate_from_prior};
+use super::marker_build::{ConfidenceModel, marker_from_outer_fit};
+use super::outer_fit::{OuterFitRejectReason, fit_outer_candidate_from_prior};
 use super::{DetectConfig, dedup_by_id, dedup_markers};
 use crate::detector::MarkerRecord;
 use crate::detector::marker_build::DetectionSource;
@@ -116,68 +113,24 @@ fn process_candidate(
     };
     timing.outer_fit += outer_fit_start.elapsed();
 
-    let OuterFitCandidate {
-        edge,
-        outer,
-        outer_ransac,
-        decode_result,
-        ..
-    } = fit;
-
-    let center = outer.center();
+    // Inner fit + metrics + confidence + record assembly.
     timing.n_inner_fit_attempted += 1;
     let inner_fit_start = Instant::now();
-    let inner_fit = inner_fit::fit_inner_ellipse_from_outer_hint(
+    let marker = marker_from_outer_fit(
         ctx.gray,
-        &outer,
-        &ctx.config.advanced.marker_spec,
+        fit,
+        ctx.config,
         ctx.mapper,
-        &ctx.config.advanced.inner_fit,
-        false,
+        ConfidenceModel::Composite,
     );
     timing.inner_fit += inner_fit_start.elapsed();
-    if inner_fit.status != inner_fit::InnerFitStatus::Ok {
-        let reason_code = inner_fit.reason.map(|reason| reason.code());
-        tracing::trace!(
-            "inner fit rejected/failed at proposal ({:.1},{:.1}): status={:?}, reason={:?}, context={:?}",
-            proposal.x,
-            proposal.y,
-            inner_fit.status,
-            reason_code,
-            inner_fit.reason_context
-        );
-    }
-    if ctx.config.advanced.inner_fit.require_inner_fit && inner_fit.ellipse_inner.is_none() {
+    if ctx.config.advanced.inner_fit.require_inner_fit && marker.ellipse_inner.is_none() {
         return Err(CandidateRejectReason::InnerFitRequired);
     }
 
-    let fit_metrics = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner_fit);
-
-    let confidence = compute_marker_confidence(
-        decode_result.as_ref(),
-        &edge,
-        outer_ransac.as_ref(),
-        &inner_fit,
-        &fit_metrics,
-        &ctx.config.advanced.inner_fit,
-    );
-    let decode_metrics = decode_metrics_from_result(decode_result.as_ref());
-    let marker_id = decode_result.as_ref().map(|d| d.id);
-    let outer_points = edge.outer_points;
-    let inner_points = inner_fit.points_inner;
-
     Ok(MarkerRecord {
-        id: marker_id,
-        confidence,
-        center,
-        ellipse_outer: Some(outer),
-        ellipse_inner: inner_fit.ellipse_inner,
-        edge_points_outer: Some(outer_points),
-        edge_points_inner: Some(inner_points),
-        fit: fit_metrics,
-        decode: decode_metrics,
         source: ctx.source,
-        ..MarkerRecord::default()
+        ..marker
     })
 }
 

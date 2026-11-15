@@ -19,7 +19,7 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::{
     CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
-    marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
+    marker_build::{ConfidenceModel, fit_support_score, marker_from_outer_fit},
     median_neighbor_outer_radius_px,
 };
 
@@ -37,7 +37,6 @@ pub struct CompletionStats {
 }
 
 struct CandidateQuality {
-    center: [f64; 2],
     arc_cov: f32,
     fit_confidence: f32,
     mean_axis: f32,
@@ -287,7 +286,6 @@ fn compute_candidate_quality(
     let max_angular_gap_outer = super::outer_fit::max_angular_gap(center, &edge.outer_points);
     let radii_cv = radii_coefficient_of_variation(&edge.outer_radii);
     CandidateQuality {
-        center,
         arc_cov,
         fit_confidence,
         mean_axis,
@@ -443,57 +441,32 @@ fn evaluate_completion_candidate(
 
 /// Build the final `MarkerRecord` for an accepted completion candidate.
 ///
-/// Performs inner ellipse fit, computes fit/decode metrics, and assembles the
-/// marker struct.
+/// Only a decode that agrees with the target cell's ID is attributed to the
+/// marker; confidence uses [`ConfidenceModel::DecodeOrFitSupport`].
 fn assemble_completion_marker(
     gray: &GrayImage,
     target_cell: CompletionTarget,
-    cand: &OuterFitCandidate,
-    quality: &CandidateQuality,
+    mut cand: OuterFitCandidate,
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
 ) -> MarkerRecord {
-    let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
-        gray,
-        &cand.outer,
-        &config.advanced.marker_spec,
-        mapper,
-        &config.advanced.inner_fit,
-        false,
-    );
-    let fit = fit_metrics_with_inner(
-        &cand.edge,
-        &cand.outer,
-        cand.outer_ransac.as_ref(),
-        &inner_fit,
-    );
     let (marker_id, grid_coord) = match target_cell {
         CompletionTarget::Id(id) => (Some(id), None),
         CompletionTarget::Cell(coord) => (None, Some(coord)),
     };
-    let decode_metrics = decode_metrics_from_result(
-        cand.decode_result
-            .as_ref()
-            .filter(|d| marker_id == Some(d.id)),
+    cand.decode_result = cand.decode_result.filter(|d| marker_id == Some(d.id));
+    let marker = marker_from_outer_fit(
+        gray,
+        cand,
+        config,
+        mapper,
+        ConfidenceModel::DecodeOrFitSupport,
     );
-    let confidence = decode_metrics
-        .as_ref()
-        .map(|d| d.decode_confidence)
-        .unwrap_or(quality.fit_confidence);
-
     MarkerRecord {
         id: marker_id,
         grid_coord,
-        confidence,
-        center: quality.center,
-        ellipse_outer: Some(cand.outer),
-        ellipse_inner: inner_fit.ellipse_inner,
-        edge_points_outer: Some(cand.edge.outer_points.clone()),
-        edge_points_inner: Some(inner_fit.points_inner.clone()),
-        fit,
-        decode: decode_metrics,
         source: DetectionSource::Completion,
-        ..MarkerRecord::default()
+        ..marker
     }
 }
 
@@ -581,8 +554,7 @@ fn try_complete_marker(
     Some(assemble_completion_marker(
         gray,
         target_cell,
-        &cand,
-        &quality,
+        cand,
         config,
         mapper,
     ))
@@ -896,7 +868,6 @@ mod tests {
     #[test]
     fn completion_quality_gate_reports_typed_arc_coverage_context() {
         let quality = CandidateQuality {
-            center: [0.0, 0.0],
             arc_cov: 0.2,
             fit_confidence: 0.9,
             mean_axis: 20.0,

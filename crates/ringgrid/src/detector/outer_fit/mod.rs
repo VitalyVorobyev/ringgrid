@@ -6,7 +6,8 @@ use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
 use crate::ring::outer_estimate::{
-    OuterEstimateFailure, OuterHypothesis, OuterStatus, estimate_outer_from_prior_with_mapper,
+    OuterEstimateFailure, OuterEstimationConfig, OuterHypothesis, OuterStatus,
+    estimate_outer_from_prior_with_mapper,
 };
 
 use super::DetectConfig;
@@ -139,6 +140,7 @@ struct OuterFitEvalContext<'a> {
     pol: Polarity,
     config: &'a DetectConfig,
     edge_cfg: &'a EdgeSampleConfig,
+    refine_halfwidth_px: f32,
     sampler: DistortionAwareSampler<'a>,
     mapper: Option<&'a dyn PixelMapper>,
 }
@@ -154,7 +156,7 @@ fn evaluate_hypothesis(
         ctx.r_expected,
         ctx.pol,
         ctx.edge_cfg,
-        ctx.config.advanced.outer_estimation.refine_halfwidth_px,
+        ctx.refine_halfwidth_px,
     );
 
     if outer_points.len() < ctx.edge_cfg.min_rays_with_ring {
@@ -221,12 +223,13 @@ pub(crate) fn fit_outer_candidate_from_prior(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
-    fit_outer_candidate_from_prior_with_edge_cfg(
+    fit_outer_candidate_with_sampling(
         gray,
         center_prior,
         r_outer_expected_px,
         config,
         mapper,
+        &config.advanced.outer_estimation,
         baseline_edge_cfg(config),
     )
 }
@@ -239,22 +242,29 @@ pub(crate) fn fit_outer_candidate_from_prior_for_completion(
     mapper: Option<&dyn PixelMapper>,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
     let edge_cfg = completion_edge_cfg(config);
-    fit_outer_candidate_from_prior_with_edge_cfg(
+    fit_outer_candidate_with_sampling(
         gray,
         center_prior,
         r_outer_expected_px,
         config,
         mapper,
+        &config.advanced.outer_estimation,
         &edge_cfg,
     )
 }
 
-fn fit_outer_candidate_from_prior_with_edge_cfg(
+/// Outer fit with explicit sampling parameters: `estimation` drives the
+/// radius-hypothesis search and the per-hypothesis edge refinement window,
+/// `edge_cfg` the edge sampler. All other fit / decode settings come from
+/// `config`. The `fit_outer_candidate_from_prior*` entry points pass the
+/// detector's own sampling; inner-as-outer recovery passes its overrides.
+pub(crate) fn fit_outer_candidate_with_sampling(
     gray: &GrayImage,
     center_prior: [f32; 2],
     r_outer_expected_px: f32,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
+    estimation: &OuterEstimationConfig,
     edge_cfg: &EdgeSampleConfig,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
     let r_expected = r_outer_expected_px.max(2.0);
@@ -264,7 +274,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         gray,
         center_prior,
         r_expected,
-        &config.advanced.outer_estimation,
+        estimation,
         edge_cfg.n_rays.max(8),
         mapper,
         false,
@@ -284,6 +294,7 @@ fn fit_outer_candidate_from_prior_with_edge_cfg(
         pol,
         config,
         edge_cfg,
+        refine_halfwidth_px: estimation.refine_halfwidth_px,
         sampler,
         mapper,
     };

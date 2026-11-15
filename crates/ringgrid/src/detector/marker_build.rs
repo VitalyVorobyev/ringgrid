@@ -1,11 +1,17 @@
+use image::GrayImage;
+
 use crate::conic::{self, Ellipse};
 use crate::marker::DecodeMetrics;
 use crate::marker::codec::distance_confidence;
 use crate::marker::decode::DecodeResult;
+use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::EdgeSampleResult;
 
-use super::config::InnerFitConfig;
-use super::inner_fit::{InnerFitReason, InnerFitResult, InnerFitStatus};
+use super::config::{DetectConfig, InnerFitConfig};
+use super::inner_fit::{
+    InnerFitReason, InnerFitResult, InnerFitStatus, fit_inner_ellipse_from_outer_hint,
+};
+use super::outer_fit::OuterFitCandidate;
 
 /// Indicates which pipeline stage produced a marker.
 ///
@@ -439,4 +445,91 @@ pub(crate) fn compute_marker_confidence(
     };
 
     (decode_conf * angular_outer * inlier_factor * inner_factor * rms_factor).clamp(0.0, 1.0)
+}
+
+/// How [`marker_from_outer_fit`] scores a marker's `confidence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfidenceModel {
+    /// [`compute_marker_confidence`]: decode-distance (or fit-support) score
+    /// times outer angular coverage, RANSAC inlier ratio, inner-fit and RMS
+    /// residual factors. Used by fit-decode and inner-as-outer recovery.
+    Composite,
+    /// The attributed decode's own `confidence` (distance × margin), else
+    /// [`fit_support_score`]. Used by completion.
+    DecodeOrFitSupport,
+}
+
+/// Turn an accepted outer-fit candidate into a marker: fit the inner ring from
+/// the outer hint, derive fit / decode metrics and the confidence, and
+/// assemble the record.
+///
+/// `cand.decode_result` is the decode attributed to the marker — callers
+/// filter or replace it before the call. The record's `id` is that decode's
+/// ID and its `center` is the outer-ellipse centre in the working frame;
+/// provenance (`source`, `grid_coord`, image-frame centre, a non-decoded
+/// `id`) is the caller's to set.
+pub(crate) fn marker_from_outer_fit(
+    gray: &GrayImage,
+    cand: OuterFitCandidate,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    confidence_model: ConfidenceModel,
+) -> MarkerRecord {
+    let OuterFitCandidate {
+        edge,
+        outer,
+        outer_ransac,
+        decode_result,
+        ..
+    } = cand;
+    let center = outer.center();
+
+    let inner = fit_inner_ellipse_from_outer_hint(
+        gray,
+        &outer,
+        &config.advanced.marker_spec,
+        mapper,
+        &config.advanced.inner_fit,
+        false,
+    );
+    if inner.status != InnerFitStatus::Ok {
+        tracing::trace!(
+            "inner fit rejected/failed at ({:.1},{:.1}): status={:?}, reason={:?}, context={:?}",
+            center[0],
+            center[1],
+            inner.status,
+            inner.reason.map(|reason| reason.code()),
+            inner.reason_context
+        );
+    }
+
+    let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
+    let decode = decode_metrics_from_result(decode_result.as_ref());
+    let confidence = match confidence_model {
+        ConfidenceModel::Composite => compute_marker_confidence(
+            decode_result.as_ref(),
+            &edge,
+            outer_ransac.as_ref(),
+            &inner,
+            &fit,
+            &config.advanced.inner_fit,
+        ),
+        ConfidenceModel::DecodeOrFitSupport => decode
+            .as_ref()
+            .map(|d| d.decode_confidence)
+            .unwrap_or_else(|| fit_support_score(&edge, outer_ransac.as_ref())),
+    };
+
+    MarkerRecord {
+        id: decode_result.as_ref().map(|d| d.id),
+        confidence,
+        center,
+        ellipse_outer: Some(outer),
+        ellipse_inner: inner.ellipse_inner,
+        edge_points_outer: Some(edge.outer_points),
+        edge_points_inner: Some(inner.points_inner),
+        fit,
+        decode,
+        ..MarkerRecord::default()
+    }
 }

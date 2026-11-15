@@ -15,13 +15,12 @@ use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
-use crate::ring::OuterEstimationConfig;
+use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
 
 use super::{
-    DetectConfig, inner_fit, marker_build,
-    marker_build::compute_marker_confidence,
-    median_neighbor_outer_radius_px,
-    outer_fit::{self, OuterFitCandidate},
+    DetectConfig,
+    marker_build::{ConfidenceModel, DetectionSource, marker_from_outer_fit},
+    median_neighbor_outer_radius_px, outer_fit,
 };
 
 /// Annotates each marker with the ratio of its outer radius to the median
@@ -90,24 +89,32 @@ fn marker_center_working(marker: &MarkerRecord) -> [f64; 2] {
     marker.center_mapped.unwrap_or(marker.center)
 }
 
-fn build_recovery_config(config: &DetectConfig) -> DetectConfig {
-    let mut recovery_config = config.clone();
-    let cfg = &config.advanced.inner_as_outer_recovery;
-    recovery_config
-        .advanced
-        .outer_estimation
-        .search_halfwidth_px = OuterEstimationConfig::default().search_halfwidth_px;
-    recovery_config
-        .advanced
-        .outer_estimation
-        .min_theta_consistency = cfg.min_theta_consistency;
-    recovery_config.advanced.outer_estimation.min_theta_coverage = cfg.min_theta_coverage;
-    recovery_config
-        .advanced
-        .outer_estimation
-        .refine_halfwidth_px = cfg.refine_halfwidth_px;
-    recovery_config.advanced.edge_sample.min_ring_depth = cfg.min_ring_depth;
-    recovery_config
+/// Outer-fit sampling for recovery: the detector's outer-estimation and
+/// edge-sampling settings with the recovery-specific thresholds applied, and
+/// the default (unwidened) hypothesis search window — the neighbour-median
+/// radius prior is already close to the true outer radius.
+struct RecoverySampling {
+    estimation: OuterEstimationConfig,
+    edge: EdgeSampleConfig,
+}
+
+impl RecoverySampling {
+    fn new(config: &DetectConfig) -> Self {
+        let cfg = &config.advanced.inner_as_outer_recovery;
+        Self {
+            estimation: OuterEstimationConfig {
+                search_halfwidth_px: OuterEstimationConfig::default().search_halfwidth_px,
+                min_theta_consistency: cfg.min_theta_consistency,
+                min_theta_coverage: cfg.min_theta_coverage,
+                refine_halfwidth_px: cfg.refine_halfwidth_px,
+                ..config.advanced.outer_estimation.clone()
+            },
+            edge: EdgeSampleConfig {
+                min_ring_depth: cfg.min_ring_depth,
+                ..config.advanced.edge_sample.clone()
+            },
+        }
+    }
 }
 
 fn resolve_recovered_id(
@@ -159,7 +166,7 @@ fn recover_marker_at_index(
     gray: &GrayImage,
     markers: &[MarkerRecord],
     config: &DetectConfig,
-    recovery_config: &DetectConfig,
+    sampling: &RecoverySampling,
     mapper: Option<&dyn PixelMapper>,
 ) -> Option<MarkerRecord> {
     let cfg = &config.advanced.inner_as_outer_recovery;
@@ -181,12 +188,14 @@ fn recover_marker_at_index(
         return None;
     };
 
-    let candidate = match outer_fit::fit_outer_candidate_from_prior(
+    let mut candidate = match outer_fit::fit_outer_candidate_with_sampling(
         gray,
         center_f32,
         r_corrected,
-        recovery_config,
+        config,
         mapper,
+        &sampling.estimation,
+        &sampling.edge,
     ) {
         Ok(candidate) => candidate,
         Err(reject) => {
@@ -210,42 +219,18 @@ fn recover_marker_at_index(
         return None;
     }
 
-    let OuterFitCandidate {
-        edge,
-        outer,
-        outer_ransac,
-        decode_result,
-        ..
-    } = candidate;
     let (marker_id, decode_result) = resolve_recovered_id(
         idx,
         &markers[idx],
-        &outer,
-        decode_result,
+        &candidate.outer,
+        candidate.decode_result.take(),
         r_corrected,
         cfg.size_gate_tolerance,
     )?;
+    candidate.decode_result = decode_result;
 
-    let inner = inner_fit::fit_inner_ellipse_from_outer_hint(
-        gray,
-        &outer,
-        &config.advanced.marker_spec,
-        mapper,
-        &config.advanced.inner_fit,
-        false,
-    );
-    let fit_metrics =
-        marker_build::fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
-    let confidence = compute_marker_confidence(
-        decode_result.as_ref(),
-        &edge,
-        outer_ransac.as_ref(),
-        &inner,
-        &fit_metrics,
-        &config.advanced.inner_fit,
-    );
-    let decode_metrics = marker_build::decode_metrics_from_result(decode_result.as_ref());
-    let new_center_wf = outer.center();
+    let marker = marker_from_outer_fit(gray, candidate, config, mapper, ConfidenceModel::Composite);
+    let new_center_wf = marker.center;
     let new_center_image = mapper
         .and_then(|m| m.working_to_image_pixel(new_center_wf))
         .unwrap_or(new_center_wf);
@@ -255,18 +240,11 @@ fn recover_marker_at_index(
         // Recovery re-fits geometry in place (center proximity gated), so the
         // lattice cell is unchanged; coded-path sync re-derives it from the id.
         grid_coord: markers[idx].grid_coord,
-        confidence,
         center: new_center_image,
         center_mapped: mapper.map(|_| new_center_wf),
-        board_xy_mm: None, // populated by sync_marker_board_correspondence later
-        ellipse_outer: Some(outer),
-        ellipse_inner: inner.ellipse_inner,
-        edge_points_outer: Some(edge.outer_points),
-        edge_points_inner: Some(inner.points_inner),
-        fit: fit_metrics,
-        decode: decode_metrics,
-        source: crate::detector::marker_build::DetectionSource::FitDecoded,
-        ..MarkerRecord::default()
+        // board_xy_mm stays None: populated by sync_marker_board_correspondence.
+        source: DetectionSource::FitDecoded,
+        ..marker
     })
 }
 
@@ -288,11 +266,11 @@ pub(crate) fn try_recover_inner_as_outer(
         n_flagged = flagged.len(),
         "attempting inner-as-outer recovery for flagged markers"
     );
-    let recovery_config = build_recovery_config(config);
+    let sampling = RecoverySampling::new(config);
     let mut n_recovered = 0usize;
     for idx in flagged {
         let Some(recovered) =
-            recover_marker_at_index(idx, gray, markers, config, &recovery_config, mapper)
+            recover_marker_at_index(idx, gray, markers, config, &sampling, mapper)
         else {
             continue;
         };

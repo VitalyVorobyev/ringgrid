@@ -176,37 +176,15 @@ impl Detector {
 
     /// Convert a finished pipeline result into the public slim result, filling
     /// the board-completeness signal and enforcing the strict gate.
-    ///
-    /// Final photometric centre refinement runs here, once per call.
-    fn finish(
-        &self,
-        image: &GrayImage,
-        mapper: Option<&dyn PixelMapper>,
-        pipeline: pipeline::PipelineResult,
-    ) -> Result<DetectionResult, DetectError> {
-        Ok(self.finish_with_diagnostics(image, mapper, pipeline)?.0)
+    fn finish(&self, pipeline: pipeline::PipelineResult) -> Result<DetectionResult, DetectError> {
+        Ok(self.finish_with_diagnostics(pipeline)?.0)
     }
 
     /// [`finish`](Self::finish) that also returns the diagnostics half.
     fn finish_with_diagnostics(
         &self,
-        image: &GrayImage,
-        mapper: Option<&dyn PixelMapper>,
         pipeline: pipeline::PipelineResult,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.finish_collecting(image, mapper, pipeline, None)
-    }
-
-    /// [`finish_with_diagnostics`](Self::finish_with_diagnostics) that can also
-    /// collect the photometric fits' per-pixel residuals.
-    fn finish_collecting(
-        &self,
-        image: &GrayImage,
-        mapper: Option<&dyn PixelMapper>,
-        mut pipeline: pipeline::PipelineResult,
-        residuals: Option<&mut Vec<PhotometricResidualMarker>>,
-    ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        pipeline::refine_centers_photometric(image, &mut pipeline, &self.config, mapper, residuals);
         let (mut result, diagnostics) = pipeline.split();
         self.apply_completeness(&mut result)?;
         Ok((result, diagnostics))
@@ -259,7 +237,7 @@ impl Detector {
     /// Currently infallible for all built-in targets; the `Result` signature
     /// reserves room for future failure modes (see [`DetectError`]).
     pub fn detect(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        self.finish(image, None, self.run_detect(image))
+        self.finish(self.run_detect(image))
     }
 
     /// Detect markers and also return opt-in detection diagnostics.
@@ -275,7 +253,7 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.finish_with_diagnostics(image, None, self.run_detect(image))
+        self.finish_with_diagnostics(self.run_detect(image))
     }
 
     /// [`detect_with_diagnostics`](Self::detect_with_diagnostics) that also
@@ -290,8 +268,9 @@ impl Detector {
         image: &GrayImage,
     ) -> Result<PhotometricResiduals, DetectError> {
         let mut residuals = Vec::new();
-        let (result, diagnostics) =
-            self.finish_collecting(image, None, self.run_detect(image), Some(&mut residuals))?;
+        let (result, diagnostics) = self.finish_with_diagnostics(
+            pipeline::detect_collecting_residuals(image, &self.config, &mut residuals),
+        )?;
         Ok((result, diagnostics, residuals))
     }
 
@@ -303,11 +282,8 @@ impl Detector {
         image: &GrayImage,
     ) -> Result<PhotometricResiduals, DetectError> {
         let mut residuals = Vec::new();
-        let (result, diagnostics) = self.finish_collecting(
-            image,
-            None,
-            pipeline::detect_adaptive(image, &self.config),
-            Some(&mut residuals),
+        let (result, diagnostics) = self.finish_with_diagnostics(
+            pipeline::detect_adaptive_collecting_residuals(image, &self.config, &mut residuals),
         )?;
         Ok((result, diagnostics, residuals))
     }
@@ -350,7 +326,7 @@ impl Detector {
     ///
     /// [`detect_multiscale`]: Self::detect_multiscale
     pub fn detect_adaptive(&self, image: &GrayImage) -> Result<DetectionResult, DetectError> {
-        self.finish(image, None, pipeline::detect_adaptive(image, &self.config))
+        self.finish(pipeline::detect_adaptive(image, &self.config))
     }
 
     /// Adaptive detection that also returns detection diagnostics.
@@ -363,7 +339,7 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.finish_with_diagnostics(image, None, pipeline::detect_adaptive(image, &self.config))
+        self.finish_with_diagnostics(pipeline::detect_adaptive(image, &self.config))
     }
 
     /// Return the scale tiers that adaptive detection would use for this image.
@@ -394,11 +370,11 @@ impl Detector {
         image: &GrayImage,
         nominal_diameter_px: Option<f32>,
     ) -> Result<DetectionResult, DetectError> {
-        self.finish(
+        self.finish(pipeline::detect_adaptive_with_hint(
             image,
-            None,
-            pipeline::detect_adaptive_with_hint(image, &self.config, nominal_diameter_px),
-        )
+            &self.config,
+            nominal_diameter_px,
+        ))
     }
 
     /// Detect markers using an explicit set of scale tiers.
@@ -416,11 +392,7 @@ impl Detector {
         image: &GrayImage,
         tiers: &ScaleTiers,
     ) -> Result<DetectionResult, DetectError> {
-        self.finish(
-            image,
-            None,
-            pipeline::detect_multiscale(image, &self.config, tiers),
-        )
+        self.finish(pipeline::detect_multiscale(image, &self.config, tiers))
     }
 
     /// Detect with a custom pixel mapper (two-pass pipeline).
@@ -440,11 +412,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<DetectionResult, DetectError> {
-        self.finish(
-            image,
-            Some(mapper),
-            pipeline::detect_with_mapper(image, &self.config, mapper),
-        )
+        self.finish(pipeline::detect_with_mapper(image, &self.config, mapper))
     }
 
     /// Detect with a custom pixel mapper and also return detection diagnostics.
@@ -462,11 +430,7 @@ impl Detector {
         image: &GrayImage,
         mapper: &dyn PixelMapper,
     ) -> Result<(DetectionResult, DetectionDiagnostics), DetectError> {
-        self.finish_with_diagnostics(
-            image,
-            Some(mapper),
-            pipeline::detect_with_mapper(image, &self.config, mapper),
-        )
+        self.finish_with_diagnostics(pipeline::detect_with_mapper(image, &self.config, mapper))
     }
 }
 

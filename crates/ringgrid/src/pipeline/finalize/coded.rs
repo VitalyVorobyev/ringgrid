@@ -5,11 +5,11 @@ use crate::pipeline::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
-use super::apply_post_filter_fixup;
 use super::common::{
     drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
     sync_marker_board_correspondence_with_logging,
 };
+use super::{annotate_radius_ratios, apply_marker_fixup};
 use crate::detector::MarkerRecord;
 use crate::homography::RansacStats;
 use crate::pipeline::{
@@ -120,6 +120,10 @@ pub(super) fn finalize_no_global_filter_result(
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
 
+    let fixup_start = Instant::now();
+    apply_marker_fixup(gray, &mut corrected_markers, config, mapper);
+    let fixup_elapsed = fixup_start.elapsed();
+
     let map_to_image_start = Instant::now();
     drop_unmappable_markers_with_warning(&mut corrected_markers, mapper);
     if let Some(mapper) = mapper {
@@ -130,10 +134,7 @@ pub(super) fn finalize_no_global_filter_result(
     let sync_start = Instant::now();
     sync_marker_board_correspondence_with_logging(&mut corrected_markers, &config.target);
     let sync_elapsed = sync_start.elapsed();
-
-    let post_fixup_start = Instant::now();
-    apply_post_filter_fixup(gray, &mut corrected_markers, config, mapper);
-    let post_fixup_elapsed = post_fixup_start.elapsed();
+    annotate_radius_ratios(&mut corrected_markers, config);
 
     let board_frame = corrected_markers
         .iter()
@@ -153,7 +154,7 @@ pub(super) fn finalize_no_global_filter_result(
         markers_out = result.markers.len(),
         map_to_image_ms = duration_ms(map_to_image_elapsed),
         sync_board_ms = duration_ms(sync_elapsed),
-        post_fixup_ms = duration_ms(post_fixup_elapsed),
+        fixup_ms = duration_ms(fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize(no global filter) timing summary"
     );
@@ -190,6 +191,10 @@ pub(super) fn finalize_global_filter_result(
     if final_markers.len() > n_before_completion {
         apply_projective_centers(&mut final_markers[n_before_completion..], config);
     }
+
+    let fixup_start = Instant::now();
+    apply_marker_fixup(gray, &mut final_markers, config, mapper);
+    let fixup_elapsed = fixup_start.elapsed();
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);
 
     let final_h_start = Instant::now();
@@ -235,9 +240,7 @@ pub(super) fn finalize_global_filter_result(
         completion_stats.n_failed_gate
     );
 
-    let post_fixup_start = Instant::now();
-    apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
-    let post_fixup_elapsed = post_fixup_start.elapsed();
+    annotate_radius_ratios(&mut final_markers, config);
 
     let board_frame = final_markers
         .iter()
@@ -266,7 +269,7 @@ pub(super) fn finalize_global_filter_result(
         sync_board_ms = duration_ms(sync_elapsed),
         geom_verify_ms = duration_ms(geom_elapsed),
         map_to_image_ms = duration_ms(map_to_image_elapsed),
-        post_fixup_ms = duration_ms(post_fixup_elapsed),
+        fixup_ms = duration_ms(fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize(global filter) timing summary"
     );

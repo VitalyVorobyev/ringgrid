@@ -72,8 +72,8 @@ pub(crate) fn annotate_neighbor_radius_ratios(
 /// corrected expected radius. If the new fit succeeds (with a valid decode), the
 /// marker is replaced in-place; otherwise the original is kept.
 ///
-/// After this function the caller should re-run `annotate_neighbor_radius_ratios`
-/// so the ratios reflect the recovered markers.
+/// Runs on working-frame markers (centers not yet mapped to the image), before
+/// the final homography refit. Callers re-annotate the ratios afterwards.
 fn flagged_recovery_indices(markers: &[MarkerRecord], ratio_threshold: f32) -> Vec<usize> {
     markers
         .iter()
@@ -83,10 +83,6 @@ fn flagged_recovery_indices(markers: &[MarkerRecord], ratio_threshold: f32) -> V
             (ratio < ratio_threshold).then_some(i)
         })
         .collect()
-}
-
-fn marker_center_working(marker: &MarkerRecord) -> [f64; 2] {
-    marker.center_mapped.unwrap_or(marker.center)
 }
 
 /// Outer-fit sampling for recovery: the detector's outer-estimation and
@@ -137,7 +133,7 @@ fn resolve_recovered_id(
         return None;
     };
 
-    let orig_center_wf = marker_center_working(marker);
+    let orig_center_wf = marker.center;
     let recovered_center = outer.center();
     let center_shift = (((recovered_center[0] - orig_center_wf[0]).powi(2)
         + (recovered_center[1] - orig_center_wf[1]).powi(2))
@@ -170,17 +166,13 @@ fn recover_marker_at_index(
     mapper: Option<&dyn PixelMapper>,
 ) -> Option<MarkerRecord> {
     let cfg = &config.advanced.inner_as_outer_recovery;
-    let center_wf = marker_center_working(&markers[idx]);
+    let center_wf = markers[idx].center;
     let center_f32 = [center_wf[0] as f32, center_wf[1] as f32];
 
-    let Some(r_corrected) = median_neighbor_outer_radius_px(
-        markers[idx].center,
-        markers,
-        cfg.k_neighbors,
-        Some(idx),
-        1,
-    )
-    .map(|r| r as f32) else {
+    let Some(r_corrected) =
+        median_neighbor_outer_radius_px(center_wf, markers, cfg.k_neighbors, Some(idx), 1)
+            .map(|r| r as f32)
+    else {
         tracing::debug!(
             idx,
             "recovery skipped: could not compute neighbor median radius"
@@ -230,18 +222,14 @@ fn recover_marker_at_index(
     candidate.decode_result = decode_result;
 
     let marker = marker_from_outer_fit(gray, candidate, config, mapper, ConfidenceModel::Composite);
-    let new_center_wf = marker.center;
-    let new_center_image = mapper
-        .and_then(|m| m.working_to_image_pixel(new_center_wf))
-        .unwrap_or(new_center_wf);
 
+    // `center` stays in the working frame like every marker at this stage;
+    // finalize maps all centers to the image afterwards.
     Some(MarkerRecord {
         id: marker_id,
         // Recovery re-fits geometry in place (center proximity gated), so the
         // lattice cell is unchanged; coded-path sync re-derives it from the id.
         grid_coord: markers[idx].grid_coord,
-        center: new_center_image,
-        center_mapped: mapper.map(|_| new_center_wf),
         // board_xy_mm stays None: populated by sync_marker_board_correspondence.
         source: DetectionSource::FitDecoded,
         ..marker

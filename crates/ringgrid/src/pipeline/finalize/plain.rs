@@ -5,7 +5,7 @@ use crate::pipeline::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
-use super::apply_post_filter_fixup;
+use super::annotate_radius_ratios;
 use super::coded::{finalize_no_global_filter_result, phase_final_h};
 use super::common::{
     drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
@@ -172,9 +172,8 @@ pub(super) fn finalize_plain_result(
     }
     let map_to_image_elapsed = map_to_image_start.elapsed();
 
-    let post_fixup_start = Instant::now();
-    apply_post_filter_fixup(gray, &mut final_markers, config, mapper);
-    let post_fixup_elapsed = post_fixup_start.elapsed();
+    // No inner-as-outer recovery / axis-ratio filter here: both key on IDs.
+    annotate_radius_ratios(&mut final_markers, config);
 
     let board_frame = Some(enforce_plain_frame_contract(&mut final_markers, anchored));
 
@@ -202,7 +201,6 @@ pub(super) fn finalize_plain_result(
         final_h_ms = duration_ms(final_h_elapsed),
         geom_verify_ms = duration_ms(geom_elapsed),
         map_to_image_ms = duration_ms(map_to_image_elapsed),
-        post_fixup_ms = duration_ms(post_fixup_elapsed),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize(plain) timing summary"
     );

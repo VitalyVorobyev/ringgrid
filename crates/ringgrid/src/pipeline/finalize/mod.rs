@@ -22,28 +22,38 @@ use coded::{finalize_global_filter_result, finalize_no_global_filter_result};
 use common::sync_marker_board_correspondence;
 use plain::finalize_plain_result;
 
-/// Runs `annotate_neighbor_radius_ratios`, then optionally runs
-/// `try_recover_inner_as_outer` (+ re-sync + re-annotate) when recovery is
-/// enabled. Called identically by both finalize paths, eliminating duplication.
-fn apply_post_filter_fixup(
+/// Inner-as-outer recovery (when enabled) followed by the axis-ratio
+/// consistency filter, on working-frame markers (centers not yet mapped to
+/// the image). The coded paths run it before the final H refit and geometric
+/// verify, so recovered markers are verified and feed the final homography.
+fn apply_marker_fixup(
     gray: &GrayImage,
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
+    // Both stages key on IDs (recovery re-anchors through one, the filter
+    // gates only id'd markers); plain markers carry none.
+    if !config.target.is_coded() {
+        return;
+    }
     let recovery = &config.advanced.inner_as_outer_recovery;
-    let (k, warn_ratio) = (recovery.k_neighbors, recovery.ratio_threshold);
-    annotate_neighbor_radius_ratios(markers, k, warn_ratio);
     if recovery.enable {
+        annotate_radius_ratios(markers, config);
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.target);
-        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
     }
     let removed = remove_axis_ratio_outliers(markers);
     if removed > 0 {
-        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
         tracing::info!(removed, "axis-ratio consistency filter removed markers");
     }
+}
+
+/// Annotate every marker's `neighbor_radius_ratio`: the recovery trigger, and
+/// a diagnostic every finalize path refreshes last on its output markers.
+fn annotate_radius_ratios(markers: &mut [MarkerRecord], config: &DetectConfig) {
+    let recovery = &config.advanced.inner_as_outer_recovery;
+    annotate_neighbor_radius_ratios(markers, recovery.k_neighbors, recovery.ratio_threshold);
 }
 
 /// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies

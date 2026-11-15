@@ -1,9 +1,9 @@
 //! Finalize stage: projective centers → ID correction → global filter /
-//! plain assignment → completion → final H refit → geometric verify.
+//! grid assignment → completion → final H refit → geometric verify.
 
 mod coded;
 mod common;
-mod plain;
+mod grid;
 
 use super::time_compat::{Instant, duration_ms};
 
@@ -20,7 +20,20 @@ use crate::pixelmap::PixelMapper;
 
 use coded::{finalize_global_filter_result, finalize_no_global_filter_result};
 use common::sync_marker_board_correspondence;
-use plain::finalize_plain_result;
+use grid::finalize_grid_result;
+
+/// TEMPORARY A/B scaffolding for the grid-first adoption study — remove at the
+/// adoption decision, together with whichever coded finalize path loses.
+///
+/// `RINGGRID_GRID_FIRST=1` routes coded targets through the grid-first path
+/// (`grid.rs`: grid labeling → decoded-ID origin vote → cell identification)
+/// instead of ID correction + the decode-anchored global filter. Read from the
+/// environment, once per process, so the CLI and the Python bindings pick it
+/// up without any API or config change. This is the only read site.
+fn grid_first_enabled() -> bool {
+    static GRID_FIRST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GRID_FIRST.get_or_init(|| std::env::var_os("RINGGRID_GRID_FIRST").is_some_and(|v| v == "1"))
+}
 
 /// Inner-as-outer recovery (when enabled) followed by the axis-ratio
 /// consistency filter, on working-frame markers (centers not yet mapped to
@@ -109,7 +122,8 @@ pub(super) fn finalize_premerge(
     let projective_center_elapsed = projective_center_start.elapsed();
 
     let id_correction_start = Instant::now();
-    if id_correction_applies(config) {
+    // Grid-first identifies cells by lattice labeling after the merge.
+    if id_correction_applies(config) && !grid_first_enabled() {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
             &config.target,
@@ -159,8 +173,8 @@ pub(super) fn finalize_postmerge(
         );
     }
 
-    if !config.target.is_coded() {
-        return finalize_plain_result(
+    if !config.target.is_coded() || grid_first_enabled() {
+        return finalize_grid_result(
             gray,
             merged_markers,
             config,

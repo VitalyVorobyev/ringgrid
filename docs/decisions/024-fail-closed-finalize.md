@@ -156,6 +156,31 @@ hex 314 → 182, Extended 435 → 272, rect 299 → 133, plain hex 231 → 118,
 plain rect 215 → 81; grid recall −0.7 to −2.6 points, contrast groups −3 to
 −9; recall floors re-measured.
 
+### Relaxed outer-edge gates behind `min_confidence` (measured, not shipped)
+
+With the threshold in place, relaxed gates were re-tested on single-board
+scenes (share of reported centres beyond 1 px; today = default gates at
+`min_confidence` 0.03):
+
+| variant | new wrong outputs | dark recall hex / Ext / rect | dark > 1 px | contrast > 1 px (hex / Ext / rect) | grid > 1 px hex |
+|---|---|---|---|---|---|
+| today | — | 0.528 / 0.498 / 0.495 | 0.6 % | 0.4 / 2.7 / 1.9 % | 1.60 % |
+| depth 0.03 + outer theta 0.2, conf 0.03 | 29 wrong IDs (tilt 58–65°, l0.25), 52 plain label errors | 0.733 / 0.704 / 0.716 | 3.4–4.9 % | 13.9 / 11.4 / 10.3 % | 3.44 % |
+| same, conf 0.05 | 10 wrong IDs, 30 label errors | 0.700 / 0.679 / 0.686 | 2.2–3.3 % | 12.8 / 8.5 / 8.5 % | 2.17 % |
+| depth 0.03, conf 0.03 | none | 0.734 / 0.704 / 0.716 | 3.3–4.9 % | 7.8 / 8.0 / 6.3 % | 2.89 % |
+| depth 0.03, conf 0.06 | none | 0.685 / 0.665 / 0.675 | 1.9–2.7 % | 7.7 / 5.8 / 4.3 % | 1.66 % |
+| depth 0.03, conf 0.08 | none | 0.632 / 0.627 / 0.632 | 1.3–2.0 % | 5.5 / 4.6 / 3.5 % | 1.00 % |
+| depth 0.05, conf 0.05 | none | 0.589 / 0.583 / 0.592 | 0.9–1.4 % | 4.5 / 3.1 / 3.2 % | 1.60 % |
+
+Relaxing the outer theta consistency produces wrong IDs on steep views and
+is out. A lower ring depth alone adds no wrong output and +6 to +22 points
+of dark recall, but the rings it admits have centres the confidence does not
+separate well enough: at every threshold the dark and contrast groups keep 2–
+18× today's share beyond 1 px (and normal groups lose recall to the higher
+threshold). Gates unchanged. The confidence has no contrast-to-noise factor
+(it did not predict on the default-gate population, AUC 0.55); on the relaxed
+population it might — the next thing to measure.
+
 ### Outer-only centres from the homography (measured, rejected)
 
 Of the visible cells missing while most lattice neighbours are reported

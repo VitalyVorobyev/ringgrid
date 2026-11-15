@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scenes: 3–9); ADR-024 has the full threshold table. `0` restores the old
   output set (with the new confidence values). Values of `confidence`
   change for every marker.
+  Measured and not adopted on top of it: a lower outer ring-depth gate
+  (0.03; +6–22 points of dark recall, no new wrong output, but 2–18× more
+  centres beyond 1 px in dark/low-contrast views at any threshold) and a
+  lower outer theta consistency (wrong IDs on steep views). ADR-024.
 - **One board per image is the supported case.** Scenes with a second board
   in view stay in the precision harness as a reported, non-gating group.
 - **Detection fails closed: it reports less rather than a wrong ID, board

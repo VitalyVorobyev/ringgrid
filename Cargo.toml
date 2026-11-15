@@ -19,7 +19,6 @@ rust-version = "1.91"
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
 imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
-rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
@@ -28,7 +27,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 approx = "0.5"
 rand = "0.10"
-tiny-solver = "0.18"
 png = "0.18"
 projective-grid = "0.14.4"
 radsym = { version = "0.4.1", features = ["unsafe-opt"] }

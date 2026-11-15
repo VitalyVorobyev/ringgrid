@@ -28,6 +28,10 @@ cli = ["std", "dep:clap", "dep:toml", "dep:tracing-subscriber"]
 # JSON Schemas shipped in `schemas/` (and in the npm package) are generated
 # with this feature on.
 schemars = ["dep:schemars"]
+# Research-only API for studying the photometric centre fit (per-pixel fit
+# residuals, covariance diagnostics). Not part of the stable API; off by
+# default and not exposed by the bindings.
+study = []
 
 [dependencies]
 nalgebra = { workspace = true }
@@ -62,6 +66,15 @@ imageproc = { workspace = true }
 rand = { workspace = true }
 criterion = "0.8"
 jsonschema = { workspace = true }
+
+# Studies of the photometric fit that need its per-pixel residuals.
+[[test]]
+name = "photometric_residual_profile"
+required-features = ["study"]
+
+[[test]]
+name = "displayed_target"
+required-features = ["study"]
 
 [[bench]]
 name = "hotpaths"

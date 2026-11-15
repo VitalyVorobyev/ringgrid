@@ -5,6 +5,7 @@ use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::{MERGE_SIZE_K_NEIGHBORS, merge_multiscale_markers};
 use crate::detector::marker_build::DetectionSource;
+#[cfg(feature = "study")]
 use crate::detector::photometric_refine::PhotometricResidualMarker;
 use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
@@ -295,6 +296,7 @@ pub fn detect_adaptive_with_hint(
 
 /// [`detect_with_self_undistort`] (a single pass when self-undistort is off)
 /// that also collects the photometric fits' per-pixel residuals.
+#[cfg(feature = "study")]
 pub(crate) fn detect_collecting_residuals(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -306,6 +308,7 @@ pub(crate) fn detect_collecting_residuals(
 
 /// [`detect_adaptive`] that also collects the photometric fits' per-pixel
 /// residuals.
+#[cfg(feature = "study")]
 pub(crate) fn detect_adaptive_collecting_residuals(
     gray: &GrayImage,
     config: &DetectConfig,

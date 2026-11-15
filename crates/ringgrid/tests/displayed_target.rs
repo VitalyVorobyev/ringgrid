@@ -29,7 +29,7 @@
 //! - `ac1`: median lag-1 residual autocorrelation (mean of x and y).
 //!
 //! ```text
-//! cargo test --release -p ringgrid --test displayed_target -- --ignored --nocapture
+//! cargo test --release -p ringgrid --features study --test displayed_target -- --ignored --nocapture
 //! ```
 //!
 //! `DISPLAY_SEEDS` (default 6) noise seeds per pose, `DISPLAY_THREADS`
@@ -191,10 +191,18 @@ fn run_job(
                     .push((m.center[0] - t[0]).powi(2) + (m.center[1] - t[1]).powi(2));
             }
         }
-        let (res, diag) = photometric
-            .detect_with_diagnostics(&scene.image)
+        let (res, _, residuals) = photometric
+            .detect_with_photometric_residuals(&scene.image)
             .expect("detect");
-        for (m, d) in res.detected_markers.iter().zip(&diag.markers) {
+        // Lag-1 residual autocorrelation per fitted marker.
+        let ac1: HashMap<usize, f64> = residuals
+            .iter()
+            .map(|r| {
+                let a = &r.residual_autocorrelation;
+                (r.marker_index, 0.5 * (a.x[0] + a.y[0]))
+            })
+            .collect();
+        for (index, m) in res.detected_markers.iter().enumerate() {
             let Some(i) = truth.marker_of(m, &rad.h) else {
                 continue;
             };
@@ -206,11 +214,7 @@ fn run_job(
             let e = [m.center[0] - t[0], m.center[1] - t[1]];
             let c = &target.cells()[i];
             let xy = [f64::from(c.xy_mm[0]), f64::from(c.xy_mm[1])];
-            let ac1 = d
-                .photometric
-                .as_ref()
-                .and_then(|p| p.residual_autocorrelation.as_ref())
-                .map(|a| 0.5 * (a.x[0] + a.y[0]));
+            let ac1 = ac1.get(&index).copied();
             job.recs.push(Rec {
                 marker: i,
                 pose,

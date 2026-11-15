@@ -11,7 +11,7 @@
 //! - Monte-Carlo honesty of the covariance: reported σ over the empirical
 //!   scatter of each marker's centre across noise seeds, pooled, for the
 //!   correlated-residual covariance (`corr`) and the white-residual one
-//!   (`white`, recovered from `covariance_inflation`);
+//!   (`white`, recovered from the covariance inflation; `study` feature only);
 //! - reported σ over the error against the truth (which also contains bias,
 //!   which no covariance covers), and the bias itself;
 //! - the result homography's RMS error at the true cell centres for both
@@ -31,11 +31,11 @@
 
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ringgrid::diagnostics::PhotometricStatus;
+use ringgrid::diagnostics::{DetectionDiagnostics, PhotometricStatus};
 use ringgrid::{
     BoardFrame, CenterSource, CircleRefinementMethod, DetectConfig, DetectedMarker,
     DetectionResult, Detector, OriginDots, TargetLayout,
@@ -164,7 +164,7 @@ struct Cell {
 struct MarkerSamples {
     centers: Vec<[f64; 2]>,
     /// `(trace of the reported covariance, covariance inflation)` per seed.
-    traces: Vec<(f64, f64)>,
+    traces: Vec<(f64, Option<f64>)>,
     truth: [f64; 2],
 }
 
@@ -192,7 +192,8 @@ struct CellResult {
     error_ratio: Option<(f64, f64)>,
     /// RMS over markers of the seed-mean error (bias), px.
     bias_rms: Option<f64>,
-    /// Mean covariance inflation over photometric centres.
+    /// Mean covariance inflation over photometric centres (NaN without the
+    /// `study` feature).
     inflation: f64,
     /// Mean fit residual standard deviation over photometric centres.
     residual: f64,
@@ -297,6 +298,36 @@ fn spec_for(cell: &Cell, target: &TargetLayout, size: [u32; 2]) -> SceneSpec {
     spec
 }
 
+/// Per fitted marker (by index), the covariance inflation: reported centre σ
+/// over the white-residual σ. Study output, empty without the feature.
+type Inflations = HashMap<usize, Option<f64>>;
+
+/// Photometric detection with the markers' covariance inflations.
+#[cfg(feature = "study")]
+fn detect_photometric(
+    det: &Detector,
+    image: &image::GrayImage,
+) -> (DetectionResult, DetectionDiagnostics, Inflations) {
+    let (res, diag, residuals) = det
+        .detect_with_photometric_residuals(image)
+        .expect("detect");
+    let inflations = residuals
+        .iter()
+        .map(|r| (r.marker_index, r.covariance_inflation))
+        .collect();
+    (res, diag, inflations)
+}
+
+/// Photometric detection; the inflations need the `study` feature.
+#[cfg(not(feature = "study"))]
+fn detect_photometric(
+    det: &Detector,
+    image: &image::GrayImage,
+) -> (DetectionResult, DetectionDiagnostics, Inflations) {
+    let (res, diag) = det.detect_with_diagnostics(image).expect("detect");
+    (res, diag, Inflations::new())
+}
+
 /// RMS error of a result's homography at the true centres of the cells
 /// imaged inside the frame; `None` without a homography in the absolute
 /// board frame (the truth's).
@@ -365,9 +396,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     let mut inflations = Vec::new();
     for seed in 0..n_seeds {
         let scene = expose(&rad, &spec, 1000 + seed);
-        let (res, diag) = photometric
-            .detect_with_diagnostics(&scene.image)
-            .expect("detect");
+        let (res, diag, inflations_of) = detect_photometric(&photometric, &scene.image);
         if seed == 0 {
             let res_p = projective.detect(&scene.image).expect("detect");
             out.rms_projective = projective_rms(&res_p, &truth, &rad.h);
@@ -375,7 +404,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             out.h_rms_photometric = homography_rms(&res, target, &truth, size);
         }
         out.n_detected += res.detected_markers.len() as f64;
-        for (m, d) in res.detected_markers.iter().zip(&diag.markers) {
+        for (index, (m, d)) in res.detected_markers.iter().zip(&diag.markers).enumerate() {
             let status = d
                 .photometric
                 .as_ref()
@@ -399,7 +428,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             let (Some(cov), Some(p)) = (m.center_cov, d.photometric.as_ref()) else {
                 continue;
             };
-            let inflation = p.covariance_inflation.unwrap_or(1.0);
+            let inflation = inflations_of.get(&index).copied().flatten();
             let t = truth.centers[idx];
             errors.push((m.center[0] - t[0]).hypot(m.center[1] - t[1]));
             inflations.push(inflation);
@@ -415,7 +444,12 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     out.n_located /= n_seeds as f64;
     out.n_photometric /= n_seeds as f64;
     out.rms_photometric = rms(&errors);
-    out.inflation = inflations.iter().sum::<f64>() / inflations.len().max(1) as f64;
+    let known: Vec<f64> = inflations.iter().flatten().copied().collect();
+    out.inflation = if known.is_empty() {
+        f64::NAN
+    } else {
+        known.iter().sum::<f64>() / known.len() as f64
+    };
     out.residual /= inflations.len().max(1) as f64;
     summarize_monte_carlo(&samples, n_seeds, &mut out);
     out
@@ -448,7 +482,8 @@ fn summarize_monte_carlo(
             err2 += (c[0] - s.truth[0]).powi(2) + (c[1] - s.truth[1]).powi(2);
             n_err += 1;
             rep_c += tr / n as f64;
-            rep_w += tr / (infl * infl) / n as f64;
+            // White-residual trace; unknown (NaN) without the inflation.
+            rep_w += infl.map_or(f64::NAN, |i| tr / (i * i)) / n as f64;
         }
         bias2 += (m[0] - s.truth[0]).powi(2) + (m[1] - s.truth[1]).powi(2);
         n_m += 1;

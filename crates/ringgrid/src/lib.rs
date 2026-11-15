@@ -109,19 +109,23 @@ pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
 pub mod diagnostics {
     pub use crate::detector::{
         DetectionSource, FitMetrics, InnerFitReason, InnerFitStatus, PhotometricMetrics,
-        PhotometricStatus, ResidualAutocorrelation,
+        PhotometricStatus,
     };
     pub use crate::homography::RansacStats;
     pub use crate::marker::DecodeMetrics;
     pub use crate::pipeline::{DetectionDiagnostics, MarkerDiagnostics, StageTimings};
 }
 
-/// Per-pixel photometric fit residuals, for studying where the intensity model
-/// fails. Not part of the stable API.
+/// Per-pixel photometric fit residuals and covariance diagnostics, for
+/// studying where the intensity model fails (`study` feature). Not part of
+/// the stable API.
+#[cfg(feature = "study")]
 #[doc(hidden)]
 pub mod photometric_residuals {
     pub use crate::api::PhotometricResiduals;
-    pub use crate::detector::photometric_refine::PhotometricResidualMarker;
+    pub use crate::detector::photometric_refine::{
+        PhotometricResidualMarker, ResidualAutocorrelation,
+    };
     pub use crate::ring::photometric_center::PhotometricResidualSample;
 }
 

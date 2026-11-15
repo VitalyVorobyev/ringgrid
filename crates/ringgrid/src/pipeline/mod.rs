@@ -40,8 +40,9 @@ pub(crate) use prelude::*;
 pub(crate) use result::{PipelineResult, seed_proposals};
 
 pub(crate) use run::{
-    detect_adaptive, detect_adaptive_collecting_residuals, detect_adaptive_with_hint,
-    detect_collecting_residuals, detect_multiscale, detect_single_pass, detect_with_mapper,
-    detect_with_self_undistort, proposal_result_for_config, proposal_seeds_for_config,
-    select_adaptive_tiers,
+    detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,
+    detect_with_mapper, detect_with_self_undistort, proposal_result_for_config,
+    proposal_seeds_for_config, select_adaptive_tiers,
 };
+#[cfg(feature = "study")]
+pub(crate) use run::{detect_adaptive_collecting_residuals, detect_collecting_residuals};

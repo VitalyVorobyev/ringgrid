@@ -11,7 +11,7 @@ use super::time_compat::{Instant, duration_ms};
 use super::*;
 use crate::detector::CenterSource;
 use crate::detector::photometric_refine::{
-    PhotometricResidualMarker, apply_photometric_centers, mark_unrefined,
+    ResidualSink, apply_photometric_centers, mark_unrefined,
 };
 use crate::pixelmap::PixelMapper;
 
@@ -26,14 +26,14 @@ thread_local! {
 /// it; otherwise return it unchanged.
 ///
 /// `mapper` is the caller's external mapper, if any; a self-undistort model
-/// the result applied is used when there is none. `residuals`, when given,
-/// receives every fitted marker's per-pixel residuals.
+/// the result applied is used when there is none. `residuals`, when given
+/// (`study` feature), receives every fitted marker's per-pixel residuals.
 pub(super) fn finish(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     mut result: PipelineResult,
-    residuals: Option<&mut Vec<PhotometricResidualMarker>>,
+    residuals: ResidualSink<'_>,
 ) -> PipelineResult {
     if !config.circle_refinement.uses_photometric() {
         return result;
@@ -55,7 +55,7 @@ fn refine(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     result: &mut PipelineResult,
-    residuals: Option<&mut Vec<PhotometricResidualMarker>>,
+    residuals: ResidualSink<'_>,
 ) {
     let self_undistort = result
         .self_undistort

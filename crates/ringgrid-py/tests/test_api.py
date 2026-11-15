@@ -1223,22 +1223,14 @@ def test_photometric_diagnostics_parse_and_tolerate_absent_fields() -> None:
             "n_pixels": 900,
             "masked_fraction": 0.02,
             "center_shift_px": 0.3,
-            "covariance_inflation": 1.7,
-            "residual_autocorrelation": {
-                "x": [0.5, 0.2, 0.1, 0.0, 0.0, 0.0],
-                "y": [0.4, 0.1, 0.0, 0.0, 0.0, 0.0],
-            },
         }
     )
     assert metrics.status == "accepted"
     assert metrics.blur_sigma_px == pytest.approx(1.4)
-    assert metrics.covariance_inflation == pytest.approx(1.7)
-    assert metrics.residual_autocorrelation is not None
-    assert metrics.residual_autocorrelation.x[0] == pytest.approx(0.5)
     assert ringgrid.PhotometricMetrics.from_dict(metrics.to_dict()) == metrics
     rejected = ringgrid.PhotometricMetrics.from_dict({"status": "no_board_position"})
     assert rejected.blur_sigma_px is None
-    assert rejected.residual_autocorrelation is None
+    assert rejected.center_shift_px is None
     assert "blur_sigma_px" not in rejected.to_dict()
 
     assert ringgrid.MarkerDiagnostics.from_dict({"fit": fit}).photometric is None

@@ -1050,32 +1050,6 @@ class DetectedMarker:
 
 
 @dataclass(slots=True)
-class ResidualAutocorrelation:
-    """Spatial autocorrelation of a photometric fit's residuals.
-
-    ``x[k]`` and ``y[k]`` are the correlation coefficients of residuals
-    ``k + 1`` pixels apart along image x and y (lags 1 to 6).
-    """
-
-    x: list[float]
-    y: list[float]
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ResidualAutocorrelation":
-        data = _require_mapping(data, name="data")
-        return cls(
-            x=[float(v) for v in data["x"]],
-            y=[float(v) for v in data["y"]],
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "x": [float(v) for v in self.x],
-            "y": [float(v) for v in self.y],
-        }
-
-
-@dataclass(slots=True)
 class PhotometricMetrics:
     """Outcome of the photometric centre fit for one marker.
 
@@ -1083,8 +1057,7 @@ class PhotometricMetrics:
     ``"degenerate"``, ``"not_converged"``, ``"shift_too_large"``,
     ``"implausible"``, ``"poor_fit"`` or ``"no_board_position"`` (the marker
     has no decoded id or lattice label, or the result has no board
-    homography). ``covariance_inflation`` is the ratio of the reported centre
-    standard deviation to the one white residuals would give.
+    homography).
     """
 
     status: str
@@ -1094,8 +1067,6 @@ class PhotometricMetrics:
     contrast: float | None = None
     residual_sigma: float | None = None
     center_shift_px: float | None = None
-    covariance_inflation: float | None = None
-    residual_autocorrelation: ResidualAutocorrelation | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "PhotometricMetrics":
@@ -1108,10 +1079,6 @@ class PhotometricMetrics:
             contrast=_optional_float(data.get("contrast")),
             residual_sigma=_optional_float(data.get("residual_sigma")),
             center_shift_px=_optional_float(data.get("center_shift_px")),
-            covariance_inflation=_optional_float(data.get("covariance_inflation")),
-            residual_autocorrelation=None
-            if data.get("residual_autocorrelation") is None
-            else ResidualAutocorrelation.from_dict(data["residual_autocorrelation"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1124,14 +1091,6 @@ class PhotometricMetrics:
         _set_optional(out, "contrast", self.contrast)
         _set_optional(out, "residual_sigma", self.residual_sigma)
         _set_optional(out, "center_shift_px", self.center_shift_px)
-        _set_optional(out, "covariance_inflation", self.covariance_inflation)
-        _set_optional(
-            out,
-            "residual_autocorrelation",
-            None
-            if self.residual_autocorrelation is None
-            else self.residual_autocorrelation.to_dict(),
-        )
         return out
 
 
@@ -3144,7 +3103,6 @@ __all__ = [
     "ProjectiveCenterConfig",
     "PhotometricConfig",
     "PhotometricMetrics",
-    "ResidualAutocorrelation",
     "SeedProposalConfig",
     "ProposalConfig",
     "EdgeSampleConfig",

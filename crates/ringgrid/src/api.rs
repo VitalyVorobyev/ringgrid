@@ -9,6 +9,7 @@ use image::GrayImage;
 use std::path::Path;
 
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
+#[cfg(feature = "study")]
 use crate::detector::photometric_refine::PhotometricResidualMarker;
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
@@ -22,7 +23,7 @@ use crate::{DetectionResult, Proposal, ProposalResult};
 
 /// Result, diagnostics and per-marker fit residuals of
 /// [`Detector::detect_with_photometric_residuals`].
-#[doc(hidden)]
+#[cfg(feature = "study")]
 pub type PhotometricResiduals = (
     DetectionResult,
     DetectionDiagnostics,
@@ -261,7 +262,9 @@ impl Detector {
     /// (observed minus model) with the pixel's position in marker
     /// coordinates. For studying where the intensity model fails; the result
     /// and diagnostics are identical to the plain call, which pays nothing for
-    /// this. Empty unless `circle_refinement` is `Photometric`.
+    /// this. Empty unless `circle_refinement` is `Photometric`. `study`
+    /// feature only; not part of the stable API.
+    #[cfg(feature = "study")]
     #[doc(hidden)]
     pub fn detect_with_photometric_residuals(
         &self,
@@ -276,6 +279,7 @@ impl Detector {
 
     /// Adaptive variant of
     /// [`detect_with_photometric_residuals`](Self::detect_with_photometric_residuals).
+    #[cfg(feature = "study")]
     #[doc(hidden)]
     pub fn detect_adaptive_with_photometric_residuals(
         &self,

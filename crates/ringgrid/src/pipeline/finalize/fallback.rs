@@ -140,15 +140,7 @@ pub(super) fn finalize_decode_anchored_fallback(
     let total_start = Instant::now();
     let markers_in = corrected_markers.len();
 
-    if id_correction_applies(config) {
-        let stats = verify_and_correct_ids(
-            &mut corrected_markers,
-            &config.target,
-            &config.advanced.id_correction,
-            config.advanced.decode.codebook_profile,
-        );
-        log_id_correction_summary(&stats);
-    }
+    phase_id_correction(&mut corrected_markers, config);
 
     let filter_start = Instant::now();
     let mut filter_phase = filter_with_h(corrected_markers, config);
@@ -252,6 +244,20 @@ pub(super) fn finalize_decode_anchored_fallback(
     );
 
     result
+}
+
+/// Hex ID correction over the decoded markers, when it applies.
+fn phase_id_correction(markers: &mut Vec<MarkerRecord>, config: &DetectConfig) {
+    if !id_correction_applies(config) {
+        return;
+    }
+    let stats = verify_and_correct_ids(
+        markers,
+        &config.target,
+        &config.advanced.id_correction,
+        config.advanced.decode.codebook_profile,
+    );
+    log_id_correction_summary(&stats);
 }
 
 /// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies

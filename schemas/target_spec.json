@@ -205,7 +205,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the canonical v6 form that writers emit; the loaders additionally migrate legacy `ringgrid.target.v5` and `ringgrid.target.v4` files.",
+  "description": "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the only form the loaders accept and the writers emit.",
   "properties": {
     "coding": {
       "$ref": "#/$defs/MarkerCoding",

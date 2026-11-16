@@ -74,7 +74,7 @@ crates/ringgrid/src/
 │   ├── ring.rs         # RingGeometry, MarkerCoding (Coded16 | Plain), CodebookProfile
 │   ├── page.rs         # PageSpec/PageSize/PageOrientation (printed sheet)
 │   ├── fiducials.rs    # OriginFiducials (validation: rotation-asymmetry, clearance)
-│   ├── schema.rs       # JSON v6 (canonical) + v5/v4 auto-migration
+│   ├── schema.rs       # JSON v6 (the only supported schema)
 │   └── error.rs        # TargetValidationError, TargetLoadError
 ├── target_generation.rs # SVG/PNG/DXF rendering + TargetRenderOptions/TargetArtifacts
 ├── proposal/           # Center proposal generation (delegates to radsym)
@@ -189,7 +189,7 @@ Key public types (root tier):
 - `DetectConfig`, `MarkerScalePrior`, `CircleRefinementMethod` — configuration
 - `ScaleTier`, `ScaleTiers` — multi-scale tier configuration (presets: `four_tier_wide`, `two_tier_standard`, `single`)
 - `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
-- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (legacy v5/v4 `board_spec.json` still loads via `TargetLayout::from_json_*` auto-migration; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
+- `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (JSON is `ringgrid.target.v6` only: v4/v5 files are rejected with an "unsupported schema" error, convert them by loading with 0.15 and re-saving; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
 - `TargetRenderOptions`, `TargetArtifacts`, `PageSpec`/`PageSize`/`PageOrientation`, `TargetGenerationError` — target rendering. `render_target_artifacts` returns all four formats in memory and works without the `std` feature, so every binding shares one contract.
 - `CodebookProfile` — `Base` (893) or `Extended` (2180). Lives on `CodedRingSpec`, i.e. on the **target**: rendering draws from it and `DetectConfig::with_target` derives `advanced.decode.codebook_profile` from it, so a printed target can never be decoded against a different table.
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
@@ -236,7 +236,10 @@ cargo run -p ringgrid-cli --bin ringgrid-dev -- detect --image <path> --target <
 
 # Regenerate embedded codebook/board constants (don't hand-edit these)
 .venv/bin/python tools/gen_codebook.py --n 893 --seed 1 --out_json tools/codebook.json --out_rs crates/ringgrid/src/marker/codebook.rs
-.venv/bin/python tools/gen_board_spec.py --pitch_mm 8.0 --rows 15 --long_row_cols 14 --board_mm 200.0 --json_out tools/board/board_spec.json
+# tools/board/board_spec.json is the `hex_coded` example recipe rendered with `--name ringgrid_200mm_hex`:
+cargo run -p ringgrid --features cli --bin ringgrid -- example --name hex_coded --out /tmp/board.toml
+cargo run -p ringgrid --features cli --bin ringgrid -- gen /tmp/board.toml --out tools/board --formats json --name ringgrid_200mm_hex
+mv tools/board/target_spec.json tools/board/board_spec.json
 cargo build  # rebuild after regenerating
 ```
 
@@ -344,7 +347,7 @@ list them at all.
 - Algorithms go in `ringgrid`; CLI/file I/O in `ringgrid-cli`
 - External JSON uses `serde` structs (see `DetectionResult` in `pipeline/result.rs`)
 - Never introduce OpenCV bindings
-- `marker/codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via Python scripts, never hand-edit generated Rust
+- `marker/codebook.rs` is generated; board target is runtime JSON (`tools/board/board_spec.json`) — regenerate via the generators / `ringgrid gen`, never hand-edit generated Rust
 - Logging via `tracing` crate; control with `RUST_LOG=debug|info|trace`
 - `lib.rs` is purely re-exports; type definitions live at their construction sites
 - Keep one source of truth for shared configs/defaults: if a config is used by multiple stages, define it once and reuse it directly.
@@ -379,7 +382,7 @@ The `/regression-gate` skill runs the full regression suite (invoke after signif
 2. Run 3 synthetic benchmarks + 1 real-world benchmark (rtv3d, local-only):
    - `bash tools/run_reference_benchmark.sh`
    - `bash tools/run_distortion_benchmark.sh`
-   - `bash tools/run_blur3_benchmark.sh`
+   - `bash tools/run_blur2_benchmark.sh`
    - `.venv/bin/python tools/run_rtv3d_eval.py` (skipped if `data/rtv3d` absent)
 3. Validate against `tools/ci/regression_baseline.json`
 4. Run `tools/ci/maintainability_guardrails.py`

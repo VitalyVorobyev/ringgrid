@@ -1,5 +1,6 @@
 //! Ring geometry primitives shared across the detector pipeline.
 
+pub(crate) mod edge_quality;
 pub(crate) mod edge_sample;
 pub(crate) mod inner_estimate;
 pub(crate) mod outer_estimate;

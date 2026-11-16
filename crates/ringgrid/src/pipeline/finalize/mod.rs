@@ -154,6 +154,66 @@ pub(super) fn refit_final_homography(result: &mut PipelineResult, config: &Detec
     result.ransac = ransac;
 }
 
+/// Output contract, on the finished result (after photometric refinement can
+/// still correct centres), with the homography refit from the markers kept:
+///
+/// - When the configuration asks for a centre correction (projective or
+///   photometric), every reported marker carries a corrected centre. A marker
+///   whose correction failed keeps the outer-ellipse centre, which
+///   perspective and blur bias (precision harness, operating range: median
+///   error 0.25–1.0 px against 0.12–0.21 px corrected); it is not reported.
+/// - Every reported marker has at least `min_confidence`.
+///
+/// Rings dropped here still served as lattice evidence (labeling, anchor
+/// votes, homography support) — their position is good to a pixel, their
+/// centre not to calibration accuracy.
+///
+/// Returns each input marker's index in the output (`None` when dropped).
+pub(super) fn apply_output_contract(
+    result: &mut PipelineResult,
+    config: &DetectConfig,
+) -> Vec<Option<usize>> {
+    let corrected_only = config.circle_refinement.uses_projective_center();
+    let before = result.markers.len();
+    let mut n_kept = 0usize;
+    let new_index: Vec<Option<usize>> = result
+        .markers
+        .iter()
+        .map(|m| {
+            let keep = (!corrected_only
+                || m.center_source != crate::detector::CenterSource::OuterEllipse)
+                && m.confidence >= config.min_confidence;
+            keep.then(|| {
+                n_kept += 1;
+                n_kept - 1
+            })
+        })
+        .collect();
+    let mut kept = new_index.iter();
+    result
+        .markers
+        .retain(|_| kept.next().is_some_and(Option::is_some));
+    if result.markers.len() == before {
+        return new_index;
+    }
+    tracing::info!(
+        n_dropped = before - result.markers.len(),
+        "markers without a corrected centre or below min_confidence not reported"
+    );
+    if result
+        .markers
+        .iter()
+        .any(|m| m.grid_coord.is_some() || m.id.is_some())
+    {
+        refit_final_homography(result, config);
+    } else {
+        result.homography = None;
+        result.ransac = None;
+        result.board_frame = None;
+    }
+    new_index
+}
+
 /// Correspondence-only copies of a result's markers, index-aligned, as
 /// finalize saw them when it fitted the homography: centre in the
 /// homography's frame, position in its source plane. A marker without a

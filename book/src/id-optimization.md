@@ -152,32 +152,30 @@ The optimizer runs in two stages:
 ## Board spec format
 
 The `id_assignment` field is an array of codebook IDs, one per marker in
-generation order. It appears at the top level of the `ringgrid.target.v4`
-JSON:
+generation order. It lives in the `coding` object of the
+`ringgrid.target.v6` JSON, next to the codebook profile it indexes:
 
 ```json
 {
-  "schema": "ringgrid.target.v4",
+  "schema": "ringgrid.target.v6",
   "name": "ringgrid_200mm_hex",
-  "pitch_mm": 8.0,
-  "rows": 15,
-  "long_row_cols": 14,
-  "marker_outer_radius_mm": 2.8,
-  "marker_inner_radius_mm": 1.68,
-  "marker_ring_width_mm": 0.56,
-  "id_assignment": [447, 612, 201, 55, ...],
-  "markers": [...]
+  "lattice": { "kind": "hex", "rows": 15, "long_row_cols": 14, "pitch_mm": 8.0 },
+  "marker": { "outer_radius_mm": 4.8, "inner_radius_mm": 3.2 },
+  "coding": {
+    "kind": "coded16",
+    "ring_width_mm": 1.152,
+    "codebook_profile": "base",
+    "id_assignment": [447, 612, 201, 55, ...]
+  }
 }
 ```
 
 When `id_assignment` is absent, IDs are assigned sequentially. When present,
-`id_assignment[i]` is the codebook ID for the i-th marker in the `markers`
-array. The array length must equal the number of markers, and all IDs must be
-unique.
+`id_assignment[i]` is the codebook ID for the i-th marker in generation
+order. The array length must equal the number of markers, all IDs must be
+unique, and every ID must exist in the selected `codebook_profile`.
 
-This optimizer's input/output remains the legacy flat `ringgrid.target.v4`
-schema; loading it through `TargetLayout::from_json_file` (Rust), the CLI's
-`--target`, or `ringgrid.TargetLayout.from_json` (Python) auto-migrates it
-to the canonical `ringgrid.target.v6` schema, carrying `id_assignment` over
-unchanged. See [Target JSON (schema v6)](targets/target-json-v6.md) for the
-migration rules.
+The optimizer reads and writes this schema directly, so its output loads
+through `TargetLayout::from_json_file` (Rust), the CLI's `--target`, or
+`ringgrid.TargetLayout.from_json` (Python) unchanged. See
+[Target JSON (schema v6)](targets/target-json-v6.md) for the full reference.

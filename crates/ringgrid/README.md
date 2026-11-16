@@ -14,7 +14,7 @@ homography. No OpenCV dependency.
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
-- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; legacy v5 and v4 files still load via `TargetLayout::from_json_*` auto-migration (see [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations))
+- **Compositional target model** — `TargetLayout` composes hex/rect lattices, coded (16-sector) or plain rings, and optional origin-dot fiducials; targets load and save as `ringgrid.target.v6` JSON (v4 and v5 files are no longer loaded; see the [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations/0.15-to-0.16.md))
 - **Pure Rust** — no C/C++ dependencies, no OpenCV bindings
 
 ## Pipeline Stages
@@ -71,8 +71,8 @@ ringgrid example --name hex_coded --out hex_coded.toml   # start from a recipe
 ringgrid gen hex_coded.toml --out ./out/target           # SVG + PNG + DXF + JSON
 ```
 
-Both paths write a v6 `target_spec.json`. Legacy v5 and v4 files still load in
-detection — `TargetLayout::from_json_*` auto-migrates them. See
+Both paths write a v6 `target_spec.json`, the only target schema detection
+loads. See
 the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html)
 for the recipe format and every flag.
 

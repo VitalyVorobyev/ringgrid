@@ -105,7 +105,7 @@ inline std::string scale_tiers_two_tier_standard_json() {
 /// the JSON result as a `std::string`, throwing [`Error`] on failure.
 class Detector {
 public:
-    /// Construct from a target layout JSON string (`v5`, or legacy `v4`).
+    /// Construct from a target layout JSON string (`ringgrid.target.v6`).
     explicit Detector(const std::string& target_json) {
         check_abi();
         detail::check(ringgrid_detector_new(target_json.c_str(), &handle_));

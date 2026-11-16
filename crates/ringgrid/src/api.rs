@@ -119,7 +119,7 @@ impl Detector {
         )
     }
 
-    /// Load target JSON (`v5` or legacy `v4`) and create a detector in one
+    /// Load target JSON (`ringgrid.target.v6`) and create a detector in one
     /// step using default marker-scale search prior.
     #[cfg(feature = "std")]
     pub fn from_target_json_file(path: &Path) -> Result<Self, TargetLoadError> {

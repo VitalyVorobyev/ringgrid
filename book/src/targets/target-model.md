@@ -159,8 +159,9 @@ a `TargetLayout` (or anything convertible into one) can be passed directly.
   board too small to hold the dot triad inside its marker field
   (see [Origin Fiducials](origin-fiducials.md)).
 
-Legacy `board_spec.json` files still load unchanged: `TargetLayout::from_json_*`
-auto-migrates the v4 and v5 schemas to the canonical v6 spec.
+Target JSON is the `ringgrid.target.v6` schema; `board_spec.json` files in the
+older v4 / v5 schemas no longer load (see
+[Target JSON](target-json-v6.md#older-schemas) for converting one).
 
 **Source:** `crates/ringgrid/src/target/` (`layout.rs`, `lattice.rs`, `ring.rs`,
 `fiducials.rs`)

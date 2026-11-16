@@ -72,7 +72,7 @@ Equivalent paths for the same geometry (identical SVG/PNG/DXF; all write a v6
 - Python script from the repo: `tools/gen_target.py` for the same geometry
 - Rust API: `TargetLayout::coded_hex(...)` / `TargetLayout::new(...)` plus `write_json_file`, `write_target_svg`, `write_target_png`, and `write_target_dxf`
 
-Legacy v4 `board_spec.json` files still load — `ringgrid.TargetLayout.from_json(...)` auto-migrates v4 and v5 to v6. (See [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations).)
+Target JSON is the `ringgrid.target.v6` schema; v4 and v5 files are no longer loaded (see the [migration notes](https://github.com/VitalyVorobyev/ringgrid/tree/main/docs/migrations/0.15-to-0.16.md) for converting one).
 
 Load this target in Python:
 
@@ -137,7 +137,7 @@ detector = ringgrid.Detector.from_target(hex_target)
 ```
 
 `to_dict()` / `from_dict()` round-trip the v6 schema verbatim; `from_json(...)`
-loads v6 (or legacy v5 / v4, auto-migrated) text or a file path; `to_spec_json()`
+loads `ringgrid.target.v6` text or a file path; `to_spec_json()`
 returns canonical, validated v6 JSON. Invalid geometry raises `ValueError` with
 the native error message:
 

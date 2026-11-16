@@ -1603,14 +1603,23 @@ def main() -> None:
     marker_inner_radius = args.pitch_mm * 0.4
     marker_ring_width = marker_outer_radius * 0.24
     board_spec = {
-        "schema": "ringgrid.target.v4",
+        "schema": "ringgrid.target.v6",
         "name": f"ringgrid_{int(args.board_mm)}mm_hex",
-        "rows": rows,
-        "long_row_cols": long_row_cols,
-        "pitch_mm": args.pitch_mm,
-        "marker_outer_radius_mm": marker_outer_radius,
-        "marker_inner_radius_mm": marker_inner_radius,
-        "marker_ring_width_mm": marker_ring_width,
+        "lattice": {
+            "kind": "hex",
+            "rows": rows,
+            "long_row_cols": long_row_cols,
+            "pitch_mm": args.pitch_mm,
+        },
+        "marker": {
+            "outer_radius_mm": marker_outer_radius,
+            "inner_radius_mm": marker_inner_radius,
+        },
+        "coding": {
+            "kind": "coded16",
+            "ring_width_mm": marker_ring_width,
+            "codebook_profile": "base",
+        },
     }
     board_spec_path = out_dir / "board_spec.json"
     with open(board_spec_path, "w") as f:

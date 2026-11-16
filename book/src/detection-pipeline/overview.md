@@ -4,6 +4,16 @@ The ringgrid detection pipeline transforms a grayscale image into a set of ident
 
 Coded and [plain (uncoded) targets](#plain-target-path) share one finalize back half: every fitted ring is labeled by the lattice, and the labeling is anchored to the board by decoded IDs (coded) or origin dots (plain). Which combinations run which path is summarized in the [target composition matrix](../targets/target-model.md#composition-matrix--how-each-combination-detects).
 
+**Supported scene: one board per image.** With a second board of any layout
+in view, rings of the other board can be labeled into this one; the detector
+does not guard against it.
+
+Every reported marker carries a `confidence` that predicts how far its
+centre can be trusted (rim coverage, inner-edge agreement, outer-edge
+sharpness, distance to the image border, decode/fit evidence);
+`DetectConfig::min_confidence` (default 0.03) drops the markers below it on
+the finished result — the one knob trading recall for centre accuracy.
+
 ## Two-Phase Architecture
 
 ### Phase 1: Fit-Decode

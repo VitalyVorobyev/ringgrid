@@ -695,7 +695,9 @@ pub(crate) fn complete_with_h(
                 continue;
             };
             let seed = completion_seed(cell.coord, cell_xy, h, markers, &grid, target, scope);
-            if let Some(marker) = adopt_nearest(unlabeled, seed, params.reproj_gate_px) {
+            if let Some(marker) = adopt_nearest(unlabeled, seed, params.reproj_gate_px, |m| {
+                !decode_contradicts_cell(m, cell.id, target)
+            }) {
                 markers.push(adopt_into(marker, cell, cell_xy, &mut stats));
                 present.insert(cell.coord);
                 added_this_round += 1;
@@ -766,16 +768,32 @@ fn adopt_into(
     }
 }
 
+/// Whether a marker's own decode names a board cell other than the one with
+/// `cell_id`: then either the decode is a misread or the marker is not this
+/// cell's ring (a lattice slip, a ring of a second board in view), and the
+/// marker must not take the cell's ID. A decode naming no board cell is a
+/// misread of this target and contradicts nothing.
+pub(crate) fn decode_contradicts_cell(
+    marker: &MarkerRecord,
+    cell_id: Option<usize>,
+    target: &TargetLayout,
+) -> bool {
+    marker
+        .id
+        .is_some_and(|id| Some(id) != cell_id && target.coord_of_id(id).is_some())
+}
+
 /// Remove and return the pool ring nearest `seed` when it lies within
-/// `gate_px` or within half its own outer radius of it. Rings never overlap,
-/// so a neighboring cell's center is at least two outer radii away: a ring
-/// within half a radius is unambiguously this cell's, at any marker scale (a
-/// fixed pixel gate is far tighter than the lattice prediction error on large
-/// markers).
+/// `gate_px` or within half its own outer radius of it, and `admissible`
+/// accepts it. Rings never overlap, so a neighboring cell's center is at least
+/// two outer radii away: a ring within half a radius is unambiguously this
+/// cell's, at any marker scale (a fixed pixel gate is far tighter than the
+/// lattice prediction error on large markers).
 fn adopt_nearest(
     pool: &mut Vec<MarkerRecord>,
     seed: [f64; 2],
     gate_px: f32,
+    admissible: impl Fn(&MarkerRecord) -> bool,
 ) -> Option<MarkerRecord> {
     let (i, d) = pool
         .iter()
@@ -786,7 +804,7 @@ fn adopt_nearest(
         .ellipse_outer
         .as_ref()
         .map_or(0.0, |e| 0.25 * (e.a + e.b));
-    (d <= f64::from(gate_px).max(half_radius)).then(|| pool.swap_remove(i))
+    (d <= f64::from(gate_px).max(half_radius) && admissible(&pool[i])).then(|| pool.swap_remove(i))
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.

@@ -50,11 +50,10 @@ python3 tools/gen_codebook.py \
   --out_rs crates/ringgrid/src/marker/codebook.rs
 
 # Board spec (runtime JSON): tools/board/board_spec.json
-python3 tools/gen_board_spec.py \
-  --pitch_mm 8.0 \
-  --rows 15 --long_row_cols 14 \
-  --board_mm 200.0 \
-  --json_out tools/board/board_spec.json
+cargo run -p ringgrid --features cli --bin ringgrid -- example --name hex_coded --out /tmp/board.toml
+cargo run -p ringgrid --features cli --bin ringgrid -- gen /tmp/board.toml \
+  --out tools/board --formats json --name ringgrid_200mm_hex
+mv tools/board/target_spec.json tools/board/board_spec.json
 
 # Rebuild to pick up embedded constants
 cargo build
@@ -184,7 +183,7 @@ that CI uses: `.venv/bin/python -m pytest crates/ringgrid-py/tests -q`.
 
 ## Do / Don’t
 
-- Do regenerate generated assets via `tools/gen_codebook.py` and `tools/gen_board_spec.py` (do not hand-edit generated Rust codebook).
+- Do regenerate generated assets via `tools/gen_codebook.py` and `ringgrid gen` (do not hand-edit generated Rust codebook).
 - Do keep generator(s) + runtime target JSON schema + decoder/scorer consistent if formats change.
 - Do keep configuration structs and default values as a single source of truth. If multiple stages use the same knobs, use one shared type instead of `*Params` + `*Config` mirrors.
 - Do remove old structs/conversions immediately when consolidating APIs, and update all call sites to the shared type.

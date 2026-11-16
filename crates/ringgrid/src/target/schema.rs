@@ -1,46 +1,31 @@
-//! Target JSON schema: canonical v6 read/write plus v5 and v4 auto-migration.
+//! Target JSON schema: canonical `ringgrid.target.v6` read/write.
 //!
 //! `ringgrid.target.v6` is the compositional schema (lattice / marker /
 //! coding / fiducials) with **derived** origin-dot positions — `fiducials`
-//! carries only `dot_radius_mm`. `ringgrid.target.v5` was identical except that
-//! it stored absolute `dots_mm`; it is accepted and migrated by checking those
-//! stored positions against the ones the lattice derives. The legacy flat
-//! `ringgrid.target.v4` schema (hex coded targets only) is also still accepted.
-//! Writers always emit v6.
+//! carries only `dot_radius_mm`. It is the only schema the loaders accept;
+//! files written with the earlier v4 / v5 schemas are rejected with an
+//! "unsupported schema" error that says how to convert them (load with
+//! ringgrid 0.15 and save again).
 
 #[cfg(feature = "std")]
 use std::path::Path;
 
 use super::error::{TargetLoadError, TargetValidationError};
-use super::fiducials::{OriginFiducials, origin_dot_positions_mm};
-use super::lattice::{HexGeometry, LatticeGeometry};
+use super::fiducials::OriginFiducials;
+use super::lattice::LatticeGeometry;
 use super::layout::TargetLayout;
 use super::ring::{CodedRingSpec, MarkerCoding, RingGeometry};
-use crate::marker::CodebookProfile;
 
-/// Schema string every target spec is written with.
-///
-/// Readers additionally accept the legacy `v5` and flat `v4` schemas and
-/// migrate them on load; writers always emit this one.
+/// Schema string every target spec is written with, and the only one the
+/// loaders accept.
 pub const TARGET_SCHEMA_VERSION: &str = "ringgrid.target.v6";
-
-pub(crate) const TARGET_SCHEMA_V6: &str = TARGET_SCHEMA_VERSION;
-pub(crate) const TARGET_SCHEMA_V5: &str = "ringgrid.target.v5";
-pub(crate) const TARGET_SCHEMA_V4: &str = "ringgrid.target.v4";
-const EXPECTED_SCHEMAS: &str = "'ringgrid.target.v6', 'ringgrid.target.v5' or 'ringgrid.target.v4'";
-
-/// Tolerance (mm) when checking a v5 file's stored dots against derived ones.
-/// Generous enough for `f32` round-trips through JSON, tight enough that a
-/// genuinely different placement (a whole pitch away) never passes.
-const LEGACY_DOT_TOL_MM: f32 = 1e-3;
 
 /// JSON Schema (draft 2020-12) of the canonical `ringgrid.target.v6` target
 /// specification, as read and written by [`TargetLayout::from_json_str`] and
 /// [`TargetLayout::to_json_string`].
 ///
 /// The wire type itself is private; this is the supported way to obtain its
-/// schema. Legacy `v5` / `v4` documents are still accepted by the loaders but
-/// are not described by this schema.
+/// schema.
 #[cfg(feature = "schemars")]
 pub fn target_spec_schema() -> schemars::Schema {
     schemars::schema_for!(TargetSpecV6)
@@ -59,7 +44,7 @@ struct SchemaProbe {
     feature = "schemars",
     schemars(
         title = "ringgrid target specification (v6)",
-        description = "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the canonical v6 form that writers emit; the loaders additionally migrate legacy `ringgrid.target.v5` and `ringgrid.target.v4` files."
+        description = "Physical description of a ringgrid calibration target: lattice, ring radii, marker coding and optional origin fiducials. All lengths are in millimeters. This is the only form the loaders accept and the writers emit."
     )
 )]
 #[serde(deny_unknown_fields)]
@@ -83,84 +68,10 @@ struct TargetSpecV6 {
     fiducials: Option<OriginFiducials>,
 }
 
-/// The `ringgrid.target.v5` schema: v6 with absolute dot coordinates.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TargetSpecV5 {
-    schema: String,
-    name: String,
-    lattice: LatticeGeometry,
-    marker: RingGeometry,
-    coding: MarkerCoding,
-    #[serde(default)]
-    fiducials: Option<OriginFiducialsV5>,
-}
-
-/// v5 fiducials: dot size *and* absolute positions.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OriginFiducialsV5 {
-    dot_radius_mm: f32,
-    dots_mm: Vec<[f32; 2]>,
-}
-
-/// The legacy flat `ringgrid.target.v4` schema (hex coded targets only).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BoardSpecV4 {
-    pub(crate) schema: String,
-    pub(crate) name: String,
-    pub(crate) pitch_mm: f32,
-    pub(crate) rows: usize,
-    pub(crate) long_row_cols: usize,
-    pub(crate) marker_outer_radius_mm: f32,
-    pub(crate) marker_inner_radius_mm: f32,
-    pub(crate) marker_ring_width_mm: f32,
-    /// Optional optimized ID assignment. When present, `id_assignment[i]` is the
-    /// codebook ID for the i-th marker (in generation order). When absent, IDs
-    /// are assigned sequentially (0, 1, 2, ...).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) id_assignment: Option<Vec<usize>>,
-}
-
-impl BoardSpecV4 {
-    pub(crate) fn into_layout(self) -> Result<TargetLayout, TargetValidationError> {
-        if self.schema != TARGET_SCHEMA_V4 {
-            return Err(TargetValidationError::UnsupportedSchema {
-                found: self.schema,
-                expected: EXPECTED_SCHEMAS,
-            });
-        }
-        TargetLayout::new(
-            self.name,
-            LatticeGeometry::Hex(HexGeometry {
-                rows: self.rows,
-                long_row_cols: self.long_row_cols,
-                pitch_mm: self.pitch_mm,
-            }),
-            RingGeometry {
-                outer_radius_mm: self.marker_outer_radius_mm,
-                inner_radius_mm: self.marker_inner_radius_mm,
-            },
-            MarkerCoding::Coded16(CodedRingSpec {
-                ring_width_mm: self.marker_ring_width_mm,
-                // The v4 schema predates profile selection: it is always the
-                // baseline table.
-                codebook_profile: CodebookProfile::Base,
-                id_assignment: self.id_assignment,
-            }),
-            None,
-        )
-    }
-}
-
 impl TargetSpecV6 {
     fn into_layout(self) -> Result<TargetLayout, TargetValidationError> {
-        if self.schema != TARGET_SCHEMA_V6 {
-            return Err(TargetValidationError::UnsupportedSchema {
-                found: self.schema,
-                expected: EXPECTED_SCHEMAS,
-            });
+        if self.schema != TARGET_SCHEMA_VERSION {
+            return Err(TargetValidationError::UnsupportedSchema { found: self.schema });
         }
         TargetLayout::new(
             self.name,
@@ -172,101 +83,26 @@ impl TargetSpecV6 {
     }
 }
 
-impl TargetSpecV5 {
-    /// Migrate to the compositional model, dropping the stored dot positions in
-    /// favour of derived ones.
-    ///
-    /// The stored positions are **verified**, not ignored: if they disagree
-    /// with what the lattice derives, the file describes a physical board whose
-    /// dots are somewhere else, and detecting against it would look for them in
-    /// the wrong place. That fails loudly with
-    /// [`TargetValidationError::LegacyDotsMismatch`] — the same precision-first
-    /// contract the origin resolver uses, where a wrong millimeter position is
-    /// worse than none.
-    fn into_layout(self) -> Result<TargetLayout, TargetValidationError> {
-        if self.schema != TARGET_SCHEMA_V5 {
-            return Err(TargetValidationError::UnsupportedSchema {
-                found: self.schema,
-                expected: EXPECTED_SCHEMAS,
-            });
-        }
-        let fiducials = match self.fiducials {
-            None => None,
-            Some(legacy) => {
-                let derived = origin_dot_positions_mm(&self.lattice)?;
-                if !same_point_set(&legacy.dots_mm, &derived) {
-                    return Err(TargetValidationError::LegacyDotsMismatch {
-                        stored_mm: legacy.dots_mm,
-                        derived_mm: derived,
-                    });
-                }
-                Some(OriginFiducials {
-                    dot_radius_mm: legacy.dot_radius_mm,
-                })
-            }
-        };
-        TargetLayout::new(self.name, self.lattice, self.marker, self.coding, fiducials)
-    }
-}
-
-/// Whether two dot lists describe the same points, ignoring order.
-///
-/// Dot order carries no geometric meaning — the renderers draw each dot and the
-/// origin resolver scores the weakest of them — so a v5 file listing the same
-/// triad in a different order describes the same physical board and must
-/// migrate cleanly.
-///
-/// Greedy matching is exact here: derived dots are a full pitch apart, orders of
-/// magnitude beyond [`LEGACY_DOT_TOL_MM`], so no stored dot can be within
-/// tolerance of two derived dots.
-fn same_point_set(stored: &[[f32; 2]], derived: &[[f32; 2]]) -> bool {
-    if stored.len() != derived.len() {
-        return false;
-    }
-    let mut claimed = vec![false; derived.len()];
-    stored.iter().all(|s| {
-        let hit = derived.iter().enumerate().position(|(i, d)| {
-            !claimed[i]
-                && (s[0] - d[0]).abs() <= LEGACY_DOT_TOL_MM
-                && (s[1] - d[1]).abs() <= LEGACY_DOT_TOL_MM
-        });
-        match hit {
-            Some(i) => {
-                claimed[i] = true;
-                true
-            }
-            None => false,
-        }
-    })
-}
-
 impl TargetLayout {
-    /// Load a target layout from a JSON string (`v6`, or legacy `v5` / `v4`
-    /// auto-migrated to the compositional model).
+    /// Load a target layout from a `ringgrid.target.v6` JSON string.
+    ///
+    /// Any other schema tag, including the earlier `v4` / `v5`, fails with
+    /// [`TargetValidationError::UnsupportedSchema`].
     pub fn from_json_str(data: &str) -> Result<Self, TargetLoadError> {
+        // Dispatch on the tag first so an older file reports its schema, not
+        // whichever field the v6 parser happens to trip over.
         let probe: SchemaProbe = serde_json::from_str(data)?;
-        match probe.schema.as_str() {
-            TARGET_SCHEMA_V6 => {
-                let spec: TargetSpecV6 = serde_json::from_str(data)?;
-                spec.into_layout().map_err(Into::into)
+        if probe.schema != TARGET_SCHEMA_VERSION {
+            return Err(TargetValidationError::UnsupportedSchema {
+                found: probe.schema,
             }
-            TARGET_SCHEMA_V5 => {
-                let spec: TargetSpecV5 = serde_json::from_str(data)?;
-                spec.into_layout().map_err(Into::into)
-            }
-            TARGET_SCHEMA_V4 => {
-                let spec: BoardSpecV4 = serde_json::from_str(data)?;
-                spec.into_layout().map_err(Into::into)
-            }
-            other => Err(TargetValidationError::UnsupportedSchema {
-                found: other.to_string(),
-                expected: EXPECTED_SCHEMAS,
-            }
-            .into()),
+            .into());
         }
+        let spec: TargetSpecV6 = serde_json::from_str(data)?;
+        spec.into_layout().map_err(Into::into)
     }
 
-    /// Load a target layout from a JSON file (`v6` or legacy `v5` / `v4`).
+    /// Load a target layout from a `ringgrid.target.v6` JSON file.
     #[cfg(feature = "std")]
     pub fn from_json_file(path: &Path) -> Result<Self, TargetLoadError> {
         let data = std::fs::read_to_string(path)?;
@@ -311,7 +147,7 @@ impl TargetLayout {
             MarkerCoding::Plain => MarkerCoding::Plain,
         };
         TargetSpecV6 {
-            schema: TARGET_SCHEMA_V6.to_string(),
+            schema: TARGET_SCHEMA_VERSION.to_string(),
             name: self.name().to_string(),
             lattice: *self.lattice(),
             marker: self.ring(),
@@ -324,6 +160,7 @@ impl TargetLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::marker::CodebookProfile;
 
     #[test]
     fn v6_round_trip_preserves_all_aspects() {
@@ -362,127 +199,6 @@ mod tests {
     }
 
     #[test]
-    fn v4_auto_migrates_to_hex_coded() {
-        let raw = r#"{
-            "schema":"ringgrid.target.v4",
-            "name":"legacy",
-            "pitch_mm":8.0,
-            "rows":3,
-            "long_row_cols":4,
-            "marker_outer_radius_mm":4.8,
-            "marker_inner_radius_mm":3.2,
-            "marker_ring_width_mm":1.152
-        }"#;
-        let target = TargetLayout::from_json_str(raw).expect("v4 accepted");
-        assert_eq!(target.name(), "legacy");
-        assert!(target.is_coded());
-        assert!(matches!(target.lattice(), LatticeGeometry::Hex(_)));
-        assert_eq!(target.fiducials(), None);
-
-        // Migrated target re-serializes as v6.
-        let json = target.to_json_string();
-        assert!(json.contains("ringgrid.target.v6"));
-    }
-
-    /// A v5 spec whose stored dots agree with the derived triad migrates
-    /// silently — the common case, since the `rect_24x24` preset and every
-    /// hand-authored L used this placement.
-    #[test]
-    fn v5_migrates_when_stored_dots_match_derived() {
-        let raw = r#"{
-            "schema":"ringgrid.target.v5",
-            "name":"legacy_rect",
-            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
-            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
-            "coding":{"kind":"plain"},
-            "fiducials":{"dot_radius_mm":1.4,
-                         "dots_mm":[[161.0,161.0],[147.0,161.0],[161.0,175.0]]}
-        }"#;
-        let target = TargetLayout::from_json_str(raw).expect("v5 accepted");
-        assert_eq!(target.fiducials().map(|f| f.dot_radius_mm), Some(1.4));
-        assert_eq!(
-            target.fiducial_dots_mm(),
-            [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
-        );
-        assert!(target.to_json_string().contains("ringgrid.target.v6"));
-    }
-
-    /// Dot order is not geometry: the renderers draw each dot and the origin
-    /// resolver scores the weakest, so a v5 file listing the same triad in a
-    /// different order describes the same physical board and must migrate.
-    #[test]
-    fn v5_migrates_when_stored_dots_are_reordered() {
-        let raw = r#"{
-            "schema":"ringgrid.target.v5",
-            "name":"legacy_rect",
-            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
-            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
-            "coding":{"kind":"plain"},
-            "fiducials":{"dot_radius_mm":1.4,
-                         "dots_mm":[[161.0,175.0],[161.0,161.0],[147.0,161.0]]}
-        }"#;
-        let target = TargetLayout::from_json_str(raw).expect("order must not matter");
-        assert_eq!(
-            target.fiducial_dots_mm(),
-            [[161.0, 161.0], [147.0, 161.0], [161.0, 175.0]]
-        );
-    }
-
-    /// Duplicates must not satisfy the check by matching one derived dot twice.
-    #[test]
-    fn v5_rejects_duplicate_dots_masquerading_as_the_triad() {
-        let raw = r#"{
-            "schema":"ringgrid.target.v5",
-            "name":"legacy_rect",
-            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
-            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
-            "coding":{"kind":"plain"},
-            "fiducials":{"dot_radius_mm":1.4,
-                         "dots_mm":[[161.0,161.0],[161.0,161.0],[147.0,161.0]]}
-        }"#;
-        assert!(matches!(
-            TargetLayout::from_json_str(raw).expect_err("duplicate dot"),
-            TargetLoadError::Validation(TargetValidationError::LegacyDotsMismatch { .. })
-        ));
-    }
-
-    /// A v5 spec whose dots sit somewhere else describes a board this build
-    /// would not find them on. Loading fails rather than quietly searching the
-    /// wrong place — a wrong millimeter position is worse than none.
-    #[test]
-    fn v5_rejects_stored_dots_that_disagree_with_the_lattice() {
-        let raw = r#"{
-            "schema":"ringgrid.target.v5",
-            "name":"legacy_rect",
-            "lattice":{"kind":"rect","rows":24,"cols":24,"pitch_mm":14.0},
-            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
-            "coding":{"kind":"plain"},
-            "fiducials":{"dot_radius_mm":1.4,
-                         "dots_mm":[[161.0,161.0],[147.0,161.0],[161.0,147.0]]}
-        }"#;
-        let err = TargetLayout::from_json_str(raw).expect_err("placement differs");
-        assert!(matches!(
-            err,
-            TargetLoadError::Validation(TargetValidationError::LegacyDotsMismatch { .. })
-        ));
-    }
-
-    /// v5 specs without fiducials — every coded target — migrate unconditionally.
-    #[test]
-    fn v5_without_fiducials_migrates() {
-        let v5 = r#"{
-            "schema":"ringgrid.target.v5",
-            "name":"legacy_hex",
-            "lattice":{"kind":"hex","rows":15,"long_row_cols":14,"pitch_mm":8.0},
-            "marker":{"outer_radius_mm":4.8,"inner_radius_mm":3.2},
-            "coding":{"kind":"coded16","ring_width_mm":1.152}
-        }"#;
-        let target = TargetLayout::from_json_str(v5).expect("v5 accepted");
-        assert_eq!(target.n_cells(), 203);
-        assert_eq!(target.fiducials(), None);
-    }
-
-    #[test]
     fn rejects_unknown_schema() {
         let raw = r#"{"schema":"ringgrid.target.v2","name":"x"}"#;
         let err = TargetLayout::from_json_str(raw).expect_err("unsupported");
@@ -490,6 +206,41 @@ mod tests {
             err,
             TargetLoadError::Validation(TargetValidationError::UnsupportedSchema { .. })
         ));
+    }
+
+    /// An earlier schema is reported by name, with the one supported version
+    /// and how to convert the file, instead of a parse error about whichever
+    /// v4 / v5 field the v6 parser meets first.
+    #[test]
+    fn earlier_schemas_fail_with_an_unsupported_schema_message() {
+        let v4 = r#"{"schema":"ringgrid.target.v4","name":"legacy","pitch_mm":8.0,
+            "rows":15,"long_row_cols":14,"marker_outer_radius_mm":4.8,
+            "marker_inner_radius_mm":3.2,"marker_ring_width_mm":1.152}"#;
+        let v5 = r#"{"schema":"ringgrid.target.v5","name":"legacy",
+            "lattice":{"kind":"rect","rows":8,"cols":8,"pitch_mm":14.0},
+            "marker":{"outer_radius_mm":5.6,"inner_radius_mm":2.8},
+            "coding":{"kind":"plain"},
+            "fiducials":{"dot_radius_mm":1.4,"dots_mm":[[49.0,49.0]]}}"#;
+        for (raw, tag) in [(v4, "ringgrid.target.v4"), (v5, "ringgrid.target.v5")] {
+            let err = TargetLayout::from_json_str(raw).expect_err("v4 / v5 are not loadable");
+            let message = err.to_string();
+            assert!(
+                matches!(
+                    err,
+                    TargetLoadError::Validation(TargetValidationError::UnsupportedSchema { .. })
+                ),
+                "{tag}: {message}"
+            );
+            assert!(message.contains(tag), "names the found schema: {message}");
+            assert!(
+                message.contains("'ringgrid.target.v6'"),
+                "names the supported schema: {message}"
+            );
+            assert!(
+                message.contains("ringgrid 0.15"),
+                "says how to convert: {message}"
+            );
+        }
     }
 
     #[test]
@@ -501,22 +252,45 @@ mod tests {
         assert!(TargetLayout::from_json_str(&raw).is_err());
     }
 
+    /// Every target JSON checked into the repository loads, validates and
+    /// round-trips to the same layout.
     #[cfg(feature = "std")]
     #[test]
-    fn checked_in_v4_fixtures_load() {
+    fn checked_in_fixtures_load() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let plain = TargetLayout::from_json_file(&root.join("tools/board/board_spec.json"))
-            .expect("v4 board_spec fixture loads");
-        assert_eq!(plain.n_cells(), 203);
-
-        let optimized =
-            TargetLayout::from_json_file(&root.join("tools/board/board_spec_optimized.json"))
-                .expect("v4 optimized fixture loads");
-        assert_eq!(optimized.n_cells(), 203);
-        // Optimized assignment survives migration and round-trip.
-        let reloaded = TargetLayout::from_json_str(&optimized.to_json_string()).expect("v5");
-        let ids: Vec<_> = optimized.cells().iter().map(|c| c.id).collect();
-        let reloaded_ids: Vec<_> = reloaded.cells().iter().map(|c| c.id).collect();
-        assert_eq!(ids, reloaded_ids);
+        // (path, cells, codebook profile)
+        let fixtures = [
+            ("tools/board/board_spec.json", 203, CodebookProfile::Base),
+            (
+                "tools/board/board_spec_optimized.json",
+                203,
+                CodebookProfile::Base,
+            ),
+            (
+                "tools/board/board_spec_extended_opt.json",
+                203,
+                CodebookProfile::Extended,
+            ),
+            ("testdata/board_ringgrid.json", 203, CodebookProfile::Base),
+            (
+                "crates/ringgrid/examples/target.json",
+                203,
+                CodebookProfile::Base,
+            ),
+        ];
+        for (path, n_cells, profile) in fixtures {
+            let target = TargetLayout::from_json_file(&root.join(path))
+                .unwrap_or_else(|e| panic!("{path} must load: {e}"));
+            assert_eq!(target.n_cells(), n_cells, "{path}");
+            assert!(
+                matches!(target.coding(), MarkerCoding::Coded16(spec) if spec.codebook_profile == profile),
+                "{path}: codebook profile"
+            );
+            let reloaded =
+                TargetLayout::from_json_str(&target.to_json_string()).expect("round-trip");
+            let ids: Vec<_> = target.cells().iter().map(|c| c.id).collect();
+            let reloaded_ids: Vec<_> = reloaded.cells().iter().map(|c| c.id).collect();
+            assert_eq!(ids, reloaded_ids, "{path}: ids survive a round-trip");
+        }
     }
 }

@@ -163,16 +163,30 @@ def test_plain_constructor_reports_when_dots_do_not_fit() -> None:
         ringgrid.TargetLayout.plain_rect(10.0, 4, 4, 6.9, 2.0, dots=True)
 
 
-def test_target_layout_from_json_migrates_v4_board_spec() -> None:
+def test_target_layout_from_json_loads_v6_board_spec() -> None:
     target = ringgrid.TargetLayout.from_json(BOARD_JSON)
 
     assert isinstance(target.lattice, ringgrid.HexGeometry)
     assert target.lattice.rows == 15
     assert target.lattice.long_row_cols == 14
     assert isinstance(target.coding, ringgrid.Coded16)
-    # The migrated target is emitted as canonical v6 and round-trips.
     assert target.to_dict()["schema"] == "ringgrid.target.v6"
     assert ringgrid.TargetLayout.from_dict(target.to_dict()) == target
+
+
+def test_target_layout_from_json_rejects_v4_board_spec() -> None:
+    v4 = {
+        "schema": "ringgrid.target.v4",
+        "name": "legacy",
+        "pitch_mm": 8.0,
+        "rows": 15,
+        "long_row_cols": 14,
+        "marker_outer_radius_mm": 4.8,
+        "marker_inner_radius_mm": 3.2,
+        "marker_ring_width_mm": 1.152,
+    }
+    with pytest.raises(ValueError, match="unsupported target schema 'ringgrid.target.v4'"):
+        ringgrid.TargetLayout.from_json(json.dumps(v4))
 
 
 def test_target_layout_coded16_id_assignment_roundtrips() -> None:

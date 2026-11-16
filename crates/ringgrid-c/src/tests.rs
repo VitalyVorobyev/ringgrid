@@ -102,7 +102,7 @@ fn status_str_is_static_and_readable() {
 }
 
 #[test]
-fn presets_are_valid_v5_json() {
+fn presets_are_valid_v6_json() {
     let mut a: *mut c_char = std::ptr::null_mut();
     let mut b: *mut c_char = std::ptr::null_mut();
     let hex = take_string(unsafe { ringgrid_default_target_json(&mut a) }, a);

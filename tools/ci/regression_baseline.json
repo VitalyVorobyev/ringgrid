@@ -24,7 +24,7 @@
     "modes": {
       "projective_center__none": {
         "min_precision": 1.0,
-        "min_recall": 0.995,
+        "min_recall": 0.965,
         "max_center_mean_px": 0.109,
         "max_h_vs_gt_mean_px": 1.381
       },
@@ -42,13 +42,13 @@
       }
     }
   },
-  "blur3_benchmark": {
-    "script": "tools/run_blur3_benchmark.sh",
-    "output": "tools/out/eval_blur3_post_pipeline/det/aggregate.json",
+  "blur2_benchmark": {
+    "script": "tools/run_blur2_benchmark.sh",
+    "output": "tools/out/eval_blur2_post_pipeline/det/aggregate.json",
     "criteria": {
-      "min_precision": 0.995,
-      "min_recall": 0.984,
-      "max_center_error": 0.472
+      "min_precision": 1.0,
+      "min_recall": 0.914,
+      "max_center_error": 0.294
     }
   },
   "target_matrix_benchmark": {
@@ -81,7 +81,7 @@
         "min_origin_correct_rate": 1.0,
         "max_h_vs_gt_mean_px": 0.045,
         "min_id_accuracy": 1.0,
-        "min_decoded_fraction": 0.927
+        "min_decoded_fraction": 0.89
       },
       "hex_plain_dots": {
         "min_precision": 1.0,
@@ -109,9 +109,9 @@
         "min_origin_correct_rate": 1.0,
         "max_h_vs_gt_mean_px": 0.043,
         "min_id_accuracy": 1.0,
-        "min_decoded_fraction": 0.797,
+        "min_decoded_fraction": 0.685,
         "min_ext_recall": 1.0,
-        "min_ext_decoded_rate": 0.701
+        "min_ext_decoded_rate": 0.544
       }
     }
   },
@@ -119,16 +119,16 @@
     "script": ".venv/bin/python tools/run_rtv3d_eval.py",
     "output": "tools/out/rtv3d_eval/report.json",
     "requires": "data/rtv3d_0",
-    "description": "Real-world rtv3d dataset (private, local only): 19 strip images, 2 on the eval's skip list (target_0, target_7), so 17 usable strips x 6 cameras = 102 tiles. Strategy A is the primary regression target (narrow scale prior, most robust to radii subsampling); B (default prior) and D (per-strip best prior) are gated too. Thresholds are ~1.7% below the measured totals (A 4576, B 3913, D 2867), the slack the A gate has always had. Strategy C (8-220 px single pass) detects nothing on both finalize paths: the proposal stage yields 1-4 proposals once the max diameter exceeds ~110 px.",
+    "description": "Real-world rtv3d dataset (private, local only): 19 strip images, 2 on the eval's skip list (target_0, target_7), so 17 usable strips x 6 cameras = 102 tiles. Strategy A is the primary regression target (narrow scale prior, most robust to radii subsampling); B (default prior) and D (per-strip best prior) are gated too. Thresholds are ~1.7% below the measured totals with the default min_confidence 0.03 (A 3475, B 2813, D 2059; ADR-024), the slack the A gate has always had. Strategy C (8-220 px single pass) detects nothing on both finalize paths: the proposal stage yields 1-4 proposals once the max diameter exceeds ~110 px.",
     "strategies": {
       "A_old_default_20_56": {
-        "min_total_decoded": 4500
+        "min_total_decoded": 3416
       },
       "B_new_default_14_66": {
-        "min_total_decoded": 3850
+        "min_total_decoded": 2765
       },
       "D_per_strip_best": {
-        "min_total_decoded": 2820
+        "min_total_decoded": 2024
       }
     }
   }

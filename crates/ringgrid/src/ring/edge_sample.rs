@@ -72,6 +72,11 @@ impl<'a> DistortionAwareSampler<'a> {
         Self { img, mapper }
     }
 
+    /// Image width and height (pixels).
+    pub(crate) fn image_size(self) -> (u32, u32) {
+        self.img.dimensions()
+    }
+
     /// Convert image-space (distorted) pixel coordinates into working-frame coordinates.
     pub fn image_to_working_xy(self, img_xy: [f32; 2]) -> Option<[f32; 2]> {
         if let Some(mapper) = self.mapper {

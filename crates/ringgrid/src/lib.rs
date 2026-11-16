@@ -163,9 +163,9 @@ pub mod codebook {
     pub use crate::marker::{CodebookInfo, CodewordMatch, codebook_info, decode_word};
 }
 
-// Geometry — compositional target model. Legacy v4 `board_spec.json` files load
-// via `TargetLayout::from_json_*` (schema auto-migration); the deprecated
-// `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
+// Geometry — compositional target model, loaded and saved as
+// `ringgrid.target.v6` JSON (`TargetLayout::from_json_*` / `to_json_string`);
+// the deprecated `BoardLayout`/`BoardMarker` Rust types were removed in 0.9.
 #[cfg(feature = "schemars")]
 pub use target::target_spec_schema;
 pub use target::{

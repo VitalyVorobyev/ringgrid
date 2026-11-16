@@ -1,10 +1,18 @@
 {
-  "schema": "ringgrid.target.v4",
+  "schema": "ringgrid.target.v6",
   "name": "ringgrid_example_hex_200mm",
-  "pitch_mm": 8.0,
-  "rows": 15,
-  "long_row_cols": 14,
-  "marker_outer_radius_mm": 4.8,
-  "marker_inner_radius_mm": 3.2,
-  "marker_ring_width_mm": 0.8
+  "lattice": {
+    "kind": "hex",
+    "rows": 15,
+    "long_row_cols": 14,
+    "pitch_mm": 8.0
+  },
+  "marker": {
+    "outer_radius_mm": 4.8,
+    "inner_radius_mm": 3.2
+  },
+  "coding": {
+    "kind": "coded16",
+    "ring_width_mm": 0.8
+  }
 }

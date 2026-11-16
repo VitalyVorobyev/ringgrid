@@ -5,7 +5,8 @@ use crate::marker::DecodeMetrics;
 use crate::marker::codec::distance_confidence;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
-use crate::ring::edge_sample::EdgeSampleResult;
+use crate::ring::edge_quality::{border_distance_radii, outer_edge_width_px};
+use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
 
 use super::config::{DetectConfig, InnerFitConfig};
 use super::inner_fit::{
@@ -171,6 +172,13 @@ pub struct FitMetrics {
     /// no-H mode or when `board_xy_mm` is not available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h_reproj_err_px: Option<f32>,
+    /// Width (pixels) of the outer edge's intensity ramp — the median
+    /// paper-to-ink step across the rim divided by the median peak radial
+    /// gradient; about 2.5 σ for a Gaussian blur of σ. A factor of the marker
+    /// [`confidence`](crate::DetectedMarker::confidence). Absent when the rim
+    /// is mostly outside the image or has no step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_edge_width_px: Option<f32>,
 }
 
 /// Internal rich working marker used while the detection pipeline runs.
@@ -318,6 +326,7 @@ fn fit_metrics_from_outer(
         inner_theta_consistency: inner_summary.inner_theta_consistency,
         radii_std_outer_px: radii_std(&edge.outer_radii),
         h_reproj_err_px: None,
+        outer_edge_width_px: None,
     }
 }
 
@@ -361,55 +370,71 @@ pub(crate) fn fit_support_score(
     (arc_cov * inlier_ratio).clamp(0.0, 1.0)
 }
 
-/// Composite confidence score incorporating decode quality, angular coverage,
-/// RANSAC inlier ratio, inner fit quality, and RMS residual. Each factor is
-/// in [0, 1]; multiplicative composition ensures any single failing dimension
-/// pulls confidence toward zero.
+/// Angular gap of the outer edge points (radians) over which the coverage
+/// factor falls by `e`: a quarter of the rim unsupported costs ~86 %.
+const COVERAGE_GAP_SCALE_RAD: f64 = std::f64::consts::FRAC_PI_4;
+/// Outer edge width (px) at which the sharpness factor is one half.
+const EDGE_WIDTH_SCALE_PX: f32 = 3.0;
+/// Distance to the image border (outer radii) below which the border factor
+/// falls linearly to zero.
+const BORDER_SCALE_RADII: f32 = 2.0;
+
+/// Per-marker confidence in `[0, 1]`: how much the marker's centre can be
+/// trusted. A product of factors, each in `[0, 1]`:
+///
+/// - **evidence** — the code distance of its decode (`1 − dist/6`), or, for
+///   an undecoded ring, its outer-edge arc coverage × RANSAC inlier ratio;
+/// - **outer fit** — RANSAC inlier ratio × `1/(1 + rms/2)` (Sampson RMS, px);
+/// - **rim coverage** — `exp(−gap / (π/4))`, `gap` the largest angular gap
+///   between outer edge points (radians);
+/// - **inner edge** — the fraction of rays whose inner-edge peak agrees with
+///   the inner ring's radius, times `miss_confidence_factor` when no inner
+///   ellipse was fitted;
+/// - **sharpness** — `1/(1 + (w / 3 px)²)`, `w` the outer edge width
+///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable);
+/// - **border** — `min(1, d / 2)`, `d` the centre's distance to the image
+///   border in outer radii.
+///
+/// Rim coverage, inner-edge agreement, sharpness and border are the
+/// predictors of a wrong centre the precision harness measured (centre error
+/// beyond 1 px: ROC AUC 0.95 for this product vs 0.89 for the previous
+/// confidence); the evidence and outer-fit factors keep ranking duplicate
+/// fits and ID votes.
 pub(crate) fn compute_marker_confidence(
     decode_result: Option<&DecodeResult>,
     edge: &EdgeSampleResult,
     outer_ransac: Option<&conic::RansacResult>,
     inner_fit: &InnerFitResult,
     fit_metrics: &FitMetrics,
+    border_radii: f32,
     inner_fit_config: &InnerFitConfig,
 ) -> f32 {
-    // 1. Decode signal (base): use normalised Hamming distance only.
-    // d.confidence = (1−dist/6) × (margin/profile_min_cyclic_dist), which
-    // can overemphasize small profile-specific margin differences. Using
-    // distance alone keeps this factor consistent while still penalising close
-    // calls.
-    let decode_conf = decode_result
+    let evidence = decode_result
         .map(|d| distance_confidence(d.dist))
         .unwrap_or_else(|| fit_support_score(edge, outer_ransac));
-
-    // 2. Outer angular coverage: linear map gap -> [0, 1]
-    let outer_gap = fit_metrics
-        .max_angular_gap_outer
-        .unwrap_or(std::f64::consts::TAU);
-    let angular_outer = (1.0 - outer_gap / std::f64::consts::TAU).clamp(0.0, 1.0) as f32;
-
-    // 3. RANSAC inlier ratio
-    let inlier_factor = outer_ransac
+    let inlier = outer_ransac
         .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
         .unwrap_or(1.0)
         .clamp(0.0, 1.0);
-
-    // 4. Inner fit quality: angular coverage when present, miss penalty otherwise
-    let inner_factor = if inner_fit.ellipse_inner.is_some() {
-        let inner_gap = fit_metrics.max_angular_gap_inner.unwrap_or(0.0);
-        (1.0 - inner_gap / std::f64::consts::TAU).clamp(0.5, 1.0) as f32
-    } else {
-        inner_fit_config.miss_confidence_factor
-    };
-
-    // 5. RMS residual penalty: softer 1/(1+rms/2) so clean fits (rms≈0.2) are
-    // penalised less while still pushing noisy fits (rms>1) toward zero.
-    let rms_factor = match fit_metrics.rms_residual_outer {
+    let rms = match fit_metrics.rms_residual_outer {
         Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32 / 2.0),
         _ => 1.0,
     };
-
-    (decode_conf * angular_outer * inlier_factor * inner_factor * rms_factor).clamp(0.0, 1.0)
+    let gap = fit_metrics
+        .max_angular_gap_outer
+        .unwrap_or(std::f64::consts::TAU);
+    let coverage = (-gap / COVERAGE_GAP_SCALE_RAD).exp() as f32;
+    let agreement = fit_metrics.inner_theta_consistency.unwrap_or(0.0);
+    let inner = if inner_fit.ellipse_inner.is_some() {
+        agreement
+    } else {
+        agreement * inner_fit_config.miss_confidence_factor
+    };
+    let sharpness = fit_metrics
+        .outer_edge_width_px
+        .map_or(0.0, |w| 1.0 / (1.0 + (w / EDGE_WIDTH_SCALE_PX).powi(2)));
+    let border = (border_radii / BORDER_SCALE_RADII).min(1.0);
+    (evidence * inlier * rms * coverage * inner * sharpness * border).clamp(0.0, 1.0)
 }
 
 /// Turn an accepted outer-fit candidate into a marker: fit the inner ring from
@@ -456,7 +481,9 @@ pub(crate) fn marker_from_outer_fit(
         );
     }
 
-    let fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
+    let sampler = DistortionAwareSampler::new(gray, mapper);
+    let mut fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
+    fit.outer_edge_width_px = outer_edge_width_px(sampler, &outer);
     let decode = decode_metrics_from_result(decode_result.as_ref());
     let confidence = compute_marker_confidence(
         decode_result.as_ref(),
@@ -464,6 +491,7 @@ pub(crate) fn marker_from_outer_fit(
         outer_ransac.as_ref(),
         &inner,
         &fit,
+        border_distance_radii(sampler, center, outer.a),
         &config.advanced.inner_fit,
     );
 

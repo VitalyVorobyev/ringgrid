@@ -24,16 +24,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    from PIL import Image
-except ImportError:
-    raise SystemExit("Pillow is required. Run: pip install Pillow")
-
-# Images to skip (zero-detection, low-contrast frames)
-SKIP_STRIPS = {"target_0", "target_7"}
-
-# Number of cameras per strip
-N_CAMERAS = 6
+from strip_tiles import N_CAMERAS, SKIP_STRIPS, split_strip  # noqa: E402  (tools/ is on sys.path)
 
 # Per-image best static priors (from empirical experiments)
 # Format: strip_stem -> (d_min, d_max)
@@ -84,22 +75,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", type=Path, default=Path("tools/out/rtv3d_eval"),
                    help="Output directory for JSON results and report")
     return p.parse_args()
-
-
-def split_strip(strip_path: Path, out_dir: Path, n_parts: int = 6) -> list[Path]:
-    """Split a horizontal strip into n_parts tiles, save as grayscale PNGs."""
-    with Image.open(strip_path) as img:
-        gray = img.convert("L")
-        w, h = gray.size
-        assert w % n_parts == 0, f"Width {w} not divisible by {n_parts}"
-        part_w = w // n_parts
-        tiles = []
-        for i in range(n_parts):
-            tile = gray.crop((i * part_w, 0, (i + 1) * part_w, h))
-            out = out_dir / f"{strip_path.stem}_{i:02d}.png"
-            tile.save(out)
-            tiles.append(out)
-    return tiles
 
 
 def run_detect(

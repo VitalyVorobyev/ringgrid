@@ -282,6 +282,7 @@ class FitMetrics:
     inner_fit_reason: str | None
     neighbor_radius_ratio: float | None
     inner_theta_consistency: float | None
+    outer_edge_width_px: float | None
     def __init__(
         self,
         n_angles_total: int,
@@ -298,6 +299,7 @@ class FitMetrics:
         inner_fit_reason: str | None = ...,
         neighbor_radius_ratio: float | None = ...,
         inner_theta_consistency: float | None = ...,
+        outer_edge_width_px: float | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> FitMetrics: ...
@@ -944,6 +946,10 @@ class DetectConfig:
     def circle_refinement(self) -> CircleRefinementMethod: ...
     @circle_refinement.setter
     def circle_refinement(self, value: CircleRefinementMethod) -> None: ...
+    @property
+    def min_confidence(self) -> float: ...
+    @min_confidence.setter
+    def min_confidence(self, value: float) -> None: ...
     @property
     def inner_fit_required(self) -> bool: ...
     @inner_fit_required.setter

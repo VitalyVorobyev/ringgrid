@@ -1,0 +1,3 @@
+{
+"digest": {"board_complete":null,"board_frame":null,"homography":null,"marker_count":3,"markers":[{"board_xy_mm":null,"center":[196.8558253992632,302.08658729184924],"confidence":0.12319627404212952,"grid_coord":null,"id":null},{"board_xy_mm":null,"center":[435.17069590788094,392.1159640952001],"confidence":0.08641115576028824,"grid_coord":null,"id":null},{"board_xy_mm":null,"center":[641.6364655553836,430.93054281103673],"confidence":0.12509587407112122,"grid_coord":null,"id":null}]}
+}

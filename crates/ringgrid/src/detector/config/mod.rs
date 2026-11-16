@@ -218,6 +218,8 @@ pub struct DetectConfig {
     pub marker_scale: MarkerScalePrior,
     /// Center-correction strategy applied after local fits are accepted: `None` keeps the outer-ellipse centers; `ProjectiveCenter` (the default) recovers unbiased centers from the inner/outer conics; `Photometric` runs on top of projective-center correction and fits each marker's pixels with a model of the blurred printed pattern, which is opt-in because it costs milliseconds per marker. With `Photometric` the returned homography and its RANSAC statistics are refit from the refined centers.
     pub circle_refinement: CircleRefinementMethod,
+    /// Minimum [`DetectedMarker::confidence`](crate::DetectedMarker::confidence) (0 to 1) of a reported marker: the one knob trading recall for centre accuracy. Applied once, to the finished result (after any refinement); markers below it are not reported and the homography is refit from those kept. `0` reports every marker that passed the detector's gates. Rings below it still serve as lattice evidence (labeling, anchoring, homography support).
+    pub min_confidence: f32,
     /// Self-undistort (division-model lens distortion) estimation controls; disabled by default.
     pub self_undistort: SelfUndistortConfig,
     /// Require the full board for detection success.
@@ -381,12 +383,16 @@ fn normalize_legacy_overlay_keys(overlay: &mut serde_json::Value) {
     }
 }
 
+/// Default [`DetectConfig::min_confidence`].
+const DEFAULT_MIN_CONFIDENCE: f32 = 0.03;
+
 impl Default for DetectConfig {
     fn default() -> Self {
         let mut cfg = Self {
             target: TargetLayout::default_hex(),
             marker_scale: MarkerScalePrior::default(),
             circle_refinement: CircleRefinementMethod::default(),
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
             self_undistort: SelfUndistortConfig::default(),
             require_complete_board: false,
             advanced: AdvancedDetectConfig::default(),

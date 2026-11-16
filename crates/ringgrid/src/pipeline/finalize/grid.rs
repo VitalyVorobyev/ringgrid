@@ -20,6 +20,7 @@ use super::common::{
 };
 use super::fallback::{finalize_decode_anchored_fallback, finalize_unlabeled_result};
 use super::{annotate_radius_ratios, apply_marker_fixup};
+use crate::detector::completion::decode_contradicts_cell;
 use crate::detector::{DetectionSource, MarkerRecord};
 use crate::homography::fit_homography_ransac;
 use crate::pipeline::anchor::CoordMap;
@@ -37,65 +38,77 @@ struct IdentifyStats {
     n_off_board: usize,
     /// Undecoded markers that took their ID from their anchored cell.
     n_id_from_cell: usize,
-    /// Decoded markers whose decoded ID contradicts their anchored cell; they
-    /// keep the cell's ID (the ring is an observation of that cell — the code
-    /// band was misread).
+    /// Decoded markers whose decode names another board cell than their
+    /// anchored one; they leave the labeling (see [`identify_cells`]).
     n_id_contradicted: usize,
 }
 
 /// Remap every labeled marker to its absolute board cell and position, and —
 /// on coded targets — give it the cell's ID. Markers labeled outside the board
 /// are removed: the labeling only reaches them through a lattice error.
+///
+/// A marker whose own decode names a *different board cell* is not given the
+/// cell's ID: either the decode is a misread or the label is wrong (a lattice
+/// slip under distortion, a ring of a second board labeled into this one), and
+/// nothing here tells which. It is returned unlabeled, for the join (its own
+/// decode, if a homography agrees) or completion (a refit at its cell) to
+/// place it. A decode naming no board cell is a misread and is overridden.
 fn identify_cells(
     markers: &mut Vec<MarkerRecord>,
     coord_map: CoordMap,
     target: &TargetLayout,
-) -> IdentifyStats {
+) -> (IdentifyStats, Vec<MarkerRecord>) {
     let mut stats = IdentifyStats::default();
-    markers.retain_mut(|m| {
+    let mut contradicted = Vec::new();
+    for mut m in std::mem::take(markers) {
         let Some(c) = m.grid_coord else {
-            return true;
+            markers.push(m);
+            continue;
         };
         let board = coord_map.apply(Coord::new(c[0], c[1]));
         let Some(xy) = target.cell_xy_mm(board) else {
             stats.n_off_board += 1;
-            return false;
+            continue;
         };
+        let cell_id = target.id_of(board);
+        if cell_id.is_some() && decode_contradicts_cell(&m, cell_id, target) {
+            stats.n_id_contradicted += 1;
+            m.grid_coord = None;
+            m.board_xy_mm = None;
+            contradicted.push(m);
+            continue;
+        }
+        if m.id.is_none() && cell_id.is_some() {
+            stats.n_id_from_cell += 1;
+        }
         m.grid_coord = Some([board.u, board.v]);
         m.board_xy_mm = Some([f64::from(xy[0]), f64::from(xy[1])]);
-        if let Some(cell_id) = target.id_of(board) {
-            match m.id {
-                None => stats.n_id_from_cell += 1,
-                Some(id) if id != cell_id => stats.n_id_contradicted += 1,
-                Some(_) => {}
-            }
-            m.id = Some(cell_id);
+        if cell_id.is_some() {
+            m.id = cell_id;
         }
-        true
-    });
-    stats
+        markers.push(m);
+    }
+    (stats, contradicted)
 }
 
 /// Resolve the board origin and, on success, identify every labeled marker
 /// with its absolute board cell and replace the frame homography with the
-/// anchored board homography. Returns whether the origin was resolved.
+/// anchored board homography. Returns the markers taken out of the labeling
+/// (see [`identify_cells`]), or `None` when the origin is unresolved.
 fn phase_anchor(
     gray: &GrayImage,
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
     h_current: &mut nalgebra::Matrix3<f64>,
-) -> bool {
-    let Some(res) = crate::pipeline::anchor::resolve_origin(gray, markers, &config.target, mapper)
-    else {
-        return false;
-    };
-    let stats = identify_cells(markers, res.coord_map, &config.target);
+) -> Option<Vec<MarkerRecord>> {
+    let res = crate::pipeline::anchor::resolve_origin(gray, markers, &config.target, mapper)?;
+    let (stats, contradicted) = identify_cells(markers, res.coord_map, &config.target);
     if config.target.is_coded() {
         tracing::info!(?stats, "grid-first cell identification");
     }
     *h_current = res.h;
-    true
+    Some(contradicted)
 }
 
 /// Let decoded rings the labeler dropped join the anchored grid on the same
@@ -104,8 +117,9 @@ fn phase_anchor(
 /// decoded cell is still free, at the configured inlier threshold. Dropped
 /// rings that are inliers join with their decoded cell, and the RANSAC
 /// homography (fit over the whole view, not just the labeled patch, whose
-/// homography extrapolates poorly) replaces `h`. Identified markers stay
-/// regardless — geometric verify judges them. Returns the number joined.
+/// homography extrapolates poorly) replaces `h` — unless most identified
+/// markers are outliers to it. Identified markers stay regardless — geometric
+/// verify judges them. Returns the number joined.
 fn join_decoded_unlabeled(
     markers: &mut Vec<MarkerRecord>,
     pool: &mut Vec<MarkerRecord>,
@@ -139,8 +153,29 @@ fn join_decoded_unlabeled(
     let Ok(fit) = fit_homography_ransac(&src, &dst, &config.advanced.ransac_homography) else {
         return 0;
     };
-    *h = fit.h;
+    // Accept the fit only when the candidates it joins are corroboration in
+    // their own right — `min_inliers` of them, as any decode-anchored
+    // homography needs — and most identified markers stay inliers. A few
+    // misread candidates far from a small anchored patch otherwise bend the
+    // fit (precision harness: 15 identified rings plus 2 joined misreads out of
+    // 150 candidates on an Extended board bent the homography a lattice row,
+    // and completion along it reported 365 wrong IDs).
     let n_identified = src.len() - candidates.len();
+    let (identified_mask, candidate_mask) = fit.inlier_mask.split_at(n_identified);
+    let n_identified_inliers = identified_mask.iter().filter(|&&inlier| inlier).count();
+    let n_candidate_inliers = candidate_mask.iter().filter(|&&inlier| inlier).count();
+    if n_candidate_inliers < config.advanced.ransac_homography.min_inliers
+        || 2 * n_identified_inliers <= n_identified
+    {
+        tracing::info!(
+            n_identified,
+            n_identified_inliers,
+            n_candidate_inliers,
+            "grid-first: join homography not corroborated; nothing joined"
+        );
+        return 0;
+    }
+    *h = fit.h;
     let mut joined: Vec<usize> = Vec::new();
     for (k, &(i, c, xy)) in candidates.iter().enumerate() {
         if fit
@@ -286,7 +321,8 @@ pub(super) fn finalize_grid_result(
     let mut h_current = assignment.h;
 
     let anchor_start = Instant::now();
-    let anchored = phase_anchor(gray, &mut final_markers, config, mapper, &mut h_current);
+    let contradicted = phase_anchor(gray, &mut final_markers, config, mapper, &mut h_current);
+    let anchored = contradicted.is_some();
     let anchor_elapsed = anchor_start.elapsed();
     if let (false, Some(input)) = (anchored, fallback_input) {
         tracing::info!("grid-first: origin unresolved; decode-anchored fallback");
@@ -301,6 +337,7 @@ pub(super) fn finalize_grid_result(
     }
 
     let mut unlabeled = assignment.unlabeled;
+    unlabeled.extend(contradicted.into_iter().flatten());
     if config.target.is_coded() {
         join_decoded_unlabeled(&mut final_markers, &mut unlabeled, &mut h_current, config);
     }

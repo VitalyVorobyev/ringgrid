@@ -11,6 +11,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`DetectedMarker::confidence` now predicts centre accuracy, and
+  `DetectConfig::min_confidence` (default `0.03`) is the one knob trading
+  recall for it.** Confidence = decode / fit evidence × outer inlier ratio ×
+  `1/(1 + rms/2)` × rim coverage `exp(−gap/(π/4))` × inner-edge ray agreement
+  × sharpness `1/(1 + (w/3 px)²)` (`w`, the outer edge width, is new in
+  `FitMetrics::outer_edge_width_px`) × border `min(1, d/2)` (`d` in outer
+  radii). Precision harness, single-board in-range scenes: ROC AUC for a
+  centre error beyond 1 px 0.95 (previous confidence: 0.89). Markers below
+  `min_confidence` are dropped once on the finished result and the
+  homography is refit. At the default, centres beyond 1 px roughly halve
+  (operating-range grid: hex 314 → 182, Extended 435 → 272, rect 299 → 133,
+  plain hex 231 → 118, plain rect 215 → 81) for 1–3 recall points (contrast
+  scenes: 3–9); ADR-024 has the full threshold table. `0` restores the old
+  output set (with the new confidence values). Values of `confidence`
+  change for every marker.
+  Measured and not adopted on top of it: a lower outer ring-depth gate
+  (0.03; +6–22 points of dark recall, no new wrong output, but 2–18× more
+  centres beyond 1 px in dark/low-contrast views at any threshold) and a
+  lower outer theta consistency (wrong IDs on steep views). ADR-024.
+- **One board per image is the supported case.** Scenes with a second board
+  in view stay in the precision harness as a reported, non-gating group.
+- **Detection fails closed: it reports less rather than a wrong ID, board
+  position or centre.** Measured on a new ground-truth harness
+  (`tests/precision_audit.rs`, 678 synthetic scenes of every target kind; the
+  same images run through 0.15.0): on the 450-scene operating-range grid
+  (blur σ ≤ 2 px, rings ≥ 20 px) wrong IDs 226 → 0, wrong homographies 2 → 0,
+  centres beyond `max(2 px, 10 % of the diameter)` 168 → 3. What changes for
+  users:
+  - IDs are reported only with a corroborated board placement. Without one —
+    1–6 isolated markers, an unreadable code band — markers come back without
+    IDs, board positions or homography (raw decodes there were 77 % wrong).
+  - The decoded-ID anchor accepts a placement whose agreeing decodes beat
+    chance and rejects ambiguous ones (a runner-up beyond chance), instead of
+    requiring a strict majority: more views anchor under heavy misreads.
+  - A ring whose own decode names another board cell no longer takes its
+    cell's ID; the decode-anchored fallback needs `min_inliers` of its
+    homography's inliers to carry their own decode, and grows completion from
+    the identified patch only.
+  - **Markers without a perspective-corrected centre are not reported** when
+    a centre correction is configured (default `ProjectiveCenter`): an
+    outer-ellipse-only centre was 1.5–8× less accurate. This costs recall
+    (operating-range grid, 0.15.0 / without this rule / now: hex 0.80 /
+    0.80 / 0.69, rect 0.74 / 0.85 / 0.70, Extended 0.82 / 0.87 / 0.71),
+    concentrated on small, tilted rings; `--refine photometric` corrects
+    them and restores it (catalogue).
+  - Geometric verify tightens its global floor to 2 px and gains an
+    ellipse-shape test (axis ratio vs the homography's prediction).
+  See ADR-024. A homography-based centre for outer-only markers (the pole of
+  the vanishing line w.r.t. the outer ellipse) was measured and not adopted:
+  it moves centres by under 0.2 px while their error is the outer edge fit
+  (share beyond 1 px stays 2–5× the two-conic centre's on the grid, ~16× on
+  steep tilt) and it reported 3 new
+  wrong IDs on second-board views (ADR-024). Also measured and not adopted:
+  a neighbour-supported inner-ellipse retry (+0.3–1 point recall, but its
+  centres were 6–11× more often beyond 1 px) and contrast-relative forms of
+  the outer-edge ring-depth gate (~+20 points on dark, low-contrast frames,
+  but new wrong IDs on second-board views). The precision harness gains a
+  `dark` scene group (low dynamic range, dark offset) with recall floors.
+
 - **With `CircleRefinementMethod::Photometric`, the returned homography is
   refit from the refined centres.** It used to stay the one fitted to the
   pre-refinement centres. After the photometric stage accepts any fit, the
@@ -104,6 +163,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Loading v4 and v5 target JSON.** `TargetLayout::from_json_*` (and everything
+  built on it: `Detector::from_target_json_file*`, the CLIs' `--target`, the
+  Python / WASM / C detector constructors) accepts only `ringgrid.target.v6`.
+  A `ringgrid.target.v4` or `v5` file fails with an `unsupported target schema`
+  error that names the supported version. To convert a file, load it with
+  ringgrid 0.15 and save it again. Also gone:
+  `TargetValidationError::LegacyDotsMismatch`, and the `expected` field of
+  `TargetValidationError::UnsupportedSchema`. The checked-in fixtures
+  (`tools/board/board_spec*.json`, `testdata/board_ringgrid.json`,
+  `crates/ringgrid/examples/target.json`) are v6;
+  `board_spec_extended_opt.json`, which never loaded as v4, is now a valid v6
+  file with `codebook_profile: "extended"`. `tools/gen_board_spec.py` is
+  removed (use `ringgrid example --name hex_coded` and `ringgrid gen`); the
+  ID-optimization tools read and write v6. See
+  [`docs/migrations/0.15-to-0.16.md`](docs/migrations/0.15-to-0.16.md).
 - **`PhotometricMetrics::covariance_inflation` and
   `PhotometricMetrics::residual_autocorrelation`, and `ResidualAutocorrelation`**
   (Rust diagnostics, Python). They are research diagnostics: they moved to the
@@ -124,6 +198,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A placement covering one board line could block the board anchor.** In
+  the decoded-ID vote, a reflected placement whose board points are collinear
+  has an undetermined homography; centre noise could let it pass as a
+  runner-up and send the view to the fallback, which re-fits most cells by
+  completion. Such placements are now rejected as degenerate (ADR-024).
 - **Documentation snippets that no longer worked.** Recipe TOML examples in the
   README and book used `coding = "coded"` / `"plain"` and `[render] margin_mm`
   (now `coding = { kind = "coded" }` and `[render.page] margin_mm`); the crate

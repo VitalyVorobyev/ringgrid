@@ -179,7 +179,7 @@ class RectGeometry:
         }
 
 
-#: Lattice arrangement of marker cells (tagged by ``kind`` in v5 JSON).
+#: Lattice arrangement of marker cells (tagged by ``kind`` in v6 JSON).
 LatticeGeometry = HexGeometry | RectGeometry
 
 
@@ -275,7 +275,7 @@ class Plain:
         return {"kind": self.kind}
 
 
-#: Marker coding style (tagged by ``kind`` in v5 JSON).
+#: Marker coding style (tagged by ``kind`` in v6 JSON).
 MarkerCoding = Coded16 | Plain
 
 
@@ -331,7 +331,7 @@ class TargetLayout:
     (the last two take ``dots=`` to place origin fiducials). Presets
     (:meth:`default_hex`, :meth:`rect_24x24`), :meth:`from_json`, and
     :meth:`from_dict` are the other entry points; :meth:`to_dict` /
-    :meth:`from_dict` round-trip the v5 schema verbatim. Pass a `TargetLayout`
+    :meth:`from_dict` round-trip the v6 schema verbatim. Pass a `TargetLayout`
     straight to :class:`DetectConfig` or :class:`Detector`.
     """
 
@@ -467,7 +467,7 @@ class TargetLayout:
 
     @classmethod
     def from_json(cls, path_or_json: str | Path) -> "TargetLayout":
-        """Load from v6 (or legacy v5 / v4, auto-migrated) JSON text or a file path.
+        """Load from ``ringgrid.target.v6`` JSON text or a file path.
 
         Validates through the native loader, so malformed geometry raises
         :class:`ValueError` with the Rust error message.
@@ -947,6 +947,9 @@ class FitMetrics:
     inner_fit_reason: str | None = None
     neighbor_radius_ratio: float | None = None
     inner_theta_consistency: float | None = None
+    #: Outer edge width (px): paper-to-ink step / peak radial gradient,
+    #: about 2.5 sigma of the blur. A factor of the marker confidence.
+    outer_edge_width_px: float | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "FitMetrics":
@@ -965,6 +968,7 @@ class FitMetrics:
             inner_fit_reason=_optional_str(data.get("inner_fit_reason")),
             neighbor_radius_ratio=_optional_float(data.get("neighbor_radius_ratio")),
             inner_theta_consistency=_optional_float(data.get("inner_theta_consistency")),
+            outer_edge_width_px=_optional_float(data.get("outer_edge_width_px")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -984,6 +988,7 @@ class FitMetrics:
         _set_optional(out, "inner_fit_reason", self.inner_fit_reason)
         _set_optional(out, "neighbor_radius_ratio", self.neighbor_radius_ratio)
         _set_optional(out, "inner_theta_consistency", self.inner_theta_consistency)
+        _set_optional(out, "outer_edge_width_px", self.outer_edge_width_px)
         return out
 
 
@@ -2355,6 +2360,15 @@ class DetectConfig:
         self._apply_overlay({"circle_refinement": _circle_refinement_to_wire(value)})
 
     @property
+    def min_confidence(self) -> float:
+        """Minimum marker confidence (0 to 1) reported: the recall/accuracy knob."""
+        return float(self._resolved()["min_confidence"])
+
+    @min_confidence.setter
+    def min_confidence(self, value: float) -> None:
+        self._apply_overlay({"min_confidence": float(value)})
+
+    @property
     def dedup_radius(self) -> float:
         return float(self._resolved_value("dedup_radius"))
 
@@ -2787,7 +2801,7 @@ __version__ = _package_version()
 
 
 def _target_spec_json(target: "TargetLayout") -> str:
-    """v5 spec JSON for a target layout handed to the native loaders."""
+    """v6 spec JSON for a target layout handed to the native loaders."""
     if isinstance(target, TargetLayout):
         return target._spec_json_str()
     raise TypeError("target must be TargetLayout")

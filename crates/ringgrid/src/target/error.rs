@@ -4,12 +4,12 @@
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TargetValidationError {
-    /// Validation failed: unsupported target schema version.
+    /// Validation failed: the file's schema is not the supported
+    /// [`TARGET_SCHEMA_VERSION`](crate::TARGET_SCHEMA_VERSION), the only one
+    /// the loaders accept.
     UnsupportedSchema {
         /// Schema string found in the file.
         found: String,
-        /// Schema strings the loader accepts.
-        expected: &'static str,
     },
     /// Validation failed: target name is empty.
     EmptyName,
@@ -135,15 +135,6 @@ pub enum TargetValidationError {
         /// Index of the problematic dot in the derived triad.
         index: usize,
     },
-    /// Validation failed: a loaded `v5` spec's stored `dots_mm` disagree with
-    /// the positions derived from its lattice, so the printed board and the
-    /// detector would look for dots in different places.
-    LegacyDotsMismatch {
-        /// Dot positions stored in the v5 file.
-        stored_mm: Vec<[f32; 2]>,
-        /// Positions the current placement rule derives.
-        derived_mm: Vec<[f32; 2]>,
-    },
     /// Validation failed: the fiducial dot pattern is invariant under a
     /// rotational symmetry of the cell lattice, so it cannot resolve the
     /// target's orientation.
@@ -168,11 +159,22 @@ pub enum TargetValidationError {
 impl std::fmt::Display for TargetValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedSchema { found, expected } => write!(
-                f,
-                "unsupported target schema '{}' (expected {})",
-                found, expected
-            ),
+            Self::UnsupportedSchema { found } => {
+                write!(
+                    f,
+                    "unsupported target schema '{found}' (expected '{}')",
+                    crate::TARGET_SCHEMA_VERSION
+                )?;
+                if matches!(
+                    found.as_str(),
+                    "ringgrid.target.v4" | "ringgrid.target.v5"
+                ) {
+                    f.write_str(
+                        "; convert an older file by loading it with ringgrid 0.15 and saving it again",
+                    )?;
+                }
+                Ok(())
+            }
             Self::EmptyName => f.write_str("target name must not be empty"),
             Self::InvalidPitch { pitch_mm } => {
                 write!(f, "pitch_mm must be finite and > 0 (got {pitch_mm})")
@@ -281,13 +283,6 @@ impl std::fmt::Display for TargetValidationError {
             Self::DotOverlapsMarker { index } => {
                 write!(f, "fiducial dot {index} overlaps a marker's drawn extent")
             }
-            Self::LegacyDotsMismatch {
-                stored_mm,
-                derived_mm,
-            } => write!(
-                f,
-                "this v5 spec stores origin dots at {stored_mm:?} but the lattice derives {derived_mm:?}; the file predates schema v6 and was generated with the pre-0.11 rect placement. Regenerate the target (and re-print it) rather than detecting against dots that are not where the board has them"
-            ),
             Self::FiducialsRotationallySymmetric { angle_deg } => write!(
                 f,
                 "fiducial dots are invariant under a {angle_deg:.0}° lattice rotation and cannot resolve orientation"

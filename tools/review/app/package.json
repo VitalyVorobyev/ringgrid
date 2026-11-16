@@ -1,0 +1,42 @@
+{
+  "name": "ringgrid-review-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Front end of tools/review: detection review on @vitavision packages. Served by tools/review/server.py from dist/.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --max-warnings 0",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitavision/charts": "^0.8.3",
+    "@vitavision/stage2d": "^0.14.0",
+    "@vitavision/ui": "^0.14.0",
+    "@vitavision/workbench": "^0.3.2",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitavision/config-oxlint": "^0.1.0",
+    "@vitavision/config-ts": "^0.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "happy-dom": "^20.11.1",
+    "oxfmt": "0.71.0",
+    "oxlint": "^1.86.0",
+    "oxlint-tsgolint": "^7.0.2003",
+    "tailwindcss": "^4.3.3",
+    "typescript": "7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  },
+  "packageManager": "bun@1.4.2"
+}

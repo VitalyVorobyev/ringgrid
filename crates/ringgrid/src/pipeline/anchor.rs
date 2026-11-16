@@ -58,10 +58,21 @@ const DISK_FRACTION: f64 = 0.55;
 const BG_FRACTIONS: [f64; 2] = [1.6, 2.2];
 /// Samples per sampling ring.
 const RING_SAMPLES: usize = 8;
-/// Minimum number of decoded markers that must agree on the winning placement.
-/// One decode is a single noisy observation; two independent decodes agreeing
-/// on the same (symmetry, translation) is already a coincidence for a misread.
-const MIN_AGREEING_DECODES: usize = 2;
+/// Chance level the winning placement's agreeing decodes must beat: the
+/// expected number of placements that misreads alone would give as many votes
+/// (see [`ln_chance_votes`]). Misreads are common (a blurred code band decodes
+/// to a valid-looking word), so agreement is judged against chance, not as a
+/// majority of all decodes.
+const MAX_CHANCE_WINNER: f64 = 1e-3;
+/// The runner-up must look like chance (expected count of placements with its
+/// votes at least this): a second placement with more votes than misreads
+/// explain means the labeling itself is inconsistent (precision harness: a
+/// rect board at 60° labeled with a row skipped split its correct decodes
+/// 7 / 6 between two placements; accepting the 7 gave 78 wrong IDs).
+const MIN_CHANCE_RUNNER_UP: f64 = 0.1;
+/// Distance (in nearest-neighbor spacings) within which a placement's board
+/// points count as one line (see [`placement_homography`]).
+const COLLINEAR_TOL_SPACINGS: f64 = 1e-3;
 
 /// Integer coordinate map `coord → M·coord + t` from the relative labeling
 /// frame to absolute board coordinates.
@@ -166,9 +177,10 @@ pub(crate) fn resolve_origin(
 /// invertible, so distinct coordinates give distinct translations), and
 /// misreads vote for unrelated placements.
 ///
-/// The winner must have at least [`MIN_AGREEING_DECODES`] votes, a strict
-/// majority of the decoded labeled markers, strictly more votes than the
-/// runner-up, and an orientation-preserving board→image homography.
+/// The winner must have an orientation-preserving board→image homography,
+/// more votes than chance gives any placement ([`MAX_CHANCE_WINNER`]), more
+/// votes than the runner-up, and a runner-up at chance level
+/// ([`MIN_CHANCE_RUNNER_UP`]).
 fn resolve_by_decoded_ids(
     markers: &[MarkerRecord],
     entries: &[(Coord, [f64; 2])],
@@ -188,15 +200,22 @@ fn resolve_by_decoded_ids(
             *tally.entry((k, [cell.u - r.u, cell.v - r.v])).or_default() += 1;
         }
     }
+    // Orientation-preserving placements (half the dihedral group) per cell.
+    let n_rotations = (transforms.len() / 2).max(1);
+    let ln_chance = |votes| ln_chance_votes(n_decoded, votes, n_rotations, target.n_cells());
+    let min_votes = (2..=n_decoded)
+        .find(|&v| ln_chance(v) <= MAX_CHANCE_WINNER.ln())
+        .unwrap_or(usize::MAX);
     // Deterministic ranking: votes descending, then the placement key. Only
     // placements with a physically valid (orientation-preserving) homography
-    // compete: two decodes along a lattice line vote equally for the true
-    // rotation and its mirror image, and that tie is no ambiguity. A placement
-    // needs MIN_AGREEING_DECODES votes to win, so only those are checked.
+    // compete — for the winner and the runner-up alike: decodes along a
+    // lattice line vote equally for the true rotation and its mirror image,
+    // and that tie is no ambiguity. A single vote is chance level whatever its
+    // placement, so it is not fitted.
     let mut ranked: Vec<((usize, [i32; 2]), usize)> = tally.into_iter().collect();
     ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let mut valid = ranked.iter().filter_map(|&((k, offset), votes)| {
-        if votes < MIN_AGREEING_DECODES {
+        if votes < 2 {
             return Some((None, votes));
         }
         let coord_map = CoordMap::new(transforms[k], offset);
@@ -205,16 +224,35 @@ fn resolve_by_decoded_ids(
     });
     let (best, votes) = valid.next()?;
     let runner_up = valid.next().map_or(0, |(_, v)| v);
-    let accepted = votes >= MIN_AGREEING_DECODES && 2 * votes > n_decoded && votes > runner_up;
+    let accepted = votes >= min_votes
+        && votes > runner_up
+        && ln_chance(runner_up) >= MIN_CHANCE_RUNNER_UP.ln();
     tracing::info!(
         n_decoded,
         votes,
         runner_up,
+        min_votes,
         resolved = accepted,
         "origin anchor (decoded ids)"
     );
     let (coord_map, h) = best.filter(|_| accepted)?;
     Some(OriginResolution { coord_map, h })
+}
+
+/// ln of the expected number of placements that `votes` of `n_decoded`
+/// decodes agree on by chance: `R · C(n_decoded, votes) · n_cells^(1 − votes)`,
+/// with `R` orientation-preserving symmetries. A misread names a near-uniform
+/// random cell, so two misreads vote for the same placement with probability
+/// about `R / n_cells`, and `v` of them with `R / n_cells^(v−1)`. Fewer than
+/// two votes are always at chance level (0).
+fn ln_chance_votes(n_decoded: usize, votes: usize, n_rotations: usize, n_cells: usize) -> f64 {
+    if votes < 2 {
+        return 0.0;
+    }
+    let ln_binom: f64 = (0..votes)
+        .map(|i| ((n_decoded - i) as f64).ln() - ((i + 1) as f64).ln())
+        .sum();
+    ln_binom + (n_rotations as f64).ln() + (1.0 - votes as f64) * (n_cells as f64).ln()
 }
 
 /// Dot anchoring: score every placement candidate by its fiducial-dot
@@ -338,6 +376,14 @@ fn enumerate_candidates(
 /// labeled entries it maps onto the board. `None` for degenerate or
 /// orientation-reversing placements — the physical filter that rejects every
 /// reflected candidate.
+///
+/// Degenerate includes entries that all land on one board line: a homography
+/// is undetermined by collinear points, and the DLT's solution — its
+/// orientation included — is then set by centre noise alone. A reflection
+/// that maps a single lattice line of the labeling onto a board edge line is
+/// such a placement (its votes are that line's correct decodes counted a
+/// second time); on rect_coded synthetic views the noise sign let it pass as
+/// a runner-up and blocked the true placement's anchor.
 fn placement_homography(
     entries: &[(Coord, [f64; 2])],
     coord_map: CoordMap,
@@ -350,7 +396,8 @@ fn placement_homography(
             Some(([f64::from(xy[0]), f64::from(xy[1])], *center))
         })
         .unzip();
-    if src.is_empty() {
+    let collinear_tol_mm = COLLINEAR_TOL_SPACINGS * f64::from(target.min_center_spacing_mm());
+    if src.is_empty() || all_collinear(&src, collinear_tol_mm) {
         return None;
     }
     let h = estimate_homography_dlt(&src, &dst).ok()?;
@@ -359,6 +406,30 @@ fn placement_homography(
         src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,
     ];
     (jacobian_det(&h, center_mm) > 0.0).then_some(h)
+}
+
+/// Whether every point lies within `tol` of one line (the points' principal
+/// axis through their centroid). Board cell positions are exact lattice
+/// points: a non-collinear set is off any line by a sizable fraction of the
+/// spacing, a collinear one only by `f32` rounding.
+fn all_collinear(points: &[[f64; 2]], tol: f64) -> bool {
+    let n = points.len() as f64;
+    let c = [
+        points.iter().map(|p| p[0]).sum::<f64>() / n,
+        points.iter().map(|p| p[1]).sum::<f64>() / n,
+    ];
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    let theta = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let normal = [-theta.sin(), theta.cos()];
+    points
+        .iter()
+        .all(|p| (normal[0] * (p[0] - c[0]) + normal[1] * (p[1] - c[1])).abs() <= tol)
 }
 
 /// Fit the candidate's board→image homography and score its fiducial dots.
@@ -633,6 +704,78 @@ mod tests {
         let (img, h_mat) = render_plain_target(&target, 6.0, 60.0, 60.0, 0.0, 780, 780);
         let markers = labeled_markers(&target, &h_mat, |c| c);
         assert!(resolve_origin(&img, &markers, &target, None).is_none());
+    }
+
+    /// A placement that lands only one lattice line of the labeling on the
+    /// board has no determinable homography, whatever the centre noise makes
+    /// of its DLT's orientation: it must never compete (as winner or
+    /// runner-up) in the decoded-ID vote.
+    #[test]
+    fn single_line_placements_are_degenerate() {
+        let target = small_rect_like();
+        let h_mat = Matrix3::new(6.0, 0.4, 60.0, -0.3, 6.2, 70.0, 1e-4, -2e-4, 1.0);
+        let transforms = target.lattice_kind().symmetry_transforms();
+        let mut n_single_line = 0usize;
+        for seed in 0..8u64 {
+            // Deterministic sub-0.1 px centre noise, different per seed.
+            let mut state = seed.wrapping_mul(6_364_136_223_846_793_005) | 1;
+            let mut noise = || {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                ((state >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 0.1
+            };
+            let entries: Vec<(Coord, [f64; 2])> = target
+                .cells()
+                .iter()
+                .map(|cell| {
+                    let p = homography_project(
+                        &h_mat,
+                        f64::from(cell.xy_mm[0]),
+                        f64::from(cell.xy_mm[1]),
+                    );
+                    (cell.coord, [p[0] + noise(), p[1] + noise()])
+                })
+                .collect();
+            for &g in transforms {
+                for du in -16..=16 {
+                    for dv in -16..=16 {
+                        let map = CoordMap::new(g, [du, dv]);
+                        let on_board: Vec<Coord> = entries
+                            .iter()
+                            .map(|(c, _)| map.apply(*c))
+                            .filter(|c| target.cell_xy_mm(*c).is_some())
+                            .collect();
+                        let one_line = on_board.iter().all(|c| c.u == on_board[0].u)
+                            || on_board.iter().all(|c| c.v == on_board[0].v);
+                        if on_board.len() < 4 || !one_line {
+                            continue;
+                        }
+                        n_single_line += 1;
+                        assert!(
+                            placement_homography(&entries, map, &target).is_none(),
+                            "single-line placement {g:?} {:?} accepted (seed {seed})",
+                            [du, dv]
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            n_single_line > 0,
+            "the sweep must reach single-line placements"
+        );
+        // The true placement is not degenerate.
+        let identity = CoordMap::new(transforms[0], [0, 0]);
+        let entries: Vec<(Coord, [f64; 2])> = target
+            .cells()
+            .iter()
+            .map(|cell| {
+                let xy = [f64::from(cell.xy_mm[0]), f64::from(cell.xy_mm[1])];
+                (cell.coord, homography_project(&h_mat, xy[0], xy[1]))
+            })
+            .collect();
+        assert!(placement_homography(&entries, identity, &target).is_some());
     }
 
     #[test]

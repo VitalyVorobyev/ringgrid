@@ -198,6 +198,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A placement covering one board line could block the board anchor.** In
+  the decoded-ID vote, a reflected placement whose board points are collinear
+  has an undetermined homography; centre noise could let it pass as a
+  runner-up and send the view to the fallback, which re-fits most cells by
+  completion. Such placements are now rejected as degenerate (ADR-024).
 - **Documentation snippets that no longer worked.** Recipe TOML examples in the
   README and book used `coding = "coded"` / `"plain"` and `[render] margin_mm`
   (now `coding = { kind = "coded" }` and `[render.page] margin_mm`); the crate

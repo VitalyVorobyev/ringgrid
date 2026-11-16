@@ -156,6 +156,23 @@ hex 314 → 182, Extended 435 → 272, rect 299 → 133, plain hex 231 → 118,
 plain rect 215 → 81; grid recall −0.7 to −2.6 points, contrast groups −3 to
 −9; recall floors re-measured.
 
+On the real e-reader captures (rtv3d, 102 tiles) the default costs more than
+on synthetic views: total decoded IDs A 3820+ → 3475, B 3200+ → 2813,
+D 2360+ → 2059 (−9 to −13 %; at `min_confidence` 0 every floor holds). Kept as
+the default by owner decision (fail closed); the rtv3d floors are re-blessed
+from these totals.
+
+Redefining `confidence` also exposed a latent anchor defect: it changed which
+ring survives `dedup_by_id` among same-ID distance-0 duplicates, and that
+perturbation let a reflected placement covering a single board line (collinear
+board points, homography undetermined, orientation sign set by centre noise)
+pass as a vote runner-up and block the true anchor (rect_coded
+`decoded_fraction` 0.852 → 0.725). `placement_homography` now rejects
+collinear placements; rect_coded `decoded_fraction` 0.900, precision sweep
+unchanged. Extended `ext_decoded_rate` 0.569 → 0.554 remains: different
+duplicate picks (equally often right against ground truth) relabel which rings
+join versus are completed; the floor was lowered to 0.544.
+
 ### Relaxed outer-edge gates behind `min_confidence` (measured, not shipped)
 
 With the threshold in place, relaxed gates were re-tested on single-board

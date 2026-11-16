@@ -13,4 +13,5 @@ mod types;
 
 pub use fit::{fit_conic_direct, fit_ellipse_direct, rms_sampson_distance};
 pub use ransac::try_fit_ellipse_ransac;
-pub use types::{Conic2D, ConicCoeffs, Ellipse, RansacConfig, RansacResult};
+pub(crate) use types::{Conic2D, ConicCoeffs, RansacResult};
+pub use types::{Ellipse, RansacConfig};

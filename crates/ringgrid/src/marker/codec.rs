@@ -109,6 +109,15 @@ pub struct Match {
     pub confidence: f32,
 }
 
+/// Distance part of the decode confidence: `1 − dist/6`, clamped to [0, 1].
+///
+/// The one definition shared by codebook matching ([`Match::confidence`]
+/// multiplies it with a margin term) and marker scoring (which uses it alone).
+#[inline]
+pub(crate) fn distance_confidence(dist: u8) -> f32 {
+    (1.0 - dist as f32 / 6.0).clamp(0.0, 1.0)
+}
+
 impl Codebook {
     /// Create one of the embedded codebook profiles.
     pub fn from_profile(profile: CodebookProfile) -> Self {
@@ -196,7 +205,7 @@ impl Codebook {
         }
 
         let margin = second_dist.saturating_sub(best_dist);
-        let conf_dist = (1.0 - best_dist as f32 / 6.0).clamp(0.0, 1.0);
+        let conf_dist = distance_confidence(best_dist);
         let conf_margin = (margin as f32 / self.min_cyclic_dist as f32).clamp(0.0, 1.0);
         let confidence = conf_dist * conf_margin;
 

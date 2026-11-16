@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
-"""Score a ringgrid detection against rect-plain synthetic ground truth.
+"""Score a ringgrid detection against gen_synth_target.py ground truth.
 
-Plain rings carry no IDs, so predictions are matched to ground-truth cells by
-center distance (greedy nearest within --gate), and label quality is measured
-on lattice coordinates:
+Works for every target kind (hex | rect lattice, coded | plain, with or without
+origin dots). Predictions are matched to ground-truth cells by center distance
+(greedy nearest within --gate), and label quality is measured on lattice
+coordinates:
 
 - board_frame == "absolute": every matched prediction's grid_coord must equal
-  the GT (u, v) — the origin dots anchored the board, and a wrong anchor is a
+  the GT (u, v) — IDs or origin dots anchored the board, and a wrong anchor is a
   hard failure (origin_correct = false).
 - board_frame == "relative_canonical": coordinates are only defined up to the
   board's rotational symmetry plus a lattice translation, so the score finds
-  the best (rotation x translation) map from predicted to GT coordinates and
-  reports the agreement fraction under it.
+  the best (lattice rotation x translation) map from predicted to GT
+  coordinates and reports the agreement fraction under it. Only rotations
+  count: the board images through an orientation-preserving homography, so a
+  mirrored labeling is wrong. ``coord_accuracy_up_to_mirror`` repeats the
+  search with reflections allowed, which separates "internally consistent but
+  mirrored" (``labels_mirrored``) from "inconsistent" labels.
+
+Coded targets are also scored on identity: ``id_accuracy`` is the fraction of
+matched predictions carrying the GT ID, ``decoded_fraction`` the fraction of
+matched predictions whose ID came from decoding their own code band
+(``source == "fit_decoded"``) rather than from homography completion. On an
+Extended-profile target the ``ext_*`` metrics restrict this to cells whose ID
+lies beyond the base table, i.e. the extension codewords.
 
 Usage:
-    python tools/score_detect_rect.py --gt gt_0000.json --pred det_0000.json \
+    python tools/score_detect_target.py --gt gt_0000.json --pred det_0000.json \
         --gate 8.0 --out score_0000.json
 """
 
@@ -22,13 +34,39 @@ import argparse
 import json
 import math
 
-# C4 rotations acting on integer grid coordinates (column vectors).
-ROTATIONS = [
-    ((1, 0), (0, 1)),
-    ((0, -1), (1, 0)),
-    ((-1, 0), (0, -1)),
-    ((0, 1), (-1, 0)),
-]
+# Orientation-preserving lattice rotations acting on integer grid coordinates
+# (rows of a 2x2 matrix). Rect: C4. Hex: C6 on axial (q, r), where a 60° turn
+# maps (q, r) -> (-r, q + r).
+IDENTITY = ((1, 0), (0, 1))
+ROTATIONS = {
+    "rect": [
+        IDENTITY,
+        ((0, -1), (1, 0)),
+        ((-1, 0), (0, -1)),
+        ((0, 1), (-1, 0)),
+    ],
+    "hex": [
+        IDENTITY,
+        ((0, -1), (1, 1)),
+        ((-1, -1), (1, 0)),
+        ((-1, 0), (0, -1)),
+        ((0, 1), (-1, -1)),
+        ((1, 1), (-1, 0)),
+    ],
+}
+# A lattice reflection (y -> -y); composed with ROTATIONS it spans the
+# orientation-reversing lattice maps. Hex: (q, r) -> (q + r, -r).
+REFLECTIONS = {
+    "rect": ((1, 0), (0, -1)),
+    "hex": ((1, 1), (0, -1)),
+}
+
+
+def compose(m, n):
+    """Matrix product m·n of two 2x2 integer matrices."""
+    (a, b), (c, d) = m
+    (e, f), (g, h) = n
+    return ((a * e + b * g, a * f + b * h), (c * e + d * g, c * f + d * h))
 
 
 def match_by_center(gt_cells, preds, gate_px):
@@ -66,10 +104,10 @@ def coord_agreement(matched_coords, rotation, translation):
     return n_ok / max(1, len(matched_coords))
 
 
-def best_symmetry_agreement(matched_coords):
-    """Best coordinate agreement over C4 rotations x solved translations."""
+def best_symmetry_agreement(matched_coords, rotations):
+    """Best coordinate agreement over lattice rotations x solved translations."""
     best = 0.0
-    for rotation in ROTATIONS:
+    for rotation in rotations:
         (a, b), (c, d) = rotation
         # Solve the translation from the most common offset.
         offsets = {}
@@ -88,6 +126,45 @@ def project(h, x, y):
     v = h[1][0] * x + h[1][1] * y + h[1][2]
     z = h[2][0] * x + h[2][1] * y + h[2][2]
     return w / z, v / z
+
+
+def marker_sources(pred):
+    """Per-marker ``source`` from the diagnostics block, when it is aligned."""
+    diag = (pred.get("diagnostics") or {}).get("markers")
+    if diag is None or len(diag) != len(pred.get("detected_markers", [])):
+        return None
+    return [m.get("source") for m in diag]
+
+
+def identity_metrics(gt, preds, sources, matches):
+    """ID accuracy / decode provenance for coded targets."""
+    gt_cells = gt["cells"]
+    n_matched = len(matches)
+    correct = [
+        m for m in matches if preds[m["pred_idx"]].get("id") == gt_cells[m["gt_idx"]]["id"]
+    ]
+    decoded = [m for m in correct if sources and sources[m["pred_idx"]] == "fit_decoded"]
+    result = {
+        "id_accuracy": len(correct) / n_matched if n_matched else 0.0,
+        "n_id_wrong": n_matched - len(correct),
+        "decoded_fraction": (len(decoded) / n_matched if n_matched else 0.0)
+        if sources is not None
+        else None,
+    }
+
+    if gt.get("codebook_profile") == "extended":
+        base_n = gt["codebook_base_n"]
+        n_ext = sum(1 for c in gt_cells if c["visible"] and c["id"] >= base_n)
+
+        def ext(ms):
+            return sum(1 for m in ms if gt_cells[m["gt_idx"]]["id"] >= base_n)
+
+        result["n_gt_visible_ext"] = n_ext
+        result["ext_recall"] = ext(correct) / n_ext if n_ext else None
+        result["ext_decoded_rate"] = (
+            ext(decoded) / n_ext if n_ext and sources is not None else None
+        )
+    return result
 
 
 def score(gt, pred, gate_px):
@@ -109,10 +186,19 @@ def score(gt, pred, gate_px):
             matched_coords.append((tuple(coord), (cell["u"], cell["v"])))
 
     origin_resolved = board_frame == "absolute"
+    mirror_metrics = {}
     if origin_resolved:
-        coord_accuracy = coord_agreement(matched_coords, ROTATIONS[0], (0, 0))
+        coord_accuracy = coord_agreement(matched_coords, IDENTITY, (0, 0))
     else:
-        coord_accuracy = best_symmetry_agreement(matched_coords)
+        kind = gt["lattice"]["kind"]
+        rotations = ROTATIONS[kind]
+        coord_accuracy = best_symmetry_agreement(matched_coords, rotations)
+        mirrored = [compose(r, REFLECTIONS[kind]) for r in rotations]
+        up_to_mirror = best_symmetry_agreement(matched_coords, rotations + mirrored)
+        mirror_metrics = {
+            "coord_accuracy_up_to_mirror": up_to_mirror,
+            "labels_mirrored": up_to_mirror > coord_accuracy,
+        }
     origin_correct = origin_resolved and coord_accuracy >= 0.99
 
     # Homography quality is only meaningful in the absolute frame.
@@ -129,7 +215,7 @@ def score(gt, pred, gate_px):
         if errs_h:
             h_vs_gt_mean = sum(errs_h) / len(errs_h)
 
-    return {
+    result = {
         "n_gt_visible": n_visible,
         "n_pred": len(preds),
         "n_matched": len(matches),
@@ -143,7 +229,11 @@ def score(gt, pred, gate_px):
         "coord_accuracy": coord_accuracy,
         "n_coord_pairs": len(matched_coords),
         "h_vs_gt_mean_px": h_vs_gt_mean,
+        **mirror_metrics,
     }
+    if "codebook_profile" in gt:
+        result.update(identity_metrics(gt, preds, marker_sources(pred), matches))
+    return result
 
 
 def main() -> None:
@@ -162,11 +252,14 @@ def main() -> None:
     result = score(gt, pred, args.gate)
     with open(args.out, "w") as f:
         json.dump(result, f, indent=2)
-    print(
+    line = (
         f"precision {result['precision']:.3f}  recall {result['recall']:.3f}  "
         f"center {result['center_err_mean_px']:.3f}px  "
         f"frame {result['board_frame']}  coord_acc {result['coord_accuracy']:.3f}"
     )
+    if "id_accuracy" in result:
+        line += f"  id_acc {result['id_accuracy']:.3f}"
+    print(line)
 
 
 if __name__ == "__main__":

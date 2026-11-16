@@ -1687,28 +1687,17 @@ class PhotometricConfig:
 
 @dataclass(slots=True)
 class SeedProposalConfig:
-    merge_radius_px: float = 3.0
-    seed_score: float = 1_000_000_000_000.0
     max_seeds: int | None = 512
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SeedProposalConfig":
         data = _require_mapping(data, name="data")
-        return cls(
-            merge_radius_px=float(data["merge_radius_px"]),
-            seed_score=float(data["seed_score"]),
-            max_seeds=_optional_int(data.get("max_seeds")),
-        )
+        return cls(max_seeds=_optional_int(data.get("max_seeds")))
 
     def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "merge_radius_px": float(self.merge_radius_px),
-            "seed_score": float(self.seed_score),
-        }
         # Explicit null: overlays merge, so omitting the key would keep a
         # previously-set cap and "reset to unlimited" could never apply.
-        out["max_seeds"] = None if self.max_seeds is None else int(self.max_seeds)
-        return out
+        return {"max_seeds": None if self.max_seeds is None else int(self.max_seeds)}
 
 
 @dataclass(slots=True)

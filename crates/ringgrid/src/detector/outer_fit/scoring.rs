@@ -124,9 +124,7 @@ mod tests {
     ) -> EdgeSampleResult {
         EdgeSampleResult {
             outer_points,
-            inner_points: Vec::new(),
             outer_radii: Vec::new(),
-            inner_radii: Vec::new(),
             n_good_rays: n_good,
             n_total_rays: n_total,
         }

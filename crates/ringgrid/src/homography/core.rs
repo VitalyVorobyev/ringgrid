@@ -8,6 +8,7 @@
 use nalgebra::{Matrix3, Vector3};
 use projective_grid::expert::geometry::estimate_homography as pg_estimate_homography;
 
+use super::correspondence::{collect_masked_inlier_errors, mean_and_p95};
 use crate::conic::RansacConfig;
 
 // ── Error type ───────────────────────────────────────────────────────────
@@ -66,15 +67,53 @@ pub struct RansacStats {
     pub p95_err_px: f64,
 }
 
+impl RansacStats {
+    /// Summarize a RANSAC fit: inlier count plus the mean / p95 of the
+    /// inlier reprojection errors. `n_candidates` is the number of
+    /// correspondences fed to RANSAC and `threshold_px` its inlier threshold.
+    pub(crate) fn from_ransac(
+        result: &RansacHomographyResult,
+        n_candidates: usize,
+        threshold_px: f64,
+    ) -> Self {
+        let mut inlier_errors = collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
+        let (mean_err_px, p95_err_px) = mean_and_p95(&mut inlier_errors);
+        Self {
+            n_candidates,
+            n_inliers: result.n_inliers,
+            threshold_px,
+            mean_err_px,
+            p95_err_px,
+        }
+    }
+}
+
 // ── Projection ───────────────────────────────────────────────────────────
 
 /// Project a 2D point through a 3×3 homography: H * [x, y, 1]^T → [u, v].
-pub fn homography_project(h: &Matrix3<f64>, x: f64, y: f64) -> [f64; 2] {
+pub(crate) fn homography_project(h: &Matrix3<f64>, x: f64, y: f64) -> [f64; 2] {
     let p = h * Vector3::new(x, y, 1.0);
     if p[2].abs() < 1e-15 {
         return [f64::NAN, f64::NAN];
     }
     [p[0] / p[2], p[1] / p[2]]
+}
+
+/// Project a 2D point through a row-major `[[f64; 3]; 3]` homography.
+///
+/// The array-form sibling of [`homography_project`] used by the photometric
+/// stages, which keep their maps as plain arrays. Returns `None` when the
+/// point maps to (near) infinity (`|w| < 1e-12`).
+#[inline]
+pub(crate) fn homography_project_rows(h: &[[f64; 3]; 3], p: [f64; 2]) -> Option<[f64; 2]> {
+    let w = h[2][0] * p[0] + h[2][1] * p[1] + h[2][2];
+    if w.abs() < 1e-12 {
+        return None;
+    }
+    Some([
+        (h[0][0] * p[0] + h[0][1] * p[1] + h[0][2]) / w,
+        (h[1][0] * p[0] + h[1][1] * p[1] + h[1][2]) / w,
+    ])
 }
 
 /// Reprojection error: ||project(H, src) - dst||.

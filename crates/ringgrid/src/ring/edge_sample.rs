@@ -47,13 +47,9 @@ impl Default for EdgeSampleConfig {
 pub struct EdgeSampleResult {
     /// Outer edge points (sub-pixel positions in image coords).
     pub outer_points: Vec<[f64; 2]>,
-    /// Inner edge points (sub-pixel positions in image coords).
-    pub inner_points: Vec<[f64; 2]>,
-    /// Per-ray outer radii for rays where both edges were found.
+    /// Per-ray outer radii, one per entry of `outer_points`.
     pub outer_radii: Vec<f32>,
-    /// Per-ray inner radii for rays where both edges were found.
-    pub inner_radii: Vec<f32>,
-    /// Number of rays with both edges found.
+    /// Number of rays with an outer edge found.
     pub n_good_rays: usize,
     /// Total rays attempted.
     pub n_total_rays: usize,

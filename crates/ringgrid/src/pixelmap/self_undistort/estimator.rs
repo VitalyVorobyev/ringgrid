@@ -38,7 +38,7 @@ struct OptimizationOutcome {
 /// Returns `None` if fewer than `config.min_markers` have both inner and
 /// outer edge points with sufficient count and homography-based objective is
 /// unavailable.
-pub fn estimate_self_undistort(
+pub(crate) fn estimate_self_undistort(
     markers: &[MarkerRecord],
     image_size: [u32; 2],
     config: &SelfUndistortConfig,

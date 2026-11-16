@@ -825,7 +825,7 @@ fn plain_candidate_coords(
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.
-fn coord_bbox(coords: impl Iterator<Item = Coord>) -> Option<(Coord, Coord)> {
+pub(crate) fn coord_bbox(coords: impl Iterator<Item = Coord>) -> Option<(Coord, Coord)> {
     let mut it = coords;
     let first = it.next()?;
     let (mut min, mut max) = (first, first);

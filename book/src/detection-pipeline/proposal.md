@@ -81,7 +81,7 @@ CLI: `--proposal-downscale auto|off|2|4`
 
 ## Seed Injection in Two-Pass Modes
 
-In two-pass detection modes (`detect_with_mapper`, `detect_with_self_undistort`), the pass-1 detection centers become seed proposals for pass-2. Seeds are assigned a very high score (`seed_score = 1e12` by default) to ensure they are evaluated before gradient-detected proposals.
+In two-pass detection modes (`detect_with_mapper`, or `detect` with `self_undistort.enable`), the pass-1 detection centers become the proposals for pass-2, which does not re-run the gradient proposal stage. Each seed's score is its pass-1 marker confidence, so the most trusted markers are evaluated first.
 
 This mechanism serves two purposes:
 
@@ -90,7 +90,6 @@ This mechanism serves two purposes:
 
 The `SeedProposalConfig` configuration controls seed injection:
 
-- `merge_radius_px` (default: 3.0): Prevents duplicate proposals when a seed and a gradient-detected proposal coincide.
 - `max_seeds` (default: 512): Caps the number of seeds to prevent excessive computation.
 
 ## Configuration

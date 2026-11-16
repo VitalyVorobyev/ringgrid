@@ -13,6 +13,7 @@ use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;
+use crate::ring::MAD_TO_SIGMA;
 use crate::target::TargetLayout;
 
 /// The lattice cell coordinate a marker is labeled with: the explicit grid
@@ -46,8 +47,6 @@ pub(crate) fn build_grid_map(markers: &[MarkerRecord], target: &TargetLayout) ->
         .collect()
 }
 
-/// 1.4826 rescales a median-absolute-deviation to a Gaussian-consistent sigma.
-const MAD_TO_SIGMA: f64 = 1.4826;
 /// Minimum residual samples before the adaptive MAD term is trusted; below this
 /// the threshold falls back to its floor alone.
 const MIN_SAMPLES: usize = 8;

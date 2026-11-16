@@ -224,9 +224,7 @@
         "seed_proposals": {
           "$ref": "#/$defs/SeedProposalConfig",
           "default": {
-            "max_seeds": 512,
-            "merge_radius_px": 3.0,
-            "seed_score": 1000000000000.0
+            "max_seeds": 512
           },
           "description": "Seed-injection controls for multi-pass proposal generation."
         },
@@ -1090,17 +1088,6 @@
             "integer",
             "null"
           ]
-        },
-        "merge_radius_px": {
-          "default": 3.0,
-          "description": "Radius (pixels) within which an injected seed center is merged with a detector proposal.",
-          "type": "number",
-          "x-unit": "px"
-        },
-        "seed_score": {
-          "default": 1000000000000.0,
-          "description": "Score assigned to injected seed proposals (dimensionless).",
-          "type": "number"
         }
       },
       "type": "object"
@@ -1351,9 +1338,7 @@
           "seed": 0
         },
         "seed_proposals": {
-          "max_seeds": 512,
-          "merge_radius_px": 3.0,
-          "seed_score": 1000000000000.0
+          "max_seeds": 512
         },
         "use_global_filter": true
       },

@@ -1,6 +1,6 @@
 ---
 name: regression-gate
-description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 3 synthetic benchmarks + 1 real-world benchmark + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
+description: Run regression benchmarks and maintainability guardrails. Rebuilds, runs 4 synthetic benchmarks (hex-coded reference/distortion/blur3 + the target-matrix benchmark covering every lattice x coding x dots combination and the Extended codebook) + 1 real-world benchmark + code quality checks, compares against baselines, auto-fixes maintainability issues, reports benchmark regressions. Invoke after significant code changes or before releases.
 ---
 
 # Regression Gate
@@ -30,16 +30,23 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Step 2 — Run benchmarks
 
-Run all 3 synthetic benchmark scripts in sequence using `.venv`:
+Run all 4 synthetic benchmark scripts in sequence using `.venv`:
 
 ```bash
 bash tools/run_reference_benchmark.sh
 bash tools/run_distortion_benchmark.sh
 bash tools/run_blur3_benchmark.sh
-bash tools/run_rect_benchmark.sh
+bash tools/run_target_matrix_benchmark.sh
 ```
 
 Each script writes results to `tools/out/`. If any script fails, report the error and continue with the remaining benchmarks.
+
+The target-matrix benchmark (~20 s) runs one case per target combination not
+covered by the hex-coded benchmarks: `rect_plain_dots`, `rect_plain_nodots`,
+`rect_coded`, `hex_plain_dots`, `hex_plain_nodots`, and `hex_coded_extended`
+(1239-cell board on the Extended codebook, IDs up to 1238). Images are rendered
+like the library's printed target by `tools/gen_synth_target.py` and scored by
+`tools/score_detect_target.py`; `--cases <name>...` runs a subset.
 
 **RTv3D real-world benchmark (local only — private data)**
 
@@ -53,37 +60,36 @@ If `data/rtv3d` does not exist, skip this step and report `RTv3D benchmark: SKIP
 
 ## Step 3 — Check benchmark results against baselines
 
-Read `tools/ci/regression_baseline.json` for the success criteria.
+```bash
+.venv/bin/python tools/ci/check_regression_baseline.py
+```
 
-**For reference and distortion benchmarks** (summary.json format):
+It reads `tools/ci/regression_baseline.json` and checks every benchmark's
+output (exit code 1 on any failure, printing each failing check; `--verbose`
+prints all checks). Each threshold `min_<metric>` requires `value >= bound`,
+`max_<metric>` requires `value <= bound`, where the value is the output's
+`<metric>` or `avg_<metric>` — for top-level `criteria` (blur3) or per
+`modes` / `strategies` entry. A missing or null value fails. The rtv3d entry is
+skipped when `data/rtv3d` is absent.
 
-For each mode in the baseline, read the corresponding mode from the benchmark output and check:
-- `avg_precision >= baseline.min_precision`
-- `avg_recall >= baseline.min_recall`
-- `avg_center_mean_px <= baseline.max_center_mean_px`
-- `avg_h_vs_gt_mean_px <= baseline.max_h_vs_gt_mean_px`
+What the gated metrics mean:
 
-**For blur3 benchmark** (aggregate.json format):
-
-- `avg_precision >= baseline.criteria.min_precision`
-- `avg_recall >= baseline.criteria.min_recall`
-- `avg_center_error <= baseline.criteria.max_center_error`
-
-**For rect benchmark** (summary.json, `modes.dots` / `modes.no_dots`):
-
-- `avg_precision >= min_precision`, `avg_recall >= min_recall`
-- `avg_center_mean_px <= max_center_mean_px`
-- `avg_coord_accuracy >= min_coord_accuracy`
-- dots: `origin_resolution_rate >= min_origin_resolution_rate`,
-  `origin_correct_rate >= min_origin_correct_rate`,
-  `avg_h_vs_gt_mean_px <= max_h_vs_gt_mean_px`
-- no_dots: `origin_resolution_rate <= max_origin_resolution_rate` (must stay 0 —
-  resolving an origin without fiducials would mean fabricated anchoring)
-
-**For rtv3d benchmark** (report.json format):
-
-For each strategy in the baseline, read the corresponding strategy from the benchmark output and check:
-- `total_decoded >= baseline.min_total_decoded`
+- **reference / distortion** (`summary.json`, per mode): precision, recall,
+  `center_mean_px`, `h_vs_gt_mean_px`.
+- **blur3** (`aggregate.json`): precision, recall, `center_error`.
+- **target matrix** (`summary.json`, per case): precision, recall,
+  `center_mean_px`, `coord_accuracy` (grid labels vs ground truth: exact in the
+  absolute frame, best lattice rotation + translation in the relative frame);
+  with dots or coded: `origin_resolution_rate`, `origin_correct_rate`,
+  `h_vs_gt_mean_px`; without dots: `origin_resolution_rate <= 0` (resolving an
+  origin without fiducials would mean fabricated anchoring); coded:
+  `id_accuracy` and `decoded_fraction` (share of markers decoded from their own
+  code band rather than filled in by completion); Extended: `ext_recall` /
+  `ext_decoded_rate` over IDs beyond the 893-word base table.
+  The no-dots modes gate both `coord_accuracy` and
+  `coord_accuracy_up_to_mirror` at 1.0: a drop in the first only means the
+  relative frame came out mirrored, a drop in both means wrong labels.
+- **rtv3d** (`report.json`, per strategy): `total_decoded`.
 
 Collect all failures into a report table.
 
@@ -129,7 +135,7 @@ REGRESSION GATE: ALL PASSED
   Reference benchmark: OK (2 modes)
   Distortion benchmark: OK (3 modes)
   Blur3 benchmark: OK
-  Rect benchmark: OK (2 modes)
+  Target matrix benchmark: OK (6 modes)
   RTv3D benchmark: OK (2 strategies)  — or SKIPPED (no data)
   Maintainability: OK
 ```
@@ -144,11 +150,14 @@ To regenerate baselines after intentional improvements:
    - Center error: actual + 0.03 px margin
    - H vs GT error: actual + 0.03 px margin
    - Blur3 recall: actual - 0.01 margin (allows slight variation)
+   - Decode fractions (`decoded_fraction`, `ext_decoded_rate`): actual - 0.01
+   - Coordinate / origin / ID accuracy: exact
 3. Commit the updated baseline
 
 ## Key files
 
 - Baselines: `tools/ci/regression_baseline.json`
 - Maintainability: `tools/ci/maintainability_baseline.json`, `tools/ci/maintainability_guardrails.py`
-- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_rect_benchmark.sh`, `tools/run_rtv3d_eval.py`
-- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/rect_benchmark/`, `tools/out/rtv3d_eval/`
+- Baseline check: `tools/ci/check_regression_baseline.py`
+- Benchmark scripts: `tools/run_reference_benchmark.sh`, `tools/run_distortion_benchmark.sh`, `tools/run_blur3_benchmark.sh`, `tools/run_target_matrix_benchmark.sh`, `tools/run_rtv3d_eval.py`
+- Benchmark outputs: `tools/out/reference_benchmark_post_pipeline/`, `tools/out/r4_benchmark_distorted_threeway_v4_post_pipeline/`, `tools/out/eval_blur3_post_pipeline/`, `tools/out/target_matrix_benchmark/`, `tools/out/rtv3d_eval/`

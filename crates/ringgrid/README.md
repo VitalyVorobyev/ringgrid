@@ -26,7 +26,7 @@ proposal -> local fit/decode -> dedup -> projective center -> `id_correction` ->
 
 ```toml
 [dependencies]
-ringgrid = "0.11"
+ringgrid = "0.15"
 ```
 
 ## Rust Target Generation
@@ -34,7 +34,7 @@ ringgrid = "0.11"
 The library can generate canonical target JSON plus printable SVG/PNG directly:
 
 ```rust,no_run
-use ringgrid::{PngTargetOptions, SvgTargetOptions, TargetLayout};
+use ringgrid::{TargetLayout, TargetRenderOptions};
 use std::path::Path;
 
 // One constructor per target-matrix row — `coded_hex`, `coded_rect`,
@@ -48,19 +48,14 @@ use std::path::Path;
 // and explicit origin fiducials.
 let target = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
 
+// One options value drives every format: page (size, orientation, margin),
+// scale bar, and PNG resolution.
+let options = TargetRenderOptions::default().with_png_dpi(300.0);
+
 target.write_json_file(Path::new("target.json")).unwrap();
-target
-    .write_target_svg(Path::new("target.svg"), &SvgTargetOptions::default())
-    .unwrap();
-target
-    .write_target_png(
-        Path::new("target.png"),
-        &PngTargetOptions {
-            dpi: 300.0,
-            ..PngTargetOptions::default()
-        },
-    )
-    .unwrap();
+target.write_target_svg(Path::new("target.svg"), &options).unwrap();
+target.write_target_png(Path::new("target.png"), &options).unwrap();
+target.write_target_dxf(Path::new("target.dxf")).unwrap();
 ```
 
 `render_target_svg` returns the SVG as a string, and `render_target_png` returns an in-memory grayscale `image::GrayImage` when you want to avoid file I/O. `write_target_png` embeds the requested DPI as PNG print metadata.
@@ -81,17 +76,13 @@ detection — `TargetLayout::from_json_*` auto-migrates them. See
 the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html)
 for the recipe format and every flag.
 
-- `tools/out/target_faststart/target_spec.json`
-- `tools/out/target_faststart/target_print.svg`
-- `tools/out/target_faststart/target_print.png`
-
 Use the generated JSON in detection:
 
 ```rust,no_run
 use ringgrid::{Detector, TargetLayout};
 use std::path::Path;
 
-let target = TargetLayout::from_json_file(Path::new("tools/out/target_faststart/target_spec.json")).unwrap();
+let target = TargetLayout::from_json_file(Path::new("target.json")).unwrap();
 let detector = Detector::new(target);
 ```
 

@@ -591,4 +591,25 @@ mod tests {
             .with_json_overlay(overlay)
             .expect("mixed-spelling overlay must load");
     }
+
+    #[test]
+    fn removed_seed_proposal_keys_still_load() {
+        // `merge_radius_px` / `seed_score` were removed (never read); configs
+        // written before the removal must keep loading, both as an overlay
+        // and as a whole document.
+        let overlay = serde_json::json!({
+            "advanced": { "seed_proposals": {
+                "merge_radius_px": 3.0,
+                "seed_score": 1.0e12,
+                "max_seeds": 64,
+            } }
+        });
+        let merged = DetectConfig::default()
+            .with_json_overlay(overlay.clone())
+            .expect("pre-removal overlay must keep loading");
+        assert_eq!(merged.advanced.seed_proposals.max_seeds, Some(64));
+        let whole: DetectConfig =
+            serde_json::from_value(overlay).expect("pre-removal document must keep loading");
+        assert_eq!(whole.advanced.seed_proposals.max_seeds, Some(64));
+    }
 }

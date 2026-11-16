@@ -89,9 +89,9 @@ Two-pass detection with an external pixel mapper (e.g., from known camera intrin
 
 The mapper transforms between image pixel coordinates and a distortion-corrected "working" coordinate frame. During pass 2, edge sampling and decoding operate in working space, producing more accurate fits under lens distortion. Final marker centers are mapped back to image space; the homography lives in the working frame.
 
-### `detect_with_self_undistort`
+### Self-undistort (`detect` with `self_undistort.enable`)
 
-Estimates a division-model distortion correction from the detected markers, then optionally re-runs detection with the estimated mapper:
+There is no separate entry point: `Detector::detect` runs this flow when `config.self_undistort.enable` is set. It estimates a division-model distortion correction from the detected markers, then optionally re-runs detection with the estimated mapper:
 
 1. **Baseline pass:** Run `detect_single_pass`.
 2. **Self-undistort estimation:** If enabled and enough markers with edge points are available, estimate a `DivisionModel` mapper from the ellipse edge points.
@@ -113,9 +113,8 @@ See [Adaptive Scale Detection](../detection-modes/adaptive-scale.md).
 
 ## Seed Injection in Two-Pass Modes
 
-When a pass-2 runs (either `detect_with_mapper` or `detect_with_self_undistort`), pass-1 detection centers become seed proposals for pass-2. Seeds are injected with a high score (`seed_score = 1e12` by default) so they are prioritized during candidate selection. The `SeedProposalConfig` configuration controls:
+When a pass-2 runs (either `detect_with_mapper` or self-undistort via `detect`), the pass-1 detection centers become the pass-2 proposals — pass 2 does not re-run the gradient proposal stage. Seeds are ordered by pass-1 marker confidence (each seed's score is that confidence). The `SeedProposalConfig` configuration controls:
 
-- `merge_radius_px`: Radius for merging seeds with detector-found proposals (default: 3.0 px).
 - `max_seeds`: Optional cap on the number of seeds consumed (default: 512).
 
 ## Coordinate Frames

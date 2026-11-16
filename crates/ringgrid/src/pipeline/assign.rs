@@ -18,9 +18,7 @@ use projective_grid::{
 
 use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
-use crate::homography::{
-    RansacStats, collect_masked_inlier_errors, fit_homography_ransac, mean_and_p95,
-};
+use crate::homography::{RansacStats, fit_homography_ransac};
 use crate::target::{LatticeGeometry, TargetLayout};
 
 /// Assignment-frame position (mm) of a lattice coordinate.
@@ -94,15 +92,12 @@ pub(crate) fn assign_plain_grid(
     };
 
     let mut entries = solution.grid().entries().to_vec();
-    match target.lattice_kind() {
-        // projective-grid 0.12 normalizes square labels before publishing the
-        // GridDetection, so no adapter-side normalization is needed.
-        LatticeKind::Square => {}
-        // `LabelledGrid::normalize` sign-flips axes independently, which is not
-        // a hex-lattice automorphism; canonicalize hex labels with a rotation
-        // from the lattice symmetry group instead.
-        _ => canonicalize_hex_entries(&mut entries),
-    }
+    // projective-grid labels are only defined up to its lattice symmetry group
+    // *including reflections* (hex labels come out uniformly mirrored; square
+    // labels are image-axis normalized, which does not guarantee handedness by
+    // construction). The relative frame's orientation is decided here, once,
+    // for both lattice families.
+    canonicalize_entries(target.lattice_kind(), &mut entries);
 
     let labeled: Vec<(usize, Coord)> = entries.iter().map(|e| (e.source_index, e.coord)).collect();
     let n_labeled = labeled.len();
@@ -130,15 +125,7 @@ pub(crate) fn assign_plain_grid(
         }
     };
 
-    let mut inlier_errors = collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
-    let (mean_err, p95_err) = mean_and_p95(&mut inlier_errors);
-    let ransac = RansacStats {
-        n_candidates: n_labeled,
-        n_inliers: result.n_inliers,
-        threshold_px: config.inlier_threshold,
-        mean_err_px: mean_err,
-        p95_err_px: p95_err,
-    };
+    let ransac = RansacStats::from_ransac(&result, n_labeled, config.inlier_threshold);
 
     apply_inlier_labels(markers, &labeled, &result.inlier_mask, target);
 
@@ -147,7 +134,7 @@ pub(crate) fn assign_plain_grid(
         n_labeled,
         n_rejected,
         n_inliers = result.n_inliers,
-        mean_err_px = mean_err,
+        mean_err_px = ransac.mean_err_px,
         "plain grid assignment complete"
     );
 
@@ -185,30 +172,39 @@ fn apply_inlier_labels(
         .collect();
 }
 
-/// Canonicalize hex axial labels: apply the rotation from the hex symmetry
-/// group that best aligns the `+u` axis with image `+x` and `+v` with image
-/// `+y`, then rebase the bounding-box minimum to `(0, 0)`.
+/// Canonicalize lattice labels into the relative frame: apply the element of
+/// the lattice symmetry group (rotations **and** reflections) that makes the
+/// labeling orientation-preserving and, among those, best aligns `+u` with
+/// image `+x` and `+v` with image `+y`; then rebase the bounding-box minimum
+/// to `(0, 0)`.
 ///
-/// Only rotations (determinant +1) are considered — an opaque planar target
-/// images through an orientation-preserving homography, so a reflected
-/// labeling cannot occur.
-fn canonicalize_hex_entries(entries: &mut [GridEntry]) {
+/// Orientation-preserving means the image-frame step vectors
+/// `e_u = p(u+1, v) − p(u, v)` and `e_v = p(u, v+1) − p(u, v)` have the same
+/// cross-product sign as the lattice model basis
+/// ([`LatticeKind::model_point`], which `frame_xy_mm` and the board cell
+/// layout share). An opaque planar target images through an
+/// orientation-preserving homography, so this is the only physically valid
+/// handedness — and the upstream labeler does not fix it, so it is enforced
+/// here rather than assumed.
+fn canonicalize_entries(kind: LatticeKind, entries: &mut [GridEntry]) {
     if entries.len() < 2 {
         rebase_entries(entries);
         return;
     }
 
-    let rotations = LatticeKind::Hex
-        .symmetry_transforms()
-        .iter()
-        .filter(|t| t.determinant() > 0);
+    let model_cross = {
+        let o = kind.model_point(Coord::new(0, 0));
+        let pu = kind.model_point(Coord::new(1, 0)) - o;
+        let pv = kind.model_point(Coord::new(0, 1)) - o;
+        pu.x * pv.y - pu.y * pv.x
+    };
 
     let mut best: Option<(f32, GridTransform)> = None;
-    for &rot in rotations {
+    for &sym in kind.symmetry_transforms() {
         let pos_by_coord: HashMap<(i32, i32), (f32, f32)> = entries
             .iter()
             .map(|e| {
-                let c = rot.apply(e.coord);
+                let c = sym.apply(e.coord);
                 ((c.u, c.v), (e.image_position.x, e.image_position.y))
             })
             .collect();
@@ -231,6 +227,10 @@ fn canonicalize_hex_entries(entries: &mut [GridEntry]) {
         if nu == 0 || nv == 0 {
             continue;
         }
+        // Orientation gate: reject transforms whose labeling mirrors the board.
+        if (u_step.0 * v_step.1 - u_step.1 * v_step.0) * model_cross <= 0.0 {
+            continue;
+        }
         let norm = |(x, y): (f32, f32), n: u32| {
             let (x, y) = (x / n as f32, y / n as f32);
             let len = (x * x + y * y).sqrt().max(1e-6);
@@ -240,13 +240,13 @@ fn canonicalize_hex_entries(entries: &mut [GridEntry]) {
         let (_, vy) = norm(v_step, nv);
         let score = ux + vy;
         if best.is_none_or(|(s, _)| score > s) {
-            best = Some((score, rot));
+            best = Some((score, sym));
         }
     }
 
-    if let Some((_, rot)) = best {
+    if let Some((_, sym)) = best {
         for e in entries.iter_mut() {
-            e.coord = rot.apply(e.coord);
+            e.coord = sym.apply(e.coord);
         }
     }
     rebase_entries(entries);
@@ -435,5 +435,55 @@ mod tests {
             .min()
             .unwrap();
         assert_eq!((min_u, min_v), (0, 0));
+    }
+
+    /// The relative frame may differ from the board by a rotation and a
+    /// translation only — never a reflection. Upstream hex labels come out
+    /// mirrored, and a mirrored labeling is self-consistent (its frame H
+    /// reprojects perfectly), so this checks the handedness directly: the
+    /// frame homography of a rotated, similarity-imaged board must keep a
+    /// positive linear determinant, like the board→image map that made it.
+    #[test]
+    fn relative_frame_preserves_orientation_for_both_lattices() {
+        let hex = TargetLayout::new(
+            "test_hex",
+            LatticeGeometry::Hex(HexGeometry {
+                rows: 9,
+                long_row_cols: 9,
+                pitch_mm: 8.0,
+            }),
+            RingGeometry {
+                outer_radius_mm: 4.8,
+                inner_radius_mm: 2.4,
+            },
+            crate::target::MarkerCoding::Plain,
+            None,
+        )
+        .expect("valid hex target");
+        for target in [hex, rect_target(8, 8, 14.0)] {
+            for deg in [0.0f64, 17.0, 45.0, 90.0, 150.0, -110.0] {
+                let (sin, cos) = deg.to_radians().sin_cos();
+                let mut markers: Vec<MarkerRecord> = target
+                    .cells()
+                    .iter()
+                    .map(|cell| {
+                        let (x, y) = (f64::from(cell.xy_mm[0]), f64::from(cell.xy_mm[1]));
+                        marker_at([
+                            4.0 * (cos * x - sin * y) + 500.0,
+                            4.0 * (sin * x + cos * y) + 500.0,
+                        ])
+                    })
+                    .collect();
+                let assignment = assign_plain_grid(&mut markers, &target, &RansacConfig::default())
+                    .expect("assignment must succeed on a clean grid");
+                let h = assignment.h;
+                let det = h[(0, 0)] * h[(1, 1)] - h[(0, 1)] * h[(1, 0)];
+                assert!(
+                    det > 0.0,
+                    "{:?} @ {deg}°: relative frame is mirrored (det {det})",
+                    target.lattice_kind()
+                );
+            }
+        }
     }
 }

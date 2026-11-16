@@ -44,7 +44,7 @@ impl std::error::Error for ConicError {}
 /// General conic: A x² + B xy + C y² + D x + E y + F = 0
 /// Stored as [A, B, C, D, E, F].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ConicCoeffs(pub [f64; 6]);
+pub(crate) struct ConicCoeffs(pub [f64; 6]);
 
 /// Geometric ellipse parameters fitted to a ring marker boundary.
 ///
@@ -82,7 +82,7 @@ impl Ellipse {
 
 /// 2D conic in homogeneous image coordinates: `x^T Q x = 0`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Conic2D {
+pub(crate) struct Conic2D {
     /// Symmetric conic matrix `Q` such that `x^T Q x = 0`.
     pub mat: Matrix3<f64>,
 }
@@ -157,7 +157,7 @@ impl Default for RansacConfig {
 
 /// Result of a RANSAC fit.
 #[derive(Debug, Clone)]
-pub struct RansacResult {
+pub(crate) struct RansacResult {
     /// Final geometric ellipse fitted on the inlier set.
     pub ellipse: Ellipse,
     /// Number of inliers under the configured Sampson threshold.

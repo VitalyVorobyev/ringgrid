@@ -46,7 +46,7 @@ small TOML file (JSON is also accepted):
 
 ```toml
 name = "lab_hex_coded"
-coding = "coded"          # "coded" | "plain"
+coding = { kind = "coded" }  # or { kind = "plain" }
 fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .. }
 
 [lattice]
@@ -58,12 +58,14 @@ pitch_mm = 8.0
 [marker]
 outer_radius_mm = 4.8
 inner_radius_mm = 3.2
-ring_width_mm = 1.152     # required only for coding = "coded"
+ring_width_mm = 1.152     # required only for coded markers
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+[render.page]             # omit for a square page fitted to the content
+margin_mm = 5.0
 ```
 
 The top-level scalar keys (`name`, `coding`, `fiducials`) **must** appear before
@@ -83,7 +85,8 @@ Recipes cover the six valid combinations of `{hex, rect}` × `{coded, plain}` ×
 | hex | plain | none | `hex_plain_nodots` | detecting the **complete** board (relative frame) |
 | rect | plain | none | `rect_plain_nodots` | detecting the **complete** board (relative frame) |
 
-The one excluded combination is `coding = "coded"` with any fiducials — it is
+The one excluded combination is coded markers (`coding = { kind = "coded" }`)
+with any fiducials — it is
 rejected, because coded markers already carry identity and cannot use origin
 dots. `fiducials = "auto"` derives both the placement and a legible dot size;
 `{ dot_radius_mm = .. }` keeps the derived placement with a size you choose.
@@ -145,32 +148,30 @@ several print runs at different pitches or DPIs.
 ## Rust API: `TargetLayout`
 
 Construct a `TargetLayout`, then call the writers. `write_json_file` emits v6
-JSON; `write_target_svg` / `write_target_png` take `SvgTargetOptions` /
-`PngTargetOptions`; `write_target_dxf` writes millimeter CAD geometry.
+JSON; `write_target_svg` / `write_target_png` take one `TargetRenderOptions`
+(page size / orientation / margin, scale bar, PNG dpi); `write_target_dxf`
+writes millimeter CAD geometry.
 
 Coded hex from direct geometry:
 
 ```rust,no_run
-use ringgrid::{TargetLayout, PngTargetOptions, SvgTargetOptions};
+use ringgrid::{PageSpec, TargetLayout, TargetRenderOptions};
 use std::path::Path;
 
 // `coded_hex` derives a deterministic geometry-based name.
 let target = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).unwrap();
+let options = TargetRenderOptions::default()
+    .with_page(PageSpec::default().with_margin_mm(5.0))
+    .with_png_dpi(600.0);
 
 target
     .write_json_file(Path::new("./out/target/target_spec.json"))
     .unwrap();
 target
-    .write_target_svg(
-        Path::new("./out/target/target_print.svg"),
-        &SvgTargetOptions { margin_mm: 5.0, include_scale_bar: true },
-    )
+    .write_target_svg(Path::new("./out/target/target_print.svg"), &options)
     .unwrap();
 target
-    .write_target_png(
-        Path::new("./out/target/target_print.png"),
-        &PngTargetOptions { dpi: 600.0, margin_mm: 5.0, include_scale_bar: true },
-    )
+    .write_target_png(Path::new("./out/target/target_print.png"), &options)
     .unwrap();
 target
     .write_target_dxf(Path::new("./out/target/target_print.dxf"))
@@ -181,7 +182,7 @@ Plain rect target with **auto-placed** origin dots — the same triad the
 `fiducials = "auto"` recipe field produces:
 
 ```rust,no_run
-use ringgrid::{OriginDots, SvgTargetOptions, TargetLayout};
+use ringgrid::{OriginDots, TargetLayout, TargetRenderOptions};
 use std::path::Path;
 
 let target = TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::Auto)
@@ -192,7 +193,7 @@ let target = TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::Auto)
 target
     .write_target_svg(
         Path::new("./out/target_rect/target_print.svg"),
-        &SvgTargetOptions::default(),
+        &TargetRenderOptions::default(),
     )
     .unwrap();
 ```
@@ -255,7 +256,7 @@ construction; validation additionally rejects a dot radius large enough to
 overlap a marker, and a board too small to hold the triad inside its marker
 field. Coded targets do not need
 fiducials — decoded IDs already anchor every marker to a physical cell, and
-`coding = "coded"` with fiducials is rejected. See
+coded markers with fiducials are rejected. See
 [Origin Fiducials](targets/origin-fiducials.md) for the anchoring and validation
 details.
 

@@ -35,7 +35,6 @@ image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-approx = { workspace = true }
 rand = { workspace = true }
 # Not optional: `render_target_artifacts` encodes PNG bytes in memory on every
 # target, including wasm32 builds that disable `std`. `image`'s png codec already

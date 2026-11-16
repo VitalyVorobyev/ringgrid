@@ -8,5 +8,10 @@ pub(crate) mod projective_center;
 pub(crate) mod radial_estimator;
 pub(crate) mod radial_profile;
 
+/// Rescales a median absolute deviation to a Gaussian-consistent sigma
+/// (`1 / Φ⁻¹(3/4)`). The one definition shared by every robust-scale estimate
+/// in the crate (photometric fits, geometric verification).
+pub(crate) const MAD_TO_SIGMA: f64 = 1.4826;
+
 pub use edge_sample::EdgeSampleConfig;
 pub use outer_estimate::OuterEstimationConfig;

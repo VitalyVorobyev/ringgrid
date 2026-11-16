@@ -1,14 +1,14 @@
 //! Plain-target finalize path: grid assignment, origin anchoring,
 //! coordinate-keyed completion, and the plain-frame output contract.
 
-use crate::pipeline::time_compat::Instant;
+use crate::pipeline::time_compat::{Instant, duration_ms};
 
 use image::GrayImage;
 
 use super::apply_post_filter_fixup;
 use super::coded::{finalize_no_global_filter_result, phase_final_h};
 use super::common::{
-    drop_unmappable_markers_with_warning, duration_ms, map_centers_to_image, phase_geometric_verify,
+    drop_unmappable_markers_with_warning, map_centers_to_image, phase_geometric_verify,
 };
 use crate::detector::MarkerRecord;
 use crate::pipeline::{

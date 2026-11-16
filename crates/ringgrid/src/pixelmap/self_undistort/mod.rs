@@ -18,7 +18,7 @@ mod policy;
 mod result;
 
 pub use config::SelfUndistortConfig;
-pub use estimator::estimate_self_undistort;
+pub(crate) use estimator::estimate_self_undistort;
 pub use result::SelfUndistortResult;
 
 #[cfg(test)]

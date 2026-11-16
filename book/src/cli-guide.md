@@ -27,7 +27,7 @@ TOML or JSON file describing the target. The CLI lowers the recipe to a
 
 ```toml
 name = "lab_hex_coded"
-coding = "coded"          # "coded" | "plain"
+coding = { kind = "coded" }  # or { kind = "plain" }
 fiducials = "none"        # "none" | "auto" | { dot_radius_mm = .. }
 
 [lattice]
@@ -39,19 +39,21 @@ pitch_mm = 8.0
 [marker]
 outer_radius_mm = 4.8
 inner_radius_mm = 3.2
-ring_width_mm = 1.152     # required only for coding = "coded"
+ring_width_mm = 1.152     # required only for coded markers
 
 [render]
 dpi = 300
-margin_mm = 5.0
 formats = ["json", "svg", "png", "dxf"]
+
+[render.page]             # omit for a square page fitted to the content
+margin_mm = 5.0
 ```
 
 The top-level scalar keys (`name`, `coding`, `fiducials`) **must** precede the
 `[lattice]` / `[marker]` / `[render]` tables — a TOML requirement. Recipes cover
 the six valid combinations of `{hex, rect}` × `{coded, plain}` ×
-`{origin dots, no dots}`; the one excluded combination is `coding = "coded"`
-with fiducials, which is rejected (coded markers already carry identity). See
+`{origin dots, no dots}`; the one excluded combination is coded markers
+(`coding = { kind = "coded" }`) with fiducials, which is rejected (coded markers already carry identity). See
 [Target Generation](target-generation.md) for every field and all six examples.
 
 ### `ringgrid example` — list or emit built-in recipes

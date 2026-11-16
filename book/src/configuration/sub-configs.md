@@ -6,12 +6,10 @@
 
 ## SeedProposalConfig
 
-Controls seed injection for multi-pass detection. In the two-pass pipeline, pass-1 detections are injected as high-priority seed proposals for pass-2.
+Controls seed injection for multi-pass detection. In the two-pass pipeline, pass-1 detections (ordered by confidence) are the proposals for pass-2.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `merge_radius_px` | `f32` | 3.0 | Radius (px) for merging seed centers with detector proposals. Seeds within this distance of an existing proposal are merged rather than duplicated. |
-| `seed_score` | `f32` | 1e12 | Score assigned to injected seed proposals. The high default ensures seeds survive NMS against weaker gradient-based proposals. |
 | `max_seeds` | `Option<usize>` | `Some(512)` | Maximum number of seeds consumed per run. `None` removes the cap. |
 
 **Source:** `crates/ringgrid/src/detector/config/`

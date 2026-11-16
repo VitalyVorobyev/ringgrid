@@ -1,4 +1,6 @@
-//! ringgrid CLI — command-line interface for ring marker detection.
+//! ringgrid-dev — development CLI for ring marker detection, benchmarking,
+//! and target generation (the published CLI is the `ringgrid` binary of the
+//! `ringgrid` crate, feature `cli`).
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -9,9 +11,9 @@ const DEFAULT_GEN_TARGET_OUT_DIR: &str = "tools/out/target";
 const DEFAULT_GEN_TARGET_BASENAME: &str = "target_print";
 
 #[derive(Parser)]
-#[command(name = "ringgrid")]
+#[command(name = "ringgrid-dev")]
 #[command(
-    about = "Detect circle/ring calibration targets in images (hex lattice, 16-sector coded rings)"
+    about = "Development CLI for ringgrid: detect ring calibration targets (hex or rect lattice, coded or plain rings), benchmark, and generate targets"
 )]
 #[command(version)]
 struct Cli {
@@ -421,13 +423,17 @@ struct CliDetectArgs {
     #[arg(long)]
     marker_diameter_max: Option<f64>,
 
+    // Tuning flags below are overrides: when a flag is omitted, the value
+    // from `--config` (or the core crate's default) is kept. Boolean flags
+    // only act when present. `--dump-config` prints the effective defaults.
     /// RANSAC inlier threshold in pixels for homography fitting.
-    #[arg(long, default_value = "5.0")]
-    ransac_thresh_px: f64,
+    /// Default: from config.
+    #[arg(long)]
+    ransac_thresh_px: Option<f64>,
 
-    /// Maximum RANSAC iterations for homography.
-    #[arg(long, default_value = "2000")]
-    ransac_iters: usize,
+    /// Maximum RANSAC iterations for homography. Default: from config.
+    #[arg(long)]
+    ransac_iters: Option<usize>,
 
     /// Disable global homography filtering.
     #[arg(long)]
@@ -437,13 +443,13 @@ struct CliDetectArgs {
     #[arg(long)]
     no_complete: bool,
 
-    /// Completion reprojection gate in pixels (tight).
-    #[arg(long, default_value = "3.0")]
-    complete_reproj_gate: f64,
+    /// Completion reprojection gate in pixels (tight). Default: from config.
+    #[arg(long)]
+    complete_reproj_gate: Option<f64>,
 
-    /// Minimum completion fit confidence in [0, 1].
-    #[arg(long, default_value = "0.45")]
-    complete_min_conf: f32,
+    /// Minimum completion fit confidence in [0, 1]. Default: from config.
+    #[arg(long)]
+    complete_min_conf: Option<f32>,
 
     /// Completion ROI radius in pixels for edge sampling.
     ///
@@ -461,8 +467,9 @@ struct CliDetectArgs {
     complete_require_perfect_decode: bool,
 
     /// Circle refinement method after local fits are accepted.
-    #[arg(long, value_enum, default_value_t = CircleRefineMethodArg::ProjectiveCenter)]
-    circle_refine_method: CircleRefineMethodArg,
+    /// Default: from config.
+    #[arg(long, value_enum)]
+    circle_refine_method: Option<CircleRefineMethodArg>,
 
     /// Projective center gate: maximum allowed correction shift (px).
     ///
@@ -471,16 +478,18 @@ struct CliDetectArgs {
     proj_center_max_shift_px: Option<f64>,
 
     /// Projective center gate: reject candidates with residual above this value.
-    #[arg(long, default_value = "0.25")]
-    proj_center_max_residual: f64,
+    /// Default: from config.
+    #[arg(long)]
+    proj_center_max_residual: Option<f64>,
 
     /// Projective center gate: reject candidates with eigen-separation below this value.
-    #[arg(long, default_value = "1e-6")]
-    proj_center_min_eig_sep: f64,
+    /// Default: from config.
+    #[arg(long)]
+    proj_center_min_eig_sep: Option<f64>,
 
     /// Maximum angular gap (degrees) allowed between consecutive edge points
     /// for both outer and inner ellipse fits. Fits with larger gaps are rejected.
-    /// Default: 90 degrees.
+    /// Default: from config.
     #[arg(long)]
     max_angular_gap_deg: Option<f64>,
 
@@ -491,12 +500,12 @@ struct CliDetectArgs {
 
     /// Minimum number of outer edge points required for RANSAC ellipse fitting.
     /// Below this threshold, direct fit is attempted; below 6 points the fit
-    /// is rejected entirely. Default: 8.
+    /// is rejected entirely. Default: from config.
     #[arg(long)]
     min_outer_edge_points: Option<usize>,
 
     /// Minimum number of inner edge points required to attempt inner ellipse
-    /// fitting. Default: 20.
+    /// fitting. Default: from config.
     #[arg(long)]
     min_inner_edge_points: Option<usize>,
 
@@ -543,34 +552,37 @@ struct CliDetectArgs {
 
     /// Proposal-stage image downscale mode.
     ///
-    /// `auto` selects a factor from marker diameter (factor = floor(d_min/20),
-    /// clamped [1,4]). `off` disables downscaling. A number (1–4) sets an
-    /// explicit factor. Default: `off`.
-    #[arg(long, default_value = "off")]
-    proposal_downscale: ProposalDownscaleArg,
+    /// `auto` derives the factor from the marker-scale prior (see
+    /// `ringgrid::ProposalDownscale::Auto`). `off` disables downscaling. A
+    /// number (1–4) sets an explicit factor. Default: from config.
+    #[arg(long)]
+    proposal_downscale: Option<ProposalDownscaleArg>,
 
     /// Enable self-undistort: estimate a 1-parameter division-model distortion
     /// from detected markers, then re-run detection with that model.
     #[arg(long)]
     self_undistort: bool,
 
-    /// Self-undistort: minimum lambda search bound.
-    #[arg(long, default_value = "-8e-7")]
-    self_undistort_lambda_min: f64,
+    /// Self-undistort: minimum lambda search bound. Default: from config.
+    #[arg(long)]
+    self_undistort_lambda_min: Option<f64>,
 
-    /// Self-undistort: maximum lambda search bound.
-    #[arg(long, default_value = "8e-7")]
-    self_undistort_lambda_max: f64,
+    /// Self-undistort: maximum lambda search bound. Default: from config.
+    #[arg(long)]
+    self_undistort_lambda_max: Option<f64>,
 
     /// Self-undistort: minimum number of markers with inner+outer edge points.
-    #[arg(long, default_value = "6")]
-    self_undistort_min_markers: usize,
+    /// Default: from config.
+    #[arg(long)]
+    self_undistort_min_markers: Option<usize>,
 
     /// Path to a JSON configuration file with detection parameters.
     ///
-    /// Present sections replace the defaults for that sub-config. CLI flags
-    /// always take precedence over values in the file. Use `--dump-config` to
-    /// print a complete template with all current defaults.
+    /// A (possibly partial) `DetectConfig` overlay; stage tuning nests under
+    /// `"advanced"`. Fields omitted from the file keep their defaults. CLI
+    /// flags that are passed take precedence over values in the file; omitted
+    /// flags leave them untouched. Use `--dump-config` to print a complete
+    /// template with all current defaults.
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -841,21 +853,24 @@ struct DetectPreset {
     marker_scale: ringgrid::MarkerScalePrior,
 }
 
-#[derive(Debug, Clone)]
+/// CLI flags lowered onto config fields. Every field is an override: `None`
+/// (or `false` for the switch flags) leaves the config value untouched, so the
+/// core crate stays the single owner of defaults.
+#[derive(Debug, Clone, Default)]
 struct DetectOverrides {
-    use_global_filter: bool,
-    ransac_thresh_px: f64,
-    ransac_iters: usize,
-    completion_enable: bool,
-    completion_reproj_gate_px: f32,
-    completion_min_fit_confidence: f32,
+    disable_global_filter: bool,
+    ransac_thresh_px: Option<f64>,
+    ransac_iters: Option<usize>,
+    disable_completion: bool,
+    completion_reproj_gate_px: Option<f32>,
+    completion_min_fit_confidence: Option<f32>,
     completion_roi_radius_px: Option<f32>,
     completion_require_perfect_decode: bool,
     camera: Option<ringgrid::CameraModel>,
-    circle_refinement: ringgrid::CircleRefinementMethod,
+    circle_refinement: Option<ringgrid::CircleRefinementMethod>,
     projective_center_max_shift_px: Option<f64>,
-    projective_center_max_residual: f64,
-    projective_center_min_eig_sep: f64,
+    projective_center_max_residual: Option<f64>,
+    projective_center_min_eig_sep: Option<f64>,
     max_angular_gap_rad: Option<f64>,
     require_inner_fit: bool,
     min_outer_edge_points: Option<usize>,
@@ -867,11 +882,12 @@ struct DetectOverrides {
     decode_min_confidence: Option<f32>,
     outer_size_score_weight: Option<f32>,
     id_correct_enable: bool,
-    inner_as_outer_recovery_enable: bool,
+    disable_inner_as_outer_recovery: bool,
     self_undistort_enable: bool,
-    self_undistort_lambda_range: [f64; 2],
-    self_undistort_min_markers: usize,
-    proposal_downscale: ringgrid::ProposalDownscale,
+    self_undistort_lambda_min: Option<f64>,
+    self_undistort_lambda_max: Option<f64>,
+    self_undistort_min_markers: Option<usize>,
+    proposal_downscale: Option<ringgrid::ProposalDownscale>,
 }
 
 impl CliDetectArgs {
@@ -902,19 +918,19 @@ impl CliDetectArgs {
     }
 
     fn to_overrides(&self) -> CliResult<DetectOverrides> {
-        let circle_refinement = self.circle_refine_method.to_core();
-
         Ok(DetectOverrides {
-            use_global_filter: !self.no_global_filter,
+            disable_global_filter: self.no_global_filter,
             ransac_thresh_px: self.ransac_thresh_px,
             ransac_iters: self.ransac_iters,
-            completion_enable: !self.no_complete,
-            completion_reproj_gate_px: self.complete_reproj_gate as f32,
+            disable_completion: self.no_complete,
+            completion_reproj_gate_px: self.complete_reproj_gate.map(|v| v as f32),
             completion_min_fit_confidence: self.complete_min_conf,
             completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
             completion_require_perfect_decode: self.complete_require_perfect_decode,
             camera: self.camera.to_core()?,
-            circle_refinement,
+            circle_refinement: self
+                .circle_refine_method
+                .map(CircleRefineMethodArg::to_core),
             projective_center_max_shift_px: self.proj_center_max_shift_px,
             projective_center_max_residual: self.proj_center_max_residual,
             projective_center_min_eig_sep: self.proj_center_min_eig_sep,
@@ -929,14 +945,12 @@ impl CliDetectArgs {
             decode_min_confidence: self.decode_min_confidence,
             outer_size_score_weight: self.outer_size_score_weight,
             id_correct_enable: self.id_correct,
-            inner_as_outer_recovery_enable: !self.no_inner_as_outer_recovery,
+            disable_inner_as_outer_recovery: self.no_inner_as_outer_recovery,
             self_undistort_enable: self.self_undistort,
-            self_undistort_lambda_range: [
-                self.self_undistort_lambda_min,
-                self.self_undistort_lambda_max,
-            ],
+            self_undistort_lambda_min: self.self_undistort_lambda_min,
+            self_undistort_lambda_max: self.self_undistort_lambda_max,
             self_undistort_min_markers: self.self_undistort_min_markers,
-            proposal_downscale: self.proposal_downscale.0,
+            proposal_downscale: self.proposal_downscale.map(|arg| arg.0),
         })
     }
 }
@@ -973,30 +987,50 @@ fn build_detect_config(
     let adv = &mut config.advanced;
 
     // Global filter options
-    adv.use_global_filter = overrides.use_global_filter;
-    adv.ransac_homography.inlier_threshold = overrides.ransac_thresh_px;
-    adv.ransac_homography.max_iters = overrides.ransac_iters;
+    if overrides.disable_global_filter {
+        adv.use_global_filter = false;
+    }
+    if let Some(v) = overrides.ransac_thresh_px {
+        adv.ransac_homography.inlier_threshold = v;
+    }
+    if let Some(v) = overrides.ransac_iters {
+        adv.ransac_homography.max_iters = v;
+    }
 
     // Homography-guided completion options
-    adv.completion.enable = overrides.completion_enable;
-    adv.completion.reproj_gate_px = overrides.completion_reproj_gate_px;
-    adv.completion.min_fit_confidence = overrides.completion_min_fit_confidence;
+    if overrides.disable_completion {
+        adv.completion.enable = false;
+    }
+    if let Some(v) = overrides.completion_reproj_gate_px {
+        adv.completion.reproj_gate_px = v;
+    }
+    if let Some(v) = overrides.completion_min_fit_confidence {
+        adv.completion.min_fit_confidence = v;
+    }
     if let Some(roi) = overrides.completion_roi_radius_px {
         adv.completion.roi_radius_px = roi;
     }
-    adv.completion.require_perfect_decode = overrides.completion_require_perfect_decode;
+    if overrides.completion_require_perfect_decode {
+        adv.completion.require_perfect_decode = true;
+    }
     if let Some(shift) = overrides.projective_center_max_shift_px {
         adv.projective_center.max_correction_shift_px = Some(shift);
     }
-    adv.projective_center.max_selected_residual = Some(overrides.projective_center_max_residual);
-    adv.projective_center.min_eig_separation = Some(overrides.projective_center_min_eig_sep);
+    if let Some(v) = overrides.projective_center_max_residual {
+        adv.projective_center.max_selected_residual = Some(v);
+    }
+    if let Some(v) = overrides.projective_center_min_eig_sep {
+        adv.projective_center.min_eig_separation = Some(v);
+    }
 
     // Angular gap and two-ellipse gates
     if let Some(gap) = overrides.max_angular_gap_rad {
         adv.outer_fit.max_angular_gap_rad = gap;
         adv.inner_fit.max_angular_gap_rad = gap;
     }
-    adv.inner_fit.require_inner_fit = overrides.require_inner_fit;
+    if overrides.require_inner_fit {
+        adv.inner_fit.require_inner_fit = true;
+    }
     if let Some(n) = overrides.min_outer_edge_points {
         adv.outer_fit.min_ransac_points = n;
     }
@@ -1038,28 +1072,47 @@ fn build_detect_config(
     }
 
     // Inner-as-outer recovery: --no-inner-as-outer-recovery disables it.
-    if !overrides.inner_as_outer_recovery_enable {
+    if overrides.disable_inner_as_outer_recovery {
         adv.inner_as_outer_recovery.enable = false;
     }
 
     // Proposal downscale
-    adv.proposal_downscale = overrides.proposal_downscale;
+    if let Some(v) = overrides.proposal_downscale {
+        adv.proposal_downscale = v;
+    }
 
     // Center refinement method (stable, top-level field).
-    config.circle_refinement = overrides.circle_refinement;
+    if let Some(v) = overrides.circle_refinement {
+        config.circle_refinement = v;
+    }
 
     // Self-undistort options (stable, top-level field).
-    config.self_undistort.enable = overrides.self_undistort_enable;
-    config.self_undistort.lambda_range = overrides.self_undistort_lambda_range;
-    config.self_undistort.min_markers = overrides.self_undistort_min_markers;
+    if overrides.self_undistort_enable {
+        config.self_undistort.enable = true;
+    }
+    if let Some(v) = overrides.self_undistort_lambda_min {
+        config.self_undistort.lambda_range[0] = v;
+    }
+    if let Some(v) = overrides.self_undistort_lambda_max {
+        config.self_undistort.lambda_range[1] = v;
+    }
+    if let Some(v) = overrides.self_undistort_min_markers {
+        config.self_undistort.min_markers = v;
+    }
 
     Ok(config)
 }
 
-fn validate_correction_compat(overrides: &DetectOverrides) -> CliResult<()> {
-    if overrides.camera.is_some() && overrides.self_undistort_enable {
+/// Camera mapping and self-undistort are mutually exclusive. Checked on the
+/// resolved config, since either flags or `--config` can enable self-undistort.
+fn validate_correction_compat(
+    camera: Option<&ringgrid::CameraModel>,
+    config: &ringgrid::DetectConfig,
+) -> CliResult<()> {
+    if camera.is_some() && config.self_undistort.enable {
         return Err(
-            "camera mapping (--cam-*) and self-undistort (--self-undistort) are mutually exclusive"
+            "camera mapping (--cam-*/--calibration) and self-undistort (--self-undistort or \
+             config self_undistort.enable) are mutually exclusive"
                 .into(),
         );
     }
@@ -1321,15 +1374,30 @@ fn load_config_file(args: &CliDetectArgs) -> CliResult<Option<DetectConfigFile>>
     }
 }
 
+/// Load `--target`, or the built-in default hex layout when it is omitted.
+fn load_target(args: &CliDetectArgs) -> CliResult<ringgrid::TargetLayout> {
+    let Some(target_path) = &args.target else {
+        return Ok(ringgrid::TargetLayout::default_hex());
+    };
+    ringgrid::TargetLayout::from_json_file(target_path).map_err(|e| -> CliError {
+        format!(
+            "Failed to load target spec {}: {}",
+            target_path.display(),
+            e
+        )
+        .into()
+    })
+}
+
 /// Dump the effective default detection configuration as JSON.
 ///
-/// Reflects `--marker-diameter-*` and `--config marker_scale` if provided.
-/// The output is a valid `--config` template; remove sections or fields to
-/// revert to built-in defaults.
+/// Reflects `--target`, `--marker-diameter-*` and `--config marker_scale` if
+/// provided. The output is a valid `--config` template; remove sections or
+/// fields to revert to built-in defaults.
 fn run_dump_config(args: &CliDetectArgs) -> CliResult<()> {
     let config_file = load_config_file(args)?;
     let preset = args.to_preset(config_file.as_ref());
-    let target = ringgrid::TargetLayout::default_hex();
+    let target = load_target(args)?;
     let config = ringgrid::DetectConfig::from_target_and_scale_prior(target, preset.marker_scale);
     // `DetectConfig` serializes directly; stage tuning nests under `advanced`.
     // The target layout is `#[serde(skip)]`; loading the dump back through
@@ -1355,7 +1423,6 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
     let preset = args.to_preset(config_file.as_ref());
 
     let overrides = args.to_overrides()?;
-    validate_correction_compat(&overrides)?;
 
     tracing::info!("Loading image: {}", args.image.display());
 
@@ -1367,27 +1434,15 @@ fn run_detect(args: &CliDetectArgs) -> CliResult<()> {
 
     tracing::info!("Image size: {}x{}", w, h);
 
-    let target = if let Some(target_path) = &args.target {
-        let target =
-            ringgrid::TargetLayout::from_json_file(target_path).map_err(|e| -> CliError {
-                format!(
-                    "Failed to load target spec {}: {}",
-                    target_path.display(),
-                    e
-                )
-                .into()
-            })?;
-        tracing::info!(
-            "Loaded target layout '{}' with {} cells",
-            target.name(),
-            target.n_cells()
-        );
-        target
-    } else {
-        ringgrid::TargetLayout::default_hex()
-    };
+    let target = load_target(args)?;
+    tracing::info!(
+        "Target layout '{}' with {} cells",
+        target.name(),
+        target.n_cells()
+    );
 
     let config = build_detect_config(target, preset, config_file.as_ref(), &overrides)?;
+    validate_correction_compat(overrides.camera.as_ref(), &config)?;
 
     let detector = ringgrid::Detector::with_config(config);
     let proposals = if args.include_proposals {
@@ -1696,40 +1751,6 @@ mod tests {
         }
     }
 
-    fn base_overrides() -> DetectOverrides {
-        DetectOverrides {
-            use_global_filter: true,
-            ransac_thresh_px: 5.0,
-            ransac_iters: 2000,
-            completion_enable: true,
-            completion_reproj_gate_px: 3.0,
-            completion_min_fit_confidence: 0.45,
-            completion_roi_radius_px: None,
-            completion_require_perfect_decode: false,
-            camera: None,
-            circle_refinement: ringgrid::CircleRefinementMethod::ProjectiveCenter,
-            projective_center_max_shift_px: None,
-            projective_center_max_residual: 0.25,
-            projective_center_min_eig_sep: 1e-6,
-            max_angular_gap_rad: None,
-            require_inner_fit: false,
-            min_outer_edge_points: None,
-            min_inner_edge_points: None,
-            outer_min_theta_consistency: None,
-            outer_second_peak_min_rel: None,
-            decode_min_margin: None,
-            decode_max_dist: None,
-            decode_min_confidence: None,
-            outer_size_score_weight: None,
-            id_correct_enable: false,
-            inner_as_outer_recovery_enable: true,
-            self_undistort_enable: false,
-            self_undistort_lambda_range: [-8e-7, 8e-7],
-            self_undistort_min_markers: 6,
-            proposal_downscale: ringgrid::ProposalDownscale::Off,
-        }
-    }
-
     fn sample_camera() -> ringgrid::CameraModel {
         ringgrid::CameraModel {
             intrinsics: ringgrid::CameraIntrinsics {
@@ -1764,21 +1785,21 @@ mod tests {
 
     #[test]
     fn validate_correction_compat_rejects_camera_plus_self_undistort() {
-        let mut overrides = base_overrides();
-        overrides.camera = Some(sample_camera());
-        overrides.self_undistort_enable = true;
-        assert!(validate_correction_compat(&overrides).is_err());
+        let camera = sample_camera();
+        let mut config = ringgrid::DetectConfig::default();
+        config.self_undistort.enable = true;
+        assert!(validate_correction_compat(Some(&camera), &config).is_err());
     }
 
     #[test]
     fn validate_correction_compat_accepts_non_conflicting_modes() {
-        let mut with_camera = base_overrides();
-        with_camera.camera = Some(sample_camera());
-        assert!(validate_correction_compat(&with_camera).is_ok());
+        let camera = sample_camera();
+        let plain = ringgrid::DetectConfig::default();
+        assert!(validate_correction_compat(Some(&camera), &plain).is_ok());
 
-        let mut with_self_undistort = base_overrides();
-        with_self_undistort.self_undistort_enable = true;
-        assert!(validate_correction_compat(&with_self_undistort).is_ok());
+        let mut with_self_undistort = ringgrid::DetectConfig::default();
+        with_self_undistort.self_undistort.enable = true;
+        assert!(validate_correction_compat(None, &with_self_undistort).is_ok());
     }
 
     #[test]
@@ -1833,13 +1854,15 @@ mod tests {
 
     #[test]
     fn build_detect_config_applies_tuning_overrides() {
-        let mut overrides = base_overrides();
-        overrides.outer_min_theta_consistency = Some(0.61);
-        overrides.outer_second_peak_min_rel = Some(0.77);
-        overrides.decode_min_margin = Some(2);
-        overrides.decode_max_dist = Some(1);
-        overrides.decode_min_confidence = Some(0.5);
-        overrides.outer_size_score_weight = Some(0.33);
+        let overrides = DetectOverrides {
+            outer_min_theta_consistency: Some(0.61),
+            outer_second_peak_min_rel: Some(0.77),
+            decode_min_margin: Some(2),
+            decode_max_dist: Some(1),
+            decode_min_confidence: Some(0.5),
+            outer_size_score_weight: Some(0.33),
+            ..DetectOverrides::default()
+        };
 
         let preset = DetectPreset {
             marker_scale: ringgrid::MarkerScalePrior::new(20.0, 56.0),
@@ -1881,19 +1904,194 @@ mod tests {
             ringgrid::TargetLayout::default_hex(),
             preset,
             Some(&config_file),
-            &base_overrides(),
+            &DetectOverrides::default(),
         )
         .expect("build config");
 
-        // base_overrides() forces completion.enable = true on top of the file,
-        // so the override wins — confirming CLI flags still take precedence.
-        assert!(cfg.advanced.completion.enable);
+        // No `--no-complete` flag, so the file's value survives.
+        assert!(!cfg.advanced.completion.enable);
         // dedup_radius has no CLI override, so the overlay value survives.
         assert!((cfg.advanced.dedup_radius - 9.5).abs() < 1e-9);
         // Untouched advanced fields keep their scale-derived/default values.
         assert_eq!(cfg.advanced.inner_fit.min_points, 20);
         // The target is re-attached and re-derives geometry.
         assert!(cfg.target.n_cells() > 0);
+    }
+
+    fn parse_detect_args(extra: &[&str]) -> CliDetectArgs {
+        let mut argv = vec![
+            "ringgrid-dev",
+            "detect",
+            "--image",
+            "in.png",
+            "--out",
+            "o.json",
+        ];
+        argv.extend_from_slice(extra);
+        match Cli::try_parse_from(argv)
+            .expect("parse detect args")
+            .command
+        {
+            Commands::Detect(args) => args,
+            _ => unreachable!("detect subcommand"),
+        }
+    }
+
+    /// Resolve the effective config exactly like `run_detect` does.
+    fn resolve_detect_config(args: &CliDetectArgs) -> ringgrid::DetectConfig {
+        let config_file = load_config_file(args).expect("load config file");
+        let preset = args.to_preset(config_file.as_ref());
+        let overrides = args.to_overrides().expect("overrides");
+        build_detect_config(
+            ringgrid::TargetLayout::default_hex(),
+            preset,
+            config_file.as_ref(),
+            &overrides,
+        )
+        .expect("build config")
+    }
+
+    /// Every tunable that has a CLI flag, set in `--config` to a non-default
+    /// value, must survive when its flag is not passed: the core crate owns the
+    /// defaults, the flags only override.
+    #[test]
+    fn config_file_values_survive_when_flags_are_omitted() {
+        let path = write_temp_json_file(
+            "flag_free_overlay",
+            r#"{
+              "circle_refinement": "None",
+              "self_undistort": { "enable": true, "lambda_range": [-1e-6, 2e-6], "min_markers": 9 },
+              "advanced": {
+                "use_global_filter": false,
+                "ransac_homography": { "inlier_threshold": 7.5, "max_iters": 321 },
+                "completion": {
+                  "enable": false,
+                  "reproj_gate_px": 4.5,
+                  "min_fit_confidence": 0.6,
+                  "require_perfect_decode": true
+                },
+                "projective_center": { "max_selected_residual": 0.5, "min_eig_separation": 1e-4 },
+                "inner_fit": { "require_inner_fit": true },
+                "proposal_downscale": "auto"
+              }
+            }"#,
+        );
+        let args = parse_detect_args(&["--config", path.to_str().expect("utf8 path")]);
+        let cfg = resolve_detect_config(&args);
+        let _ = std::fs::remove_file(&path);
+
+        let adv = &cfg.advanced;
+        assert!(!adv.use_global_filter, "use_global_filter");
+        assert_eq!(adv.ransac_homography.inlier_threshold, 7.5);
+        assert_eq!(adv.ransac_homography.max_iters, 321);
+        assert!(!adv.completion.enable, "completion.enable");
+        assert_eq!(adv.completion.reproj_gate_px, 4.5);
+        assert_eq!(adv.completion.min_fit_confidence, 0.6);
+        assert!(
+            adv.completion.require_perfect_decode,
+            "require_perfect_decode"
+        );
+        assert_eq!(adv.projective_center.max_selected_residual, Some(0.5));
+        assert_eq!(adv.projective_center.min_eig_separation, Some(1e-4));
+        assert!(adv.inner_fit.require_inner_fit, "require_inner_fit");
+        assert!(matches!(
+            adv.proposal_downscale,
+            ringgrid::ProposalDownscale::Auto
+        ));
+        assert!(matches!(
+            cfg.circle_refinement,
+            ringgrid::CircleRefinementMethod::None
+        ));
+        assert!(cfg.self_undistort.enable, "self_undistort.enable");
+        assert_eq!(cfg.self_undistort.lambda_range, [-1e-6, 2e-6]);
+        assert_eq!(cfg.self_undistort.min_markers, 9);
+    }
+
+    /// Flags that are passed still win over the config file.
+    #[test]
+    fn explicit_flags_override_config_file_values() {
+        let path = write_temp_json_file(
+            "flag_overlay",
+            r#"{ "advanced": { "ransac_homography": { "inlier_threshold": 7.5 },
+                               "completion": { "enable": true } } }"#,
+        );
+        let args = parse_detect_args(&[
+            "--config",
+            path.to_str().expect("utf8 path"),
+            "--ransac-thresh-px",
+            "2.5",
+            "--no-complete",
+            "--circle-refine-method",
+            "none",
+        ]);
+        let cfg = resolve_detect_config(&args);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.advanced.ransac_homography.inlier_threshold, 2.5);
+        assert!(!cfg.advanced.completion.enable);
+        assert!(matches!(
+            cfg.circle_refinement,
+            ringgrid::CircleRefinementMethod::None
+        ));
+    }
+
+    /// Without `--config` and flags, the CLI resolves to the core defaults.
+    #[test]
+    fn no_flags_resolve_to_core_defaults() {
+        let cfg = resolve_detect_config(&parse_detect_args(&[]));
+        let core = ringgrid::DetectConfig::default();
+        assert_eq!(
+            serde_json::to_value(&cfg).expect("cli cfg json"),
+            serde_json::to_value(&core).expect("core cfg json")
+        );
+    }
+
+    /// Assert every leaf of `overlay` appears, with the same value, in `resolved`
+    /// — i.e. no key of the overlay was silently ignored or re-derived.
+    fn assert_overlay_applied(
+        overlay: &serde_json::Value,
+        resolved: &serde_json::Value,
+        path: &str,
+    ) {
+        match overlay {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    let child = resolved.get(key).unwrap_or_else(|| {
+                        panic!("overlay key `{path}.{key}` is not a config field")
+                    });
+                    assert_overlay_applied(value, child, &format!("{path}.{key}"));
+                }
+            }
+            serde_json::Value::Number(n) => {
+                let (a, b) = (
+                    n.as_f64().expect("number"),
+                    resolved.as_f64().expect("number"),
+                );
+                assert!(
+                    (a - b).abs() <= 1e-6 * a.abs().max(1.0),
+                    "`{path}`: overlay {a} vs resolved {b}"
+                );
+            }
+            serde_json::Value::Array(items) => {
+                let resolved = resolved.as_array().expect("array");
+                assert_eq!(items.len(), resolved.len(), "`{path}` length");
+                for (i, (a, b)) in items.iter().zip(resolved).enumerate() {
+                    assert_overlay_applied(a, b, &format!("{path}[{i}]"));
+                }
+            }
+            other => assert_eq!(other, resolved, "`{path}`"),
+        }
+    }
+
+    /// The shipped `config_sample.json` is a valid overlay: every key lands on
+    /// a real config field (stage sections under `advanced`) and survives.
+    #[test]
+    fn config_sample_is_a_fully_applied_overlay() {
+        let overlay: serde_json::Value =
+            serde_json::from_str(include_str!("../config_sample.json")).expect("sample parses");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config_sample.json");
+        let args = parse_detect_args(&["--config", path.to_str().expect("utf8 path")]);
+        let resolved = serde_json::to_value(resolve_detect_config(&args)).expect("config json");
+        assert_overlay_applied(&overlay, &resolved, "");
     }
 
     #[test]

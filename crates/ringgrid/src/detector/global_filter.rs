@@ -7,7 +7,7 @@ use crate::target::TargetLayout;
 /// Apply global homography RANSAC filter.
 ///
 /// Returns `(filtered markers, RANSAC result, stats)`.
-pub fn global_filter(
+pub(crate) fn global_filter(
     markers: &[MarkerRecord],
     config: &RansacConfig,
     target: &TargetLayout,
@@ -63,24 +63,14 @@ pub fn global_filter(
     }
 
     // Compute stats.
-    let mut inlier_errors =
-        homography::collect_masked_inlier_errors(&result.errors, &result.inlier_mask);
-    let (mean_err, p95_err) = homography::mean_and_p95(&mut inlier_errors);
-
-    let stats = RansacStats {
-        n_candidates: correspondences.len(),
-        n_inliers: result.n_inliers,
-        threshold_px: config.inlier_threshold,
-        mean_err_px: mean_err,
-        p95_err_px: p95_err,
-    };
+    let stats = RansacStats::from_ransac(&result, correspondences.len(), config.inlier_threshold);
 
     tracing::info!(
         "Homography RANSAC: {}/{} inliers, mean_err={:.2}px, p95={:.2}px",
         result.n_inliers,
         correspondences.len(),
-        mean_err,
-        p95_err,
+        stats.mean_err_px,
+        stats.p95_err_px,
     );
 
     (filtered, Some(result), Some(stats))

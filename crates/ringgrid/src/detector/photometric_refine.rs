@@ -17,9 +17,11 @@ use crate::detector::{
     CenterSource, DetectConfig, MarkerRecord, PhotometricMetrics, PhotometricStatus,
     ResidualAutocorrelation,
 };
+use crate::homography::homography_project_rows;
 use crate::marker::codec::Codebook;
 use crate::pipeline::BoardFrame;
 use crate::pixelmap::PixelMapper;
+use crate::ring::MAD_TO_SIGMA;
 use crate::ring::photometric_center::{
     InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem,
     PhotometricResidualSample, PrintRadii, fit_marker, residual_samples,
@@ -64,16 +66,6 @@ fn mat3_mul(a: &Mat3, b: &Mat3) -> Mat3 {
     out
 }
 
-fn project(h: &Mat3, p: [f64; 2]) -> Option<[f64; 2]> {
-    let w = h[2][0] * p[0] + h[2][1] * p[1] + h[2][2];
-    (w.abs() > 1e-12).then(|| {
-        [
-            (h[0][0] * p[0] + h[0][1] * p[1] + h[0][2]) / w,
-            (h[1][0] * p[0] + h[1][1] * p[1] + h[1][2]) / w,
-        ]
-    })
-}
-
 /// Board-local (mm relative to `cell_mm`) → image-pixel projective map.
 ///
 /// Without a mapper the board homography is already board → image and the
@@ -103,7 +95,7 @@ fn local_map(
                 0.65 * r_outer_mm * f64::from(i),
                 0.65 * r_outer_mm * f64::from(j),
             ];
-            let w = project(&to_working, u)?;
+            let w = homography_project_rows(&to_working, u)?;
             let x = mapper.working_to_image_pixel(w)?;
             src.push(u);
             dst.push(x);
@@ -275,9 +267,9 @@ struct Task {
 
 /// Image px per board mm of a local map at the marker centre.
 fn local_scale(map: &Mat3) -> Option<f64> {
-    let c0 = project(map, [0.0, 0.0])?;
-    let cx = project(map, [1.0, 0.0])?;
-    let cy = project(map, [0.0, 1.0])?;
+    let c0 = homography_project_rows(map, [0.0, 0.0])?;
+    let cx = homography_project_rows(map, [1.0, 0.0])?;
+    let cy = homography_project_rows(map, [0.0, 1.0])?;
     let det = ((cx[0] - c0[0]) * (cy[1] - c0[1]) - (cx[1] - c0[1]) * (cy[0] - c0[0])).abs();
     (det.is_finite() && det > 0.0).then(|| det.sqrt())
 }
@@ -487,7 +479,7 @@ fn radii_consensus(
         // Spread of the samples around the first mean, robustly.
         let mut dev: Vec<f64> = samples.iter().map(|(r, _)| (r[k] - first).abs()).collect();
         dev.sort_by(|a, b| a.total_cmp(b));
-        let spread = 1.4826 * dev[dev.len() / 2];
+        let spread = MAD_TO_SIGMA * dev[dev.len() / 2];
         out[k] = mean_of(&|r, s| (r - first).abs() <= 4.0 * s.hypot(spread))?;
     }
     // Plain markers keep r1 = r2 = r3, hence the non-strict comparisons.

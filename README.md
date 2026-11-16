@@ -120,7 +120,7 @@ ringgrid gen my_target.toml --out ./out                   # writes SVG, PNG, DXF
 ```toml
 # my_target.toml — plain rings on a square lattice, anchored by origin dots
 name = "lab_rect"
-coding = "plain"       # coded | plain
+coding = { kind = "plain" }  # or { kind = "coded" }
 fiducials = "auto"     # none | auto | explicit dot table
 
 [lattice]
@@ -139,7 +139,7 @@ formats = ["json", "svg", "png", "dxf"]
 ```
 
 `gen` reports the board's physical size and whether it fits a paper size, so you
-find out before the print run that the defaults above make a 343 mm square board.
+find out before the print run that the defaults above make a 333 mm square board.
 Any recipe field can be overridden on the command line (`--pitch-mm`, `--dpi`, …),
 and `ringgrid example --list` shows the built-in recipes — one per valid target
 combination, ready to copy and adapt.

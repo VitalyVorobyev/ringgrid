@@ -159,7 +159,7 @@ def generate_scene(scene: dict, reuse: bool) -> tuple[Path, Path | None]:
                "--pitch_mm", str(params["pitch_mm"]),
                "--seed", str(params["seed"]), "--blur_px", str(params["blur"])]
     else:  # rect
-        cmd = [PYTHON, "tools/gen_synth_rect.py", "--out_dir", str(out_dir),
+        cmd = [PYTHON, "tools/gen_synth_target.py", "--out_dir", str(out_dir),
                "--n_images", "1",
                "--img_w", str(params["img_w"]), "--img_h", str(params["img_h"]),
                "--rows", str(params["rows"]), "--cols", str(params["cols"]),

@@ -53,7 +53,9 @@ tools/
                        #   `gen-target` or the Python `TargetLayout` API, which
                        #   also emit DXF)
   gen_synth.py         # synthetic dataset generator
-  gen_synth_rect.py    # rect-plain synthetic dataset generator
+  gen_synth_target.py  # synthetic generator for any target (hex|rect x
+                       #   coded|plain x dots), library-faithful rendering
+  run_target_matrix_benchmark.py  # gated per-combination benchmark
   run_synth_eval.py    # generate -> detect -> score
   score_detect.py      # scoring utility
   viz_detect.py        # detection overlay renderer

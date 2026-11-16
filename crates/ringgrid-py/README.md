@@ -461,8 +461,6 @@ or guided workflows.
 
 | Field | Default | Practical notes |
 |---|---|---|
-| `merge_radius_px` | `3.0` | Seed/proposal merge distance. Raise only if seed centers are systematically off by several pixels. |
-| `seed_score` | `1000000000000.0` | Score assigned to injected seeds so they survive proposal ranking. |
 | `max_seeds` | `512` | Optional cap on consumed seeds. Use it to bound runtime when external seed lists get large. |
 
 ### `projective_center`

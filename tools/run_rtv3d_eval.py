@@ -75,8 +75,8 @@ class StrategyAggregate:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--data-dir", type=Path, default=Path("data/rtv3d"),
-                   help="Directory containing rtv3d strip images (default: data/rtv3d)")
+    p.add_argument("--data-dir", type=Path, default=Path("data/rtv3d_0"),
+                   help="Directory containing rtv3d strip images (default: data/rtv3d_0)")
     p.add_argument("--binary", type=Path, default=Path("target/release/ringgrid-dev"),
                    help="Path to ringgrid CLI binary (default: target/release/ringgrid-dev)")
     p.add_argument("--target", type=Path, default=None,
@@ -134,7 +134,8 @@ def count_result(data: dict) -> tuple[int, int, int]:
     markers = data.get("detected_markers", [])
     n_total = len(markers)
     n_decoded = sum(1 for m in markers if m.get("id") is not None)
-    ransac = data.get("ransac") or {}
+    # RANSAC stats live under `diagnostics` in the detection JSON.
+    ransac = (data.get("diagnostics") or {}).get("ransac") or {}
     n_inliers = ransac.get("n_inliers", 0) or 0
     return n_total, n_decoded, n_inliers
 

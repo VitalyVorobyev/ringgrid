@@ -85,7 +85,7 @@
             "seed_min_decode_confidence": 0.7,
             "soft_lock_exact_decode": true
           },
-          "description": "Structural ID verification and correction using hex neighborhood consensus."
+          "description": "Structural ID verification and correction using hex neighborhood\nconsensus; runs only in the decode-anchored fallback (no grid labeled\nand anchored), hex coded targets only."
         },
         "inner_as_outer_recovery": {
           "$ref": "#/$defs/InnerAsOuterRecoveryConfig",
@@ -495,7 +495,7 @@
       ]
     },
     "IdCorrectionConfig": {
-      "description": "Structural ID verification and correction using hex neighborhood consensus.\n\nRuns after fit-decode and deduplication, before the global RANSAC filter.\nUses the board's hex lattice geometry to detect wrong IDs (misidentified by\nthe codebook decoder) and recover missing ones. Each marker's correct ID is\nimplied by its decoded neighbors' positions: neighbors vote on the expected\nboard position of the query marker using a local affine transform (or scale\nestimate when fewer than 3 neighbors are available).\n\nMarkers that cannot be verified or corrected have their IDs cleared\n(`id = None`) or are removed entirely depending on `remove_unverified`.\nThis guarantees no wrong IDs reach the global filter or completion stages.",
+      "description": "Structural ID verification and correction using hex neighborhood consensus.\n\nRuns only in the decode-anchored fallback — when no grid can be labeled and\nanchored from the fitted rings — before the global RANSAC filter, and only\nfor hex coded targets. On the main grid-first path IDs come from the\nanchored grid cell, so this stage does not run. Uses the board's hex lattice\ngeometry to detect wrong IDs (misidentified by\nthe codebook decoder) and recover missing ones. Each marker's correct ID is\nimplied by its decoded neighbors' positions: neighbors vote on the expected\nboard position of the query marker using a local affine transform (or scale\nestimate when fewer than 3 neighbors are available).\n\nMarkers that cannot be verified or corrected have their IDs cleared\n(`id = None`) or are removed entirely depending on `remove_unverified`.\nThis keeps wrong IDs away from the fallback's global filter and completion.",
       "properties": {
         "auto_search_radius_outer_muls": {
           "default": [

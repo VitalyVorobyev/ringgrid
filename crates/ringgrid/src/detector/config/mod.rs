@@ -128,7 +128,9 @@ pub struct AdvancedDetectConfig {
     pub geometric_verify: bool,
     /// RANSAC homography configuration.
     pub ransac_homography: RansacConfig,
-    /// Structural ID verification and correction using hex neighborhood consensus.
+    /// Structural ID verification and correction using hex neighborhood
+    /// consensus; runs only in the decode-anchored fallback (no grid labeled
+    /// and anchored), hex coded targets only.
     pub id_correction: IdCorrectionConfig,
     /// Automatic recovery for markers where the inner edge was incorrectly
     /// fitted as the outer ellipse.

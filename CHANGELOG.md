@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Coded targets now identify markers from the grid, not from each marker's
+  own code band.** Every fitted ring — decoded or not — is labeled with lattice
+  coordinates; the decoded IDs vote for where that labeling sits on the board,
+  and each ring then takes its cell's ID (a misread code is overridden by the
+  cell's ID). Previously only rings that decoded fed the board homography and
+  the rest were refitted from scratch. What changes for users:
+  - more markers identified: real-image benchmark +2.2% (strategy A), +5.9%
+    (default prior), +6.1% (per-strip prior); strong perspective / partial
+    views up to +13 points of recall (synthetic rect tilt 45°: 0.86 → 0.99,
+    radial distortion without a camera model: 0.73 → 0.87);
+  - coded rect targets get an ID consistency check (they had none: ID
+    correction was hex-only); on the rect-coded benchmark 94% of markers come
+    from their own fitted ring instead of 73%;
+  - `DetectedMarker.id` is the cell's ID; `diagnostics.markers[].decode` still
+    reports what the code band itself decoded, so the two can differ;
+  - finalize is faster on large boards (1239-cell board: 223 → 87 ms; total
+    493 → 358 ms per image) and on the default board (8 → 4 ms);
+  - ID correction (`advanced.id_correction`) now runs only in the fallback for
+    views where no grid can be labeled, hex coded targets only, before the
+    decode-anchored homography filter. See ADR-023.
 - **Codebook matching is ~9× faster, with identical results.** Decoding used to
   scan every rotation of every codeword twice (observed word, then its
   complement) with a branchy best/second-best update. One branchless pass now

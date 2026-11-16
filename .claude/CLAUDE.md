@@ -96,7 +96,7 @@ crates/ringgrid/src/
 │   ├── global_filter.rs# RANSAC homography filter
 │   ├── completion.rs   # Conservative fits at missing cells (Id- or Coord-keyed)
 │   ├── center_correction.rs # Projective center application
-│   └── id_correction/  # BFS hex-neighbor ID consensus
+│   └── id_correction/  # BFS hex-neighbor ID consensus (fallback only)
 │       ├── mod.rs, engine.rs, workspace.rs, types.rs, index.rs
 │       ├── local.rs, homography.rs, vote.rs, math.rs
 │       ├── bootstrap.rs, consistency.rs, cleanup.rs, diagnostics.rs
@@ -117,12 +117,12 @@ crates/ringgrid/src/
 │   ├── run.rs          # Top-level orchestrator + two-pass/self-undistort/multiscale
 │   ├── fit_decode.rs   # Proposals → fit → decode → dedup
 │   ├── finalize/       # Pipeline back half
-│   │   ├── mod.rs      # run/premerge/postmerge entry points + dispatch
-│   │   ├── coded.rs    # Global filter → completion → final H (coded path)
-│   │   ├── plain.rs    # Grid assign → anchor → completion (plain path)
-│   │   └── common.rs   # Frame mapping, correspondence sync, geometric verify
-│   ├── assign.rs       # Plain-path grid labeling (projective_grid::detect_grid) + f64 H
-│   ├── anchor.rs       # Origin-dot resolution (verify dots at predicted positions)
+│   │   ├── mod.rs      # run/premerge/postmerge entry points
+│   │   ├── grid.rs     # Grid-first back half (every target): label → anchor → identify → complete → H → verify
+│   │   ├── fallback.rs # No grid: ID correction + decode-anchored global filter (coded), pass-through (plain)
+│   │   └── common.rs   # Final H, frame mapping, correspondence sync, geometric verify
+│   ├── assign.rs       # Grid labeling (projective_grid::detect_grid) + f64 frame H
+│   ├── anchor.rs       # Origin resolution: decoded-ID vote (coded) or origin dots (plain)
 │   ├── geometric_verify.rs # Local/global geometric consistency checks
 │   ├── scale_probe.rs  # Ring angular-variance sweep → dominant radius estimates
 │   ├── axis_ratio_filter.rs # Ellipse axis-ratio gating
@@ -158,20 +158,20 @@ crates/ringgrid/src/
 5. **Inner Fit** (`detector/inner_fit.rs`) — inner ring ellipse fit
 6. **Dedup** (`detector/dedup.rs`) — spatial + ID-based deduplication
 7. **Projective Center** (`detector/center_correction.rs`) — correct fit-decode marker centers (once per marker)
-8. **ID Correction** (`detector/id_correction/`) — BFS hex-neighbor consensus
-9. **Global Filter** (`detector/global_filter.rs`) — RANSAC homography if ≥4 decoded markers (uses corrected centers)
-10. **Completion** (`detector/completion.rs`) — conservative fits at missing H-projected IDs + projective center for new markers
-11. **Final H Refit** — refit homography from all corrected centers
+8. **Grid Labeling** (`pipeline/assign.rs`) — label every fitted ring, decoded or not, with lattice coords (relative frame)
+9. **Anchor + Identify** (`pipeline/anchor.rs`, `finalize/grid.rs`) — decoded IDs vote for the board placement (coded) or origin dots verify it (plain); each labeled ring takes its cell's ID (a contradicting decode is overridden)
+10. **Join + Completion** (`finalize/grid.rs`, `detector/completion.rs`) — decoded dropped rings join via RANSAC; completion grows from the patch, adopting dropped rings before refitting missing cells
+11. **Final H Refit + Geometric Verify** (`finalize/common.rs`, `pipeline/geometric_verify.rs`)
 
-Pipeline orchestration: stages 1–6 in `pipeline/fit_decode.rs`, stages 7–11 in `pipeline/finalize/` (coded path in `coded.rs`; plain targets replace decode-anchored stages with `assign.rs` grid labeling + `anchor.rs` origin resolution, dispatched from `finalize/plain.rs`), top-level sequencing in `pipeline/run.rs`.
+Fallback (`finalize/fallback.rs`) when no grid is labeled (coded: and anchored): hex ID correction (`detector/id_correction/`) → global RANSAC filter over decodes → completion; with fewer than 6 consistent decodes, markers without H. Stages 1–6 in `pipeline/fit_decode.rs`, 7–11 in `pipeline/finalize/`, sequencing in `pipeline/run.rs`.
 
 ### Multi-scale / adaptive pipeline
 
 For multi-scale detection (`detect_multiscale`, `detect_adaptive`, `detect_adaptive_with_hint`), the pipeline is split at the finalize boundary:
 
-- **`finalize_premerge`** — runs stages 7–8 (projective center + ID correction) only; returns `Vec<DetectedMarker>` without global filter, completion, or H refit. Called once per tier.
+- **`finalize_premerge`** — runs stage 7 (projective center) only. Called once per tier.
 - **`merge_multiscale_markers`** (`detector/dedup.rs`) — size-consistency-aware NMS across all tier outputs. Prefers markers whose outer radius matches the neighborhood median (k=6 hex-lattice neighbors); confidence breaks ties.
-- **`finalize_postmerge`** — runs stages 9–11 (global filter + completion + final H refit) exactly once on the merged pool.
+- **`finalize_postmerge`** — runs stages 8–11 (and the fallback) exactly once on the merged pool.
 
 Scale probe (`pipeline/scale_probe.rs`): ring angular-variance sweep at top-K gradient proposals over 20 geometric radius candidates (4–110 px). High variance at a radius indicates the code band (alternating bright/dark sectors). Code-band midpoint ≈ 0.8× outer ring radius; results feed `ScaleTiers::from_detected_radii`.
 
@@ -251,7 +251,7 @@ Single-choice selector: `none` | `projective_center`
 
 CLI: `--circle-refine-method {none,projective-center}`
 
-Center correction is applied once per marker: before global filter for fit-decode markers, and after completion for newly completed markers only. Logic is in `pipeline/finalize/`.
+Center correction is applied once per marker: before grid labeling for fit-decode markers, and after completion for newly refitted markers only. Logic is in `pipeline/finalize/`.
 
 ## Camera / Distortion Support
 

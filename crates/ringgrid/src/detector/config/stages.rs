@@ -185,8 +185,11 @@ impl Default for PhotometricConfig {
 
 /// Structural ID verification and correction using hex neighborhood consensus.
 ///
-/// Runs after fit-decode and deduplication, before the global RANSAC filter.
-/// Uses the board's hex lattice geometry to detect wrong IDs (misidentified by
+/// Runs only in the decode-anchored fallback — when no grid can be labeled and
+/// anchored from the fitted rings — before the global RANSAC filter, and only
+/// for hex coded targets. On the main grid-first path IDs come from the
+/// anchored grid cell, so this stage does not run. Uses the board's hex lattice
+/// geometry to detect wrong IDs (misidentified by
 /// the codebook decoder) and recover missing ones. Each marker's correct ID is
 /// implied by its decoded neighbors' positions: neighbors vote on the expected
 /// board position of the query marker using a local affine transform (or scale
@@ -194,7 +197,7 @@ impl Default for PhotometricConfig {
 ///
 /// Markers that cannot be verified or corrected have their IDs cleared
 /// (`id = None`) or are removed entirely depending on `remove_unverified`.
-/// This guarantees no wrong IDs reach the global filter or completion stages.
+/// This keeps wrong IDs away from the fallback's global filter and completion.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]

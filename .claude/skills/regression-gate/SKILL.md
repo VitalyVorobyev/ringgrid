@@ -50,13 +50,13 @@ like the library's printed target by `tools/gen_synth_target.py` and scored by
 
 **RTv3D real-world benchmark (local only — private data)**
 
-If the `data/rtv3d` directory exists, also run:
+If the `data/rtv3d_0` directory exists (the eval's default `--data-dir`), also run:
 
 ```bash
 .venv/bin/python tools/run_rtv3d_eval.py
 ```
 
-If `data/rtv3d` does not exist, skip this step and report `RTv3D benchmark: SKIPPED (no data)`. This dataset is private and not available in CI.
+If `data/rtv3d_0` does not exist, skip this step and report `RTv3D benchmark: SKIPPED (no data)`. This dataset is private and not available in CI: never commit or copy anything derived from it (tiles, detections, overlays) outside the gitignored `data/` and `tools/out/`. It has 17 usable strips (2 on the eval's skip list) = 102 tiles; strategies A, B and D are gated (`total_decoded`), C (8-220 px single pass) detects nothing by design of the proposal stage.
 
 ## Step 3 — Check benchmark results against baselines
 
@@ -70,7 +70,7 @@ prints all checks). Each threshold `min_<metric>` requires `value >= bound`,
 `max_<metric>` requires `value <= bound`, where the value is the output's
 `<metric>` or `avg_<metric>` — for top-level `criteria` (blur3) or per
 `modes` / `strategies` entry. A missing or null value fails. The rtv3d entry is
-skipped when `data/rtv3d` is absent.
+skipped when `data/rtv3d_0` is absent.
 
 What the gated metrics mean:
 

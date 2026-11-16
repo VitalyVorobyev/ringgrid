@@ -1,12 +1,12 @@
 # ID Correction
 
-The `id_correction` stage runs in the `pipeline/finalize/` module after projective-center correction and before optional global homography filtering.
+The `id_correction` stage runs only in the decode-anchored fallback (`pipeline/finalize/fallback.rs`): for coded views where grid labeling finds no grid, or none its decoded IDs can anchor, right before the global homography filter. On the main grid-first path IDs come from the anchored grid cell and this stage does not run.
 
 It enforces structural consistency between decoded marker IDs and the board's hex-lattice topology, while recovering safe missing IDs.
 
 ## Applicability
 
-ID correction is a hex-neighbor BFS consensus, so it runs **only for hex coded targets** — its algorithmic domain. Rect coded targets carry decodable IDs but have no hex neighborhood, so they rely on the global RANSAC homography filter plus [geometric verification](overview.md#geometric-verification) instead. Plain targets carry no IDs at all and are labeled by [grid assignment](overview.md#grid-assignment). The gate is `config.advanced.id_correction.enable && target.is_coded() && lattice == Hex`.
+ID correction is a hex-neighbor BFS consensus, so it runs **only for hex coded targets** — its algorithmic domain. Rect coded targets carry decodable IDs but have no hex neighborhood, so their fallback relies on the global RANSAC homography filter plus [geometric verification](overview.md#geometric-verification) alone. Plain targets carry no IDs at all and are labeled by [grid assignment](overview.md#grid-assignment). The gate is `config.advanced.id_correction.enable && target.is_coded() && lattice == Hex`.
 
 ## Inputs and Outputs
 

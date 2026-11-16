@@ -1,17 +1,26 @@
-//! Origin resolution for plain targets.
+//! Origin resolution: anchoring a grid labeling to the board frame.
 //!
-//! Plain-grid labeling (`pipeline::assign`) produces cell coordinates in a
+//! Grid labeling (`pipeline::assign`) produces cell coordinates in a
 //! canonical *relative* frame: the true board labeling differs by an element
 //! of the lattice symmetry group plus a lattice translation — a rotation
 //! whenever canonicalization could measure the handedness, see
-//! [`enumerate_candidates`]. When the target
-//! carries origin fiducials (small filled dots at known board positions), each
-//! candidate (symmetry × translation) labeling is scored by projecting the dot
-//! positions through the candidate's board→image homography and measuring dot
-//! darkness against the local background — verify-at-predicted-positions, no
-//! separate dot detector needed. The winner must clear an absolute contrast
-//! threshold and a margin over the runner-up; otherwise the origin stays
-//! unresolved and outputs remain in the relative frame.
+//! [`enumerate_candidates`]. The target decides which evidence fixes that
+//! unknown ([`OriginEvidence`]):
+//!
+//! - **Decoded IDs** (coded targets): every labeled marker whose code band
+//!   decoded knows its board cell, so it votes for the one (symmetry,
+//!   translation) per symmetry that maps its relative coordinate onto that
+//!   cell. A robust majority of agreeing votes wins; see
+//!   [`resolve_by_decoded_ids`].
+//! - **Dots** (plain targets with origin fiducials): each candidate
+//!   (symmetry × translation) labeling is scored by projecting the dot
+//!   positions through the candidate's board→image homography and measuring
+//!   dot darkness against the local background — verify-at-predicted-positions,
+//!   no separate dot detector needed. The winner must clear an absolute
+//!   contrast threshold and a margin over the runner-up.
+//!
+//! Without evidence, or when it is ambiguous, the origin stays unresolved and
+//! outputs remain in the relative frame.
 //!
 //! Candidates span the full dihedral symmetry group (rotations and
 //! reflections), but every candidate whose fitted board→image homography is
@@ -21,7 +30,7 @@
 //! why fiducial validation (`crate::target`) only rejects rotationally
 //! symmetric dot arrangements.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use image::GrayImage;
 use nalgebra::Matrix3;
@@ -32,7 +41,7 @@ use crate::detector::completion::coord_bbox;
 use crate::homography::{estimate_homography_dlt, homography_project};
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
-use crate::target::TargetLayout;
+use crate::target::{OriginFiducials, TargetLayout};
 
 /// Upper bound on (rotation × translation) candidates before giving up.
 /// Small detected patches on a large board explode the translation count and
@@ -49,6 +58,10 @@ const DISK_FRACTION: f64 = 0.55;
 const BG_FRACTIONS: [f64; 2] = [1.6, 2.2];
 /// Samples per sampling ring.
 const RING_SAMPLES: usize = 8;
+/// Minimum number of decoded markers that must agree on the winning placement.
+/// One decode is a single noisy observation; two independent decodes agreeing
+/// on the same (symmetry, translation) is already a coincidence for a misread.
+const MIN_AGREEING_DECODES: usize = 2;
 
 /// Integer coordinate map `coord → M·coord + t` from the relative labeling
 /// frame to absolute board coordinates.
@@ -89,21 +102,41 @@ struct Candidate {
     score: f32,
 }
 
-/// Resolve the board origin for labeled plain markers.
+/// Evidence that fixes a relative grid labeling to the board frame.
+#[derive(Clone, Copy)]
+enum OriginEvidence<'a> {
+    /// Coded targets: decoded IDs vote for the placement.
+    DecodedIds,
+    /// Plain targets with origin fiducials: dots verified at predicted
+    /// positions.
+    Dots(&'a OriginFiducials),
+}
+
+impl<'a> OriginEvidence<'a> {
+    /// The evidence a target carries; `None` for plain targets without dots.
+    fn of(target: &'a TargetLayout) -> Option<Self> {
+        if target.is_coded() {
+            Some(Self::DecodedIds)
+        } else {
+            target.fiducials().map(Self::Dots)
+        }
+    }
+}
+
+/// Resolve the board origin for grid-labeled markers.
 ///
 /// `markers` must carry relative-frame `grid_coord`s (from
 /// [`assign_plain_grid`](super::assign::assign_plain_grid)); centers are
 /// working-frame. Returns `None` — leaving the caller in the relative frame —
-/// when the target has no fiducials, the candidate set is empty, too large, or
-/// unscorable (dots out of view), or the best score fails the absolute
-/// threshold or runner-up margin.
+/// when the target carries no origin evidence or its evidence is ambiguous
+/// (see [`resolve_by_decoded_ids`] and [`resolve_by_dots`]).
 pub(crate) fn resolve_origin(
     gray: &GrayImage,
     markers: &[MarkerRecord],
     target: &TargetLayout,
     mapper: Option<&dyn PixelMapper>,
 ) -> Option<OriginResolution> {
-    let fiducials = target.fiducials()?;
+    let evidence = OriginEvidence::of(target)?;
 
     let entries: Vec<(Coord, [f64; 2])> = markers
         .iter()
@@ -116,17 +149,94 @@ pub(crate) fn resolve_origin(
         return None;
     }
 
+    match evidence {
+        OriginEvidence::DecodedIds => resolve_by_decoded_ids(markers, &entries, target),
+        OriginEvidence::Dots(fiducials) => {
+            let sampler = DistortionAwareSampler::new(gray, mapper);
+            resolve_by_dots(&entries, target, sampler, fiducials)
+        }
+    }
+}
+
+/// Decoded-ID anchoring. Each labeled marker with a decoded board ID votes,
+/// for every lattice symmetry `g`, for the translation `t = cell(id) − g·c`
+/// that maps its relative coordinate `c` onto its decoded cell. Correct
+/// decodes all vote for the true placement; for any other symmetry their
+/// votes scatter (a nonzero difference of two lattice rotations is
+/// invertible, so distinct coordinates give distinct translations), and
+/// misreads vote for unrelated placements.
+///
+/// The winner must have at least [`MIN_AGREEING_DECODES`] votes, a strict
+/// majority of the decoded labeled markers, strictly more votes than the
+/// runner-up, and an orientation-preserving board→image homography.
+fn resolve_by_decoded_ids(
+    markers: &[MarkerRecord],
+    entries: &[(Coord, [f64; 2])],
+    target: &TargetLayout,
+) -> Option<OriginResolution> {
+    let transforms = target.lattice_kind().symmetry_transforms();
+    let mut tally: HashMap<(usize, [i32; 2]), usize> = HashMap::new();
+    let mut n_decoded = 0usize;
+    for m in markers {
+        let (Some(c), Some(cell)) = (m.grid_coord, m.id.and_then(|id| target.coord_of_id(id)))
+        else {
+            continue;
+        };
+        n_decoded += 1;
+        for (k, g) in transforms.iter().enumerate() {
+            let r = g.apply(Coord::new(c[0], c[1]));
+            *tally.entry((k, [cell.u - r.u, cell.v - r.v])).or_default() += 1;
+        }
+    }
+    // Deterministic ranking: votes descending, then the placement key. Only
+    // placements with a physically valid (orientation-preserving) homography
+    // compete: two decodes along a lattice line vote equally for the true
+    // rotation and its mirror image, and that tie is no ambiguity. A placement
+    // needs MIN_AGREEING_DECODES votes to win, so only those are checked.
+    let mut ranked: Vec<((usize, [i32; 2]), usize)> = tally.into_iter().collect();
+    ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut valid = ranked.iter().filter_map(|&((k, offset), votes)| {
+        if votes < MIN_AGREEING_DECODES {
+            return Some((None, votes));
+        }
+        let coord_map = CoordMap::new(transforms[k], offset);
+        let h = placement_homography(entries, coord_map, target)?;
+        Some((Some((coord_map, h)), votes))
+    });
+    let (best, votes) = valid.next()?;
+    let runner_up = valid.next().map_or(0, |(_, v)| v);
+    let accepted = votes >= MIN_AGREEING_DECODES && 2 * votes > n_decoded && votes > runner_up;
+    tracing::info!(
+        n_decoded,
+        votes,
+        runner_up,
+        resolved = accepted,
+        "origin anchor (decoded ids)"
+    );
+    let (coord_map, h) = best.filter(|_| accepted)?;
+    Some(OriginResolution { coord_map, h })
+}
+
+/// Dot anchoring: score every placement candidate by its fiducial-dot
+/// contrast. The winner must clear [`MIN_DOT_CONTRAST`] and lead the
+/// runner-up by [`MIN_MARGIN`]; `None` also when the candidate set is empty,
+/// too large, or unscorable (dots out of view).
+fn resolve_by_dots(
+    entries: &[(Coord, [f64; 2])],
+    target: &TargetLayout,
+    sampler: DistortionAwareSampler<'_>,
+    fiducials: &OriginFiducials,
+) -> Option<OriginResolution> {
     let board_coords: HashSet<Coord> = target.cells().iter().map(|cell| cell.coord).collect();
-    let candidates = enumerate_candidates(&entries, &board_coords, target)?;
+    let candidates = enumerate_candidates(entries, &board_coords, target)?;
     if candidates.is_empty() {
         tracing::info!("origin anchor: no placement admits the labeled patch");
         return None;
     }
 
-    let sampler = DistortionAwareSampler::new(gray, mapper);
     let mut scored: Vec<Candidate> = Vec::new();
     for coord_map in candidates {
-        let Some((h, score)) = score_candidate(&entries, coord_map, target, sampler, fiducials)
+        let Some((h, score)) = score_candidate(entries, coord_map, target, sampler, fiducials)
         else {
             continue;
         };
@@ -224,6 +334,33 @@ fn enumerate_candidates(
     Some(candidates)
 }
 
+/// Board-mm → working-px homography of a placement, fitted by DLT over the
+/// labeled entries it maps onto the board. `None` for degenerate or
+/// orientation-reversing placements — the physical filter that rejects every
+/// reflected candidate.
+fn placement_homography(
+    entries: &[(Coord, [f64; 2])],
+    coord_map: CoordMap,
+    target: &TargetLayout,
+) -> Option<Matrix3<f64>> {
+    let (src, dst): (Vec<[f64; 2]>, Vec<[f64; 2]>) = entries
+        .iter()
+        .filter_map(|(coord, center)| {
+            let xy = target.cell_xy_mm(coord_map.apply(*coord))?;
+            Some(([f64::from(xy[0]), f64::from(xy[1])], *center))
+        })
+        .unzip();
+    if src.is_empty() {
+        return None;
+    }
+    let h = estimate_homography_dlt(&src, &dst).ok()?;
+    let center_mm = [
+        src.iter().map(|p| p[0]).sum::<f64>() / src.len() as f64,
+        src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,
+    ];
+    (jacobian_det(&h, center_mm) > 0.0).then_some(h)
+}
+
 /// Fit the candidate's board→image homography and score its fiducial dots.
 /// Returns `None` for degenerate, orientation-reversing, or unscorable
 /// candidates.
@@ -232,26 +369,9 @@ fn score_candidate(
     coord_map: CoordMap,
     target: &TargetLayout,
     sampler: DistortionAwareSampler<'_>,
-    fiducials: &crate::target::OriginFiducials,
+    fiducials: &OriginFiducials,
 ) -> Option<(Matrix3<f64>, f32)> {
-    let mut src: Vec<[f64; 2]> = Vec::with_capacity(entries.len());
-    let mut dst: Vec<[f64; 2]> = Vec::with_capacity(entries.len());
-    for (coord, center) in entries {
-        let xy = target.cell_xy_mm(coord_map.apply(*coord))?;
-        src.push([f64::from(xy[0]), f64::from(xy[1])]);
-        dst.push(*center);
-    }
-    let h = estimate_homography_dlt(&src, &dst).ok()?;
-
-    // Physical filter: the board→image map must preserve orientation, which
-    // rejects every reflected candidate.
-    let center_mm = [
-        src.iter().map(|p| p[0]).sum::<f64>() / src.len() as f64,
-        src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,
-    ];
-    if jacobian_det(&h, center_mm) <= 0.0 {
-        return None;
-    }
+    let h = placement_homography(entries, coord_map, target)?;
 
     let mut min_contrast = f32::INFINITY;
     for dot in target.fiducial_dots_mm() {

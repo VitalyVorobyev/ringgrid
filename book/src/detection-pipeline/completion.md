@@ -1,8 +1,8 @@
 # Completion & Final Refit
 
-The completion stage attempts to detect markers that the initial pipeline missed — typically markers at the image periphery, under heavy blur, or with low contrast. It runs after projective-center correction, structural ID correction, and global homography filtering. It uses the homography to predict where missing markers should be and attempts conservative local fits at those locations.
+The completion stage attempts to detect markers that the initial pipeline missed — typically markers at the image periphery, under heavy blur, or with low contrast. It runs after grid labeling and origin anchoring (or, in the decode-anchored fallback, after ID correction and the global homography filter). It predicts where missing markers should be and attempts conservative local fits at those locations. On the grid-first path a cell first adopts an already-fitted ring the grid labeler dropped when one lies within the reprojection gate (or half its own outer radius) of the cell's seed, and only then refits; coded completion grows from the labeled patch one lattice ring per round before one sweep over the whole board.
 
-Completion is **coordinate-keyed** and lattice-generic: it targets undetected target *cells*, identified by decoded ID for coded targets (`CompletionTarget::Id`) and by lattice coordinate for plain ones (`CompletionTarget::Cell`). Coded and plain paths share the same fit/gate machinery.
+Completion is **coordinate-keyed** and lattice-generic: it targets undetected target *cells*, identified by lattice coordinate, with the cell's ID on coded targets (`CompletionScope`, `complete_with_h`). Coded and plain paths share the same fit/gate machinery.
 
 ## Completion Algorithm
 
@@ -41,7 +41,7 @@ The neighbor-midpoint seed was added via the `projective-grid` crate integration
 
 ## Plain-Target Completion and Patch Growth
 
-Plain targets run the same fit and gate machinery, keyed by lattice coordinate (`complete_plain_with_h`). The candidate set depends on whether the [origin was resolved](../targets/origin-fiducials.md):
+Plain targets run the same fit and gate machinery, keyed by lattice coordinate (`complete_with_h`). The candidate set depends on whether the [origin was resolved](../targets/origin-fiducials.md):
 
 - **Anchored** (origin resolved): every missing board cell is a candidate, exactly like the coded path over the full board.
 - **Unanchored** (relative frame): the labeled patch is **grown** iteratively. Each round attempts the cells inside the current patch bounding box expanded by one lattice ring; predictions improve as the patch fills, so cells the topological labeler dropped are recovered ring by ring, up to a bounded number of rounds.
@@ -66,6 +66,6 @@ Set `advanced.completion.enable = false` in `DetectConfig` or use `--no-complete
 - Processing speed is more important than recall
 - The homography is unreliable (few decoded markers)
 
-Completion also requires a valid homography — if the coded global filter (fewer than 4 decoded markers) or the plain grid assignment did not produce one, completion is automatically skipped.
+Completion also requires a valid homography — if neither grid labeling nor the decode-anchored fallback produced one, completion is skipped.
 
-**Source**: `detector/completion.rs`, `pipeline/finalize/` (`coded.rs`, `plain.rs`)
+**Source**: `detector/completion.rs`, `pipeline/finalize/` (`grid.rs`, `fallback.rs`)

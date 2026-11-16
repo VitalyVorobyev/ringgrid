@@ -1,8 +1,8 @@
 # Pipeline Overview
 
-The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs (coded targets) or lattice coordinates (plain targets), and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence, with projective center correction and structural ID correction in finalize.
+The ringgrid detection pipeline transforms a grayscale image into a set of identified marker detections with sub-pixel centers, fitted ellipses, decoded IDs (coded targets) or lattice coordinates (plain targets), and an optional board-to-image homography. The pipeline is structured in two major phases executed in sequence: fit-decode, then a grid-first finalize.
 
-The pages below describe the **coded** path (16-sector coded rings, the classic hex board). [Plain (uncoded) targets](#plain-target-path) share the fit and projective-center stages but replace the decode-driven back half with grid labeling and origin anchoring. Which combinations run which path is summarized in the [target composition matrix](../targets/target-model.md#composition-matrix--how-each-combination-detects).
+Coded and [plain (uncoded) targets](#plain-target-path) share one finalize back half: every fitted ring is labeled by the lattice, and the labeling is anchored to the board by decoded IDs (coded) or origin dots (plain). Which combinations run which path is summarized in the [target composition matrix](../targets/target-model.md#composition-matrix--how-each-combination-detects).
 
 ## Two-Phase Architecture
 
@@ -23,20 +23,20 @@ Stages 2--5 are executed per-proposal inside `process_candidate()`. A proposal t
 
 ### Phase 2: Finalize
 
-Orchestrated by the `pipeline/finalize/` module, this phase applies global geometric reasoning to improve and extend the detection set. The coded path (`finalize/coded.rs`) runs:
+Orchestrated by the `pipeline/finalize/` module (`grid.rs`), this phase applies global geometric reasoning to identify, extend and verify the detection set:
 
 | Order | Name | Description |
 |-------|------|-------------|
 | 1 | [Projective Center](projective-center.md) | Correct fit-decode marker centers (once per marker) |
-| 2 | [ID Correction](id-correction.md) | Structural consistency scrub/recovery of decoded IDs (hex coded targets only) |
-| 3 | [Global Filter](projective-center.md#global-filter) | Optional RANSAC homography from decoded markers with known board positions |
-| 4 | [Completion](completion.md) | Optional conservative fits at missing H-projected IDs (+ projective center for new markers) |
-| 5 | [Final H Refit](completion.md#final-homography-refit) | Optional refit homography from all corrected centers |
+| 2 | Grid labeling | Label every fitted ring — decoded or not — with lattice coordinates (`pipeline/assign.rs`) |
+| 3 | Anchor + identify | Decoded IDs vote for the board placement (coded) or origin dots verify it (plain); every labeled ring takes its cell's ID, overriding a contradicting decode (`pipeline/anchor.rs`) |
+| 4 | [Completion](completion.md) | Decoded dropped rings join through a RANSAC homography; completion grows from the labeled patch, adopting already-fitted rings before refitting missing cells |
+| 5 | [Final H Refit](completion.md#final-homography-refit) | Refit homography from all labeled markers |
 | 6 | [Geometric Verify](#geometric-verification) | Precision-first lattice-consistency gate; removes geometrically impossible markers |
 
-When `use_global_filter` is `false`, finalize still runs projective center + ID correction, then returns immediately, skipping the homography-dependent stages (global filter/completion/final refit/geometric verify).
+When no grid can be labeled (coded targets: or anchored), coded views fall back to the decode-anchored path (`finalize/fallback.rs`): [ID Correction](id-correction.md) (hex targets), a RANSAC [global filter](projective-center.md#global-filter) over decoded markers, completion, final H and verify; with fewer than six consistent decodes the decoded markers are returned without a homography. Plain views without a grid return their markers unlabeled.
 
-Plain (uncoded) targets take a different back half — see [Plain-Target Path](#plain-target-path).
+When `use_global_filter` is `false`, finalize runs projective center correction and returns the markers without labeling or homography.
 
 ## Geometric Verification
 
@@ -49,10 +49,9 @@ Both thresholds adapt to the observed inlier-residual distribution (`max(floor, 
 
 ## Plain-Target Path
 
-Plain (uncoded) rings carry no IDs, so the coded path's decode → ID correction →
-global filter cannot label them. The plain finalize path
-(`pipeline/finalize/plain.rs`) replaces the decode-anchored stages with
-coordinate-keyed grid labeling and origin anchoring. The full walkthrough —
+Plain (uncoded) rings carry no IDs; they run the same grid-first back half
+(`pipeline/finalize/grid.rs`), anchored by the origin dots instead of decoded
+IDs. The full walkthrough —
 grid assignment, origin resolution, completion, and the absolute/relative frame
 contract — is on its own page: **[Plain / Rect Target
 Detection](plain-target.md)**.
@@ -61,7 +60,7 @@ Detection](plain-target.md)**.
 
 Projective center correction recovers the true projected center of a ring marker from its inner and outer ellipse pair, compensating for the perspective bias inherent in ellipse center estimation. It is applied **once per marker** at two points in the pipeline:
 
-1. **Before global filter:** Corrects all fit-decode markers so that downstream geometric stages operate on unbiased centers.
+1. **Before grid labeling:** Corrects all fit-decode markers so that downstream geometric stages operate on unbiased centers.
 2. **After completion:** Newly added completion markers receive their own correction. Only the slice of markers added since the last correction is processed.
 
 Each marker is corrected exactly once. `apply_projective_centers()` from `detector/center_correction.rs` requires both inner and outer ellipses. Markers without a valid inner ellipse are skipped.
@@ -105,9 +104,9 @@ Adaptive scale entry points run the same fit/decode and finalize logic, but over
 one or more scale tiers:
 
 1. Build tiers (automatic probe, hint-derived, or explicit).
-2. Run per-tier fit/decode + projective center + ID correction.
+2. Run per-tier fit/decode + projective center.
 3. Merge markers across tiers with size-aware dedup.
-4. Run global filter + completion + final homography refit once.
+4. Run grid labeling + anchoring + completion + final homography refit once.
 
 See [Adaptive Scale Detection](../detection-modes/adaptive-scale.md).
 
@@ -143,4 +142,4 @@ For the serialized JSON shape used by the CLI and examples, see
 
 ![ringgrid detection pipeline flow: eleven stages grouped into per-marker and board-level phases](../assets/pipeline-flow.svg)
 
-**Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize/` (`coded.rs`, `plain.rs`, `common.rs`), `pipeline/assign.rs`, `pipeline/anchor.rs`, `pipeline/geometric_verify.rs`
+**Source:** `pipeline/run.rs`, `pipeline/fit_decode.rs`, `pipeline/finalize/` (`grid.rs`, `fallback.rs`, `common.rs`), `pipeline/assign.rs`, `pipeline/anchor.rs`, `pipeline/geometric_verify.rs`

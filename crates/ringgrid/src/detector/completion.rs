@@ -6,7 +6,9 @@ const EXPECTED_RADIUS_K_NEIGHBORS: usize = 12;
 use image::GrayImage;
 use projective_grid::{Coord, expert::lattice::predict_grid_position};
 
-use crate::pipeline::GridMap;
+use crate::pipeline::{GridMap, marker_cell_coord};
+use crate::target::TargetLayout;
+use std::collections::HashSet;
 
 use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;
@@ -19,7 +21,7 @@ use crate::ring::edge_sample::EdgeSampleResult;
 use super::{
     CompletionConfig, DetectConfig, OuterFitCandidate,
     fit_outer_candidate_from_prior_for_completion,
-    marker_build::{decode_metrics_from_result, fit_metrics_with_inner, fit_support_score},
+    marker_build::{fit_support_score, marker_from_outer_fit},
     median_neighbor_outer_radius_px,
 };
 
@@ -37,7 +39,6 @@ pub struct CompletionStats {
 }
 
 struct CandidateQuality {
-    center: [f64; 2],
     arc_cov: f32,
     fit_confidence: f32,
     mean_axis: f32,
@@ -145,21 +146,102 @@ struct CompletionDecodeNotice {
     observed_id: usize,
 }
 
-/// The board cell a completion attempt targets: a decoded ID for coded
-/// targets, a lattice coordinate for plain ones.
+/// The board cell a completion attempt targets: its lattice coordinate, plus
+/// its codebook ID on coded targets.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum CompletionTarget {
-    /// Coded cell, identified by its codebook ID.
-    Id(usize),
-    /// Plain cell, identified by its (frame) lattice coordinate.
-    Cell([i32; 2]),
+struct CompletionCell {
+    coord: Coord,
+    id: Option<usize>,
 }
 
-impl std::fmt::Display for CompletionTarget {
+impl std::fmt::Display for CompletionCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.id {
+            Some(id) => write!(f, "id={id}"),
+            None => write!(f, "cell=({},{})", self.coord.u, self.coord.v),
+        }
+    }
+}
+
+/// Upper bound on unanchored patch-growth rounds; each round can extend the
+/// labeled patch by one lattice ring.
+const MAX_GROWTH_ROUNDS: usize = 32;
+
+/// Which cells completion visits and in which frame it places them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompletionScope {
+    /// Coded target: every coded cell, board frame, one pass.
+    Coded,
+    /// Plain target with a resolved origin: every cell, board frame, one pass.
+    PlainAnchored,
+    /// Plain target without a resolved origin: grow the labeled patch in the
+    /// relative assignment frame, one lattice ring per round. The grid labeler
+    /// may recover only an interior core (hex boundary cells in particular),
+    /// and the physical board is the only ring source in view, so the quality
+    /// gates plus the downstream geometric verify keep growth precise.
+    PlainRelative,
+}
+
+impl CompletionScope {
+    /// Plain-target scope for an anchored / unanchored labeling.
+    pub(crate) fn plain(anchored: bool) -> Self {
+        if anchored {
+            Self::PlainAnchored
+        } else {
+            Self::PlainRelative
+        }
+    }
+
+    /// Position (mm) of a cell in this scope's frame: board millimeters, or the
+    /// relative assignment frame. `None` for a coordinate off the board.
+    fn cell_xy(self, target: &TargetLayout, coord: Coord) -> Option<[f64; 2]> {
         match self {
-            Self::Id(id) => write!(f, "id={id}"),
-            Self::Cell([u, v]) => write!(f, "cell=({u},{v})"),
+            Self::Coded | Self::PlainAnchored => target
+                .cell_xy_mm(coord)
+                .map(|xy| [f64::from(xy[0]), f64::from(xy[1])]),
+            Self::PlainRelative => Some(crate::pipeline::frame_xy_mm(target, coord)),
+        }
+    }
+
+    /// Cells to try in one round: the board's (coded) cells, or the labeled
+    /// patch's bounding box expanded by one lattice ring. `None` when there is
+    /// nothing to grow from.
+    fn candidates(
+        self,
+        target: &TargetLayout,
+        present: &HashSet<Coord>,
+    ) -> Option<Vec<CompletionCell>> {
+        let board_cells = |coded_only: bool| {
+            target
+                .cells()
+                .iter()
+                .filter(|cell| !coded_only || cell.id.is_some())
+                .map(|cell| CompletionCell {
+                    coord: cell.coord,
+                    id: cell.id,
+                })
+                .collect()
+        };
+        match self {
+            Self::Coded => Some(board_cells(true)),
+            Self::PlainAnchored => Some(board_cells(false)),
+            Self::PlainRelative => {
+                let (min, max) = coord_bbox(present.iter().copied())?;
+                Some(
+                    ((min.v - 1)..=(max.v + 1))
+                        .flat_map(|v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v)))
+                        .map(|coord| CompletionCell { coord, id: None })
+                        .collect(),
+                )
+            }
+        }
+    }
+
+    /// Board-cell scopes have a fixed candidate set, so one pass covers them.
+    fn max_rounds(self) -> usize {
+        match self {
+            Self::Coded | Self::PlainAnchored => 1,
+            Self::PlainRelative => MAX_GROWTH_ROUNDS,
         }
     }
 }
@@ -176,35 +258,19 @@ fn radii_coefficient_of_variation(radii: &[f32]) -> f32 {
     variance.sqrt() / mean
 }
 
-fn local_affine_completion_seed(
-    target_board_xy: [f64; 2],
+/// Local-affine seed from the nearest labeled markers, positioned in the
+/// scope's frame via their lattice cell.
+fn local_affine_seed(
+    target_xy: [f64; 2],
     markers: &[MarkerRecord],
-    target: &crate::target::TargetLayout,
+    target: &TargetLayout,
+    scope: CompletionScope,
 ) -> Option<[f64; 2]> {
     local_affine_seed_from_neighbors(
-        target_board_xy,
+        target_xy,
         markers.iter().filter_map(|marker| {
-            let id = marker.id?;
-            let board_xy = target.xy_mm_of_id(id)?;
-            Some((
-                [f64::from(board_xy[0]), f64::from(board_xy[1])],
-                marker.center,
-            ))
-        }),
-    )
-}
-
-/// Plain-path variant: neighbors come from the assignment-frame positions
-/// stored on labeled markers instead of an ID lookup.
-fn local_affine_frame_seed(
-    target_frame_xy: [f64; 2],
-    markers: &[MarkerRecord],
-) -> Option<[f64; 2]> {
-    local_affine_seed_from_neighbors(
-        target_frame_xy,
-        markers.iter().filter_map(|marker| {
-            marker.grid_coord?;
-            Some((marker.board_xy_mm?, marker.center))
+            let coord = marker_cell_coord(marker, target)?;
+            Some((scope.cell_xy(target, coord)?, marker.center))
         }),
     )
 }
@@ -241,28 +307,21 @@ fn local_affine_seed_from_neighbors(
     (seed[0].is_finite() && seed[1].is_finite()).then_some(seed)
 }
 
-fn lattice_neighbor_seed(
-    id: usize,
-    grid: &GridMap,
-    target: &crate::target::TargetLayout,
-) -> Option<[f64; 2]> {
-    let coord = target.coord_of_id(id)?;
-    let predicted = predict_grid_position(grid, coord, target.lattice_kind())?.position;
-    Some([f64::from(predicted.x), f64::from(predicted.y)])
-}
-
-fn projected_completion_seed(
-    id: usize,
+/// Image-space seed for a missing cell: lattice prediction from labeled
+/// neighbors, else a local-affine fit, else the homography projection.
+fn completion_seed(
+    coord: Coord,
+    cell_xy: [f64; 2],
     h: &nalgebra::Matrix3<f64>,
     markers: &[MarkerRecord],
-    target: &crate::target::TargetLayout,
     grid: &GridMap,
-) -> Option<[f64; 2]> {
-    let board_xy = target.xy_mm_of_id(id)?;
-    let target_board_xy = [f64::from(board_xy[0]), f64::from(board_xy[1])];
-    lattice_neighbor_seed(id, grid, target)
-        .or_else(|| local_affine_completion_seed(target_board_xy, markers, target))
-        .or_else(|| Some(project(h, target_board_xy[0], target_board_xy[1])))
+    target: &TargetLayout,
+    scope: CompletionScope,
+) -> [f64; 2] {
+    predict_grid_position(grid, coord, target.lattice_kind())
+        .map(|p| [f64::from(p.position.x), f64::from(p.position.y)])
+        .or_else(|| local_affine_seed(cell_xy, markers, target, scope))
+        .unwrap_or_else(|| project(h, cell_xy[0], cell_xy[1]))
 }
 
 fn compute_candidate_quality(
@@ -287,7 +346,6 @@ fn compute_candidate_quality(
     let max_angular_gap_outer = super::outer_fit::max_angular_gap(center, &edge.outer_points);
     let radii_cv = radii_coefficient_of_variation(&edge.outer_radii);
     CandidateQuality {
-        center,
         arc_cov,
         fit_confidence,
         mean_axis,
@@ -386,7 +444,7 @@ fn check_quality_gates(
 /// Returns `Ok(quality)` if all gates pass, or `Err(())` if the candidate
 /// should be rejected (with appropriate stats and tracing already applied).
 fn evaluate_completion_candidate(
-    target_cell: CompletionTarget,
+    target_cell: CompletionCell,
     cand: &OuterFitCandidate,
     projected_center: [f64; 2],
     r_expected: f32,
@@ -443,57 +501,23 @@ fn evaluate_completion_candidate(
 
 /// Build the final `MarkerRecord` for an accepted completion candidate.
 ///
-/// Performs inner ellipse fit, computes fit/decode metrics, and assembles the
-/// marker struct.
+/// Only a decode that agrees with the target cell's ID is attributed to the
+/// marker.
 fn assemble_completion_marker(
     gray: &GrayImage,
-    target_cell: CompletionTarget,
-    cand: &OuterFitCandidate,
-    quality: &CandidateQuality,
+    target_cell: CompletionCell,
+    mut cand: OuterFitCandidate,
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
 ) -> MarkerRecord {
-    let inner_fit = super::inner_fit::fit_inner_ellipse_from_outer_hint(
-        gray,
-        &cand.outer,
-        &config.advanced.marker_spec,
-        mapper,
-        &config.advanced.inner_fit,
-        false,
-    );
-    let fit = fit_metrics_with_inner(
-        &cand.edge,
-        &cand.outer,
-        cand.outer_ransac.as_ref(),
-        &inner_fit,
-    );
-    let (marker_id, grid_coord) = match target_cell {
-        CompletionTarget::Id(id) => (Some(id), None),
-        CompletionTarget::Cell(coord) => (None, Some(coord)),
-    };
-    let decode_metrics = decode_metrics_from_result(
-        cand.decode_result
-            .as_ref()
-            .filter(|d| marker_id == Some(d.id)),
-    );
-    let confidence = decode_metrics
-        .as_ref()
-        .map(|d| d.decode_confidence)
-        .unwrap_or(quality.fit_confidence);
-
+    let marker_id = target_cell.id;
+    cand.decode_result = cand.decode_result.filter(|d| marker_id == Some(d.id));
+    let marker = marker_from_outer_fit(gray, cand, config, mapper);
     MarkerRecord {
         id: marker_id,
-        grid_coord,
-        confidence,
-        center: quality.center,
-        ellipse_outer: Some(cand.outer),
-        ellipse_inner: inner_fit.ellipse_inner,
-        edge_points_outer: Some(cand.edge.outer_points.clone()),
-        edge_points_inner: Some(inner_fit.points_inner.clone()),
-        fit,
-        decode: decode_metrics,
+        grid_coord: Some([target_cell.coord.u, target_cell.coord.v]),
         source: DetectionSource::Completion,
-        ..MarkerRecord::default()
+        ..marker
     }
 }
 
@@ -513,7 +537,7 @@ fn is_center_in_bounds(center: [f64; 2], img_w: f64, img_h: f64, safe_margin: f6
 /// Attempt to fit and validate a single completion marker at a projected center.
 fn try_complete_marker(
     gray: &GrayImage,
-    target_cell: CompletionTarget,
+    target_cell: CompletionCell,
     projected_center: [f64; 2],
     markers: &[MarkerRecord],
     config: &DetectConfig,
@@ -559,7 +583,7 @@ fn try_complete_marker(
         Err(()) => return None,
     };
 
-    if let CompletionTarget::Id(id) = target_cell
+    if let Some(id) = target_cell.id
         && let Some(notice) = check_decode_gate(cand.decode_result.as_ref(), id)
     {
         tracing::info!(
@@ -581,247 +605,108 @@ fn try_complete_marker(
     Some(assemble_completion_marker(
         gray,
         target_cell,
-        &cand,
-        &quality,
+        cand,
         config,
         mapper,
     ))
 }
 
+/// H-guided completion at missing cells.
+///
+/// Visits the cells of `scope` that no marker is labeled with yet, seeds each
+/// from its labeled neighbors (or `h`), and keeps conservative fits that pass
+/// the quality gates. For [`CompletionScope::PlainRelative`] the visited set
+/// grows round by round with the labeled patch. Each cell is attempted at most
+/// once; completed markers carry their cell's `grid_coord`, frame
+/// `board_xy_mm`, and — on coded targets — its ID.
 pub(crate) fn complete_with_h(
     gray: &GrayImage,
     h: &nalgebra::Matrix3<f64>,
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
-    target: &crate::target::TargetLayout,
+    scope: CompletionScope,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
 ) -> CompletionStats {
-    use std::collections::HashSet;
-
     let params = &config.advanced.completion;
     if !params.enable {
         return CompletionStats::default();
     }
-
-    let (w, h_img) = gray.dimensions();
-    let w_f = w as f64;
-    let h_f = h_img as f64;
-
-    let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
-    let safe_margin = roi_radius + params.image_margin_px.max(0.0) as f64;
-
-    let present_ids: HashSet<usize> = markers.iter().filter_map(|m| m.id).collect();
-
-    let grid = crate::pipeline::build_grid_map(markers, target);
-
-    let mut stats = CompletionStats {
-        n_candidates_total: target.n_cells(),
-        ..Default::default()
-    };
-    let mut attempted_fits = 0usize;
-
-    for id in target.marker_ids() {
-        let projected_center = match projected_completion_seed(id, h, markers, target, &grid) {
-            Some(center) => center,
-            None => continue,
-        };
-
-        if present_ids.contains(&id) {
-            continue;
-        }
-
-        if !is_center_in_bounds(projected_center, w_f, h_f, safe_margin) {
-            continue;
-        }
-        stats.n_in_image += 1;
-
-        if let Some(max) = params.max_attempts
-            && attempted_fits >= max
-        {
-            break;
-        }
-        attempted_fits += 1;
-        stats.n_attempted += 1;
-
-        let marker = match try_complete_marker(
-            gray,
-            CompletionTarget::Id(id),
-            projected_center,
-            markers,
-            config,
-            mapper,
-            &mut stats,
-        ) {
-            Some(m) => m,
-            None => continue,
-        };
-        markers.push(marker);
-        stats.n_added += 1;
-    }
-
-    tracing::info!(
-        "Completion: added {} markers (attempted {}, in_image {})",
-        stats.n_added,
-        stats.n_attempted,
-        stats.n_in_image
-    );
-
-    stats
-}
-
-/// Upper bound on unanchored patch-growth rounds; each round can extend the
-/// labeled patch by one lattice ring.
-const MAX_GROWTH_ROUNDS: usize = 32;
-
-/// Coordinate-keyed completion for plain targets.
-///
-/// Mirrors [`complete_with_h`], but iterates lattice coordinates instead of
-/// board IDs. When `anchored`, the candidate set is the full board cell set.
-/// When unanchored, the labeled patch is *grown* iteratively: each round
-/// attempts the cells inside the current patch bounding box expanded by one —
-/// the grid labeler may recover only an interior core (hex boundary cells in
-/// particular), and the physical board is the only ring source in view, so the
-/// quality gates plus the downstream geometric verify keep growth precise.
-/// Each cell is attempted at most once. Newly completed markers carry
-/// `grid_coord` and the frame `board_xy_mm`.
-pub(crate) fn complete_plain_with_h(
-    gray: &GrayImage,
-    h: &nalgebra::Matrix3<f64>,
-    markers: &mut Vec<MarkerRecord>,
-    config: &DetectConfig,
-    target: &crate::target::TargetLayout,
-    anchored: bool,
-    mapper: Option<&dyn crate::pixelmap::PixelMapper>,
-) -> CompletionStats {
-    use std::collections::HashSet;
-
-    let params = &config.advanced.completion;
-    if !params.enable {
-        return CompletionStats::default();
-    }
-
-    let (w, h_img) = gray.dimensions();
-    let w_f = w as f64;
-    let h_f = h_img as f64;
-    let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
-    let safe_margin = roi_radius + params.image_margin_px.max(0.0) as f64;
+    let target = &config.target;
 
     let mut present: HashSet<Coord> = markers
         .iter()
-        .filter_map(|m| m.grid_coord.map(|c| Coord::new(c[0], c[1])))
+        .filter_map(|m| marker_cell_coord(m, target))
         .collect();
     if present.is_empty() {
         return CompletionStats::default();
     }
 
-    let frame_xy = |coord: Coord| -> Option<[f64; 2]> {
-        if anchored {
-            let xy = target.cell_xy_mm(coord)?;
-            Some([f64::from(xy[0]), f64::from(xy[1])])
-        } else {
-            Some(crate::pipeline::frame_xy_mm(target, coord))
-        }
-    };
+    let (w, h_img) = gray.dimensions();
+    let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
+    let safe_margin = roi_radius + params.image_margin_px.max(0.0) as f64;
 
-    let lattice_kind = target.lattice_kind();
     let mut stats = CompletionStats::default();
     let mut tried: HashSet<Coord> = HashSet::new();
-    let mut attempted_fits = 0usize;
     let mut capped = false;
 
-    for _round in 0..MAX_GROWTH_ROUNDS {
-        let Some(candidates) = plain_candidate_coords(anchored, target, &present) else {
+    for _round in 0..scope.max_rounds() {
+        let Some(candidates) = scope.candidates(target, &present) else {
             break;
         };
-
         // Predictions improve as the patch grows; rebuild the map per round.
         let grid = crate::pipeline::build_grid_map(markers, target);
         let mut added_this_round = 0usize;
 
-        for coord in candidates {
-            if present.contains(&coord) || tried.contains(&coord) {
+        for cell in candidates {
+            if present.contains(&cell.coord) || tried.contains(&cell.coord) {
                 continue;
             }
             stats.n_candidates_total += 1;
-            let Some(target_frame_xy) = frame_xy(coord) else {
+            let Some(cell_xy) = scope.cell_xy(target, cell.coord) else {
                 continue;
             };
-            let projected_center = predict_grid_position(&grid, coord, lattice_kind)
-                .map(|p| [f64::from(p.position.x), f64::from(p.position.y)])
-                .or_else(|| local_affine_frame_seed(target_frame_xy, markers))
-                .unwrap_or_else(|| project(h, target_frame_xy[0], target_frame_xy[1]));
-
-            if !is_center_in_bounds(projected_center, w_f, h_f, safe_margin) {
+            let seed = completion_seed(cell.coord, cell_xy, h, markers, &grid, target, scope);
+            if !is_center_in_bounds(seed, f64::from(w), f64::from(h_img), safe_margin) {
                 continue;
             }
             stats.n_in_image += 1;
 
-            if let Some(max) = params.max_attempts
-                && attempted_fits >= max
+            if params
+                .max_attempts
+                .is_some_and(|max| stats.n_attempted >= max)
             {
                 capped = true;
                 break;
             }
-            attempted_fits += 1;
             stats.n_attempted += 1;
-            tried.insert(coord);
+            tried.insert(cell.coord);
 
-            let marker = match try_complete_marker(
-                gray,
-                CompletionTarget::Cell([coord.u, coord.v]),
-                projected_center,
-                markers,
-                config,
-                mapper,
-                &mut stats,
-            ) {
-                Some(mut m) => {
-                    m.board_xy_mm = Some(target_frame_xy);
-                    m
-                }
-                None => continue,
+            let Some(mut marker) =
+                try_complete_marker(gray, cell, seed, markers, config, mapper, &mut stats)
+            else {
+                continue;
             };
+            marker.board_xy_mm = Some(cell_xy);
             markers.push(marker);
-            present.insert(coord);
+            present.insert(cell.coord);
             stats.n_added += 1;
             added_this_round += 1;
         }
 
-        // Anchored candidates are fixed, so one pass covers them; unanchored
-        // growth stops when a round adds nothing new.
-        if capped || anchored || added_this_round == 0 {
+        if capped || added_this_round == 0 {
             break;
         }
     }
 
     tracing::info!(
-        "Plain completion: added {} markers (attempted {}, in_image {}, anchored {})",
-        stats.n_added,
-        stats.n_attempted,
-        stats.n_in_image,
-        anchored,
+        ?scope,
+        n_added = stats.n_added,
+        n_attempted = stats.n_attempted,
+        n_in_image = stats.n_in_image,
+        "completion summary"
     );
 
     stats
-}
-
-/// Candidate cells for one plain-completion round: the full board when
-/// anchored, else the labeled patch's bounding box expanded by one lattice
-/// ring. `None` when there is nothing to grow from.
-fn plain_candidate_coords(
-    anchored: bool,
-    target: &crate::target::TargetLayout,
-    present: &std::collections::HashSet<Coord>,
-) -> Option<Vec<Coord>> {
-    if anchored {
-        return Some(target.cells().iter().map(|cell| cell.coord).collect());
-    }
-    let (min, max) = coord_bbox(present.iter().copied())?;
-    Some(
-        ((min.v - 1)..=(max.v + 1))
-            .flat_map(|v| ((min.u - 1)..=(max.u + 1)).map(move |u| Coord::new(u, v)))
-            .collect(),
-    )
 }
 
 /// Inclusive coordinate bounding box of a coordinate set.
@@ -896,7 +781,6 @@ mod tests {
     #[test]
     fn completion_quality_gate_reports_typed_arc_coverage_context() {
         let quality = CandidateQuality {
-            center: [0.0, 0.0],
             arc_cov: 0.2,
             fit_confidence: 0.9,
             mean_axis: 20.0,
@@ -955,10 +839,11 @@ mod tests {
             .collect();
 
         let target_board_xy = board.xy_mm_of_id(target_id).expect("target board xy");
-        let seed = local_affine_completion_seed(
+        let seed = local_affine_seed(
             [f64::from(target_board_xy[0]), f64::from(target_board_xy[1])],
             &markers,
             &board,
+            CompletionScope::Coded,
         )
         .expect("local affine seed");
         let expected = affine_to_image(
@@ -970,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_completion_seed_falls_back_to_h_with_fewer_than_three_neighbors() {
+    fn completion_seed_falls_back_to_h_with_fewer_than_three_neighbors() {
         let board = crate::TargetLayout::default_hex();
         let target_id = 16usize;
         let markers = vec![
@@ -980,13 +865,18 @@ mod tests {
         let h = nalgebra::Matrix3::new(1.0, 0.0, 3.0, 0.0, 1.0, -4.0, 0.0, 0.0, 1.0);
         let target_board_xy = board.xy_mm_of_id(target_id).expect("target board xy");
         let hex_grid = crate::pipeline::build_grid_map(&markers, &board);
-        let seed =
-            projected_completion_seed(target_id, &h, &markers, &board, &hex_grid).expect("seed");
-        let expected = project(
+        let target_xy = [f64::from(target_board_xy[0]), f64::from(target_board_xy[1])];
+        let coord = board.coord_of_id(target_id).expect("target coord");
+        let seed = completion_seed(
+            coord,
+            target_xy,
             &h,
-            f64::from(target_board_xy[0]),
-            f64::from(target_board_xy[1]),
+            &markers,
+            &hex_grid,
+            &board,
+            CompletionScope::Coded,
         );
+        let expected = project(&h, target_xy[0], target_xy[1]);
         assert!((seed[0] - expected[0]).abs() < 1e-9);
         assert!((seed[1] - expected[1]).abs() < 1e-9);
     }

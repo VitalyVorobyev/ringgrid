@@ -28,6 +28,7 @@ const _: () = {
 // ── Bit manipulation helpers ───────────────────────────────────────────
 
 /// Count set bits (popcount).
+#[cfg(test)]
 #[inline]
 fn popcount(x: u16) -> u8 {
     x.count_ones() as u8
@@ -184,38 +185,112 @@ impl Codebook {
     /// The margin denominator equals the codebook minimum cyclic Hamming distance,
     /// so a perfect decode (dist=0) with the minimum attainable margin scores 1.0.
     pub fn match_word(&self, obs: u16) -> Match {
-        let mut best_id = 0usize;
-        let mut best_rot = 0u8;
-        let mut best_dist = u8::MAX;
-        let mut second_dist = u8::MAX;
+        self.match_word_both_polarities(obs)[0]
+    }
 
+    /// [`Self::match_word`] for `obs` and its complement `!obs`, in one scan.
+    ///
+    /// Returns `[match(obs), match(!obs)]`. The complement's distance to any
+    /// rotated codeword is `16 − d`, so a single pass over the codebook yields
+    /// both matches.
+    pub(crate) fn match_word_both_polarities(&self, obs: u16) -> [Match; 2] {
+        let mut normal = RotationLanes::new();
+        let mut inverted = RotationLanes::new();
+        // Lane `k` holds rotation `k`: popcount(obs ^ rotl(cw, k)) equals
+        // popcount(rotr(obs, k) ^ cw), so rotating the observation once per
+        // call replaces rotating every codeword.
+        let obs_rot: [u16; ROTATIONS] = std::array::from_fn(|k| obs.rotate_right(k as u32));
         for (id, &cw) in self.words.iter().enumerate() {
-            for k in 0u32..self.bits() as u32 {
-                let rotated = rotate_left_16(cw, k);
-                let d = popcount(obs ^ rotated);
-                if d < best_dist {
-                    second_dist = best_dist;
-                    best_dist = d;
-                    best_id = id;
-                    best_rot = k as u8;
-                } else if d < second_dist {
-                    second_dist = d;
-                }
-            }
+            let dist: [u16; ROTATIONS] =
+                std::array::from_fn(|k| (obs_rot[k] ^ cw).count_ones() as u16);
+            normal.push(id as u16, &dist);
+            inverted.push(id as u16, &dist.map(|d| CODEBOOK_BITS as u16 - d));
         }
+        [normal.finish(self), inverted.finish(self)]
+    }
 
+    fn match_from_search(&self, id: usize, rotation: u8, best_dist: u8, second_dist: u8) -> Match {
         let margin = second_dist.saturating_sub(best_dist);
         let conf_dist = distance_confidence(best_dist);
         let conf_margin = (margin as f32 / self.min_cyclic_dist as f32).clamp(0.0, 1.0);
-        let confidence = conf_dist * conf_margin;
-
         Match {
-            id: best_id,
-            rotation: best_rot,
+            id,
+            rotation,
             dist: best_dist,
             margin,
-            confidence,
+            confidence: conf_dist * conf_margin,
         }
+    }
+}
+
+/// Number of cyclic rotations tried per codeword (one per bit).
+const ROTATIONS: usize = CODEBOOK_BITS;
+
+// Codeword IDs are stored as `u16` lanes in [`RotationLanes`].
+const _: () = assert!(CODEBOOK_EXTENDED_N <= u16::MAX as usize);
+
+/// Per-rotation running nearest-codeword search.
+///
+/// Lane `k` tracks, over rotation `k` of every codeword scanned so far, the
+/// smallest distance, the second smallest (as a multiset: ties count twice)
+/// and the first codeword ID reaching the smallest. The update is branchless
+/// and independent across lanes, so it vectorises; [`Self::finish`] merges the
+/// lanes into exactly the result of a sequential scan in (ID, rotation) order.
+struct RotationLanes {
+    best: [u16; ROTATIONS],
+    second: [u16; ROTATIONS],
+    best_id: [u16; ROTATIONS],
+}
+
+impl RotationLanes {
+    fn new() -> Self {
+        Self {
+            best: [u16::MAX; ROTATIONS],
+            second: [u16::MAX; ROTATIONS],
+            best_id: [0; ROTATIONS],
+        }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, id: u16, dist: &[u16; ROTATIONS]) {
+        for k in 0..ROTATIONS {
+            let d = dist[k];
+            let best = self.best[k];
+            self.second[k] = self.second[k].min(best.max(d));
+            self.best_id[k] = if d < best { id } else { self.best_id[k] };
+            self.best[k] = best.min(d);
+        }
+    }
+
+    /// Merge the lanes. The overall best is the lexicographically smallest
+    /// (ID, rotation) among lanes at the minimum distance — the first hit of a
+    /// sequential scan. The overall second smallest is the smaller of that
+    /// lane's own second and every other lane's best.
+    fn finish(&self, codebook: &Codebook) -> Match {
+        let mut lane = 0usize;
+        for k in 1..ROTATIONS {
+            let better = self.best[k] < self.best[lane]
+                || (self.best[k] == self.best[lane] && self.best_id[k] < self.best_id[lane]);
+            if better {
+                lane = k;
+            }
+        }
+        let second = (0..ROTATIONS)
+            .map(|k| {
+                if k == lane {
+                    self.second[k]
+                } else {
+                    self.best[k]
+                }
+            })
+            .min()
+            .unwrap_or(u16::MAX);
+        codebook.match_from_search(
+            self.best_id[lane] as usize,
+            lane as u8,
+            self.best[lane].min(u8::MAX as u16) as u8,
+            second.min(u8::MAX as u16) as u8,
+        )
     }
 }
 
@@ -487,6 +562,68 @@ mod tests {
         // The complement might match some other codeword well, but generally
         // with large distance the confidence should be lower
         let _ = m2; // just ensure no panic
+    }
+
+    /// The straightforward sequential scan `match_word` replaced: every
+    /// rotation of every codeword in (ID, rotation) order, keeping the first
+    /// strict minimum and the multiset second minimum.
+    fn match_word_reference(cb: &Codebook, obs: u16) -> Match {
+        let mut best_id = 0usize;
+        let mut best_rot = 0u8;
+        let mut best_dist = u8::MAX;
+        let mut second_dist = u8::MAX;
+        for (id, &cw) in cb.words.iter().enumerate() {
+            for k in 0u32..16 {
+                let d = popcount(obs ^ rotate_left_16(cw, k));
+                if d < best_dist {
+                    second_dist = best_dist;
+                    best_dist = d;
+                    best_id = id;
+                    best_rot = k as u8;
+                } else if d < second_dist {
+                    second_dist = d;
+                }
+            }
+        }
+        cb.match_from_search(best_id, best_rot, best_dist, second_dist)
+    }
+
+    /// Words that exercise ties: exact codewords and their rotations, 1- and
+    /// 2-bit corruptions, complements, plus a strided sweep of the word space.
+    fn equivalence_probe_words(cb: &Codebook) -> Vec<u16> {
+        let mut rng = StdRng::seed_from_u64(0xC0DE);
+        let mut words: Vec<u16> = (0..=u16::MAX).step_by(331).collect();
+        words.extend([0x0000, 0xFFFF, 0x5555, 0xAAAA, 0x00FF, 0xFF00]);
+        for _ in 0..300 {
+            let w = cb.word(rng.random_range(0..cb.len())).unwrap();
+            let w = rotate_left_16(w, rng.random_range(0u32..16));
+            let flip1 = 1u16 << rng.random_range(0u32..16);
+            let flip2 = 1u16 << rng.random_range(0u32..16);
+            words.extend([w, w ^ flip1, w ^ flip1 ^ flip2, !w]);
+        }
+        words
+    }
+
+    #[test]
+    fn match_word_equals_sequential_reference_scan() {
+        for profile in [CodebookProfile::Base, CodebookProfile::Extended] {
+            let cb = Codebook::from_profile(profile);
+            for obs in equivalence_probe_words(&cb) {
+                let [normal, inverted] = cb.match_word_both_polarities(obs);
+                assert_eq!(
+                    normal,
+                    match_word_reference(&cb, obs),
+                    "{profile:?} obs=0x{obs:04X}"
+                );
+                assert_eq!(
+                    inverted,
+                    match_word_reference(&cb, !obs),
+                    "{profile:?} !obs=0x{:04X}",
+                    !obs
+                );
+                assert_eq!(cb.match_word(obs), normal);
+            }
+        }
     }
 
     #[test]

@@ -53,6 +53,11 @@ pub struct DetectedMarker {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_coord: Option<[i32; 2]>,
     /// Combined detection + decode confidence in [0, 1].
+    ///
+    /// One formula for every [`DetectionSource`]: the decode score (normalised
+    /// Hamming distance, or arc coverage × RANSAC inlier ratio when no ID was
+    /// decoded) multiplied by outer angular coverage, RANSAC inlier ratio,
+    /// inner-fit quality and an RMS-residual penalty.
     pub confidence: f32,
     /// Marker center in raw image pixel coordinates.
     ///

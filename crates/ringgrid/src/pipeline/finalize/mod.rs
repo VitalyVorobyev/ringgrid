@@ -22,28 +22,38 @@ use coded::{finalize_global_filter_result, finalize_no_global_filter_result};
 use common::sync_marker_board_correspondence;
 use plain::finalize_plain_result;
 
-/// Runs `annotate_neighbor_radius_ratios`, then optionally runs
-/// `try_recover_inner_as_outer` (+ re-sync + re-annotate) when recovery is
-/// enabled. Called identically by both finalize paths, eliminating duplication.
-fn apply_post_filter_fixup(
+/// Inner-as-outer recovery (when enabled) followed by the axis-ratio
+/// consistency filter, on working-frame markers (centers not yet mapped to
+/// the image). The coded paths run it before the final H refit and geometric
+/// verify, so recovered markers are verified and feed the final homography.
+fn apply_marker_fixup(
     gray: &GrayImage,
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) {
+    // Both stages key on IDs (recovery re-anchors through one, the filter
+    // gates only id'd markers); plain markers carry none.
+    if !config.target.is_coded() {
+        return;
+    }
     let recovery = &config.advanced.inner_as_outer_recovery;
-    let (k, warn_ratio) = (recovery.k_neighbors, recovery.ratio_threshold);
-    annotate_neighbor_radius_ratios(markers, k, warn_ratio);
     if recovery.enable {
+        annotate_radius_ratios(markers, config);
         try_recover_inner_as_outer(gray, markers, config, mapper);
         sync_marker_board_correspondence(markers, &config.target);
-        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
     }
     let removed = remove_axis_ratio_outliers(markers);
     if removed > 0 {
-        annotate_neighbor_radius_ratios(markers, k, warn_ratio);
         tracing::info!(removed, "axis-ratio consistency filter removed markers");
     }
+}
+
+/// Annotate every marker's `neighbor_radius_ratio`: the recovery trigger, and
+/// a diagnostic every finalize path refreshes last on its output markers.
+fn annotate_radius_ratios(markers: &mut [MarkerRecord], config: &DetectConfig) {
+    let recovery = &config.advanced.inner_as_outer_recovery;
+    annotate_neighbor_radius_ratios(markers, recovery.k_neighbors, recovery.ratio_threshold);
 }
 
 /// ID correction is a hex-neighbor BFS consensus over decoded IDs; it applies
@@ -94,10 +104,11 @@ pub(super) fn finalize_premerge(
 ) -> Vec<MarkerRecord> {
     let mut corrected_markers = fit_markers;
 
-    if config.circle_refinement.uses_projective_center() {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
+    let projective_center_start = Instant::now();
+    apply_projective_centers(&mut corrected_markers, config);
+    let projective_center_elapsed = projective_center_start.elapsed();
 
+    let id_correction_start = Instant::now();
     if id_correction_applies(config) {
         let stats = verify_and_correct_ids(
             &mut corrected_markers,
@@ -107,6 +118,12 @@ pub(super) fn finalize_premerge(
         );
         log_id_correction_summary(&stats);
     }
+    tracing::debug!(
+        markers = corrected_markers.len(),
+        projective_center_ms = duration_ms(projective_center_elapsed),
+        id_correction_ms = duration_ms(id_correction_start.elapsed()),
+        "finalize premerge timing summary"
+    );
 
     corrected_markers
 }
@@ -163,6 +180,8 @@ pub(super) fn finalize_postmerge(
     )
 }
 
+/// Single-scale finalize: [`finalize_premerge`] followed directly by
+/// [`finalize_postmerge`] (there is no tier merge in between).
 pub(super) fn run(
     gray: &GrayImage,
     fit_markers: Vec<MarkerRecord>,
@@ -170,81 +189,20 @@ pub(super) fn run(
     mapper: Option<&dyn PixelMapper>,
 ) -> PipelineResult {
     let total_start = Instant::now();
-    let (w, h) = gray.dimensions();
-    let image_size = [w, h];
-    let homography_frame = if mapper.is_some() {
-        DetectionFrame::Working
-    } else {
-        DetectionFrame::Image
-    };
     let markers_in = fit_markers.len();
 
     warn_center_correction_without_intrinsics(config, mapper.is_some());
 
-    let mut corrected_markers = fit_markers;
-    let projective_center_start = Instant::now();
-    if config.circle_refinement.uses_projective_center() {
-        apply_projective_centers(&mut corrected_markers, config);
-    }
-    let projective_center_elapsed = projective_center_start.elapsed();
-
-    let id_correction_start = Instant::now();
-    if id_correction_applies(config) {
-        let stats = verify_and_correct_ids(
-            &mut corrected_markers,
-            &config.target,
-            &config.advanced.id_correction,
-            config.advanced.decode.codebook_profile,
-        );
-        log_id_correction_summary(&stats);
-    }
-    let id_correction_elapsed = id_correction_start.elapsed();
+    let premerge_start = Instant::now();
+    let corrected_markers = finalize_premerge(fit_markers, config);
+    let premerge_elapsed = premerge_start.elapsed();
 
     let tail_start = Instant::now();
-    if !config.advanced.use_global_filter {
-        let result = finalize_no_global_filter_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        );
-        tracing::info!(
-            markers_in,
-            markers_out = result.markers.len(),
-            projective_center_ms = duration_ms(projective_center_elapsed),
-            id_correction_ms = duration_ms(id_correction_elapsed),
-            tail_ms = duration_ms(tail_start.elapsed()),
-            total_ms = duration_ms(total_start.elapsed()),
-            "finalize stage timing summary"
-        );
-        return result;
-    }
-    let result = if config.target.is_coded() {
-        finalize_global_filter_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        )
-    } else {
-        finalize_plain_result(
-            gray,
-            corrected_markers,
-            config,
-            mapper,
-            homography_frame,
-            image_size,
-        )
-    };
+    let result = finalize_postmerge(gray, corrected_markers, config, mapper);
     tracing::info!(
         markers_in,
         markers_out = result.markers.len(),
-        projective_center_ms = duration_ms(projective_center_elapsed),
-        id_correction_ms = duration_ms(id_correction_elapsed),
+        premerge_ms = duration_ms(premerge_elapsed),
         tail_ms = duration_ms(tail_start.elapsed()),
         total_ms = duration_ms(total_start.elapsed()),
         "finalize stage timing summary"

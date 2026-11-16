@@ -70,6 +70,9 @@ const MAX_CHANCE_WINNER: f64 = 1e-3;
 /// rect board at 60° labeled with a row skipped split its correct decodes
 /// 7 / 6 between two placements; accepting the 7 gave 78 wrong IDs).
 const MIN_CHANCE_RUNNER_UP: f64 = 0.1;
+/// Distance (in nearest-neighbor spacings) within which a placement's board
+/// points count as one line (see [`placement_homography`]).
+const COLLINEAR_TOL_SPACINGS: f64 = 1e-3;
 
 /// Integer coordinate map `coord → M·coord + t` from the relative labeling
 /// frame to absolute board coordinates.
@@ -373,6 +376,14 @@ fn enumerate_candidates(
 /// labeled entries it maps onto the board. `None` for degenerate or
 /// orientation-reversing placements — the physical filter that rejects every
 /// reflected candidate.
+///
+/// Degenerate includes entries that all land on one board line: a homography
+/// is undetermined by collinear points, and the DLT's solution — its
+/// orientation included — is then set by centre noise alone. A reflection
+/// that maps a single lattice line of the labeling onto a board edge line is
+/// such a placement (its votes are that line's correct decodes counted a
+/// second time); on rect_coded synthetic views the noise sign let it pass as
+/// a runner-up and blocked the true placement's anchor.
 fn placement_homography(
     entries: &[(Coord, [f64; 2])],
     coord_map: CoordMap,
@@ -385,7 +396,8 @@ fn placement_homography(
             Some(([f64::from(xy[0]), f64::from(xy[1])], *center))
         })
         .unzip();
-    if src.is_empty() {
+    let collinear_tol_mm = COLLINEAR_TOL_SPACINGS * f64::from(target.min_center_spacing_mm());
+    if src.is_empty() || all_collinear(&src, collinear_tol_mm) {
         return None;
     }
     let h = estimate_homography_dlt(&src, &dst).ok()?;
@@ -394,6 +406,30 @@ fn placement_homography(
         src.iter().map(|p| p[1]).sum::<f64>() / src.len() as f64,
     ];
     (jacobian_det(&h, center_mm) > 0.0).then_some(h)
+}
+
+/// Whether every point lies within `tol` of one line (the points' principal
+/// axis through their centroid). Board cell positions are exact lattice
+/// points: a non-collinear set is off any line by a sizable fraction of the
+/// spacing, a collinear one only by `f32` rounding.
+fn all_collinear(points: &[[f64; 2]], tol: f64) -> bool {
+    let n = points.len() as f64;
+    let c = [
+        points.iter().map(|p| p[0]).sum::<f64>() / n,
+        points.iter().map(|p| p[1]).sum::<f64>() / n,
+    ];
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    let theta = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let normal = [-theta.sin(), theta.cos()];
+    points
+        .iter()
+        .all(|p| (normal[0] * (p[0] - c[0]) + normal[1] * (p[1] - c[1])).abs() <= tol)
 }
 
 /// Fit the candidate's board→image homography and score its fiducial dots.
@@ -668,6 +704,78 @@ mod tests {
         let (img, h_mat) = render_plain_target(&target, 6.0, 60.0, 60.0, 0.0, 780, 780);
         let markers = labeled_markers(&target, &h_mat, |c| c);
         assert!(resolve_origin(&img, &markers, &target, None).is_none());
+    }
+
+    /// A placement that lands only one lattice line of the labeling on the
+    /// board has no determinable homography, whatever the centre noise makes
+    /// of its DLT's orientation: it must never compete (as winner or
+    /// runner-up) in the decoded-ID vote.
+    #[test]
+    fn single_line_placements_are_degenerate() {
+        let target = small_rect_like();
+        let h_mat = Matrix3::new(6.0, 0.4, 60.0, -0.3, 6.2, 70.0, 1e-4, -2e-4, 1.0);
+        let transforms = target.lattice_kind().symmetry_transforms();
+        let mut n_single_line = 0usize;
+        for seed in 0..8u64 {
+            // Deterministic sub-0.1 px centre noise, different per seed.
+            let mut state = seed.wrapping_mul(6_364_136_223_846_793_005) | 1;
+            let mut noise = || {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                ((state >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 0.1
+            };
+            let entries: Vec<(Coord, [f64; 2])> = target
+                .cells()
+                .iter()
+                .map(|cell| {
+                    let p = homography_project(
+                        &h_mat,
+                        f64::from(cell.xy_mm[0]),
+                        f64::from(cell.xy_mm[1]),
+                    );
+                    (cell.coord, [p[0] + noise(), p[1] + noise()])
+                })
+                .collect();
+            for &g in transforms {
+                for du in -16..=16 {
+                    for dv in -16..=16 {
+                        let map = CoordMap::new(g, [du, dv]);
+                        let on_board: Vec<Coord> = entries
+                            .iter()
+                            .map(|(c, _)| map.apply(*c))
+                            .filter(|c| target.cell_xy_mm(*c).is_some())
+                            .collect();
+                        let one_line = on_board.iter().all(|c| c.u == on_board[0].u)
+                            || on_board.iter().all(|c| c.v == on_board[0].v);
+                        if on_board.len() < 4 || !one_line {
+                            continue;
+                        }
+                        n_single_line += 1;
+                        assert!(
+                            placement_homography(&entries, map, &target).is_none(),
+                            "single-line placement {g:?} {:?} accepted (seed {seed})",
+                            [du, dv]
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            n_single_line > 0,
+            "the sweep must reach single-line placements"
+        );
+        // The true placement is not degenerate.
+        let identity = CoordMap::new(transforms[0], [0, 0]);
+        let entries: Vec<(Coord, [f64; 2])> = target
+            .cells()
+            .iter()
+            .map(|cell| {
+                let xy = [f64::from(cell.xy_mm[0]), f64::from(cell.xy_mm[1])];
+                (cell.coord, homography_project(&h_mat, xy[0], xy[1]))
+            })
+            .collect();
+        assert!(placement_homography(&entries, identity, &target).is_some());
     }
 
     #[test]

@@ -124,6 +124,8 @@ VIRTUAL_ENV=.venv ./.venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml -
 ./.venv/bin/python -m pytest crates/ringgrid-py/tests -q
 ```
 
+The `ringgrid` crate's non-default `study` feature exposes research-only API for the photometric fit (per-pixel residuals, covariance diagnostics; used by the photometric study tests and `ringgrid-cli` examples); `--all-features` covers it.
+
 ## More References
 
 - [User Guide](https://vitalyvorobyev.github.io/ringgrid/book/) for end-user workflows, theory, and detailed configuration notes

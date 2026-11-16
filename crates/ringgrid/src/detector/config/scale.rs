@@ -4,6 +4,9 @@
 /// Center-correction strategy used after local fits are accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+// The command-line tools' `--refine` value (`none`, `projective-center`,
+// `photometric`).
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum CircleRefinementMethod {
     /// Disable center correction.
     None,
@@ -25,7 +28,9 @@ pub enum CircleRefinementMethod {
     /// for spatially correlated fit residuals. Markers it does not refine keep
     /// their projective (or outer-ellipse) centre, see
     /// [`DetectedMarker::center_source`]; the diagnostics give every marker a
-    /// photometric status saying why. Tuning lives in
+    /// photometric status saying why. The result's homography and its
+    /// RANSAC statistics are then refit from the refined centres. Tuning
+    /// lives in
     /// [`AdvancedDetectConfig::photometric`](crate::AdvancedDetectConfig::photometric).
     ///
     /// [`DetectedMarker::center_cov`]: crate::DetectedMarker::center_cov

@@ -11,9 +11,11 @@
 //! - Monte-Carlo honesty of the covariance: reported σ over the empirical
 //!   scatter of each marker's centre across noise seeds, pooled, for the
 //!   correlated-residual covariance (`corr`) and the white-residual one
-//!   (`white`, recovered from `covariance_inflation`);
+//!   (`white`, recovered from the covariance inflation; `study` feature only);
 //! - reported σ over the error against the truth (which also contains bias,
-//!   which no covariance covers), and the bias itself.
+//!   which no covariance covers), and the bias itself;
+//! - the result homography's RMS error at the true cell centres for both
+//!   methods (first exposure; absolute board frame only).
 //!
 //! The default run checks a representative subset (one cell per target kind,
 //! one seed). The full matrix and the model-misfit study are `#[ignore]`d:
@@ -29,14 +31,14 @@
 
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ringgrid::diagnostics::PhotometricStatus;
+use ringgrid::diagnostics::{DetectionDiagnostics, PhotometricStatus};
 use ringgrid::{
-    CenterSource, CircleRefinementMethod, DetectConfig, DetectedMarker, Detector, OriginDots,
-    TargetLayout,
+    BoardFrame, CenterSource, CircleRefinementMethod, DetectConfig, DetectedMarker,
+    DetectionResult, Detector, OriginDots, TargetLayout,
 };
 use support::blur_scene::{BoardRaster, Psf, Radiance, SceneSpec, apply_h, expose, radiance};
 
@@ -162,7 +164,7 @@ struct Cell {
 struct MarkerSamples {
     centers: Vec<[f64; 2]>,
     /// `(trace of the reported covariance, covariance inflation)` per seed.
-    traces: Vec<(f64, f64)>,
+    traces: Vec<(f64, Option<f64>)>,
     truth: [f64; 2],
 }
 
@@ -181,13 +183,17 @@ struct CellResult {
     n_silent: usize,
     rms_projective: f64,
     rms_photometric: f64,
+    /// Homography RMS error at the true cell centres, first exposure.
+    h_rms_projective: Option<f64>,
+    h_rms_photometric: Option<f64>,
     /// Pooled reported σ / Monte-Carlo scatter: correlated, white covariance.
     scatter_ratio: Option<(f64, f64)>,
     /// Pooled reported σ / error against the truth: correlated, white.
     error_ratio: Option<(f64, f64)>,
     /// RMS over markers of the seed-mean error (bias), px.
     bias_rms: Option<f64>,
-    /// Mean covariance inflation over photometric centres.
+    /// Mean covariance inflation over photometric centres (NaN without the
+    /// `study` feature).
     inflation: f64,
     /// Mean fit residual standard deviation over photometric centres.
     residual: f64,
@@ -292,14 +298,67 @@ fn spec_for(cell: &Cell, target: &TargetLayout, size: [u32; 2]) -> SceneSpec {
     spec
 }
 
-/// Projective-centre RMS of one exposure.
-fn projective_rms(
+/// Per fitted marker (by index), the covariance inflation: reported centre σ
+/// over the white-residual σ. Study output, empty without the feature.
+type Inflations = HashMap<usize, Option<f64>>;
+
+/// Photometric detection with the markers' covariance inflations.
+#[cfg(feature = "study")]
+fn detect_photometric(
     det: &Detector,
-    scene_img: &image::GrayImage,
+    image: &image::GrayImage,
+) -> (DetectionResult, DetectionDiagnostics, Inflations) {
+    let (res, diag, residuals) = det
+        .detect_with_photometric_residuals(image)
+        .expect("detect");
+    let inflations = residuals
+        .iter()
+        .map(|r| (r.marker_index, r.covariance_inflation))
+        .collect();
+    (res, diag, inflations)
+}
+
+/// Photometric detection; the inflations need the `study` feature.
+#[cfg(not(feature = "study"))]
+fn detect_photometric(
+    det: &Detector,
+    image: &image::GrayImage,
+) -> (DetectionResult, DetectionDiagnostics, Inflations) {
+    let (res, diag) = det.detect_with_diagnostics(image).expect("detect");
+    (res, diag, Inflations::new())
+}
+
+/// RMS error of a result's homography at the true centres of the cells
+/// imaged inside the frame; `None` without a homography in the absolute
+/// board frame (the truth's).
+fn homography_rms(
+    res: &DetectionResult,
+    target: &TargetLayout,
     truth: &Truth,
-    h: &[[f64; 3]; 3],
-) -> f64 {
-    let res = det.detect(scene_img).expect("detect");
+    size: [u32; 2],
+) -> Option<f64> {
+    if res.board_frame != Some(BoardFrame::Absolute) {
+        return None;
+    }
+    let h = res.homography?;
+    let inside = |p: [f64; 2]| {
+        p[0] >= 0.0 && p[1] >= 0.0 && p[0] < f64::from(size[0]) && p[1] < f64::from(size[1])
+    };
+    let errs: Vec<f64> = target
+        .cells()
+        .iter()
+        .zip(&truth.centers)
+        .filter(|(_, t)| inside(**t))
+        .map(|(c, t)| {
+            let p = apply_h(&h, [f64::from(c.xy_mm[0]), f64::from(c.xy_mm[1])]);
+            (p[0] - t[0]).hypot(p[1] - t[1])
+        })
+        .collect();
+    Some(rms(&errs))
+}
+
+/// Projective-centre RMS of one exposure.
+fn projective_rms(res: &DetectionResult, truth: &Truth, h: &[[f64; 3]; 3]) -> f64 {
     let errs: Vec<f64> = res
         .detected_markers
         .iter()
@@ -337,14 +396,15 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     let mut inflations = Vec::new();
     for seed in 0..n_seeds {
         let scene = expose(&rad, &spec, 1000 + seed);
+        let (res, diag, inflations_of) = detect_photometric(&photometric, &scene.image);
         if seed == 0 {
-            out.rms_projective = projective_rms(&projective, &scene.image, &truth, &rad.h);
+            let res_p = projective.detect(&scene.image).expect("detect");
+            out.rms_projective = projective_rms(&res_p, &truth, &rad.h);
+            out.h_rms_projective = homography_rms(&res_p, target, &truth, size);
+            out.h_rms_photometric = homography_rms(&res, target, &truth, size);
         }
-        let (res, diag) = photometric
-            .detect_with_diagnostics(&scene.image)
-            .expect("detect");
         out.n_detected += res.detected_markers.len() as f64;
-        for (m, d) in res.detected_markers.iter().zip(&diag.markers) {
+        for (index, (m, d)) in res.detected_markers.iter().zip(&diag.markers).enumerate() {
             let status = d
                 .photometric
                 .as_ref()
@@ -368,7 +428,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             let (Some(cov), Some(p)) = (m.center_cov, d.photometric.as_ref()) else {
                 continue;
             };
-            let inflation = p.covariance_inflation.unwrap_or(1.0);
+            let inflation = inflations_of.get(&index).copied().flatten();
             let t = truth.centers[idx];
             errors.push((m.center[0] - t[0]).hypot(m.center[1] - t[1]));
             inflations.push(inflation);
@@ -384,7 +444,12 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     out.n_located /= n_seeds as f64;
     out.n_photometric /= n_seeds as f64;
     out.rms_photometric = rms(&errors);
-    out.inflation = inflations.iter().sum::<f64>() / inflations.len().max(1) as f64;
+    let known: Vec<f64> = inflations.iter().flatten().copied().collect();
+    out.inflation = if known.is_empty() {
+        f64::NAN
+    } else {
+        known.iter().sum::<f64>() / known.len() as f64
+    };
     out.residual /= inflations.len().max(1) as f64;
     summarize_monte_carlo(&samples, n_seeds, &mut out);
     out
@@ -417,7 +482,8 @@ fn summarize_monte_carlo(
             err2 += (c[0] - s.truth[0]).powi(2) + (c[1] - s.truth[1]).powi(2);
             n_err += 1;
             rep_c += tr / n as f64;
-            rep_w += tr / (infl * infl) / n as f64;
+            // White-residual trace; unknown (NaN) without the inflation.
+            rep_w += infl.map_or(f64::NAN, |i| tr / (i * i)) / n as f64;
         }
         bias2 += (m[0] - s.truth[0]).powi(2) + (m[1] - s.truth[1]).powi(2);
         n_m += 1;
@@ -435,6 +501,10 @@ fn summarize_monte_carlo(
     out.bias_rms = Some((bias2 / n_m as f64).sqrt());
 }
 
+fn opt4(v: Option<f64>) -> String {
+    v.map_or("-".into(), |v| format!("{v:.4}"))
+}
+
 fn fmt_pair(p: Option<(f64, f64)>) -> String {
     p.map_or("    -       -  ".into(), |(c, w)| {
         format!("{c:6.3} {w:6.3}")
@@ -443,13 +513,13 @@ fn fmt_pair(p: Option<(f64, f64)>) -> String {
 
 fn print_header() {
     println!(
-        "kind               R_px blur  con tilt effect          vis   det   loc  phot wrong  rms_proj rms_phot  scatter(corr white)  err(corr white)  bias   infl  resid"
+        "kind               R_px blur  con tilt effect          vis   det   loc  phot wrong  rms_proj rms_phot  scatter(corr white)  err(corr white)  bias   infl  resid  h_proj  h_phot"
     );
 }
 
 fn print_row(cell: &Cell, r: &CellResult) {
     println!(
-        "{:<18} {:>4.0} {:>4.1} {:>4.0} {:>4.0} {:<15} {:>4} {:>5.1} {:>5.1} {:>5.1} {:>4}  {:>8.4} {:>8.4}  {}       {}   {:>6} {:>5.2} {:>5.2}",
+        "{:<18} {:>4.0} {:>4.1} {:>4.0} {:>4.0} {:<15} {:>4} {:>5.1} {:>5.1} {:>5.1} {:>4}  {:>8.4} {:>8.4}  {}       {}   {:>6} {:>5.2} {:>5.2} {:>7} {:>7}",
         cell.kind.name(),
         cell.outer_radius_px,
         cell.blur,
@@ -468,6 +538,8 @@ fn print_row(cell: &Cell, r: &CellResult) {
         r.bias_rms.map_or("-".into(), |b| format!("{b:.4}")),
         r.inflation,
         r.residual,
+        opt4(r.h_rms_projective),
+        opt4(r.h_rms_photometric),
     );
     if r.n_silent > 0 || std::env::var("MATRIX_STATUSES").is_ok() {
         println!("    statuses {:?}", r.statuses);
@@ -547,7 +619,8 @@ fn run_cells(cells: &[Cell], n_seeds: u64, size: [u32; 2]) -> Vec<CellResult> {
 
 /// Default run: one medium-scale cell per target kind. Every marker reports a
 /// photometric status, the photometric centres cover the located markers and
-/// meet 0.05 px RMS, and no label is wrong.
+/// meet 0.05 px RMS, no label is wrong, and the returned homography — refit
+/// from the refined centres — is more accurate than the projective-centre one.
 #[test]
 fn photometric_refines_every_target_kind() {
     let cells: Vec<Cell> = KINDS
@@ -584,6 +657,9 @@ fn photometric_refines_every_target_kind() {
             r.rms_photometric,
             r.rms_projective
         );
+        if let (Some(proj), Some(phot)) = (r.h_rms_projective, r.h_rms_photometric) {
+            assert!(phot < proj, "{name}: homography rms {phot} vs {proj}");
+        }
     }
 }
 

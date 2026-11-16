@@ -89,8 +89,9 @@ cargo run -p ringgrid-cli --bin ringgrid-dev -- detect \
 
 Notes:
 - Logging goes to stderr via `tracing`; use `RUST_LOG=debug` (or `info`, `trace`, etc.).
-- Center refinement is selected with `--circle-refine-method {none,projective-center}`
-  (default `projective-center`); pass `none` to disable it.
+- Center refinement is selected with `--refine {none,projective-center,photometric}`
+  (`--circle-refine-method` is an alias on `ringgrid-dev`); without it the
+  config/default (`projective-center`) applies; pass `none` to disable it.
 
 ### 4) Score detections
 

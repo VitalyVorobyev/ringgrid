@@ -115,8 +115,10 @@ covariance — ill-conditioned once the window's hat share `Σ h/p` approaches 1
 (κ swung to ±100 s²); the classic cross-product HAC — 0.74 on correlated noise
 (residual orthogonality to the score cancels it).
 
-`PhotometricMetrics::covariance_inflation` reports `sqrt(tr C / tr C_white)`
-and `residual_autocorrelation` the residual ACF at lags 1–6 px per axis.
+The study output (`study` cargo feature, `PhotometricResidualMarker`) reports
+`covariance_inflation = sqrt(tr C / tr C_white)` and `residual_autocorrelation`,
+the residual ACF at lags 1–6 px per axis. (Until the stage moved into the
+pipeline they were fields of `PhotometricMetrics`.)
 
 ### Alternatives considered
 
@@ -177,7 +179,9 @@ and `residual_autocorrelation` the residual ACF at lags 1–6 px per axis.
 - `CircleRefinementMethod` gains a variant (exhaustive matches break).
 
 **Neutral:**
-- The result homography stays the one fitted to the pre-refinement centers.
+- The result homography and its RANSAC statistics are refit from the refined
+  centers (finalize's final-H step), after the stage. (Originally the
+  homography stayed the one fitted to the pre-refinement centers.)
 
 ## Evidence
 

@@ -5,6 +5,8 @@ use super::*;
 use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::{MERGE_SIZE_K_NEIGHBORS, merge_multiscale_markers};
 use crate::detector::marker_build::DetectionSource;
+#[cfg(feature = "study")]
+use crate::detector::photometric_refine::PhotometricResidualMarker;
 use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
     Proposal, ProposalConfig, ProposalResult, find_ellipse_centers,
@@ -209,8 +211,118 @@ pub(crate) fn proposal_result_for_config(
 
 // ---------------------------------------------------------------------------
 // Public entry points
+//
+// Each returns a finished result: its internal flow (the private function
+// below without the `detect_` prefix), then the photometric stage, exactly
+// once per call (`super::photometric`). The internal flows compose each
+// other unrefined, so no pass, scale tier or adaptive candidate is refined on
+// its own.
 // ---------------------------------------------------------------------------
+
+/// Single-pass detection in image coordinates.
 pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
+    let result = single_pass(gray, config);
+    super::photometric::finish(gray, config, None, result, None)
+}
+
+/// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
+///
+/// Returned marker centers are always image-space (`MarkerRecord.center`).
+/// When a mapper is active, mapper-frame centers are preserved in
+/// `MarkerRecord.center_mapped` and homography frame metadata is set to
+/// `DetectionFrame::Working`.
+pub fn detect_with_mapper(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    mapper: &dyn PixelMapper,
+) -> PipelineResult {
+    let result = with_mapper(gray, config, mapper);
+    super::photometric::finish(gray, config, Some(mapper), result, None)
+}
+
+/// Detect markers, then estimate and optionally apply a self-undistort model.
+///
+/// Runs a baseline pass first. If `config.self_undistort.enable` is true and
+/// enough markers with edge points are available, estimates a division-model
+/// mapper and re-runs pass-2 with seeded proposals.
+pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
+    let result = with_self_undistort(gray, config);
+    super::photometric::finish(gray, config, None, result, None)
+}
+
+/// Detect markers across multiple scale tiers.
+///
+/// For each tier:
+/// 1. Clones `config` and applies the tier's scale prior.
+/// 2. Runs fit/decode + projective centers (`detect_premerge`).
+///
+/// After all tiers:
+/// 3. Merges results with size-consistency-aware dedup
+///    ([`merge_multiscale_markers`]).
+/// 4. Runs grid labeling + anchoring + completion + final H refit once on the
+///    merged pool.
+///
+/// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
+/// `config.advanced.dedup_radius`.
+pub fn detect_multiscale(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    tiers: &ScaleTiers,
+) -> PipelineResult {
+    let result = multiscale(gray, config, tiers);
+    super::photometric::finish(gray, config, None, result, None)
+}
+
+/// Adaptive detection using automatically selected scale tiers.
+///
+/// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.
+pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
+    detect_adaptive_with_hint(gray, config, None)
+}
+
+/// Adaptive detection with an optional nominal-diameter hint.
+///
+/// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
+/// two-tier bracket around `[0.5×, 1.5×]` the hint. When `None`, behaves
+/// identically to [`detect_adaptive`]. Only the selected candidate is refined.
+pub fn detect_adaptive_with_hint(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    nominal_diameter_px: Option<f32>,
+) -> PipelineResult {
+    let result = adaptive(gray, config, nominal_diameter_px);
+    super::photometric::finish(gray, config, None, result, None)
+}
+
+/// [`detect_with_self_undistort`] (a single pass when self-undistort is off)
+/// that also collects the photometric fits' per-pixel residuals.
+#[cfg(feature = "study")]
+pub(crate) fn detect_collecting_residuals(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    residuals: &mut Vec<PhotometricResidualMarker>,
+) -> PipelineResult {
+    let result = with_self_undistort(gray, config);
+    super::photometric::finish(gray, config, None, result, Some(residuals))
+}
+
+/// [`detect_adaptive`] that also collects the photometric fits' per-pixel
+/// residuals.
+#[cfg(feature = "study")]
+pub(crate) fn detect_adaptive_collecting_residuals(
+    gray: &GrayImage,
+    config: &DetectConfig,
+    residuals: &mut Vec<PhotometricResidualMarker>,
+) -> PipelineResult {
+    let result = adaptive(gray, config, None);
+    super::photometric::finish(gray, config, None, result, Some(residuals))
+}
+
+// ---------------------------------------------------------------------------
+// Internal flows (not photometrically refined)
+// ---------------------------------------------------------------------------
+
+fn single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
     let total_start = Instant::now();
     let (image_width, image_height) = gray.dimensions();
 
@@ -251,13 +363,7 @@ pub fn detect_single_pass(gray: &GrayImage, config: &DetectConfig) -> PipelineRe
     result
 }
 
-/// Two-pass detection: pass-1 without mapper, pass-2 with mapper + seeds.
-///
-/// Returned marker centers are always image-space (`MarkerRecord.center`).
-/// When a mapper is active, mapper-frame centers are preserved in
-/// `MarkerRecord.center_mapped` and homography frame metadata is set to
-/// `DetectionFrame::Working`.
-pub fn detect_with_mapper(
+fn with_mapper(
     gray: &GrayImage,
     config: &DetectConfig,
     mapper: &dyn PixelMapper,
@@ -265,7 +371,7 @@ pub fn detect_with_mapper(
     let total_start = Instant::now();
 
     let pass1_start = Instant::now();
-    let pass1 = detect_single_pass(gray, config);
+    let pass1 = single_pass(gray, config);
     let pass1_elapsed = pass1_start.elapsed();
 
     let pass2_start = Instant::now();
@@ -292,7 +398,7 @@ pub fn detect_with_mapper(
 /// (projective centers).
 ///
 /// Returns a raw marker list **without** grid labeling, completion, or final H
-/// refit. Call [`detect_multiscale`] to merge and finalize across tiers.
+/// refit. [`multiscale`] merges and finalizes across tiers.
 pub(crate) fn detect_premerge(
     gray: &GrayImage,
     config: &DetectConfig,
@@ -303,25 +409,8 @@ pub(crate) fn detect_premerge(
     super::finalize::finalize_premerge(fit_markers, config)
 }
 
-/// Detect markers across multiple scale tiers.
-///
-/// For each tier:
-/// 1. Clones `config` and applies the tier's scale prior.
-/// 2. Runs fit/decode + projective centers (`detect_premerge`).
-///
-/// After all tiers:
-/// 3. Merges results with size-consistency-aware dedup
-///    ([`merge_multiscale_markers`]).
-/// 4. Runs grid labeling + anchoring + completion + final H refit once on the
-///    merged pool.
-///
-/// The merge dedup radius is `min_tier_diameter × 0.6`, clamped to at least
-/// `config.advanced.dedup_radius`.
-pub fn detect_multiscale(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    tiers: &ScaleTiers,
-) -> PipelineResult {
+/// The tier loop and merge of [`detect_multiscale`].
+fn multiscale(gray: &GrayImage, config: &DetectConfig, tiers: &ScaleTiers) -> PipelineResult {
     warn_center_correction_without_intrinsics(config, false);
 
     let mut all_markers: Vec<crate::detector::MarkerRecord> = Vec::new();
@@ -553,7 +642,8 @@ fn build_adaptive_candidates(
     candidates
 }
 
-fn detect_adaptive_candidates(
+/// Run every adaptive candidate and keep the best-scoring result.
+fn adaptive(
     gray: &GrayImage,
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
@@ -564,7 +654,7 @@ fn detect_adaptive_candidates(
     let mut best_label = "<none>";
 
     for candidate in candidates {
-        let result = detect_multiscale(gray, config, &candidate.tiers);
+        let result = multiscale(gray, config, &candidate.tiers);
         let score = AdaptiveCandidateScore::from_result(&result);
 
         let should_replace = best_score
@@ -590,82 +680,11 @@ fn detect_adaptive_candidates(
     best_result.expect("adaptive candidate list must not be empty")
 }
 
-/// Photometric centre refinement of a finished result.
-///
-/// Runs once per public detection call, after scale/candidate selection, so
-/// adaptive detection does not pay for it per candidate. The board homography
-/// and its statistics stay those fitted to the pre-refinement centres.
-pub(crate) fn refine_centers_photometric(
-    gray: &GrayImage,
-    result: &mut PipelineResult,
-    config: &DetectConfig,
-    mapper: Option<&dyn PixelMapper>,
-    residuals: Option<&mut Vec<crate::detector::photometric_refine::PhotometricResidualMarker>>,
-) {
-    if !config.circle_refinement.uses_photometric() {
-        return;
-    }
-    let self_undistort = result
-        .self_undistort
-        .as_ref()
-        .filter(|s| s.applied)
-        .map(|s| s.model);
-    let mapper: Option<&dyn PixelMapper> = match result.homography_frame {
-        DetectionFrame::Image => None,
-        DetectionFrame::Working => {
-            match mapper.or(self_undistort.as_ref().map(|m| m as &dyn PixelMapper)) {
-                Some(m) => Some(m),
-                None => {
-                    // No way back to image pixels: nothing can be placed.
-                    crate::detector::photometric_refine::mark_unrefined(&mut result.markers);
-                    return;
-                }
-            }
-        }
-    };
-    let h = result.homography;
-    result.photometric_print_radii_mm =
-        crate::detector::photometric_refine::apply_photometric_centers(
-            gray,
-            &mut result.markers,
-            h.as_ref(),
-            result.board_frame,
-            mapper,
-            config,
-            residuals,
-        );
-}
-
-/// Adaptive detection using automatically selected scale tiers.
-///
-/// Equivalent to [`detect_adaptive_with_hint`] with `nominal_diameter_px=None`.
-pub fn detect_adaptive(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
-    detect_adaptive_candidates(gray, config, None)
-}
-
-/// Adaptive detection with an optional nominal-diameter hint.
-///
-/// When `nominal_diameter_px` is `Some`, skips the scale probe and builds a
-/// two-tier bracket around `[0.5×, 1.5×]` the hint. When `None`, behaves
-/// identically to [`detect_adaptive`].
-pub fn detect_adaptive_with_hint(
-    gray: &GrayImage,
-    config: &DetectConfig,
-    nominal_diameter_px: Option<f32>,
-) -> PipelineResult {
-    detect_adaptive_candidates(gray, config, nominal_diameter_px)
-}
-
-/// Detect markers, then estimate and optionally apply a self-undistort model.
-///
-/// Runs a baseline pass first. If `config.self_undistort.enable` is true and
-/// enough markers with edge points are available, estimates a division-model
-/// mapper and re-runs pass-2 with seeded proposals.
-pub fn detect_with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
+fn with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {
     let total_start = Instant::now();
 
     let pass1_start = Instant::now();
-    let mut result = detect_single_pass(gray, config);
+    let mut result = single_pass(gray, config);
     let pass1_elapsed = pass1_start.elapsed();
     let su_cfg = &config.self_undistort;
     if !su_cfg.enable {
@@ -769,5 +788,64 @@ mod tests {
         assert!((best.y - (23.0 * 98.0 / 24.0)).abs() < 1.0e-5);
         assert_ne!(best.x.to_bits(), (24.0f32 * 4.0f32).to_bits());
         assert_ne!(best.y.to_bits(), (23.0f32 * 4.0f32).to_bits());
+    }
+
+    struct IdentityMapper;
+
+    impl PixelMapper for IdentityMapper {
+        fn image_to_working_pixel(&self, image_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some(image_xy)
+        }
+
+        fn working_to_image_pixel(&self, working_xy: [f64; 2]) -> Option<[f64; 2]> {
+            Some(working_xy)
+        }
+    }
+
+    /// Photometric stage runs on this thread while `f` runs.
+    fn photometric_runs(f: impl FnOnce() -> PipelineResult) -> usize {
+        let before = super::super::photometric::RUNS.with(|n| n.get());
+        let _ = f();
+        super::super::photometric::RUNS.with(|n| n.get()) - before
+    }
+
+    /// Every public entry point refines exactly once, however many passes,
+    /// tiers or adaptive candidates it runs internally — and not at all when
+    /// the method is not photometric.
+    #[test]
+    fn photometric_stage_runs_once_per_entry_point() {
+        let gray = crate::test_utils::draw_ring_image(160, 160, [80.0, 80.0], 24.0, 12.0, 30, 220);
+        let mut config = DetectConfig::from_target(crate::TargetLayout::default_hex());
+        config.circle_refinement = crate::CircleRefinementMethod::Photometric;
+        let mut su_config = config.clone();
+        su_config.self_undistort.enable = true;
+        su_config.self_undistort.min_markers = 0;
+        let tiers = ScaleTiers::four_tier_wide();
+        assert!(tiers.tiers().len() > 1);
+        assert!(build_adaptive_candidates(&gray, &config, None).len() > 1);
+
+        let cases: [(&str, &dyn Fn() -> PipelineResult); 6] = [
+            ("single_pass", &|| detect_single_pass(&gray, &config)),
+            ("mapper", &|| {
+                detect_with_mapper(&gray, &config, &IdentityMapper)
+            }),
+            ("self_undistort", &|| {
+                detect_with_self_undistort(&gray, &su_config)
+            }),
+            ("multiscale", &|| detect_multiscale(&gray, &config, &tiers)),
+            ("adaptive", &|| detect_adaptive(&gray, &config)),
+            ("adaptive_hint", &|| {
+                detect_adaptive_with_hint(&gray, &config, Some(48.0))
+            }),
+        ];
+        for (name, run) in cases {
+            assert_eq!(photometric_runs(run), 1, "{name}");
+        }
+
+        config.circle_refinement = crate::CircleRefinementMethod::ProjectiveCenter;
+        assert_eq!(
+            photometric_runs(|| detect_with_mapper(&gray, &config, &IdentityMapper)),
+            0
+        );
     }
 }

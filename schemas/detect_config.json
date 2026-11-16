@@ -286,7 +286,7 @@
         },
         {
           "const": "Photometric",
-          "description": "Projective-center recovery, then a per-marker photometric fit of the\nblurred marker pattern for every marker with a board position — a\ndecoded id on a coded target, a lattice label on a plain one — on any\nlattice, whenever the result has a board homography.\n\nThe fit explains the marker's pixels with what the target prints\naround it (the ring annulus, the code sectors of a coded marker, the\nouter edges of the neighbouring markers and any origin dots), seen\nthrough the board homography refined locally, blurred by a fitted\nGaussian PSF, over an affine background. It removes the blur- and\ncode-dependent bias of edge-based centres and reports a 2×2 centre\ncovariance per marker (`DetectedMarker::center_cov`) that accounts\nfor spatially correlated fit residuals. Markers it does not refine keep\ntheir projective (or outer-ellipse) centre, see\n`DetectedMarker::center_source`; the diagnostics give every marker a\nphotometric status saying why. Tuning lives in\n`AdvancedDetectConfig::photometric`.\n\n`DetectedMarker::center_cov`: crate::DetectedMarker::center_cov\n`DetectedMarker::center_source`: crate::DetectedMarker::center_source",
+          "description": "Projective-center recovery, then a per-marker photometric fit of the\nblurred marker pattern for every marker with a board position — a\ndecoded id on a coded target, a lattice label on a plain one — on any\nlattice, whenever the result has a board homography.\n\nThe fit explains the marker's pixels with what the target prints\naround it (the ring annulus, the code sectors of a coded marker, the\nouter edges of the neighbouring markers and any origin dots), seen\nthrough the board homography refined locally, blurred by a fitted\nGaussian PSF, over an affine background. It removes the blur- and\ncode-dependent bias of edge-based centres and reports a 2×2 centre\ncovariance per marker (`DetectedMarker::center_cov`) that accounts\nfor spatially correlated fit residuals. Markers it does not refine keep\ntheir projective (or outer-ellipse) centre, see\n`DetectedMarker::center_source`; the diagnostics give every marker a\nphotometric status saying why. The result's homography and its\nRANSAC statistics are then refit from the refined centres. Tuning\nlives in\n`AdvancedDetectConfig::photometric`.\n\n`DetectedMarker::center_cov`: crate::DetectedMarker::center_cov\n`DetectedMarker::center_source`: crate::DetectedMarker::center_source",
           "type": "string"
         }
       ]
@@ -1347,7 +1347,7 @@
     "circle_refinement": {
       "$ref": "#/$defs/CircleRefinementMethod",
       "default": "ProjectiveCenter",
-      "description": "Center-correction strategy applied after local fits are accepted: `None` disables it, `ProjectiveCenter` recovers unbiased centers from the inner/outer conics."
+      "description": "Center-correction strategy applied after local fits are accepted: `None` keeps the outer-ellipse centers; `ProjectiveCenter` (the default) recovers unbiased centers from the inner/outer conics; `Photometric` runs on top of projective-center correction and fits each marker's pixels with a model of the blurred printed pattern, which is opt-in because it costs milliseconds per marker. With `Photometric` the returned homography and its RANSAC statistics are refit from the refined centers."
     },
     "marker_scale": {
       "$ref": "#/$defs/MarkerScalePrior",

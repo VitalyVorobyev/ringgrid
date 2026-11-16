@@ -6,10 +6,12 @@
 //! Algorithmic primitives live in `crate::detector`, `crate::ring`, and `crate::pixelmap`.
 //! The pipeline layer focuses on stage boundaries, call order, and data flow.
 //!
-//! Entry points:
-//! - `detect_single_pass`: baseline detection (optional mapper for distortion-aware sampling)
+//! Entry points (each returns a finished result, photometric centre
+//! refinement included when configured — once per call):
+//! - `detect_single_pass`: baseline detection
 //! - `detect_with_mapper`: baseline pass + seeded mapper pass
 //! - `detect_with_self_undistort`: baseline pass + estimate division-model mapper + optional rerun
+//! - `detect_multiscale`, `detect_adaptive*`: per-tier fit/decode, merge, one finalize
 //!
 //! See `docs/pipeline_analysis.md` for a detailed architecture write-up.
 
@@ -19,6 +21,7 @@ mod axis_ratio_filter;
 mod finalize;
 mod fit_decode;
 mod geometric_verify;
+mod photometric;
 mod prelude;
 mod result;
 mod run;
@@ -39,5 +42,7 @@ pub(crate) use result::{PipelineResult, seed_proposals};
 pub(crate) use run::{
     detect_adaptive, detect_adaptive_with_hint, detect_multiscale, detect_single_pass,
     detect_with_mapper, detect_with_self_undistort, proposal_result_for_config,
-    proposal_seeds_for_config, refine_centers_photometric, select_adaptive_tiers,
+    proposal_seeds_for_config, select_adaptive_tiers,
 };
+#[cfg(feature = "study")]
+pub(crate) use run::{detect_adaptive_collecting_residuals, detect_collecting_residuals};

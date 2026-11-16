@@ -331,14 +331,6 @@ class DetectedMarker:
     def from_dict(cls, data: Mapping[str, Any]) -> DetectedMarker: ...
     def to_dict(self) -> dict[str, Any]: ...
 
-class ResidualAutocorrelation:
-    x: list[float]
-    y: list[float]
-    def __init__(self, x: list[float], y: list[float]) -> None: ...
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> ResidualAutocorrelation: ...
-    def to_dict(self) -> dict[str, Any]: ...
-
 class PhotometricMetrics:
     status: str
     n_pixels: int
@@ -347,8 +339,6 @@ class PhotometricMetrics:
     contrast: float | None
     residual_sigma: float | None
     center_shift_px: float | None
-    covariance_inflation: float | None
-    residual_autocorrelation: ResidualAutocorrelation | None
     def __init__(
         self,
         status: str,
@@ -358,8 +348,6 @@ class PhotometricMetrics:
         contrast: float | None = ...,
         residual_sigma: float | None = ...,
         center_shift_px: float | None = ...,
-        covariance_inflation: float | None = ...,
-        residual_autocorrelation: ResidualAutocorrelation | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> PhotometricMetrics: ...

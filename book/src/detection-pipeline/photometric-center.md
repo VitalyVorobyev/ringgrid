@@ -8,8 +8,10 @@ paper or ink. The resulting center error depends on the marker's code and on
 the blur, so it does not average out across markers. The projective center
 inherits it from both ellipses.
 
-`CircleRefinementMethod::Photometric` adds a final stage that fits each
-marker's pixels directly with a model of the blurred printed pattern. It works
+`CircleRefinementMethod::Photometric` adds a final stage, on top of
+projective-center correction, that fits each marker's pixels directly with a
+model of the blurred printed pattern. It is opt-in because it costs a few
+milliseconds per marker. It works
 for every target kind the detector supports — coded and plain markers, hex and
 rect lattices, with or without origin dots: the pattern is derived from the
 target definition, so all of them go through the same model.
@@ -67,7 +69,8 @@ is used for all final fits. The estimate is reported in
 | Refined center | `DetectedMarker::center` |
 | Which estimator produced the center | `DetectedMarker::center_source` (`outer_ellipse`, `projective_center`, `photometric`) |
 | 2×2 center covariance (px²) | `DetectedMarker::center_cov` (photometric centers only) |
-| Fitted blur, contrast, residual, status, covariance inflation, residual autocorrelation | `MarkerDiagnostics::photometric` |
+| Fitted blur, contrast, residual, center shift, status | `MarkerDiagnostics::photometric` |
+| Homography and RANSAC statistics, refit from the refined centers | `DetectionResult::homography`, `DetectionDiagnostics::ransac` |
 
 ## Covariance
 
@@ -91,10 +94,7 @@ center: a misfit that is symmetric about the center (a PSF shape or a response
 curve the model does not have) cannot move the center and is not mistaken for
 noise.
 
-`PhotometricMetrics::covariance_inflation` is the ratio of the reported center
-standard deviation to the independent-pixel one; `residual_autocorrelation`
-gives the residual correlation at lags 1–6 px along each image axis. The
-covariance does not cover a bias common to the whole marker (the model's own
+The covariance does not cover a bias common to the whole marker (the model's own
 approximation error, an asymmetric misfit), which on synthetic data stays
 below about 0.015 px for markers of 17 px outer radius and more.
 
@@ -111,17 +111,22 @@ a marker that could not be placed on the board at all reports
 - Every marker with a board position: a decoded id on a coded target, a
   lattice label on a plain one. Undecoded or unlabelled markers keep their
   center (`no_board_position`).
-- A board homography is required; coded targets get one from the global
-  filter (the default), plain targets from grid assignment. When a plain
+- A board homography is required; finalize's grid labeling provides it for
+  coded and plain targets alike (coded views it cannot label fall back to the
+  decode-anchored global filter). When a plain
   board's origin is resolved (absolute frame) the model knows every printed
   marker and origin dot; in the relative frame of an unresolved board it
   knows the labelled markers only, so an undetected neighbour or an origin dot
   next to a marker is not modelled there.
 - With a `PixelMapper`, the local board-to-image map is fitted through the
   mapper.
-- The stage runs once per detection call, after scale selection, so adaptive
-  detection does not pay for it per candidate. The result's homography is the
-  one fitted before refinement.
+- The stage is the pipeline's last: it runs once per detection call, on the
+  finished result — after every pass, scale tier and adaptive candidate — so
+  adaptive detection does not pay for it per candidate.
+- After refinement the result's homography and its RANSAC statistics are refit
+  from the centers now in the result (refined and unrefined markers alike),
+  with the same final-homography step finalize ends with: the refit is kept
+  when it reprojects the centers better than the homography finalize fitted.
 
 ## Configuration
 

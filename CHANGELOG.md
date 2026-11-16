@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **With `CircleRefinementMethod::Photometric`, the returned homography is
+  refit from the refined centres.** It used to stay the one fitted to the
+  pre-refinement centres. After the photometric stage accepts any fit, the
+  homography and `DetectionDiagnostics::ransac` are refit from the centres now
+  in the result (refined and unrefined markers) with finalize's own final-H
+  step (the refit is kept when it reprojects the centres better), and each
+  marker's `fit.h_reproj_err_px` is recomputed against it. Homography error at
+  the true cell centres, synthetic scenes: clean coded hex 0.20 → 0.007 px,
+  adaptive detection with glare 0.12 → 0.003 px; no study scene worse
+  (273 scenes, mean and p95). On distorted images a homography cannot model
+  (no camera model; self-undistort) the mean still improves but the p95 rose
+  on one image each (3.84 → 3.89 px, 0.108 → 0.130 px). Photometric off:
+  nothing changes.
+- **Photometric refinement is a pipeline stage.** It runs once per detection
+  call on the finished result (after adaptive candidate selection, never per
+  pass, scale tier or candidate), as before, but is now owned by the pipeline
+  rather than the `Detector` facade; single-pass `StageTimings::total_ms`
+  includes it.
+- **CLI: `--refine {none,projective-center,photometric}`** on `ringgrid detect`
+  and `ringgrid batch`, overriding the `--config` overlay's
+  `circle_refinement`. `ringgrid-dev` uses the same flag; its
+  `--circle-refine-method` remains an alias.
+
 - **Coded targets now identify markers from the grid, not from each marker's
   own code band.** Every fitted ring — decoded or not — is labeled with lattice
   coordinates; the decoded IDs vote for where that labeling sits on the board,
@@ -80,6 +103,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/config_sample.json` was removed.
 
 ### Removed
+
+- **`PhotometricMetrics::covariance_inflation` and
+  `PhotometricMetrics::residual_autocorrelation`, and `ResidualAutocorrelation`**
+  (Rust diagnostics, Python). They are research diagnostics: they moved to the
+  study output (`PhotometricResidualMarker`), so the stable diagnostics type has
+  one serde shape. Old JSON carrying the keys still deserializes.
+- **The photometric study API without the `study` feature.** The doc-hidden
+  `photometric_residuals` module and
+  `Detector::detect_with_photometric_residuals` /
+  `detect_adaptive_with_photometric_residuals` now exist only with the
+  non-default `study` cargo feature (not exposed by the bindings).
 
 - **`SeedProposalConfig::merge_radius_px` and `SeedProposalConfig::seed_score`**
   (Rust, Python, JSON schema). Neither was ever read: pass 2 uses the pass-1

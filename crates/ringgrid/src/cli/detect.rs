@@ -8,7 +8,7 @@ use image::GrayImage;
 
 use crate::DetectionResult;
 use crate::api::{DetectError, Detector};
-use crate::detector::DetectConfig;
+use crate::detector::{CircleRefinementMethod, DetectConfig};
 use crate::target::TargetLayout;
 
 use super::recipe::TargetRecipe;
@@ -103,10 +103,13 @@ pub fn load_target(path: &Path) -> Result<TargetLayout, DetectRunError> {
 ///
 /// Precedence for the strict complete-board gate: `--strict` (`strict = true`)
 /// OR a `require_complete_board: true` in the config overlay enables it.
+/// `refine` (`--refine`), when given, overrides the overlay's
+/// `circle_refinement`; otherwise the overlay or the default applies.
 pub fn build_detector(
     target: TargetLayout,
     marker_diameter_px: Option<f32>,
     strict: bool,
+    refine: Option<CircleRefinementMethod>,
     overlay: Option<serde_json::Value>,
 ) -> Result<Detector, DetectRunError> {
     let mut config = match marker_diameter_px {
@@ -119,6 +122,9 @@ pub fn build_detector(
             .map_err(|e| DetectRunError::Config(e.to_string()))?;
     }
     config.require_complete_board = config.require_complete_board || strict;
+    if let Some(refine) = refine {
+        config.circle_refinement = refine;
+    }
     Ok(Detector::with_config(config))
 }
 
@@ -223,4 +229,28 @@ pub fn decoded_count(result: &DetectionResult) -> usize {
         .iter()
         .filter(|m| m.id.is_some())
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--refine` wins over the config overlay; without it the overlay, and
+    /// without both the default, applies.
+    #[test]
+    fn refine_overrides_the_overlay_and_defaults_otherwise() {
+        let overlay = || Some(serde_json::json!({ "circle_refinement": "None" }));
+        let method = |refine, overlay| {
+            build_detector(TargetLayout::default_hex(), None, false, refine, overlay)
+                .expect("detector")
+                .config()
+                .circle_refinement
+        };
+        assert_eq!(
+            method(Some(CircleRefinementMethod::Photometric), overlay()),
+            CircleRefinementMethod::Photometric
+        );
+        assert_eq!(method(None, overlay()), CircleRefinementMethod::None);
+        assert_eq!(method(None, None), CircleRefinementMethod::default());
+    }
 }

@@ -4,7 +4,7 @@
 //! PSF, affine illumination, white noise) the residual profiles are flat; with
 //! a Gaussian-plus-halo PSF the signed edge profile (table (b) of the
 //! `photometric_residual_profile` example) shows the structure the model
-//! cannot fit.
+//! cannot fit. Needs the `study` feature (`--features study`).
 
 mod support;
 

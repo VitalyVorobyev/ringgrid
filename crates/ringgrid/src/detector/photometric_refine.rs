@@ -15,7 +15,6 @@ use projective_grid::Coord;
 
 use crate::detector::{
     CenterSource, DetectConfig, MarkerRecord, PhotometricMetrics, PhotometricStatus,
-    ResidualAutocorrelation,
 };
 use crate::homography::homography_project_rows;
 use crate::marker::codec::Codebook;
@@ -23,10 +22,35 @@ use crate::pipeline::BoardFrame;
 use crate::pixelmap::PixelMapper;
 use crate::ring::MAD_TO_SIGMA;
 use crate::ring::photometric_center::{
-    InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem,
-    PhotometricResidualSample, PrintRadii, fit_marker, residual_samples,
+    InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem, PrintRadii, fit_marker,
 };
 use crate::target::{MarkerCoding, TargetLayout};
+
+#[cfg(feature = "study")]
+mod residuals;
+#[cfg(feature = "study")]
+pub(crate) use residuals::ResidualSink;
+#[cfg(feature = "study")]
+use residuals::record_residuals;
+#[cfg(feature = "study")]
+pub use residuals::{PhotometricResidualMarker, ResidualAutocorrelation};
+
+/// Where the stage sends each fitted marker's residuals: nowhere without the
+/// `study` feature (the sink can only be `None`).
+#[cfg(not(feature = "study"))]
+pub(crate) type ResidualSink<'a> = Option<&'a mut std::convert::Infallible>;
+
+#[cfg(not(feature = "study"))]
+fn record_residuals(
+    sink: &mut std::convert::Infallible,
+    _: &Stage<'_>,
+    _: &Task,
+    _: [f64; 2],
+    _: PrintRadii,
+    _: &PhotometricFit,
+) {
+    match *sink {}
+}
 
 /// Minimum number of well-determined markers for a print-radii consensus.
 const MIN_RADII_SAMPLES: usize = 6;
@@ -232,27 +256,6 @@ impl<'a> PrintedBoard<'a> {
             })
             .collect()
     }
-}
-
-/// The per-pixel fit residuals of one marker, for studying where the
-/// intensity model fails. Obtained through
-/// [`Detector::detect_with_photometric_residuals`](crate::Detector::detect_with_photometric_residuals).
-#[derive(Debug, Clone)]
-pub struct PhotometricResidualMarker {
-    /// Index into `DetectionResult::detected_markers`.
-    pub marker_index: usize,
-    /// Fitted centre (image pixels), whether or not the fit was accepted.
-    pub center: [f64; 2],
-    /// Fitted PSF sigma (pixels).
-    pub blur_sigma_px: f64,
-    /// Fitted PSF anisotropy `[a, b]`.
-    pub aniso: [f64; 2],
-    /// Outer print radius used (board mm); the unit of the samples' `radius`.
-    pub outer_radius_mm: f64,
-    /// Robust residual standard deviation of the fit (grey levels).
-    pub residual_sigma: f64,
-    /// The patch pixels in row-major order.
-    pub samples: Vec<PhotometricResidualSample>,
 }
 
 /// One marker's fit inputs.
@@ -506,8 +509,6 @@ fn status_only(status: PhotometricStatus) -> PhotometricMetrics {
         n_pixels: 0,
         masked_fraction: 0.0,
         center_shift_px: None,
-        covariance_inflation: None,
-        residual_autocorrelation: None,
     }
 }
 
@@ -536,8 +537,6 @@ fn judge(
     } else {
         PhotometricStatus::Accepted
     };
-    let trace = |c: &[[f64; 2]; 2]| c[0][0] + c[1][1];
-    let inflation = (trace(&fit.center_cov) / trace(&fit.center_cov_white)).sqrt();
     PhotometricMetrics {
         status,
         blur_sigma_px: Some(fit.blur_sigma_px),
@@ -546,11 +545,6 @@ fn judge(
         n_pixels: fit.n_pixels,
         masked_fraction: fit.masked_fraction,
         center_shift_px: Some(shift),
-        covariance_inflation: inflation.is_finite().then_some(inflation),
-        residual_autocorrelation: Some(ResidualAutocorrelation {
-            x: fit.residual_acf.x,
-            y: fit.residual_acf.y,
-        }),
     }
 }
 
@@ -563,8 +557,8 @@ pub(crate) fn mark_unrefined(markers: &mut [MarkerRecord]) {
 }
 
 /// Refine the centres of every marker with a board position in place.
-/// `residuals`, when given, receives every fitted marker's per-pixel
-/// residuals; nothing is computed for it otherwise.
+/// `residuals`, when given (`study` feature), receives every fitted marker's
+/// per-pixel residuals; nothing is computed for it otherwise.
 ///
 /// `homography` maps the result's board frame (`board_frame`; absolute board
 /// mm for coded targets) to the working frame; `mapper` maps that frame to
@@ -578,7 +572,7 @@ pub(crate) fn apply_photometric_centers(
     board_frame: Option<BoardFrame>,
     mapper: Option<&dyn PixelMapper>,
     config: &DetectConfig,
-    residuals: Option<&mut Vec<PhotometricResidualMarker>>,
+    residuals: ResidualSink<'_>,
 ) -> Option<PrintRadii> {
     if !config.circle_refinement.uses_photometric() {
         return None;
@@ -603,7 +597,7 @@ fn refine(
     board_frame: Option<BoardFrame>,
     mapper: Option<&dyn PixelMapper>,
     config: &DetectConfig,
-    mut residuals: Option<&mut Vec<PhotometricResidualMarker>>,
+    mut residuals: ResidualSink<'_>,
 ) -> Option<PrintRadii> {
     let target = &config.target;
     let h = homography?;
@@ -653,25 +647,17 @@ fn refine(
             Ok(fit) => {
                 iterations += fit.iterations;
                 if let Some(sink) = residuals.as_deref_mut() {
-                    // The fit's own problem: the seed is still the pre-fit centre.
-                    let mode = FitMode {
-                        fit_radii: false,
-                        cubic_background: false,
-                    };
-                    let problem = stage.problem(t, m.center, final_radii, mode);
-                    if let Some(samples) = residual_samples(&problem, &fit) {
-                        sink.push(PhotometricResidualMarker {
-                            marker_index: t.index,
-                            center: fit.center,
-                            blur_sigma_px: fit.blur_sigma_px,
-                            aniso: fit.params.aniso(),
-                            outer_radius_mm: fit.radii[3],
-                            residual_sigma: fit.residual_sigma,
-                            samples,
-                        });
-                    }
+                    // The seed is still the pre-fit centre.
+                    record_residuals(sink, &stage, t, m.center, final_radii, &fit);
                 }
                 let metrics = judge(&fit, m.center, max_shift_px, typical_residual);
+                tracing::trace!(
+                    marker = t.index,
+                    status = ?metrics.status,
+                    covariance_inflation = fit.covariance_inflation(),
+                    residual_acf = ?fit.residual_acf,
+                    "photometric fit"
+                );
                 if metrics.status == PhotometricStatus::Accepted {
                     m.center = fit.center;
                     m.center_cov = Some(fit.center_cov);

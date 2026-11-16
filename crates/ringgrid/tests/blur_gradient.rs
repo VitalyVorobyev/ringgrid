@@ -18,7 +18,7 @@
 //! The ignored studies measure what the detector makes of it:
 //!
 //! ```text
-//! cargo test --release -p ringgrid --test blur_gradient -- --ignored --nocapture
+//! cargo test --release -p ringgrid --features study --test blur_gradient -- --ignored --nocapture
 //! ```
 //!
 //! - `blur_gradient_bias_matrix`: the centre bias per method, target kind,
@@ -27,9 +27,9 @@
 //!   `GRADIENT_SIGMAS`, `GRADIENT_TILTS`, `GRADIENT_GS` (comma-separated
 //!   lists) restrict it; `GRADIENT_THREADS`; `GRADIENT_CSV=<path>` writes the
 //!   rows.
-//! - `blur_gradient_residual_dipole`: the stacked photometric residual near
-//!   the outer edge by image angle, to compare with the dipole seen on real
-//!   captures.
+//! - `blur_gradient_residual_dipole` (`study` feature): the stacked
+//!   photometric residual near the outer edge by image angle, to compare with
+//!   the dipole seen on real captures.
 //! - `blur_gradient_ink_centroid`: the centroid of an isolated blurred marker
 //!   (no detector).
 //!
@@ -46,7 +46,6 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ringgrid::diagnostics::PhotometricStatus;
 use ringgrid::{
     CenterSource, CircleRefinementMethod, DetectConfig, Detector, OriginDots, TargetLayout,
 };
@@ -54,6 +53,7 @@ use support::blur_scene::{
     BlurForm, BoardRaster, Psf, Radiance, SceneSpec, apply_h, apply_psf, expose, radiance,
     varying_sigma,
 };
+#[cfg(feature = "study")]
 use support::residual_profile::{MarkerData, analyze, dipole};
 
 /// Smallest sigma the linear field may reach inside the band of interest.
@@ -893,9 +893,12 @@ fn blur_gradient_bias_matrix() {
 /// Q3: the stacked residual of the photometric fit near the outer edge, by
 /// image angle, on blur-gradient scenes of a coded hex board close to the real
 /// captures (17 px markers, contrast 60).
+#[cfg(feature = "study")]
 #[test]
 #[ignore = "benchmark; run in release with --ignored --nocapture"]
 fn blur_gradient_residual_dipole() {
+    use ringgrid::diagnostics::PhotometricStatus;
+
     let radius = 17.0;
     let target = TargetLayout::coded_hex(8.0, 15, 14, 4.8, 3.2, 1.152).expect("target");
     let board = BoardRaster::with_dpi(target.clone(), raster_dpi(&target, radius));

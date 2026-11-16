@@ -38,6 +38,8 @@ When no grid can be labeled (coded targets: or anchored), coded views fall back 
 
 When `use_global_filter` is `false`, finalize runs projective center correction and returns the markers without labeling or homography.
 
+With `circle_refinement = Photometric` (opt-in), [photometric center refinement](photometric-center.md) runs after finalize, once per detection call on the finished result, and the final homography is then refit from the refined centers.
+
 ## Geometric Verification
 
 After the final homography, a precision-first gate (`pipeline/geometric_verify.rs`, enabled by `advanced.geometric_verify`, default `true`) checks every labeled marker against the target lattice and **removes** the geometrically inconsistent ones, so only trusted board correspondences reach the output. Two complementary tests run, rejecting on their union:

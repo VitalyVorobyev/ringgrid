@@ -1,6 +1,6 @@
 # ADR-017: Plain / Rect Target Detection & the Compositional Target Model
 
-- **Status:** accepted
+- **Status:** accepted; origin enumeration amended by ADR-025
 - **Date:** 2026-07-04
 - **Author role:** pipeline-architect
 - **Supersedes:** none
@@ -70,7 +70,8 @@ none.
 - Plain anchoring depends on visible fiducial dots; without them, outputs are
   relative-frame only.
 - Origin enumeration is capped (`MAX_CANDIDATES = 512`); pathologically large
-  labeled patches are truncated (logged, not silently).
+  labeled patches are truncated (logged, not silently). *(Superseded by
+  ADR-025: placements are enumerated by anchor cell, without a cap.)*
 
 **Neutral:**
 - Rect **coded** targets are supported but skip hex-neighbor ID correction.

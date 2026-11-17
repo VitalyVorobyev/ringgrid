@@ -79,25 +79,29 @@ resolution decides whether they can be remapped to absolute board cells.
 
 The algorithm is *verify-at-predicted-positions* — no separate dot detector:
 
-1. **Enumerate candidates.** For each lattice rotation (determinant +1 only) and
-   each lattice translation that embeds the whole labeled patch into the board
-   cell set, form a `(rotation × translation)` coordinate map. The candidate set
-   is capped at 512; a patch too small on a large board explodes the translation
-   count and is declined rather than guessed.
-2. **Fit and screen each candidate.** Fit a board→image homography by DLT over
-   the labeled correspondences, and reject it if its Jacobian determinant is
-   non-positive at the patch center (orientation-reversing — physically
-   impossible).
-3. **Score dot darkness.** Project each dot through the candidate homography and
+1. **Enumerate placements by anchor cell.** The triad surrounds board cell
+   `(0, 0)`, so a placement is a lattice rotation (determinant +1 only) plus the
+   labeled-frame cell that carries the triad, searched at and one lattice step
+   around the labeled patch. Every labeled marker must land on a board cell.
+   The number of placements follows the visible patch, not the board: a
+   14 × 11-ring window of a 58 × 58 board anchors like a small board does.
+2. **Screen orientation.** One board→image homography of the labeled patch
+   serves every placement; a placement whose map would be orientation-reversing
+   (physically impossible) is discarded.
+3. **Score dot darkness.** Project each dot through that homography and
    measure the normalized `(background − dot)` intensity contrast: a dark disk at
    the predicted center against a clear background annulus around it. A candidate
    whose dots fall off-image or sub-pixel is *unscorable* (declined), not dark.
    The candidate's score is its weakest dot's contrast.
 4. **Accept the winner** only if it clears an **absolute contrast threshold**
-   (`0.10`) **and** beats the runner-up by a **margin** (`0.05`). Otherwise the
-   origin stays unresolved.
+   (`0.10`) **and** beats every other placement by a **margin** (`0.05`).
+   Otherwise the origin stays unresolved — for example when only one or two dots
+   are in view, or when a dark speck in a neighbouring gap forms a second,
+   equally dark triad.
 
 Resolution needs at least four labeled markers to fit a stable homography.
+When the labeled patch stops short of the dots, the view is anchored once more
+after completion has grown the patch over the visible board.
 
 ## `board_frame` and what callers see
 

@@ -202,6 +202,22 @@ fn join_decoded_unlabeled(
     joined.len()
 }
 
+/// Plain targets: anchor an unresolved labeling once more after its relative
+/// completion. The labeler returns one connected component, which can stop
+/// short of the origin dots, and dots are verified only next to labeled rings
+/// (`pipeline::anchor`); completion grows the patch over the visible board.
+/// Returns whether the origin is now resolved (always `false` for coded
+/// targets, which anchor by decoded IDs before completion or fall back).
+fn reanchor_plain(
+    gray: &GrayImage,
+    markers: &mut Vec<MarkerRecord>,
+    config: &DetectConfig,
+    mapper: Option<&dyn PixelMapper>,
+    h_current: &mut nalgebra::Matrix3<f64>,
+) -> bool {
+    !config.target.is_coded() && phase_anchor(gray, markers, config, mapper, h_current).is_some()
+}
+
 /// Coordinate-keyed completion plus projective-center correction for the newly
 /// refitted markers only (adopted rings were corrected before labeling).
 ///
@@ -278,8 +294,8 @@ fn unlabeled_fallback(
 }
 
 /// Grid-first finalize: grid assignment → origin anchor (+ cell
-/// identification) → completion → marker fixup → final H refit → geometric
-/// verify.
+/// identification) → completion → (plain, unresolved: origin anchor on the
+/// completed patch) → marker fixup → final H refit → geometric verify.
 ///
 /// `assign_plain_grid` labels every fitted ring and keeps the frame-homography
 /// inliers; `resolve_origin` decides whether outputs are absolute board-frame
@@ -353,6 +369,10 @@ pub(super) fn finalize_grid_result(
         mapper,
     );
     let completion_elapsed = completion_start.elapsed();
+    let retry_start = Instant::now();
+    let anchored =
+        anchored || reanchor_plain(gray, &mut final_markers, config, mapper, &mut h_current);
+    let anchor_elapsed = anchor_elapsed + retry_start.elapsed();
     // Coded only (ID-keyed recovery + axis-ratio filter), before the final H.
     apply_marker_fixup(gray, &mut final_markers, config, mapper);
     drop_unmappable_markers_with_warning(&mut final_markers, mapper);

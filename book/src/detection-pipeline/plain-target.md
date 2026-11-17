@@ -25,7 +25,7 @@ targets anchor by decoded IDs instead of dots) when `advanced.use_global_filter`
 | 1 | Projective center | Correct fit centers once per marker (shared with coded) |
 | 2 | [Grid assignment](#grid-assignment) | Label ring centers with lattice coordinates; fit the frame homography |
 | 3 | [Origin anchor](#origin-resolution) | Resolve the board origin from fiducial dots (when present) |
-| 4 | [Completion](#completion) | Coordinate-keyed fits at missing cells; grows the labeled patch when unanchored |
+| 4 | [Completion](#completion) | Coordinate-keyed fits at missing cells; grows the labeled patch when unanchored, then retries the origin anchor |
 | 5 | Final H refit | Refit the frame/board homography over all labeled markers |
 | 6 | [Geometric verify](overview.md#geometric-verification) | The same lattice-consistency gate as the coded path |
 
@@ -65,24 +65,40 @@ When the target carries [origin fiducials](../targets/origin-fiducials.md) and a
 least four markers are labeled, `pipeline/anchor.rs` (`resolve_origin`) upgrades
 the relative labeling to an **absolute** board frame:
 
-1. **Enumerate coordinate maps.** Consider every `(symmetry × translation)` that
-   embeds the labeled patch into the board's cell set, over the lattice's full
-   dihedral group (rotations **and** reflections). The candidate set is capped at
-   `MAX_CANDIDATES = 512`.
-2. **Fit and gate each candidate.** For each map, fit a board→image homography by
-   DLT and reject it if the Jacobian determinant is ≤ 0 at the patch center
-   (a folded / reflected mapping). This physical check is what excludes
-   reflections: when the relative frame is orientation-preserving (the normal
-   case) every reflected candidate fails it, and when canonicalization could not
-   fix the handedness the reflected candidates are the ones that pass.
-3. **Score by dot darkness.** Project each fiducial dot through the candidate
+1. **Fit the patch homography once.** A DLT from relative-frame lattice
+   millimetres to image pixels over every labeled ring. A placement only
+   re-expresses board millimetres by a lattice isometry, under which the
+   normalized DLT is equivariant, so one fit serves every placement.
+2. **Enumerate placements by anchor cell.** The dot triad surrounds board cell
+   `(0, 0)`, so a placement is a lattice symmetry plus the relative-frame cell
+   that carries the triad. That anchor cell is searched over the labeled patch's
+   coordinate bounds expanded by one lattice step, over the lattice's full
+   dihedral group (rotations **and** reflections): the count is set by the
+   patch, not by the board, so a small window of a large board costs the same as
+   a small board. A placement must put every labeled ring on a board cell.
+3. **Gate on orientation.** A placement's board→image map is the patch
+   homography composed with the placement, so it is orientation-reversing
+   exactly when its symmetry's handedness differs from the patch homography's.
+   This physical check is what excludes reflections: when the relative frame is
+   orientation-preserving (the normal case) every reflected placement fails it,
+   and when canonicalization could not fix the handedness the reflected
+   placements are the ones that pass.
+4. **Score by dot darkness.** Project each fiducial dot through the patch
    homography and measure normalized `(background − dot)` contrast with a
-   distortion-aware disk-vs-annulus sample. A candidate's score is its *weakest*
-   dot (the min over dots).
-4. **Accept the winner** only if its contrast ≥ `MIN_DOT_CONTRAST = 0.10` **and**
-   its margin over the runner-up ≥ `MIN_MARGIN = 0.05`. This "verify at predicted
-   positions" test is deliberately conservative: a wrong origin is worse than an
-   unresolved one.
+   distortion-aware disk-vs-annulus sample. A placement's score is its *weakest*
+   dot (the min over dots); a placement with a dot off-image is unscorable, not
+   dark.
+5. **Accept the winner** only if its contrast ≥ `MIN_DOT_CONTRAST = 0.10` **and**
+   its margin over every other valid placement ≥ `MIN_MARGIN = 0.05`. This
+   "verify at predicted positions" test is deliberately conservative: a wrong
+   origin is worse than an unresolved one. A dark speck that forms a second
+   triad with two of the dots makes the view ambiguous (unresolved); a speck
+   anywhere else cannot complete a triad.
+
+Dots are verified only next to labeled rings, where the patch homography is
+measured. The labeler returns one connected component, which can stop short of
+the dots; an unresolved plain view therefore anchors once more after
+[completion](#completion) has grown the patch over the visible board.
 
 On success, each marker's `grid_coord` is remapped through the winning
 coordinate map to absolute board cells, `board_xy_mm` is filled from the target's

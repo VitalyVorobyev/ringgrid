@@ -359,7 +359,9 @@ list them at all.
 ## CI / checks
 
 GitHub Actions workflows in `.github/workflows/`:
-- `ci.yml` — fmt, clippy, test, WASM build smoke test on push/PR
+- `ci.yml` — fmt, clippy, test, WASM build smoke test on push/PR; also the release
+  workflow's `cargo test --workspace --all-targets --all-features --release` on ubuntu
+  and macOS, which runs the per-platform golden snapshots (`tests/golden_entry_points.rs`)
 - `publish-crates.yml` — publish ringgrid to crates.io on tag (ringgrid-cli is intentionally unpublished, installable from source)
 - `release-pypi.yml` — build and publish Python wheels to PyPI on tag
 - `release-npm.yml` — build and publish WASM npm package on tag (copies `schemas/` into the package via `tools/ci/package_schemas.sh`)

@@ -116,6 +116,7 @@ cargo build --release
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test --workspace --all-targets --all-features --release   # what the release workflow runs
 cargo doc --workspace --all-features --no-deps
 cargo test --doc --workspace
 mdbook build book
@@ -123,6 +124,13 @@ mdbook build book
 VIRTUAL_ENV=.venv ./.venv/bin/maturin develop -m crates/ringgrid-py/Cargo.toml --release
 ./.venv/bin/python -m pytest crates/ringgrid-py/tests -q
 ```
+
+The release-mode run includes the golden snapshots of every detection entry point
+(`crates/ringgrid/tests/golden_entry_points.rs`), which are skipped in debug builds.
+They are exact and kept per platform (`x86_64-linux`, `aarch64-macos`), because the
+platform math libraries differ in the last bits and detection amplifies that. CI runs
+them on both; to bless a platform you are not on, take the `golden-actual-<os>`
+artifact of the failing CI job (see the test's module docs).
 
 The `ringgrid` crate's non-default `study` feature exposes research-only API for the photometric fit (per-pixel residuals, covariance diagnostics; used by the photometric study tests and `ringgrid-cli` examples); `--all-features` covers it.
 

@@ -163,7 +163,8 @@ For a plain target with origin dots, check `board_frame` in the result: it reads
 have not — see [Origin Fiducials](origin-fiducials.md). If it stays
 `relative_canonical` on a board that *does* have dots, the usual causes are dots
 outside the field of view, too few labeled markers (at least four are needed to
-fit the anchoring homography), or insufficient contrast at the dots.
+fit the anchoring homography), insufficient contrast at the dots, or a dark
+speck in a gap next to them that forms a second triad.
 
 ## Related Chapters
 

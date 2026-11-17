@@ -71,6 +71,26 @@ impl LatticeGeometry {
         }
     }
 
+    /// Board-mm displacement of one lattice step along each coordinate axis:
+    /// `[step_u, step_v]`, so a coordinate offset `(du, dv)` moves a cell by
+    /// `du · step_u + dv · step_v`. Matches the cell generators (pinned by
+    /// `basis_matches_generated_cells`).
+    pub(crate) fn basis_mm(&self) -> [[f64; 2]; 2] {
+        match *self {
+            Self::Hex(HexGeometry { pitch_mm, .. }) => {
+                let p = f64::from(pitch_mm);
+                [
+                    [f64::sqrt(3.0) * p, 0.0],
+                    [0.5 * f64::sqrt(3.0) * p, 1.5 * p],
+                ]
+            }
+            Self::Rect(RectGeometry { pitch_mm, .. }) => {
+                let p = f64::from(pitch_mm);
+                [[p, 0.0], [0.0, p]]
+            }
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), TargetValidationError> {
         let pitch_mm = self.pitch_mm();
         if !pitch_mm.is_finite() || pitch_mm <= 0.0 {
@@ -354,6 +374,39 @@ mod tests {
             let max_y = 14.0 * (rows - 1) as f32;
             assert!((origin.1[0] - 0.5 * max_x).abs() <= 7.0);
             assert!((origin.1[1] - 0.5 * max_y).abs() <= 7.0);
+        }
+    }
+
+    /// `basis_mm` is the generators' lattice: every cell sits at the origin
+    /// cell plus its coordinate offset through the basis.
+    #[test]
+    fn basis_matches_generated_cells() {
+        let lattices = [
+            LatticeGeometry::Rect(RectGeometry {
+                rows: 5,
+                cols: 7,
+                pitch_mm: 2.0,
+            }),
+            LatticeGeometry::Hex(HexGeometry {
+                rows: 7,
+                long_row_cols: 6,
+                pitch_mm: 8.0,
+            }),
+        ];
+        for lattice in lattices {
+            let cells = lattice.generate_cells().expect("valid geometry");
+            let (_, origin) = cells
+                .iter()
+                .find(|(c, _)| *c == Coord::new(0, 0))
+                .expect("origin cell");
+            let [bu, bv] = lattice.basis_mm();
+            for (c, xy) in &cells {
+                let (u, v) = (f64::from(c.u), f64::from(c.v));
+                let x = f64::from(origin[0]) + u * bu[0] + v * bv[0];
+                let y = f64::from(origin[1]) + u * bu[1] + v * bv[1];
+                assert!((x - f64::from(xy[0])).abs() < 1e-4, "{lattice:?} {c:?}");
+                assert!((y - f64::from(xy[1])).abs() < 1e-4, "{lattice:?} {c:?}");
+            }
         }
     }
 

@@ -198,6 +198,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A partial view of a large plain board anchors whenever its origin dots are
+  in view.** Dot anchoring enumerated every placement of the labeled patch on
+  the board and gave up beyond 512, so a small window of a large plain board
+  (a 14 × 11-ring window of a 58 × 58 board has ~17,000 placements) stayed in
+  the relative frame with the dots plainly visible. Placements are now
+  enumerated by the cell that carries the dot triad, at and one step around
+  the labeled patch, and scored through one homography of the patch: the cost
+  follows the visible patch, not the board, and small boards resolve exactly
+  as before. A plain view whose labeled patch stops short of the dots is
+  anchored once more after completion has grown the patch. Acceptance is
+  unchanged (weakest dot contrast ≥ 0.10, margin ≥ 0.05 over every other
+  placement), so views without the dots, with one or two of them, or with a
+  dark speck forming a second triad stay relative. Precision harness: no new
+  wrong output; plain rect recall (grid 0.489 → 0.550, blur 0.459 → 0.535,
+  dark 0.172 → 0.384, tilt 0.265 → 0.325, partial 0 → 0.152), plain hex
+  (grid 0.402 → 0.415, dark 0.189 → 0.211, partial 0.614 → 0.777); coded
+  targets unchanged. ADR-025.
 - **A placement covering one board line could block the board anchor.** In
   the decoded-ID vote, a reflected placement whose board points are collinear
   has an undetermined homography; centre noise could let it pass as a

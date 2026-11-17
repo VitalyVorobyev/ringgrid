@@ -3,34 +3,36 @@
 //! Grid labeling (`pipeline::assign`) produces cell coordinates in a
 //! canonical *relative* frame: the true board labeling differs by an element
 //! of the lattice symmetry group plus a lattice translation — a rotation
-//! whenever canonicalization could measure the handedness, see
-//! [`enumerate_candidates`]. The target decides which evidence fixes that
-//! unknown ([`OriginEvidence`]):
+//! whenever canonicalization could measure the handedness. The target decides
+//! which evidence fixes that unknown ([`OriginEvidence`]):
 //!
 //! - **Decoded IDs** (coded targets): every labeled marker whose code band
 //!   decoded knows its board cell, so it votes for the one (symmetry,
 //!   translation) per symmetry that maps its relative coordinate onto that
 //!   cell. A robust majority of agreeing votes wins; see
 //!   [`resolve_by_decoded_ids`].
-//! - **Dots** (plain targets with origin fiducials): each candidate
-//!   (symmetry × translation) labeling is scored by projecting the dot
-//!   positions through the candidate's board→image homography and measuring
-//!   dot darkness against the local background — verify-at-predicted-positions,
-//!   no separate dot detector needed. The winner must clear an absolute
-//!   contrast threshold and a margin over the runner-up.
+//! - **Dots** (plain targets with origin fiducials): the triad surrounds board
+//!   cell `(0, 0)`, so a placement is a symmetry plus the relative-frame cell
+//!   that carries the triad. Every placement with that cell at or next to the
+//!   labeled patch is scored by projecting its dots through the patch's
+//!   homography and measuring their darkness against the local background —
+//!   verify-at-predicted-positions, no separate dot detector needed, and a
+//!   cost set by the patch, not the board. The winner must clear an absolute
+//!   contrast threshold and a margin over the runner-up; see
+//!   [`resolve_by_dots`].
 //!
 //! Without evidence, or when it is ambiguous, the origin stays unresolved and
 //! outputs remain in the relative frame.
 //!
 //! Candidates span the full dihedral symmetry group (rotations and
-//! reflections), but every candidate whose fitted board→image homography is
+//! reflections), but every candidate whose board→image homography is
 //! orientation-reversing (non-positive Jacobian determinant) is discarded: an
 //! opaque planar target always images through an orientation-preserving
 //! homography, so reflected labelings are physically impossible. This is also
 //! why fiducial validation (`crate::target`) only rejects rotationally
 //! symmetric dot arrangements.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use image::GrayImage;
 use nalgebra::Matrix3;
@@ -43,10 +45,13 @@ use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
 use crate::target::{OriginFiducials, TargetLayout};
 
-/// Upper bound on (rotation × translation) candidates before giving up.
-/// Small detected patches on a large board explode the translation count and
-/// cannot be disambiguated reliably anyway.
-const MAX_CANDIDATES: usize = 512;
+/// How far (lattice steps) beyond the labeled patch's coordinate bounds the
+/// triad's anchor cell is searched for. The dots are verified through the
+/// patch's own homography, which is measured only where rings were labeled:
+/// one step lets the anchor ring itself be missing from the labeling (cut by
+/// the image border, blurred) while every dot stays within two steps of
+/// labeled rings.
+const ANCHOR_SEARCH_MARGIN: i32 = 1;
 /// Minimum normalized (background − dot) contrast for the winning candidate.
 const MIN_DOT_CONTRAST: f32 = 0.10;
 /// Minimum score margin of the winner over the runner-up.
@@ -105,12 +110,6 @@ pub(crate) struct OriginResolution {
     pub coord_map: CoordMap,
     /// Board-mm → working-px homography of the winning candidate.
     pub h: Matrix3<f64>,
-}
-
-struct Candidate {
-    coord_map: CoordMap,
-    h: Matrix3<f64>,
-    score: f32,
 }
 
 /// Evidence that fixes a relative grid labeling to the board frame.
@@ -255,121 +254,210 @@ fn ln_chance_votes(n_decoded: usize, votes: usize, n_rotations: usize, n_cells: 
     ln_binom + (n_rotations as f64).ln() + (1.0 - votes as f64) * (n_cells as f64).ln()
 }
 
-/// Dot anchoring: score every placement candidate by its fiducial-dot
-/// contrast. The winner must clear [`MIN_DOT_CONTRAST`] and lead the
-/// runner-up by [`MIN_MARGIN`]; `None` also when the candidate set is empty,
-/// too large, or unscorable (dots out of view).
+/// Dot anchoring. A placement is fixed by a lattice symmetry `g` and the
+/// relative-frame cell `a` that carries the triad (board cell `(0, 0)`), so
+/// placements are enumerated by anchor cell near the labeled patch — never by
+/// translation over the board, whose count grows with the board while the
+/// triad can only be verified where the patch is. Each placement is scored by
+/// its weakest dot's contrast, measured through one homography of the labeled
+/// patch ([`PatchFrame`]).
+///
+/// Placements must be physically valid: every labeled ring on a board cell
+/// and an orientation-preserving board→image map. The winner must clear
+/// [`MIN_DOT_CONTRAST`] and lead every other valid placement by
+/// [`MIN_MARGIN`]; `None` also when the patch is degenerate or no placement
+/// can be scored (dots out of view).
 fn resolve_by_dots(
     entries: &[(Coord, [f64; 2])],
     target: &TargetLayout,
     sampler: DistortionAwareSampler<'_>,
     fiducials: &OriginFiducials,
 ) -> Option<OriginResolution> {
-    let board_coords: HashSet<Coord> = target.cells().iter().map(|cell| cell.coord).collect();
-    let candidates = enumerate_candidates(entries, &board_coords, target)?;
-    if candidates.is_empty() {
-        tracing::info!("origin anchor: no placement admits the labeled patch");
+    let Some(patch) = PatchFrame::fit(entries, target) else {
+        tracing::info!("origin anchor: degenerate labeled patch");
         return None;
-    }
+    };
+    let triad = triad_offsets(target)?;
+    let board_coords = target.cells().iter().map(|cell| cell.coord);
+    let (board_min, board_max) = coord_bbox(board_coords)?;
+    let (patch_min, patch_max) = coord_bbox(entries.iter().map(|(c, _)| *c))?;
+    let dot_radius_mm = f64::from(fiducials.dot_radius_mm);
 
-    let mut scored: Vec<Candidate> = Vec::new();
-    for coord_map in candidates {
-        let Some((h, score)) = score_candidate(entries, coord_map, target, sampler, fiducials)
-        else {
+    let mut scored: Vec<(CoordMap, f32)> = Vec::new();
+    for &g in target.lattice_kind().symmetry_transforms() {
+        // board→image = patch homography ∘ (board → relative), and the latter
+        // reverses orientation exactly when `g` does. This also admits the
+        // reflected placements when canonicalization left the relative frame
+        // mirrored (`assign::canonicalize_entries`, no `+u`/`+v` neighbour pair).
+        if g.determinant() * patch.orientation <= 0 {
             continue;
-        };
-        scored.push(Candidate {
-            coord_map,
-            h,
-            score,
-        });
-    }
-    if scored.is_empty() {
-        tracing::info!("origin anchor: no candidate could be scored (dots out of view?)");
-        return None;
-    }
-
-    scored.sort_by(|a, b| b.score.total_cmp(&a.score));
-    let best = &scored[0];
-    let runner_up = scored.get(1).map(|c| c.score);
-
-    if best.score < MIN_DOT_CONTRAST {
-        tracing::info!(
-            best_score = best.score,
-            "origin anchor: best candidate below contrast threshold"
-        );
-        return None;
-    }
-    if let Some(second) = runner_up
-        && best.score - second < MIN_MARGIN
-    {
-        tracing::info!(
-            best_score = best.score,
-            runner_up = second,
-            "origin anchor: ambiguous — margin over runner-up too small"
-        );
-        return None;
-    }
-
-    tracing::info!(
-        best_score = best.score,
-        ?runner_up,
-        "origin anchor: resolved board origin"
-    );
-    Some(OriginResolution {
-        coord_map: best.coord_map,
-        h: best.h,
-    })
-}
-
-/// Enumerate all (symmetry × translation) maps embedding every labeled
-/// coordinate into the board cell set. Returns `None` when the count exceeds
-/// [`MAX_CANDIDATES`].
-///
-/// The full dihedral group is enumerated — rotations **and** reflections. The
-/// physical orientation-preserving constraint is enforced downstream by
-/// [`score_candidate`]'s Jacobian check on the fitted homography. Normally the
-/// relative frame is already orientation-preserving
-/// (`assign::canonicalize_entries`) and every reflected candidate fails it, but
-/// canonicalization leaves the labels untouched when no symmetry yields both a
-/// `+u` and a `+v` neighbor pair (e.g. two non-adjacent rows), so a mirrored
-/// relative frame can reach this stage; then the reflected candidates are the
-/// physically valid ones. Do not narrow this to rotations without closing that
-/// fallback first.
-fn enumerate_candidates(
-    entries: &[(Coord, [f64; 2])],
-    board_coords: &HashSet<Coord>,
-    target: &TargetLayout,
-) -> Option<Vec<CoordMap>> {
-    let (board_min, board_max) = coord_bbox(board_coords.iter().copied())?;
-
-    let transforms = target.lattice_kind().symmetry_transforms();
-
-    let mut candidates: Vec<CoordMap> = Vec::new();
-    for &rot in transforms.iter() {
-        let mapped: Vec<Coord> = entries.iter().map(|(c, _)| rot.apply(*c)).collect();
-        let Some((min, max)) = coord_bbox(mapped.iter().copied()) else {
-            continue;
-        };
-        for du in (board_min.u - min.u)..=(board_max.u - max.u) {
-            for dv in (board_min.v - min.v)..=(board_max.v - max.v) {
-                let all_in = mapped
-                    .iter()
-                    .all(|c| board_coords.contains(&Coord::new(c.u + du, c.v + dv)));
-                if all_in {
-                    candidates.push(CoordMap::new(rot, [du, dv]));
-                    if candidates.len() > MAX_CANDIDATES {
-                        tracing::info!(
-                            max = MAX_CANDIDATES,
-                            "origin anchor: too many placement candidates"
-                        );
-                        return None;
+        }
+        let Some(g_inv) = g.inverse() else { continue };
+        let m = g.matrix();
+        let mi = g_inv.matrix();
+        let dots_rel: Vec<[f64; 2]> = triad
+            .iter()
+            .map(|d| {
+                [
+                    f64::from(mi[0][0]) * d[0] + f64::from(mi[0][1]) * d[1],
+                    f64::from(mi[1][0]) * d[0] + f64::from(mi[1][1]) * d[1],
+                ]
+            })
+            .collect();
+        let (mapped_min, mapped_max) = coord_bbox(entries.iter().map(|(c, _)| g.apply(*c)))?;
+        for au in (patch_min.u - ANCHOR_SEARCH_MARGIN)..=(patch_max.u + ANCHOR_SEARCH_MARGIN) {
+            for av in (patch_min.v - ANCHOR_SEARCH_MARGIN)..=(patch_max.v + ANCHOR_SEARCH_MARGIN) {
+                // c ↦ g·c + t with g·a + t = (0, 0): the anchor cell `a` carries
+                // the triad.
+                let t = [
+                    -(m[0][0] * au + m[0][1] * av),
+                    -(m[1][0] * au + m[1][1] * av),
+                ];
+                let fits_board = mapped_min.u + t[0] >= board_min.u
+                    && mapped_min.v + t[1] >= board_min.v
+                    && mapped_max.u + t[0] <= board_max.u
+                    && mapped_max.v + t[1] <= board_max.v;
+                if !fits_board {
+                    continue;
+                }
+                let mut score = f32::INFINITY;
+                for d in &dots_rel {
+                    let rel = [f64::from(au) + d[0], f64::from(av) + d[1]];
+                    match dot_contrast(sampler, &patch.h, patch.mm(rel), dot_radius_mm) {
+                        Some(contrast) => score = score.min(contrast),
+                        None => {
+                            score = f32::NAN;
+                            break;
+                        }
                     }
+                }
+                if score.is_finite() {
+                    scored.push((CoordMap::new(g, t), score));
                 }
             }
         }
     }
-    Some(candidates)
+    if scored.is_empty() {
+        tracing::info!("origin anchor: no placement could be scored (dots out of view?)");
+        return None;
+    }
+
+    // Best first; the stable sort keeps enumeration order among ties. The
+    // bounding-box test above is exact on rect boards; the full embedding
+    // test runs only on the placements that can still decide.
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let embeds = |map: &CoordMap| {
+        entries
+            .iter()
+            .all(|(c, _)| target.cell_xy_mm(map.apply(*c)).is_some())
+    };
+    let mut valid = scored.iter().filter(|(map, _)| embeds(map));
+    let Some(&(coord_map, best_score)) = valid.next() else {
+        tracing::info!("origin anchor: no placement admits the labeled patch");
+        return None;
+    };
+    if best_score < MIN_DOT_CONTRAST {
+        tracing::info!(
+            best_score,
+            "origin anchor: best candidate below contrast threshold"
+        );
+        return None;
+    }
+    if let Some(&(_, runner_up)) = valid
+        .take_while(|(_, s)| best_score - s < MIN_MARGIN)
+        .next()
+    {
+        tracing::info!(
+            best_score,
+            runner_up,
+            "origin anchor: ambiguous — margin over runner-up too small"
+        );
+        return None;
+    }
+    let h = placement_homography(entries, coord_map, target)?;
+    tracing::info!(
+        best_score,
+        n_scored = scored.len(),
+        "origin anchor: resolved board origin"
+    );
+    Some(OriginResolution { coord_map, h })
+}
+
+/// The labeled patch's homography from relative-frame lattice millimetres
+/// (`basis · coord`) to working pixels, fitted once and shared by every
+/// placement: a placement re-expresses board millimetres by a lattice isometry,
+/// under which the normalized DLT is equivariant, so the per-placement fit
+/// ([`placement_homography`]) is needed only for the winner.
+struct PatchFrame {
+    h: Matrix3<f64>,
+    /// Lattice steps along `u` and `v`, board mm (`LatticeGeometry::basis_mm`).
+    basis: [[f64; 2]; 2],
+    /// Sign of the homography's Jacobian over the patch (±1).
+    orientation: i32,
+}
+
+impl PatchFrame {
+    /// `None` for a patch whose rings lie on one lattice line (homography
+    /// undetermined, see [`placement_homography`]).
+    fn fit(entries: &[(Coord, [f64; 2])], target: &TargetLayout) -> Option<Self> {
+        let basis = target.lattice().basis_mm();
+        let mm = |c: Coord| lattice_mm(basis, [f64::from(c.u), f64::from(c.v)]);
+        let (src, dst): (Vec<[f64; 2]>, Vec<[f64; 2]>) =
+            entries.iter().map(|(c, center)| (mm(*c), *center)).unzip();
+        let collinear_tol_mm = COLLINEAR_TOL_SPACINGS * f64::from(target.min_center_spacing_mm());
+        if src.is_empty() || all_collinear(&src, collinear_tol_mm) {
+            return None;
+        }
+        let h = estimate_homography_dlt(&src, &dst).ok()?;
+        let n = src.len() as f64;
+        let centroid = [
+            src.iter().map(|p| p[0]).sum::<f64>() / n,
+            src.iter().map(|p| p[1]).sum::<f64>() / n,
+        ];
+        let det = jacobian_det(&h, centroid);
+        if !det.is_normal() {
+            return None;
+        }
+        Some(Self {
+            h,
+            basis,
+            orientation: if det > 0.0 { 1 } else { -1 },
+        })
+    }
+
+    /// Relative-frame lattice millimetres of a (fractional) lattice coordinate.
+    fn mm(&self, coord: [f64; 2]) -> [f64; 2] {
+        lattice_mm(self.basis, coord)
+    }
+}
+
+/// `coord[0] · step_u + coord[1] · step_v` for a basis `[step_u, step_v]`.
+fn lattice_mm(basis: [[f64; 2]; 2], coord: [f64; 2]) -> [f64; 2] {
+    [
+        coord[0] * basis[0][0] + coord[1] * basis[1][0],
+        coord[0] * basis[0][1] + coord[1] * basis[1][1],
+    ]
+}
+
+/// The origin dots as fractional lattice offsets from board cell `(0, 0)`, the
+/// cell they surround (`target::fiducials::origin_dot_positions_mm`).
+fn triad_offsets(target: &TargetLayout) -> Option<Vec<[f64; 2]>> {
+    let origin = target.cell_xy_mm(Coord::new(0, 0))?;
+    let [bu, bv] = target.lattice().basis_mm();
+    let det = bu[0] * bv[1] - bv[0] * bu[1];
+    let offsets = target
+        .fiducial_dots_mm()
+        .iter()
+        .map(|d| {
+            let dx = f64::from(d[0]) - f64::from(origin[0]);
+            let dy = f64::from(d[1]) - f64::from(origin[1]);
+            [
+                (bv[1] * dx - bv[0] * dy) / det,
+                (bu[0] * dy - bu[1] * dx) / det,
+            ]
+        })
+        .collect();
+    Some(offsets)
 }
 
 /// Board-mm → working-px homography of a placement, fitted by DLT over the
@@ -430,31 +518,6 @@ fn all_collinear(points: &[[f64; 2]], tol: f64) -> bool {
     points
         .iter()
         .all(|p| (normal[0] * (p[0] - c[0]) + normal[1] * (p[1] - c[1])).abs() <= tol)
-}
-
-/// Fit the candidate's board→image homography and score its fiducial dots.
-/// Returns `None` for degenerate, orientation-reversing, or unscorable
-/// candidates.
-fn score_candidate(
-    entries: &[(Coord, [f64; 2])],
-    coord_map: CoordMap,
-    target: &TargetLayout,
-    sampler: DistortionAwareSampler<'_>,
-    fiducials: &OriginFiducials,
-) -> Option<(Matrix3<f64>, f32)> {
-    let h = placement_homography(entries, coord_map, target)?;
-
-    let mut min_contrast = f32::INFINITY;
-    for dot in target.fiducial_dots_mm() {
-        let contrast = dot_contrast(
-            sampler,
-            &h,
-            [f64::from(dot[0]), f64::from(dot[1])],
-            f64::from(fiducials.dot_radius_mm),
-        )?;
-        min_contrast = min_contrast.min(contrast);
-    }
-    min_contrast.is_finite().then_some((h, min_contrast))
 }
 
 /// Determinant of the homography's Jacobian at a board point (numeric, 1 mm
@@ -527,6 +590,7 @@ fn dot_contrast(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target::LatticeGeometry;
     use crate::target::TargetLayout;
 
     /// Render the rect target through an affine map: filled annuli plus
@@ -805,5 +869,163 @@ mod tests {
             resolve_origin(&img, &markers, &target, None).is_none(),
             "absent dots must leave the origin unresolved"
         );
+    }
+
+    /// A 58×58 plain rect board (2 mm pitch) and a 1,640-cell plain hex
+    /// board, both with auto dots: windows of them have far more placements
+    /// than any fixed cap.
+    fn large_boards() -> [TargetLayout; 2] {
+        use crate::target::OriginDots;
+        [
+            TargetLayout::plain_rect(2.0, 58, 58, 0.8, 0.4, OriginDots::Auto).expect("rect"),
+            TargetLayout::plain_hex(2.0, 41, 40, 1.2, 0.6, OriginDots::Auto).expect("hex"),
+        ]
+    }
+
+    /// Paint a filled dark disc at a board point (a dust speck).
+    fn paint_dot(img: &mut GrayImage, h_mat: &Matrix3<f64>, xy_mm: [f64; 2], r_px: f64) {
+        let c = homography_project(h_mat, xy_mm[0], xy_mm[1]);
+        for y in (c[1] - r_px).floor() as u32..=(c[1] + r_px).ceil() as u32 {
+            for x in (c[0] - r_px).floor() as u32..=(c[0] + r_px).ceil() as u32 {
+                let d2 = (f64::from(x) - c[0]).powi(2) + (f64::from(y) - c[1]).powi(2);
+                if d2 <= r_px * r_px {
+                    img.put_pixel(x, y, image::Luma([20u8]));
+                }
+            }
+        }
+    }
+
+    /// View scale: a 50 px marker spacing.
+    fn view_scale(target: &TargetLayout) -> f64 {
+        50.0 / f64::from(target.min_center_spacing_mm())
+    }
+
+    /// A 700×550 view at [`view_scale`], rotated by `rot_rad`, with board point
+    /// `look_mm` at the image centre; markers of the cells fully in view,
+    /// labeled `g·coord + offset`.
+    fn window_view(
+        target: &TargetLayout,
+        look_mm: [f64; 2],
+        rot_rad: f64,
+        g: GridTransform,
+        offset: [i32; 2],
+    ) -> (GrayImage, Matrix3<f64>, Vec<MarkerRecord>) {
+        let (w, h, scale) = (700u32, 550u32, view_scale(target));
+        let (sin, cos) = rot_rad.sin_cos();
+        let tx = 350.0 - scale * (cos * look_mm[0] - sin * look_mm[1]);
+        let ty = 275.0 - scale * (sin * look_mm[0] + cos * look_mm[1]);
+        let (img, h_mat) = render_plain_target(target, scale, tx, ty, rot_rad, w, h);
+        let r_px = f64::from(target.ring().outer_radius_mm) * scale;
+        let relabel = CoordMap::new(g, offset);
+        let markers = labeled_markers(target, &h_mat, |c| relabel.apply(c))
+            .into_iter()
+            .filter(|m| {
+                let [x, y] = m.center;
+                x >= r_px && y >= r_px && x <= f64::from(w) - r_px && y <= f64::from(h) - r_px
+            })
+            .collect();
+        (img, h_mat, markers)
+    }
+
+    fn origin_mm(target: &TargetLayout) -> [f64; 2] {
+        let xy = target.cell_xy_mm(Coord::new(0, 0)).expect("origin cell");
+        [f64::from(xy[0]), f64::from(xy[1])]
+    }
+
+    /// A small window of a large board anchors, whatever the relabeling, at a
+    /// cost set by the window: the window's ~150 rings admit ~10⁴ placements on
+    /// the board.
+    #[test]
+    fn small_window_of_a_large_board_resolves() {
+        for target in large_boards() {
+            let o = origin_mm(&target);
+            let rotations: Vec<GridTransform> = target
+                .lattice_kind()
+                .symmetry_transforms()
+                .iter()
+                .copied()
+                .filter(|g| g.determinant() > 0)
+                .collect();
+            for (i, &g) in rotations.iter().enumerate() {
+                let look = [o[0] + 3.0 - i as f64, o[1] - 2.0 + 0.5 * i as f64];
+                let rot = 0.3 * i as f64;
+                let (img, _, markers) = window_view(&target, look, rot, g, [5, -3]);
+                assert!(markers.len() > 100, "{} in view", markers.len());
+                let res = resolve_origin(&img, &markers, &target, None)
+                    .unwrap_or_else(|| panic!("{} {g:?}: unresolved", target.name()));
+                for cell in target.cells() {
+                    let rel = CoordMap::new(g, [5, -3]).apply(cell.coord);
+                    assert_eq!(res.coord_map.apply(rel), cell.coord, "{}", target.name());
+                }
+            }
+        }
+    }
+
+    /// Without the triad in view, nothing resolves.
+    #[test]
+    fn window_without_the_triad_is_unresolved() {
+        for target in large_boards() {
+            let o = origin_mm(&target);
+            let g = target.lattice_kind().symmetry_transforms()[0];
+            // 12 × 9 spacings away: the triad is well out of the 14 × 11 view.
+            let s = f64::from(target.min_center_spacing_mm());
+            let look = [o[0] + 12.0 * s, o[1] - 9.0 * s];
+            let (img, _, markers) = window_view(&target, look, 0.2, g, [0, 0]);
+            assert!(markers.len() > 100);
+            assert!(resolve_origin(&img, &markers, &target, None).is_none());
+        }
+    }
+
+    /// A speck in a far gap changes nothing; a speck that makes a second
+    /// triad as dark as the true one (rect: closing the square of gaps around
+    /// the triad's corner cell; hex: the next hole around the origin cell)
+    /// makes the placement ambiguous: unresolved rather than a guess.
+    #[test]
+    fn dust_in_a_gap_never_resolves_wrong() {
+        for target in large_boards() {
+            let o = origin_mm(&target);
+            let g = target.lattice_kind().symmetry_transforms()[0];
+            let r_dot =
+                f64::from(target.fiducials().expect("dots").dot_radius_mm) * view_scale(&target);
+            let pitch = f64::from(target.pitch_mm());
+            let (img, h_mat, markers) = window_view(&target, [o[0] + 1.0, o[1]], 0.1, g, [0, 0]);
+            let (far, square) = match target.lattice() {
+                LatticeGeometry::Rect(_) => (
+                    [o[0] - 3.5 * pitch, o[1] - 2.5 * pitch],
+                    [o[0] - 0.5 * pitch, o[1] + 1.5 * pitch],
+                ),
+                LatticeGeometry::Hex(_) => {
+                    // Holes around the origin cell sit at 30° + k·60°, one pitch out;
+                    // the triad holds 30°, 90°, 150°.
+                    let at = |deg: f64| {
+                        let (s, c) = deg.to_radians().sin_cos();
+                        [o[0] + pitch * c, o[1] + pitch * s]
+                    };
+                    let [bu, bv] = target.lattice().basis_mm();
+                    let hole = at(270.0);
+                    let far = [
+                        hole[0] - 3.0 * bu[0] - 2.0 * bv[0],
+                        hole[1] - 3.0 * bu[1] - 2.0 * bv[1],
+                    ];
+                    (far, at(210.0))
+                }
+            };
+            let mut dusty = img.clone();
+            paint_dot(&mut dusty, &h_mat, far, r_dot);
+            let res =
+                resolve_origin(&dusty, &markers, &target, None).expect("far dust is harmless");
+            for m in &markers {
+                let c = m.grid_coord.expect("labeled");
+                let c = Coord::new(c[0], c[1]);
+                assert_eq!(res.coord_map.apply(c), c, "{}", target.name());
+            }
+            let mut ambiguous = img.clone();
+            paint_dot(&mut ambiguous, &h_mat, square, r_dot);
+            assert!(
+                resolve_origin(&ambiguous, &markers, &target, None).is_none(),
+                "{}: a second, equally dark triad must leave the origin unresolved",
+                target.name()
+            );
+        }
     }
 }

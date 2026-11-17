@@ -4,7 +4,7 @@
 //! identical detection output. This test is how that promise is checked: each
 //! *case* (a scene, a refinement method and an entry point) is run, and its
 //! output is compared with a committed snapshot under
-//! `tests/fixtures/golden/<case>.json`.
+//! `tests/fixtures/golden/<platform>/<case>.json`.
 //!
 //! A snapshot holds two things:
 //!
@@ -24,19 +24,39 @@
 //! does not touch the detector API.
 //!
 //! Floats are compared exactly (the snapshot text must match byte for byte).
-//! Regenerate with `RINGGRID_BLESS=1 cargo test -p ringgrid --test
-//! golden_entry_points`.
+//!
+//! **One snapshot set per platform.** The detector is deterministic on a
+//! given platform, but not across platforms: `sin`, `cos`, `atan2`, `exp`,
+//! `ln`, `hypot`, `cbrt` come from the platform's math library, whose last
+//! bits differ between glibc, Apple's libm and the MSVC CRT. The detector's
+//! discrete decisions (edge-sample selection, inlier gates, tier merging,
+//! completion) amplify those last-bit differences: between x86_64 Linux and
+//! aarch64 macOS most values agree to ~1e-13, but individual markers move by
+//! up to ~0.6 px and a few low-confidence markers are kept on one platform
+//! and dropped on the other. That spread is far above the shifts this test
+//! must catch (a real change moved centres by 0.0012 px RMS), so no numeric
+//! tolerance can make one snapshot set serve every platform. Instead each
+//! platform in [`SNAPSHOT_PLATFORMS`] keeps its own exact set under
+//! `<target_arch>-<target_os>/`; on any other platform the test is skipped
+//! with a note.
 //!
 //! The snapshots are blessed from an optimized build and the test only runs
 //! in one: an unoptimized build takes 15+ minutes (photometric refinement) and
 //! its floating-point results differ from the optimized ones in the last
-//! digits (confidences and homography entries move by ~1e-5, and a decode
-//! threshold flips for a marker or two), so a debug run cannot be compared
-//! with the snapshots. Plain `cargo test` therefore skips it with a note; run
+//! digits, so a debug run cannot be compared with the snapshots. Plain
+//! `cargo test` therefore skips it with a note; run
 //! `cargo test --release -p ringgrid --test golden_entry_points` after any
-//! change that can touch detection output. The snapshots were blessed on
-//! aarch64 macOS; other platforms may differ in the last digits.
-//! `RINGGRID_GOLDEN_ALL=1` forces a run in any profile.
+//! change that can touch detection output. `RINGGRID_GOLDEN_ALL=1` forces a
+//! run in any profile. CI runs it on every platform in
+//! [`SNAPSHOT_PLATFORMS`].
+//!
+//! **Blessing.** `RINGGRID_BLESS=1 cargo test --release -p ringgrid --test
+//! golden_entry_points` rewrites the current platform's set. On a mismatch
+//! the test also writes the platform's complete fresh set to
+//! `target/tmp/golden-actual/<platform>/` (CI uploads it as the
+//! `golden-actual-<os>` artifact), so a change that moves detection output
+//! is blessed for a platform you are not on by copying that set over
+//! `tests/fixtures/golden/<platform>/` after reviewing the diff.
 //!
 //! Coverage restrictions, chosen to bound runtime: the photometric refinement
 //! is slow, so the four-tier multiscale entry point is run with it only on the
@@ -421,8 +441,23 @@ fn snapshot_text(case: &Case, (result, diagnostics): &Run) -> String {
 
 // ── Comparison ──────────────────────────────────────────────────────────────
 
-fn golden_dir() -> PathBuf {
+/// Platforms (`<target_arch>-<target_os>`) that keep a snapshot set: the one
+/// the release workflow runs on and the maintainers' development machines.
+const SNAPSHOT_PLATFORMS: [&str; 2] = ["x86_64-linux", "aarch64-macos"];
+
+fn platform() -> String {
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+}
+
+fn golden_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/golden")
+}
+
+/// Where a mismatching run leaves the platform's complete fresh set.
+fn actual_dir(platform: &str) -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("golden-actual")
+        .join(platform)
 }
 
 fn short(v: &Value) -> String {
@@ -487,20 +522,57 @@ fn describe_mismatch(case: &str, old: &str, new: &str) -> String {
     lines.join("\n")
 }
 
+/// Entries of the golden root that are not a snapshot set of a platform in
+/// [`SNAPSHOT_PLATFORMS`]: a set nobody runs is a stale promise.
+fn stray_snapshot_sets(root: &Path) -> Vec<String> {
+    let mut stray = Vec::new();
+    for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.path().is_dir() {
+            if !SNAPSHOT_PLATFORMS.contains(&name.as_str()) {
+                stray.push(format!(
+                    "{name}/: snapshot set of a platform not in SNAPSHOT_PLATFORMS"
+                ));
+            }
+        } else if name.ends_with(".json") {
+            stray.push(format!("{name}: snapshot outside a platform set"));
+        }
+    }
+    stray
+}
+
+/// Replace `dir` with the complete fresh snapshot set.
+fn write_set(dir: &Path, fresh: &[(String, String)]) {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir).expect("clear snapshot dir");
+    }
+    std::fs::create_dir_all(dir).expect("create snapshot dir");
+    for (name, text) in fresh {
+        std::fs::write(dir.join(format!("{name}.json")), text).expect("write snapshot");
+    }
+}
+
 #[test]
 fn entry_points_match_golden_snapshots() {
     if cfg!(debug_assertions) && std::env::var_os("RINGGRID_GOLDEN_ALL").is_none() {
         eprintln!("golden_entry_points: skipped in an unoptimized build; use --release");
         return;
     }
-    let bless = std::env::var_os("RINGGRID_BLESS").is_some();
-    let dir = golden_dir();
-    let cases = cases();
-    if bless {
-        std::fs::create_dir_all(&dir).expect("create golden dir");
+    let root = golden_root();
+    let mut failures = stray_snapshot_sets(&root);
+    let platform = platform();
+    if !SNAPSHOT_PLATFORMS.contains(&platform.as_str()) {
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        eprintln!(
+            "golden_entry_points: skipped on {platform}; snapshot sets exist for {SNAPSHOT_PLATFORMS:?}"
+        );
+        return;
     }
+    let bless = std::env::var_os("RINGGRID_BLESS").is_some();
+    let dir = root.join(&platform);
+    let cases = cases();
 
-    let mut failures = Vec::new();
+    let mut fresh: Vec<(String, String)> = Vec::new();
     let mut scenes: Vec<(SceneId, SceneData)> = Vec::new();
     for case in &cases {
         if !scenes.iter().any(|(id, _)| *id == case.scene) {
@@ -516,40 +588,49 @@ fn entry_points_match_golden_snapshots() {
             run.0.detected_markers.len(),
             started.elapsed().as_secs_f64()
         );
+        if !bless {
+            let path = dir.join(format!("{}.json", case.name));
+            match std::fs::read_to_string(&path) {
+                Ok(old) if old == text => {}
+                Ok(old) => failures.push(describe_mismatch(&case.name, &old, &text)),
+                Err(_) => failures.push(format!(
+                    "{}: no snapshot at {} (run with RINGGRID_BLESS=1)",
+                    case.name,
+                    path.display()
+                )),
+            }
+        }
+        fresh.push((case.name.clone(), text));
+    }
 
-        let path = dir.join(format!("{}.json", case.name));
-        if bless {
-            std::fs::write(&path, &text).expect("write snapshot");
-            continue;
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(old) if old == text => {}
-            Ok(old) => failures.push(describe_mismatch(&case.name, &old, &text)),
-            Err(_) => failures.push(format!(
-                "{}: no snapshot at {} (run with RINGGRID_BLESS=1)",
-                case.name,
-                path.display()
-            )),
-        }
+    if bless {
+        // Writing the whole set also drops snapshots of cases that are gone.
+        write_set(&dir, &fresh);
+        return;
     }
 
     // A snapshot nobody runs any more is a stale promise.
     let known: BTreeSet<String> = cases.iter().map(|c| format!("{}.json", c.name)).collect();
     for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let file = entry.file_name().to_string_lossy().into_owned();
-        if file.ends_with(".json") && !known.contains(&file) {
-            if bless {
-                std::fs::remove_file(entry.path()).expect("remove stale snapshot");
-            } else {
-                failures.push(format!("{file}: snapshot has no matching case"));
-            }
+        if !known.contains(&file) {
+            failures.push(format!("{platform}/{file}: snapshot has no matching case"));
         }
     }
 
+    if !failures.is_empty() {
+        let actual = actual_dir(&platform);
+        write_set(&actual, &fresh);
+        failures.push(format!(
+            "the complete fresh {platform} set is in {}; after reviewing the diff, \
+             bless it by copying it over {}",
+            actual.display(),
+            dir.display()
+        ));
+    }
     assert!(
         failures.is_empty(),
-        "{} golden case(s) changed:\n{}",
-        failures.len(),
+        "golden snapshots ({platform}) changed:\n{}",
         failures.join("\n")
     );
 }

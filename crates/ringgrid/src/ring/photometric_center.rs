@@ -11,7 +11,9 @@
 //!   homography and corrected per marker by a free translation `p` and a free
 //!   2×2 matrix `C`: `y = h0 + C (x - p)`, `u = H_loc^-1(y)`. The marker centre
 //!   (`u = 0`) is imaged exactly at `p`, so the reported centre is `p` — no
-//!   ellipse-centre or two-conic construction is involved.
+//!   ellipse-centre or two-conic construction is involved. A plain marker,
+//!   symmetric under rotation, keeps the board homography's rotation: its `C`
+//!   has three free directions instead of four (see [`CBasis`]).
 //! - `P` is the dark-ink coverage of the printed pattern around the marker,
 //!   blurred by a Gaussian PSF of standard deviation `sigma` px (optionally
 //!   anisotropic, two more parameters, see [`Blur`]):
@@ -41,7 +43,8 @@ use crate::homography::homography_project_rows;
 
 /// Number of sectors in the coded band.
 const CODE_SECTORS: usize = 16;
-/// Nonlinear geometric parameters: p (2), C (4), log sigma (1).
+/// Nonlinear geometric parameters of a coded marker: p (2), C (4), log sigma
+/// (1). A plain marker fits one fewer (see [`CBasis`]).
 const N_GEOM: usize = 7;
 /// PSF anisotropy parameters, when fitted.
 const N_ANISO: usize = 2;
@@ -62,8 +65,9 @@ const CONTRAST: usize = 10;
 /// Beyond this many PSF sigmas an edge's contribution is exactly 0 or 1.
 const EDGE_REACH_SIGMAS: f64 = 6.0;
 /// Prior standard deviation of `C - I` (dimensionless). Keeps the rotation of
-/// a marker whose code band is blurred away (or that has none) well-posed;
-/// far wider than the error of a board-homography seed.
+/// a coded marker whose code band is blurred away well-posed (a plain marker
+/// does not fit its rotation, see [`CBasis`]); far wider than the error of a
+/// board-homography seed.
 const C_PRIOR_SIGMA: f64 = 0.15;
 /// Prior standard deviation of free print radii, as a fraction of the outer
 /// radius `r3` (scale-free, so any marker size gets the same prior).
@@ -668,6 +672,19 @@ impl CodeBand {
     }
 }
 
+/// Jacobian of `map` at the board origin (px per board mm).
+fn local_jacobian(map: &Mat3) -> [[f64; 2]; 2] {
+    let w = map[2][2];
+    let x = [map[0][2] / w, map[1][2] / w];
+    let mut j = [[0.0; 2]; 2];
+    for (i, row) in j.iter_mut().enumerate() {
+        for (k, v) in row.iter_mut().enumerate() {
+            *v = (map[i][k] - x[i] * map[2][k]) / w;
+        }
+    }
+    j
+}
+
 fn build_model<'a>(problem: &'a PhotometricProblem<'_>) -> Option<Model<'a>> {
     let h_inv = mat3_inverse(&problem.local_map)?;
     let h0 = homography_project_rows(&problem.local_map, [0.0, 0.0])?;
@@ -740,9 +757,128 @@ fn collect_patch(problem: &PhotometricProblem<'_>, model: &Model<'_>) -> (Vec<Pa
     (pixels, masked_fraction)
 }
 
-/// Layout of the full parameter vector: geometry, the active linear
-/// coefficients, then the free radii.
+/// The free directions of the local correction `C`: an orthonormal basis
+/// (Frobenius inner product) of the 2×2 matrices the fit may move `C` along,
+/// with `C = sum_k v_k E_k`.
+///
+/// A coded marker frees all four entries (the standard basis, so `v` is `C`
+/// itself). A plain marker is a rotationally symmetric annulus: rotating the
+/// board about its centre, `C -> M R(t) M^-1 C` with `M` the local map's
+/// Jacobian at the centre, leaves the pattern's image unchanged up to the
+/// projective terms and the far-away neighbour ink. Free, that direction is
+/// held by the weak `C` prior alone; it forms a long curved valley in which
+/// Levenberg–Marquardt creeps by thousandths per iteration (slower the larger
+/// the marker), dragging the centre along. The plain basis spans the
+/// complement of its generator `M Omega M^-1` at `C = I`, so the marker keeps
+/// the board homography's rotation, which the whole board determines far
+/// better. The identity lies in that complement (the generator is
+/// traceless), so the seed `C = I` stays representable.
+#[derive(Clone, Copy)]
+struct CBasis {
+    e: [[[f64; 2]; 2]; 4],
+    n: usize,
+}
+
+impl CBasis {
+    fn full() -> Self {
+        Self {
+            e: [
+                [[1.0, 0.0], [0.0, 0.0]],
+                [[0.0, 1.0], [0.0, 0.0]],
+                [[0.0, 0.0], [1.0, 0.0]],
+                [[0.0, 0.0], [0.0, 1.0]],
+            ],
+            n: 4,
+        }
+    }
+
+    /// The complement of the in-plane rotation of a symmetric pattern imaged
+    /// through `m` (board mm -> px at the centre); `None` when `m` is
+    /// singular.
+    fn without_rotation(m: [[f64; 2]; 2]) -> Option<Self> {
+        let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+        if !det.is_finite() || det.abs() < 1e-300 {
+            return None;
+        }
+        // M Omega M^-1, Omega = [[0, -1], [1, 0]].
+        let mo = [[m[0][1], -m[0][0]], [m[1][1], -m[1][0]]];
+        let inv = [
+            [m[1][1] / det, -m[0][1] / det],
+            [-m[1][0] / det, m[0][0] / det],
+        ];
+        let mut g = [[0.0; 2]; 2];
+        for (i, row) in g.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = mo[i][0] * inv[0][j] + mo[i][1] * inv[1][j];
+            }
+        }
+        let dot = |a: &[[f64; 2]; 2], b: &[[f64; 2]; 2]| {
+            a[0][0] * b[0][0] + a[0][1] * b[0][1] + a[1][0] * b[1][0] + a[1][1] * b[1][1]
+        };
+        let norm = dot(&g, &g).sqrt();
+        if !(norm.is_finite() && norm > 0.0) {
+            return None;
+        }
+        let g = g.map(|r| r.map(|v| v / norm));
+        // Gram-Schmidt of the standard basis against g, dropping the unit
+        // matrix most aligned with g (deterministic).
+        let units = Self::full().e;
+        let drop = (0..4)
+            .max_by(|&a, &b| {
+                dot(&units[a], &g)
+                    .abs()
+                    .total_cmp(&dot(&units[b], &g).abs())
+            })
+            .unwrap_or(0);
+        let mut out = Self {
+            e: [[[0.0; 2]; 2]; 4],
+            n: 0,
+        };
+        for (k, u) in units.iter().enumerate() {
+            if k == drop {
+                continue;
+            }
+            let mut v = *u;
+            for b in std::iter::once(&g).chain(out.e[..out.n].iter()) {
+                let c = dot(&v, b);
+                for i in 0..2 {
+                    for j in 0..2 {
+                        v[i][j] -= c * b[i][j];
+                    }
+                }
+            }
+            let nv = dot(&v, &v).sqrt();
+            out.e[out.n] = v.map(|r| r.map(|x| x / nv));
+            out.n += 1;
+        }
+        Some(out)
+    }
+
+    /// Coordinates of `c` in the basis.
+    fn coords(&self, c: &[[f64; 2]; 2], k: usize) -> f64 {
+        let e = &self.e[k];
+        e[0][0] * c[0][0] + e[0][1] * c[0][1] + e[1][0] * c[1][0] + e[1][1] * c[1][1]
+    }
+
+    /// The matrix with coordinates `v`.
+    fn matrix(&self, v: &[f64]) -> [[f64; 2]; 2] {
+        let mut c = [[0.0; 2]; 2];
+        for (e, vk) in self.e[..self.n].iter().zip(v) {
+            for i in 0..2 {
+                for j in 0..2 {
+                    c[i][j] += vk * e[i][j];
+                }
+            }
+        }
+        c
+    }
+}
+
+/// Layout of the full parameter vector: centre, the free directions of `C`,
+/// log sigma, the PSF anisotropy when fitted, the active linear coefficients,
+/// then the free radii.
 struct Layout {
+    c_basis: CBasis,
     /// Fit the PSF anisotropy (two more geometric parameters).
     aniso: bool,
     /// Number of free radii: 0, 1 (`r0` of a plain marker) or 3 (`r0..r2`).
@@ -751,8 +887,9 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(fit_radii: bool, coded: bool, cubic: bool, aniso: bool) -> Self {
+    fn new(c_basis: CBasis, fit_radii: bool, coded: bool, cubic: bool, aniso: bool) -> Self {
         Self {
+            c_basis,
             aniso,
             n_radii: match (fit_radii, coded) {
                 (false, _) => 0,
@@ -762,9 +899,17 @@ impl Layout {
             lin: if cubic { &LIN_CUBIC } else { &LIN_AFFINE },
         }
     }
+    /// Index of log sigma (after the centre and `C`).
+    fn sigma_index(&self) -> usize {
+        2 + self.c_basis.n
+    }
+    /// Index of the first anisotropy parameter, when fitted.
+    fn aniso_base(&self) -> usize {
+        self.sigma_index() + 1
+    }
     /// Index of the first linear coefficient (after the geometry).
     fn lin_base(&self) -> usize {
-        N_GEOM + if self.aniso { N_ANISO } else { 0 }
+        self.aniso_base() + if self.aniso { N_ANISO } else { 0 }
     }
     fn radii_base(&self) -> usize {
         self.lin_base() + self.lin.len()
@@ -776,14 +921,13 @@ impl Layout {
         let mut v = DVector::zeros(self.n());
         v[0] = prm.p[0];
         v[1] = prm.p[1];
-        v[2] = prm.c[0][0];
-        v[3] = prm.c[0][1];
-        v[4] = prm.c[1][0];
-        v[5] = prm.c[1][1];
-        v[6] = prm.log_sigma;
+        for k in 0..self.c_basis.n {
+            v[2 + k] = self.c_basis.coords(&prm.c, k);
+        }
+        v[self.sigma_index()] = prm.log_sigma;
         if self.aniso {
-            v[N_GEOM] = prm.aniso[0];
-            v[N_GEOM + 1] = prm.aniso[1];
+            v[self.aniso_base()] = prm.aniso[0];
+            v[self.aniso_base() + 1] = prm.aniso[1];
         }
         for (k, &li) in self.lin.iter().enumerate() {
             v[self.lin_base() + k] = prm.lin[li];
@@ -796,11 +940,11 @@ impl Layout {
     fn unpack(&self, v: &DVector<f64>, template: &Params) -> Params {
         let mut prm = *template;
         prm.p = [v[0], v[1]];
-        prm.c = [[v[2], v[3]], [v[4], v[5]]];
-        prm.log_sigma = v[6];
+        prm.c = self.c_basis.matrix(&v.as_slice()[2..2 + self.c_basis.n]);
+        prm.log_sigma = v[self.sigma_index()];
         if self.aniso {
             // Keep the PSF covariance positive definite (axis ratio ≤ 4.4).
-            let a = [v[N_GEOM], v[N_GEOM + 1]];
+            let a = [v[self.aniso_base()], v[self.aniso_base() + 1]];
             let r = a[0].hypot(a[1]);
             let k = if r > MAX_ANISO { MAX_ANISO / r } else { 1.0 };
             prm.aniso = [k * a[0], k * a[1]];
@@ -836,15 +980,18 @@ fn pixel_row(
     // dy/dp = -C  =>  dI/dp = A * C^T grad_y.
     row[0] = a * (c[0][0] * gy[0] + c[1][0] * gy[1]);
     row[1] = a * (c[0][1] * gy[0] + c[1][1] * gy[1]);
-    // dy_i/dC_ij = dx_j.
-    row[2] = -a * gy[0] * dx[0];
-    row[3] = -a * gy[0] * dx[1];
-    row[4] = -a * gy[1] * dx[0];
-    row[5] = -a * gy[1] * dx[1];
-    row[6] = -a * pe.dlog_sigma;
+    // dy_i/dC_ij = dx_j, projected on the free directions of C.
+    let d_c = [
+        [-a * gy[0] * dx[0], -a * gy[0] * dx[1]],
+        [-a * gy[1] * dx[0], -a * gy[1] * dx[1]],
+    ];
+    for k in 0..layout.c_basis.n {
+        row[2 + k] = layout.c_basis.coords(&d_c, k);
+    }
+    row[layout.sigma_index()] = -a * pe.dlog_sigma;
     if layout.aniso {
-        row[N_GEOM] = -a * pe.d_aniso[0];
-        row[N_GEOM + 1] = -a * pe.d_aniso[1];
+        row[layout.aniso_base()] = -a * pe.d_aniso[0];
+        row[layout.aniso_base() + 1] = -a * pe.d_aniso[1];
     }
     let full = lin_row(px.xi, pe.p);
     let lin_base = layout.lin_base();
@@ -945,13 +1092,14 @@ fn prior_terms(layout: &Layout, prior: &Params) -> (DVector<f64>, DVector<f64>) 
     let mut info = DVector::zeros(n);
     let mean = layout.pack(prior);
     let ic = 1.0 / (C_PRIOR_SIGMA * C_PRIOR_SIGMA);
-    for k in 2..6 {
-        info[k] = ic;
+    // Isotropic in the entries of C, so the same in any orthonormal basis.
+    for k in 0..layout.c_basis.n {
+        info[2 + k] = ic;
     }
     if layout.aniso {
         let ia = 1.0 / (ANISO_PRIOR_SIGMA * ANISO_PRIOR_SIGMA);
-        info[N_GEOM] = ia;
-        info[N_GEOM + 1] = ia;
+        info[layout.aniso_base()] = ia;
+        info[layout.aniso_base() + 1] = ia;
     }
     let sigma_r = RADIUS_PRIOR_SIGMA_REL * prior.radii[3];
     let ir = 1.0 / (sigma_r * sigma_r);
@@ -1095,7 +1243,7 @@ impl Fitting<'_> {
                 let cost_new = acc_new.robust_cost * inv_s2 + self.prior_cost(&x_new);
                 if cost_new.is_finite() && cost_new <= cost {
                     converged = delta[0].abs().max(delta[1].abs()) < 1e-4
-                        && delta[6].abs() < 1e-4
+                        && delta[self.layout.sigma_index()].abs() < 1e-4
                         && (cost - cost_new) <= 1e-9 * cost.max(1.0);
                     x = x_new;
                     prm = prm_new;
@@ -1567,7 +1715,13 @@ pub(crate) fn fit_marker(
 ) -> Result<PhotometricFit, PhotometricFailure> {
     let model = build_model(problem).ok_or(PhotometricFailure::DegenerateMap)?;
     let (pixels, masked_fraction) = collect_patch(problem, &model);
+    let c_basis = match problem.codeword {
+        Some(_) => CBasis::full(),
+        None => CBasis::without_rotation(local_jacobian(&problem.local_map))
+            .ok_or(PhotometricFailure::DegenerateMap)?,
+    };
     let layout = Layout::new(
+        c_basis,
         problem.fit_radii,
         problem.codeword.is_some(),
         problem.cubic_background,
@@ -1899,6 +2053,76 @@ pub(super) mod tests {
                 );
                 assert!(err < 0.5, "blur {blur}: centre error {err} px");
                 assert!((fit.blur_sigma_px - blur.max(0.3)).abs() < 0.25 * blur + 0.15);
+            }
+        }
+    }
+
+    /// `map` magnified `k` times about the image point `c`: the same marker
+    /// imaged `k` times larger.
+    fn magnified(map: &Mat3, k: f64, c: [f64; 2]) -> Mat3 {
+        let s = [
+            [k, 0.0, c[0] * (1.0 - k)],
+            [0.0, k, c[1] * (1.0 - k)],
+            [0.0, 0.0, 1.0],
+        ];
+        let mut out = [[0.0; 3]; 3];
+        for (i, row) in out.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = (0..3).map(|m| s[i][m] * map[m][j]).sum();
+            }
+        }
+        out
+    }
+
+    /// A tilted plain annulus at every size from 20 to 111 px across: the
+    /// fit converges within a few iterations and lands within the noise of
+    /// the truth. Its rotation about the centre is fixed by the seed map
+    /// (here 2° off); fitted freely, it is held only by the `C` prior, and
+    /// the solver crept along it on large markers (10–17 iterations, 1 of 4
+    /// fits not converging at 111 px and blur 5, centre errors 2–3× the
+    /// noise).
+    #[test]
+    fn plain_marker_converges_at_every_size() {
+        let nbs = neighbors();
+        let plain = [RADII[0], RADII[3], RADII[3], RADII[3]];
+        for (k, blur) in [
+            (0.54f64, 0.8),
+            (0.54, 2.0),
+            (2.0, 3.0),
+            (3.0, 1.5),
+            (3.0, 4.0),
+        ] {
+            let size = (80.0 * k).ceil() as u32;
+            let truth = [f64::from(size) / 2.0 + 0.3, f64::from(size) / 2.0 - 0.4];
+            let map = magnified(&true_map(30.0, truth), k, truth);
+            let rad = radiance(&map, size, blur, None);
+            for seed in 0..3 {
+                let gray = quantize(&rad, size, 2.0, 100 + seed);
+                let seed_xy = [truth[0] + 0.6, truth[1] - 0.4];
+                let mut pb = problem(&gray, perturbed(&map), seed_xy, &nbs);
+                pb.codeword = None;
+                pb.radii = plain;
+                let fit = fit_marker(&pb).unwrap();
+                let err = (fit.center[0] - truth[0]).hypot(fit.center[1] - truth[1]);
+                let sd = (fit.center_cov[0][0] + fit.center_cov[1][1]).sqrt();
+                let diameter = 2.0 * RADII[3] * 3.45 * k;
+                eprintln!(
+                    "diameter {diameter:.0} px blur {blur}: {} iterations, error {err:.4} px, sd {sd:.4} px",
+                    fit.iterations
+                );
+                assert!(
+                    fit.converged,
+                    "{diameter:.0} px, blur {blur}: not converged"
+                );
+                assert!(
+                    fit.iterations <= 10,
+                    "{diameter:.0} px, blur {blur}: {} iterations",
+                    fit.iterations
+                );
+                assert!(
+                    err <= 4.0 * sd,
+                    "{diameter:.0} px, blur {blur}: error {err} px, sd {sd} px"
+                );
             }
         }
     }

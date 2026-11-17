@@ -50,7 +50,12 @@ I(x) = B(x) - A(x) * P(u(x); sigma)
 The fit is Levenberg–Marquardt on the pixel residuals with Huber weights.
 Saturated pixels (`saturation_level`, default 250) and their 8-neighbours are
 excluded. A weak prior keeps `C` near identity, which only matters when blur
-erases the code band and the marker's in-plane rotation is unobservable.
+erases a coded marker's code band and its in-plane rotation becomes
+unobservable. A plain marker looks the same rotated about its center, so its
+`C` does not fit that rotation at all: the marker keeps the board homography's
+rotation, which the whole board determines. Left free, that rotation would be
+held by the prior alone, and on large, tilted plain markers the solver would
+creep along it for tens to hundreds of iterations.
 
 ## Printed radii
 

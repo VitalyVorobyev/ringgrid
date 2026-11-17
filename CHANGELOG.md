@@ -198,6 +198,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Photometric fits of large plain markers converge.** A plain ring looks
+  the same rotated about its centre, so one direction of the per-marker map
+  correction was held only by its weak prior. On large, tilted plain rings
+  the solver crept along it (the centre with it) and most fits hit the
+  iteration cap: `not_converged`, the marker kept its projective centre.
+  Plain markers now keep the board homography's rotation and fit the other
+  three directions of the correction; coded markers are unchanged (identical
+  output). Real images of a plain plate (rings 80–120 px across, blur σ
+  0.8–6 px; 56 images, 6356 markers): photometric centres 32.5 % → 100 %
+  (`not_converged` 4285 → 0), median 9 iterations instead of the cap,
+  photometric stage 2.5× faster (12.8 → 5.1 s per image); per-image
+  smooth-fit residual of the markers accepted before unchanged (0.0238 →
+  0.0237 px RMS), 0.0163 px over all markers now accepted. Synthetic plain
+  markers at 30° tilt: centre RMS 19–67 % lower at outer radius 33–45 px
+  (e.g. 0.0104 → 0.0069 px at 45 px and blur 1.5), up to 22 % at 20 px, no
+  fit left unconverged where the model fits the scene; untilted markers and
+  10 px markers unchanged. ADR-022.
 - **A partial view of a large plain board anchors whenever its origin dots are
   in view.** Dot anchoring enumerated every placement of the labeled patch on
   the board and gave up beyond 512, so a small window of a large plain board

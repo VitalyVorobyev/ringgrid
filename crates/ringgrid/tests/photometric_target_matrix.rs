@@ -663,6 +663,64 @@ fn photometric_refines_every_target_kind() {
     }
 }
 
+/// Fail closed: a fit stopped by the iteration cap before it converged
+/// reports `NotConverged`, and its marker keeps the centre the pipeline
+/// produced without the stage.
+#[test]
+fn unconverged_fits_keep_their_previous_centre() {
+    let cell = Cell {
+        kind: Kind::PlainRectDots,
+        outer_radius_px: 17.0,
+        blur: 1.5,
+        contrast: 80.0,
+        tilt: 20.0,
+        effect: Effect::None,
+    };
+    let size = [400, 300];
+    let target = cell.kind.target();
+    let board = BoardRaster::with_dpi(target.clone(), raster_dpi(&target, cell.outer_radius_px));
+    let spec = spec_for(&cell, &target, size);
+    let scene = expose(&radiance(&board, &spec), &spec, 1000);
+
+    let mut config = DetectConfig::from_target_and_marker_diameter(
+        target.clone(),
+        (2.0 * cell.outer_radius_px) as f32,
+    );
+    config.circle_refinement = CircleRefinementMethod::Photometric;
+    config.advanced.photometric.max_iterations = 1;
+    let (res, diag) = Detector::with_config(config)
+        .detect_with_diagnostics(&scene.image)
+        .expect("detect");
+    let reference = detector(
+        &target,
+        cell.outer_radius_px,
+        CircleRefinementMethod::ProjectiveCenter,
+    )
+    .detect(&scene.image)
+    .expect("detect");
+
+    assert!(res.detected_markers.len() >= 10, "markers detected");
+    assert_eq!(res.detected_markers.len(), reference.detected_markers.len());
+    for ((m, d), r) in res
+        .detected_markers
+        .iter()
+        .zip(&diag.markers)
+        .zip(&reference.detected_markers)
+    {
+        let status = d.photometric.as_ref().map(|p| p.status);
+        assert!(
+            matches!(
+                status,
+                Some(PhotometricStatus::NotConverged | PhotometricStatus::NoBoardPosition)
+            ),
+            "status {status:?}"
+        );
+        assert_ne!(m.center_source, CenterSource::Photometric);
+        assert!(m.center_cov.is_none());
+        assert_eq!(m.center, r.center, "centre kept");
+    }
+}
+
 /// The full matrix: kind × scale {8, 17, 33 px} × blur {0.8, 1.5, 3} ×
 /// contrast {40, 80} × tilt {0, 20, 30}, Gaussian PSF, white noise.
 #[test]
@@ -693,6 +751,70 @@ fn photometric_target_matrix() {
         }
     }
     run_cells(&cells, n_seeds, [720, 540]);
+}
+
+/// Marker scale: kind × outer radius {10, 20, 33, 45, 60} px (20–120 px
+/// across) × blur {0.8, 1.5, 3, 5} × tilt {0, 30°}, contrast 80, on a
+/// 1280×960 frame so that large markers are detected in numbers.
+///
+/// Wherever the model explains the scene (mean fit residual within 1.25× the
+/// noise σ of 2) no fit may stop unconverged. Where it does not — on a plain
+/// board without origin dots, the relative frame models only the labelled
+/// neighbours, and at 20 px, blur 3 and 30° tilt the undetected ones blur
+/// into the patch — fits may fail, and must say so. In the accepted regime
+/// (outer radius ≥ 17 px, blur ≤ 3 px) with at least five photometric
+/// centres, their RMS error stays within 0.05 px.
+#[test]
+#[ignore = "benchmark; run in release with --ignored --nocapture"]
+fn photometric_scale_matrix() {
+    let n_seeds = env_or("MATRIX_SEEDS", 2u64);
+    let mut cells = Vec::new();
+    for kind in selected_kinds() {
+        for outer_radius_px in [10.0, 20.0, 33.0, 45.0, 60.0] {
+            for blur in [0.8, 1.5, 3.0, 5.0] {
+                for tilt in [0.0, 30.0] {
+                    cells.push(Cell {
+                        kind,
+                        outer_radius_px,
+                        blur,
+                        contrast: 80.0,
+                        tilt,
+                        effect: Effect::None,
+                    });
+                }
+            }
+        }
+    }
+    let results = run_cells(&cells, n_seeds, [1280, 960]);
+    let not_converged = format!("{:?}", PhotometricStatus::NotConverged);
+    for (c, r) in cells.iter().zip(&results) {
+        let cell = format!(
+            "{} R {} blur {} tilt {}",
+            c.kind.name(),
+            c.outer_radius_px,
+            c.blur,
+            c.tilt
+        );
+        assert_eq!(r.n_silent, 0, "{cell}: every marker reports a status");
+        // Scenes are rendered with noise σ 2 (`SceneSpec`).
+        let model_fits = r.residual <= 1.25 * 2.0;
+        if !model_fits {
+            continue;
+        }
+        assert_eq!(
+            r.statuses.get(&not_converged).copied().unwrap_or(0),
+            0,
+            "{cell}: fits that did not converge"
+        );
+        let accepted_regime = c.outer_radius_px >= 17.0 && c.blur <= 3.0;
+        if accepted_regime && r.n_photometric * n_seeds as f64 >= 5.0 {
+            assert!(
+                r.rms_photometric <= 0.05,
+                "{cell}: photometric rms {}",
+                r.rms_photometric
+            );
+        }
+    }
 }
 
 /// Model misfit: PSFs and responses the photometric model cannot represent,

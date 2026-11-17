@@ -2,7 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-14 (amended 2026-11-14: every target kind, correlated
-  residual covariance, anisotropic PSF)
+  residual covariance, anisotropic PSF; amended 2026-11-17: plain markers keep
+  the homography's rotation)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 
@@ -36,8 +37,10 @@ pattern (`ring/photometric_center.rs`, stage in
 `detector/photometric_refine.rs`):
 
 - local projective map = board homography (through the mapper when present),
-  corrected per marker by a free translation `p` and a free 2×2 matrix `C`;
-  the reported center is `p`, the image of the ring center;
+  corrected per marker by a free translation `p` and a free 2×2 matrix `C`
+  (three free directions for a plain marker, whose rotation about its centre
+  stays the homography's: see *Plain markers keep the homography's
+  rotation*); the reported center is `p`, the image of the ring center;
 - ink coverage derived from the target definition: the marker's ink annulus
   `[r0, r3]` (coded: the two stroked rings and the code band; plain: the
   filled annulus), minus the paper sectors of a coded marker's codeword in
@@ -119,6 +122,44 @@ The study output (`study` cargo feature, `PhotometricResidualMarker`) reports
 `covariance_inflation = sqrt(tr C / tr C_white)` and `residual_autocorrelation`,
 the residual ACF at lags 1–6 px per axis. (Until the stage moved into the
 pipeline they were fields of `PhotometricMetrics`.)
+
+### Plain markers keep the homography's rotation
+
+A plain annulus looks the same rotated about its centre. In the local map
+that rotation is `C -> M R(t) M^-1 C`, `M` the map's Jacobian at the centre:
+it changes the pixels only through the projective terms of the map and the
+neighbours' ink at the patch edge. With all four entries of `C` free it was
+held by the `C` prior (σ 0.15) alone — a long, curved, nearly flat valley
+between walls the data make steep. Levenberg–Marquardt creeps along such a
+valley: on large tilted rings the step was dominated by `C` after the first
+few iterations, alternated between a rejected and an accepted trial, and
+lowered the cost by 0.01–0.5 (in units of the noise variance) per
+iteration, while `C` turned (median 3.5° at the 30-iteration cap, up to 60°
+when run to convergence) and dragged the centre with it.
+
+So a plain marker's `C` is fitted in the three-dimensional complement of the
+rotation generator `M Ω M⁻¹` at `C = I` (Frobenius-orthonormal basis,
+`CBasis` in `ring/photometric_center.rs`). The identity is in that complement
+(the generator is traceless), the prior is the same isotropic one restricted
+to it, and the marker keeps the board homography's rotation, which the whole
+board determines to a fraction of a degree. Coded markers keep all four
+directions (the code band fixes the rotation); their fits are bit-identical.
+
+Alternatives rejected:
+
+- **A larger iteration cap.** On a real image, 46 of 75 fits needed more than
+  30 iterations, median 49 and up to 283; the runtime grows accordingly, and
+  where the valley ends is set by the weak prior and model misfit.
+- **A looser or scale-aware convergence test.** The test is not mis-scaled
+  (it bounds the centre and blur steps in pixels and the cost change relative
+  to the cost); with the rotation fixed the same test is met in 5–12
+  iterations at every marker size. Loosening it would accept centres still
+  moving: at the cap the centre was a median 0.13 and up to 1.8 of its
+  reported σ away from where the fit converged, and moved 0.10 σ (median) over
+  the last ten iterations.
+- **A stiff prior on the rotation only.** A soft version of the same
+  constraint that keeps a stiff valley for the solver; the exact constraint
+  costs one parameter less.
 
 ### Alternatives considered
 
@@ -271,6 +312,61 @@ the truth is 0.86–1.68 (coded) and 0.95–1.07 (plain). Fitter-level
 Monte-Carlo (`monte_carlo` unit tests, 120 seeds, coded and plain): white
 noise 0.94–1.05, noise correlated over 1 px 0.95–0.97 (old covariance
 0.29–0.32).
+
+### Evidence: plain markers keep the homography's rotation (amendment, 2026-11-17)
+
+Real images (private, not in the repository): a precision plain plate,
+58 × 58 rings on a rect 2 mm lattice (outer radius 0.8 mm, inner 0.4 mm,
+origin dots), 2 cameras × 28 views, 2048 × 1536, rings 80–120 px across,
+fitted blur σ 0.8–6 px; `detect_adaptive`, 6356 reported markers.
+
+| | before | after |
+|---|---|---|
+| photometric centres | 2068 (32.5 %) | 6356 (100 %) |
+| `not_converged` | 4285 | 0 |
+| iterations (final fits), median / p90 | 30 (cap) / 30 | 9 / 12 |
+| `|C − I|`, median (one image) | 0.088 (rotation 3.5°, up to 60° run to convergence) | 0.002 |
+| photometric stage per image (6 images, sequential) | 12.8 s | 5.1 s |
+| smooth-fit residual, markers accepted before (1985) | 0.0238 px | 0.0237 px |
+| smooth-fit residual, every accepted marker | 0.0238 px (1985) | 0.0163 px (6210) |
+
+Acceptance before fell with ring size (0.47 at 80–90 px across, 0.22 at
+110–120 px) and barely with blur or image position. Smooth-fit residual:
+per image, a degree-4 polynomial from board to image fitted to the
+photometric centres, leave-one-out residuals, pooled RMS over the 43 images
+with ≥ 25 markers accepted in both runs. The fits that stopped at the cap
+were close but still moving: against the same per-image fit of their
+converged neighbours they scattered by 0.034 px RMS, and on one image run to
+convergence they had a median 0.13 (max 1.8) of their reported σ still to go.
+Reported σ against the leave-one-out residual after the change: 1.13–1.31×
+by blur bin (sharpest worst), 1.20 pooled; the residual includes what a
+quartic cannot follow, so this bounds the covariance's understatement.
+
+Synthetic, fitter level (`plain_marker_converges_at_every_size`, 30° tilt,
+20–111 px across): every fit converges in ≤ 8 iterations, within 4 reported
+σ of the truth. Before, a 74 px fit took up to 12 iterations, and 111 px fits
+averaged 10–17 (one in four at blur 5 not converged) with a centre RMS of
+0.015–0.026 px, against 0.007–0.010 px after. `photometric_scale_matrix`
+(pipeline, every kind, outer radius 10–60 px, blur 0.8–5, tilt 0/30°,
+2 seeds): unconverged fits 68 → 31, all 31 in one cell whose model misfits (plain rect without
+dots, 20 px, blur 3, 30°: relative frame, undetected neighbours blur into the
+patch; unchanged, mean fit residual 1.8× the noise) — they still report
+`not_converged`. Plain photometric RMS at 30° tilt drops 19–67 % at 33 and
+45 px radius (e.g. plain hex 45 px blur 1.5: 0.0104 → 0.0069 px; thin ring
+45 px blur 0.8: 0.0188 → 0.0063 px), −22 % to +2 % at 20 px (misfit cell
+aside), −34 % to +26 % at 60 px (2–5 markers per cell); at 0° tilt, and at
+10 px radius, it moves by ≤ 0.0005 px. Coded markers: bit-identical.
+`photometric_target_matrix` (scales 10/20/33/55 px, 3 seeds, 720 × 540)
+agrees: plain unconverged fits 103 → 0, plain RMS at 33 px
+0.0129/0.0132/0.0123 → 0.0107/0.0119/0.0093 (rect dots / hex dots / thin).
+Monte-Carlo scatter ratio (mean over a kind's cells at one scale): unchanged
+within 0.02 at 10 and 20 px; at 33 px 1.09 → 1.04, 0.92 → 0.85,
+1.15 → 1.01; at 55 px (few markers per cell) 0.86 → 0.82, 0.71 → 0.66,
+0.67 → 0.60, where coded hex is at 0.50 unchanged — the under-coverage of
+large markers in this harness predates the change. Fitter-level Monte-Carlo
+(`monte_carlo`) for plain markers 0.95–0.96 as before. Golden snapshots of
+the plain scene with photometric refinement: same markers and statuses,
+centres moved by 0.0012 px RMS (max 0.0026 px), homography refit with them.
 
 ## Affected Modules
 

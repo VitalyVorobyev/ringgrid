@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-17
+
+Detection fails closed: it reports fewer markers rather than a wrong ID,
+board position or centre, coded targets are identified from the grid, and
+`confidence` predicts centre accuracy behind one `min_confidence` knob. Plain
+targets anchor partial views of large boards and their photometric fits
+converge. Breaking: only `ringgrid.target.v6` target JSON loads, and dead and
+research-only API items are removed; see
+[`docs/migrations/0.15-to-0.16.md`](docs/migrations/0.15-to-0.16.md).
+
+### Added
+
+- **Detection review tool** (`tools/review/`, repository tooling, not
+  shipped): a local web page for reviewing detection results on real images —
+  flag wrong IDs, centres and false positives, pin missed markers, compare
+  detector runs — writing the feedback as JSON to be read back as ground
+  truth.
+
 ### Changed
 
 - **`DetectedMarker::confidence` now predicts centre accuracy, and

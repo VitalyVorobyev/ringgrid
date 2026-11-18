@@ -487,8 +487,12 @@ pub fn select_adaptive_tiers(gray: &GrayImage, nominal_diameter_px: Option<f32>)
     }
 }
 
+/// How an adaptive candidate's result ranks, scored on what the caller would
+/// receive (see [`AdaptiveCandidateScore::of_reported`]).
 #[derive(Debug, Clone, Copy)]
 struct AdaptiveCandidateScore {
+    /// Markers with an absolute board position: decoded or identified rings
+    /// on a coded target, anchored rings on a plain one.
     mapped: usize,
     has_ransac: usize,
     ransac_inliers: usize,
@@ -499,18 +503,25 @@ struct AdaptiveCandidateScore {
 }
 
 impl AdaptiveCandidateScore {
+    /// Score a candidate on the markers the output contract would report
+    /// (`min_confidence`, corrected centres): a candidate whose labeled rings
+    /// all fall below the contract reports nothing and must not win on them.
+    fn of_reported(result: &PipelineResult, config: &DetectConfig) -> Self {
+        let mut reported = result.clone();
+        super::finalize::apply_output_contract(&mut reported, config);
+        Self::from_result(&reported)
+    }
+
     fn from_result(result: &PipelineResult) -> Self {
         let mut mapped = 0usize;
         let mut decoded = 0usize;
         let mut mapped_conf_sum = 0.0f64;
 
         for marker in &result.markers {
-            if marker.id.is_some() {
-                decoded += 1;
-                if marker.board_xy_mm.is_some() {
-                    mapped += 1;
-                    mapped_conf_sum += f64::from(marker.confidence);
-                }
+            decoded += usize::from(marker.id.is_some());
+            if marker.board_xy_mm.is_some() {
+                mapped += 1;
+                mapped_conf_sum += f64::from(marker.confidence);
             }
         }
 
@@ -655,7 +666,7 @@ fn adaptive(
 
     for candidate in candidates {
         let result = multiscale(gray, config, &candidate.tiers);
-        let score = AdaptiveCandidateScore::from_result(&result);
+        let score = AdaptiveCandidateScore::of_reported(&result, config);
 
         let should_replace = best_score
             .as_ref()
@@ -764,6 +775,27 @@ mod tests {
         let a = score_from(12, 12, false, 0, 0.0);
         let b = score_from(10, 20, true, 20, 0.1);
         assert!(a.is_better_than(&b));
+    }
+
+    /// Plain targets carry no IDs: anchored markers (board positions) are
+    /// what a caller can use, and they must rank a candidate.
+    #[test]
+    fn adaptive_score_counts_anchored_plain_markers() {
+        let plain = |n_anchored: usize, n_relative: usize| {
+            let markers = (0..n_anchored + n_relative)
+                .map(|i| crate::detector::MarkerRecord {
+                    grid_coord: Some([i as i32, 0]),
+                    board_xy_mm: (i < n_anchored).then_some([0.0, 0.0]),
+                    confidence: 0.8,
+                    ..crate::detector::MarkerRecord::default()
+                })
+                .collect();
+            AdaptiveCandidateScore::from_result(&PipelineResult {
+                markers,
+                ..PipelineResult::default()
+            })
+        };
+        assert!(plain(20, 0).is_better_than(&plain(0, 80)));
     }
 
     #[test]

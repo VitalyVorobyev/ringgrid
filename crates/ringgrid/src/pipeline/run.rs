@@ -624,10 +624,17 @@ fn build_adaptive_candidates(
         }
     };
 
-    push_candidate(AdaptiveCandidate {
-        label: "probe",
-        tiers: select_adaptive_tiers(gray, nominal_diameter_px),
-    });
+    // The scale probe reads the code band's angular variance; a plain ring
+    // has no code band, and the probe's radii then pile up at its largest
+    // candidate radius (IPGS plate: tiers from 68–162 px up to 371 px for
+    // ~110 px rings, zero markers on every view). A diameter hint needs no
+    // probe and stays.
+    if config.target.is_coded() || nominal_diameter_px.is_some() {
+        push_candidate(AdaptiveCandidate {
+            label: "probe",
+            tiers: select_adaptive_tiers(gray, nominal_diameter_px),
+        });
+    }
     push_candidate(AdaptiveCandidate {
         label: "two_tier_standard",
         tiers: ScaleTiers::two_tier_standard(),

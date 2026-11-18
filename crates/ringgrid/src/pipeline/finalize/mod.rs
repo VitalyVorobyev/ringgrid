@@ -6,6 +6,7 @@
 mod common;
 mod fallback;
 mod grid;
+mod join;
 
 use super::time_compat::{Instant, duration_ms};
 
@@ -24,6 +25,8 @@ use crate::pixelmap::PixelMapper;
 use crate::target::TargetLayout;
 use projective_grid::Coord;
 use std::collections::HashSet;
+
+pub(super) use join::join_anchored_candidates;
 
 use common::sync_marker_board_correspondence;
 use fallback::finalize_unlabeled_result;

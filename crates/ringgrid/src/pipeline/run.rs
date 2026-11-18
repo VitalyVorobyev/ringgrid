@@ -660,42 +660,45 @@ fn build_adaptive_candidates(
     candidates
 }
 
-/// Run every adaptive candidate and keep the best-scoring result.
+/// Run every adaptive candidate, keep the best-scoring result, and join into
+/// it the anchored markers of the candidates that labeled the same board
+/// placement ([`finalize::join_anchored_candidates`](super::finalize)).
 fn adaptive(
     gray: &GrayImage,
     config: &DetectConfig,
     nominal_diameter_px: Option<f32>,
 ) -> PipelineResult {
     let candidates = build_adaptive_candidates(gray, config, nominal_diameter_px);
-    let mut best_result: Option<PipelineResult> = None;
-    let mut best_score: Option<AdaptiveCandidateScore> = None;
+    let mut results: Vec<PipelineResult> = Vec::with_capacity(candidates.len());
+    let mut best: Option<(usize, AdaptiveCandidateScore)> = None;
     let mut best_label = "<none>";
 
     for candidate in candidates {
         let result = multiscale(gray, config, &candidate.tiers);
         let score = AdaptiveCandidateScore::of_reported(&result, config);
-
-        let should_replace = best_score
+        if best
             .as_ref()
-            .is_none_or(|best| score.is_better_than(best));
-
-        if should_replace {
+            .is_none_or(|(_, best_score)| score.is_better_than(best_score))
+        {
             best_label = candidate.label;
-            best_score = Some(score);
-            best_result = Some(result);
+            best = Some((results.len(), score));
         }
+        results.push(result);
     }
 
+    let (best_index, best_score) = best.expect("adaptive candidate list must not be empty");
     tracing::debug!(
         selected = best_label,
-        mapped = best_score.as_ref().map(|s| s.mapped),
-        decoded = best_score.as_ref().map(|s| s.decoded),
-        has_ransac = best_score.as_ref().map(|s| s.has_ransac),
-        inliers = best_score.as_ref().map(|s| s.ransac_inliers),
+        mapped = best_score.mapped,
+        decoded = best_score.decoded,
+        has_ransac = best_score.has_ransac,
+        inliers = best_score.ransac_inliers,
         "adaptive candidate selected"
     );
 
-    best_result.expect("adaptive candidate list must not be empty")
+    let mut result = results.swap_remove(best_index);
+    super::finalize::join_anchored_candidates(&mut result, results, config);
+    result
 }
 
 fn with_self_undistort(gray: &GrayImage, config: &DetectConfig) -> PipelineResult {

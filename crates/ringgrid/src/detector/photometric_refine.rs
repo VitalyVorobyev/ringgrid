@@ -13,6 +13,7 @@
 use image::GrayImage;
 use projective_grid::Coord;
 
+use crate::detector::marker_build::confidence_of_photometric_centre;
 use crate::detector::{
     CenterSource, DetectConfig, MarkerRecord, PhotometricMetrics, PhotometricStatus,
 };
@@ -662,6 +663,7 @@ fn refine(
                     m.center = fit.center;
                     m.center_cov = Some(fit.center_cov);
                     m.center_source = CenterSource::Photometric;
+                    m.confidence = confidence_of_photometric_centre(m);
                     if let Some(mapper) = mapper {
                         m.center_mapped = mapper.image_to_working_pixel(fit.center);
                     }

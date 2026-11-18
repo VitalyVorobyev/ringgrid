@@ -50,7 +50,7 @@
         },
         "geometric_verify": {
           "default": true,
-          "description": "Final precision-first geometric verification gate.\n\nAfter the final homography, each labeled marker is checked against its\nfinal-H reprojection residual (a gross-blunder backstop) and, through\nits deviation from that homography, against the midpoint of its\nlattice neighbors' deviations (a second difference, so perspective\ncancels and lens distortion only bends it). Both thresholds adapt to\nthe observed inlier residual distribution, so the gate stays\nrecall-safe on clean and lens-distorted boards alike. Markers the\nlattice judges geometrically inconsistent are removed, so only trusted\nboard correspondences reach the output.\n\nDisable (`false`) to keep every decoded marker and apply your own\nfiltering. Default: `true`.",
+          "description": "Final precision-first geometric verification gate.\n\nAfter the final homography, each labeled marker is checked against its\nfinal-H reprojection residual (a gross-blunder backstop) and, through\nits deviation from that homography, against the midpoint of its\nlattice neighbors' deviations (a second difference, so perspective\ncancels and lens distortion only bends it). Both thresholds adapt to\nthe observed inlier residual distribution, so the gate stays\nrecall-safe on clean and lens-distorted boards alike. Markers the\nlattice judges geometrically inconsistent are removed, so only trusted\nboard correspondences reach the output. With photometric refinement the\ngate runs after the photometric stage, on the refined centres.\n\nDisable (`false`) to keep every decoded marker and apply your own\nfiltering. Default: `true`.",
           "type": "boolean"
         },
         "id_correction": {

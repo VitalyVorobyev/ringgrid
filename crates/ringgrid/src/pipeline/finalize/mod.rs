@@ -12,16 +12,18 @@ use super::time_compat::{Instant, duration_ms};
 use image::GrayImage;
 
 use super::axis_ratio_filter::remove_axis_ratio_outliers;
-use super::geometric_verify::annotate_h_reproj_err_px;
+use super::geometric_verify::{annotate_h_reproj_err_px, geometric_verify_filter};
 use super::{
     DetectConfig, annotate_neighbor_radius_ratios, apply_projective_centers,
     try_recover_inner_as_outer, warn_center_correction_without_intrinsics,
 };
-use crate::detector::MarkerRecord;
+use crate::detector::{CenterSource, MarkerRecord};
+use crate::pipeline::marker_cell_coord;
 use crate::pipeline::{BoardFrame, DetectionFrame, PipelineResult, frame_xy_mm, matrix3_to_array};
 use crate::pixelmap::PixelMapper;
 use crate::target::TargetLayout;
 use projective_grid::Coord;
+use std::collections::HashSet;
 
 use common::sync_marker_board_correspondence;
 use fallback::finalize_unlabeled_result;
@@ -163,6 +165,11 @@ pub(super) fn refit_final_homography(result: &mut PipelineResult, config: &Detec
 ///   perspective and blur bias (precision harness, operating range: median
 ///   error 0.25–1.0 px against 0.12–0.21 px corrected); it is not reported.
 /// - Every reported marker has at least `min_confidence`.
+/// - With photometric refinement, every reported marker passes geometric
+///   verification on the refined centres (finalize deferred it; see
+///   `common::phase_geometric_verify`). Candidates scored before the
+///   photometric stage are verified on their unrefined centres — the same
+///   gate finalize would have applied.
 ///
 /// Rings dropped here still served as lattice evidence (labeling, anchor
 /// votes, homography support) — their position is good to a pixel, their
@@ -174,15 +181,17 @@ pub(super) fn apply_output_contract(
     config: &DetectConfig,
 ) -> Vec<Option<usize>> {
     let corrected_only = config.circle_refinement.uses_projective_center();
+    let verified = deferred_verification(result, config);
     let before = result.markers.len();
     let mut n_kept = 0usize;
     let new_index: Vec<Option<usize>> = result
         .markers
         .iter()
-        .map(|m| {
-            let keep = (!corrected_only
-                || m.center_source != crate::detector::CenterSource::OuterEllipse)
-                && m.confidence >= config.min_confidence;
+        .enumerate()
+        .map(|(i, m)| {
+            let keep = (!corrected_only || m.center_source != CenterSource::OuterEllipse)
+                && m.confidence >= config.min_confidence
+                && verified.as_ref().is_none_or(|v| v[i]);
             keep.then(|| {
                 n_kept += 1;
                 n_kept - 1
@@ -214,6 +223,48 @@ pub(super) fn apply_output_contract(
     new_index
 }
 
+/// Which markers pass the geometric verification finalize deferred for a
+/// photometric configuration (`None`: not deferred). The gate itself is
+/// [`geometric_verify_filter`], run in the homography's frame on copies of the
+/// markers; it judges by cell, so a marker survives when its cell does.
+///
+/// The homography it judges against is the one that best fits the
+/// photometric centres ([`common::phase_final_h`] over them alone, when there
+/// are enough). A homography fitted to every centre leans toward an
+/// edge-fitted centre a pixel or two off — on a view of a few dozen rings,
+/// to under the 2 px floor (precision harness: a projective centre 2.4 px off
+/// sat 1.9 px from it) — while the photometric centres agree with theirs to
+/// hundredths of a pixel.
+fn deferred_verification(result: &PipelineResult, config: &DetectConfig) -> Option<Vec<bool>> {
+    if !(config.advanced.geometric_verify && config.circle_refinement.uses_photometric()) {
+        return None;
+    }
+    let target = &config.target;
+    let mut view = homography_frame_view(result, target);
+    let cells: Vec<Option<Coord>> = view.iter().map(|m| marker_cell_coord(m, target)).collect();
+    let photometric: Vec<MarkerRecord> = view
+        .iter()
+        .zip(&result.markers)
+        .filter(|(_, m)| m.center_source == CenterSource::Photometric)
+        .map(|(v, _)| v.clone())
+        .collect();
+    let h_current = result
+        .homography
+        .map(|h| nalgebra::Matrix3::from_fn(|r, c| h[r][c]));
+    let (h, _) = common::phase_final_h(&photometric, h_current, None, config);
+    geometric_verify_filter(&mut view, h.as_ref(), target);
+    let kept: HashSet<Coord> = view
+        .iter()
+        .filter_map(|m| marker_cell_coord(m, target))
+        .collect();
+    Some(
+        cells
+            .iter()
+            .map(|c| c.is_none_or(|c| kept.contains(&c)))
+            .collect(),
+    )
+}
+
 /// Correspondence-only copies of a result's markers, index-aligned, as
 /// finalize saw them when it fitted the homography: centre in the
 /// homography's frame, position in its source plane. A marker without a
@@ -240,6 +291,8 @@ fn homography_frame_view(result: &PipelineResult, target: &TargetLayout) -> Vec<
                 center: center.unwrap_or(m.center),
                 board_xy_mm,
                 confidence: m.confidence,
+                // The geometric verification's shape test reads the ellipse.
+                ellipse_outer: m.ellipse_outer,
                 ..MarkerRecord::default()
             }
         })

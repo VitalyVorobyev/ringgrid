@@ -123,7 +123,8 @@ pub struct AdvancedDetectConfig {
     /// the observed inlier residual distribution, so the gate stays
     /// recall-safe on clean and lens-distorted boards alike. Markers the
     /// lattice judges geometrically inconsistent are removed, so only trusted
-    /// board correspondences reach the output.
+    /// board correspondences reach the output. With photometric refinement the
+    /// gate runs after the photometric stage, on the refined centres.
     ///
     /// Disable (`false`) to keep every decoded marker and apply your own
     /// filtering. Default: `true`.

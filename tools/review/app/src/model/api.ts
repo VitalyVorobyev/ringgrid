@@ -173,8 +173,33 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 
 const enc = encodeURIComponent;
 
+export interface ScreenTargetOptions {
+  width_px: number;
+  height_px: number;
+  pixel_pitch_mm: number;
+  marker_diameter_mm: number;
+  margin_px: number;
+}
+
+export interface ScreenTargetExport {
+  png_base64: string;
+  json_text: string;
+  metadata: {
+    screen: ScreenTargetOptions;
+    board_origin_px: [number, number];
+    rows: number;
+    columns: number;
+    marker_count: number;
+    drawn_marker_diameter_mm: number;
+    drawn_marker_diameter_px: number;
+    code_band_width_px: number | null;
+  };
+}
+
 export const api = {
   state: () => request<ServerState>("/api/state"),
+  generateScreenTarget: (template: string, screen: ScreenTargetOptions) =>
+    request<ScreenTargetExport>("/api/screen-target", { template, screen }),
   detection: (run: string, tile: string) => request<Detection>(`/api/run/${enc(run)}/tile/${enc(tile)}`),
   compare: (tile: string, a: string, b: string, matchPx: number, posPx: number) =>
     request<Comparison>(`/api/compare/${enc(tile)}?a=${enc(a)}&b=${enc(b)}&match=${matchPx}&pos=${posPx}`),

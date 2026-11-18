@@ -4,11 +4,13 @@
 //! single images or whole directories. Built only with `--features cli`.
 //!
 //! ```text
-//! ringgrid gen     <recipe.toml>  --out DIR         # target artifacts
-//! ringgrid detect  --image P --target T --out J     # one image
-//! ringgrid batch   --images DIR --target T --out-dir D
-//!                  [--refine none|projective-center|photometric]
-//! ringgrid example --list | --name NAME [--out FILE]
+//! ringgrid gen        <recipe.toml> --out DIR       # printable target artifacts
+//! ringgrid gen-screen <template> --width-px W --height-px H
+//!                     --pixel-pitch-mm P --marker-diameter-mm D --out DIR
+//! ringgrid detect     --image P --target T --out J  # one image
+//! ringgrid batch      --images DIR --target T --out-dir D
+//!                     [--refine none|projective-center|photometric]
+//! ringgrid example    --list | --name NAME [--out FILE]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -37,6 +39,12 @@ struct Cli {
 enum Command {
     /// Generate target artifacts (JSON spec + SVG/PNG/DXF) from a recipe.
     Gen(GenArgs),
+    /// Fit a target to a display and render a native grayscale PNG for 1:1 viewing.
+    ///
+    /// Scales the template to the requested marker diameter, fits the grid
+    /// with the most markers on the screen, and writes target_screen.png,
+    /// target_spec.json (pass to `detect --target`) and screen.json.
+    GenScreen(ScreenArgs),
     /// Detect markers in a single image.
     Detect(DetectArgs),
     /// Detect markers across every image in a directory.
@@ -70,6 +78,32 @@ struct GenArgs {
     /// Override the emitted formats (comma-separated: json,svg,png,dxf).
     #[arg(long, value_delimiter = ',')]
     formats: Option<Vec<Format>>,
+}
+
+#[derive(Args)]
+struct ScreenArgs {
+    /// Template target spec or recipe: supplies the lattice kind, marker
+    /// proportions, coding and origin dots (its size is ignored).
+    template: PathBuf,
+    /// Output directory for target_screen.png, target_spec.json and screen.json.
+    #[arg(long, default_value = "out")]
+    out: PathBuf,
+    /// Native screen width in pixels, in the orientation it will be displayed.
+    #[arg(long)]
+    width_px: u32,
+    /// Native screen height in pixels, in the orientation it will be displayed.
+    #[arg(long)]
+    height_px: u32,
+    /// Physical size of one display pixel in mm (25.4 / ppi, or the measured
+    /// active width divided by --width-px).
+    #[arg(long)]
+    pixel_pitch_mm: f64,
+    /// Drawn outer marker diameter in mm, including the outer ring stroke.
+    #[arg(long)]
+    marker_diameter_mm: f64,
+    /// Minimum white margin on each edge, in display pixels [default: 8].
+    #[arg(long)]
+    margin_px: Option<u32>,
 }
 
 #[derive(Args)]
@@ -147,6 +181,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Gen(args) => run_gen(args),
+        Command::GenScreen(args) => run_gen_screen(args),
         Command::Detect(args) => run_detect(args),
         Command::Batch(args) => run_batch_cmd(args),
         Command::Example(args) => run_example(args),
@@ -158,6 +193,43 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_gen_screen(args: ScreenArgs) -> Result<(), String> {
+    let template = cli::load_target(&args.template).map_err(|e| e.to_string())?;
+    let mut options = ringgrid::ScreenTargetOptions::new(
+        args.width_px,
+        args.height_px,
+        args.pixel_pitch_mm,
+        args.marker_diameter_mm,
+    );
+    if let Some(margin) = args.margin_px {
+        options = options.with_margin_px(margin);
+    }
+    let bundle = template
+        .render_fitted_screen_target(&options)
+        .map_err(|e| e.to_string())?;
+    let metadata_json =
+        serde_json::to_string_pretty(&bundle.metadata).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&args.out).map_err(|e| e.to_string())?;
+    for (name, bytes) in [
+        ("target_screen.png", bundle.png_bytes.as_slice()),
+        ("target_spec.json", bundle.json_text.as_bytes()),
+        ("screen.json", metadata_json.as_bytes()),
+    ] {
+        let path = args.out.join(name);
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("wrote {}", path.display());
+    }
+    let m = &bundle.metadata;
+    eprintln!(
+        "{} markers ({} rows, up to {} columns), diameter {:.4} mm / {:.2} px",
+        m.marker_count, m.rows, m.columns, m.drawn_marker_diameter_mm, m.drawn_marker_diameter_px
+    );
+    if let Some(band) = m.code_band_width_px {
+        eprintln!("code band {:.2} display px wide", band);
+    }
+    Ok(())
 }
 
 fn run_gen(args: GenArgs) -> Result<(), String> {

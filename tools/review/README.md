@@ -44,6 +44,19 @@ commit, args, timestamp) and reused on restart. `--run NAME=DIR` imports
 Output (`--out`, default `tools/out/review/<dataset>/`): `feedback.json`
 (`ringgrid.review.v1`, written atomically), `runs/`, `tiles/` (cropped PNG cache).
 
+## Generate a screen target
+
+Open **Generate screen target** in the React app and choose a coded hex or
+plain rectangular template. The InkPad Lite preset fills in the panel
+resolution and nominal physical pixel pitch. Enter the drawn marker diameter,
+generate, and download the native PNG and both JSON files. Display the PNG
+at 1:1 and pass the target spec to the detector.
+
+This dialog uses the RingGrid Python extension in the local server process.
+Build the bindings with
+`VIRTUAL_ENV="$PWD/.venv" .venv/bin/python -m maturin develop -m crates/ringgrid-py/Cargo.toml --release`
+and run the server with `.venv/bin/python`.
+
 ## Privacy
 
 - Binds to loopback only (non-loopback `--host` is refused); `Host`/`Origin`

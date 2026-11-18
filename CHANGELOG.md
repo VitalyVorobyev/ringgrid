@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Screen targets.** `TargetLayout::render_fitted_screen_target`
+  (`ScreenTargetOptions` → `ScreenTargetArtifacts`) fits a target template to a
+  display: it scales the template to a requested drawn marker diameter, fits
+  the grid with the most markers inside the screen margins, and renders a
+  native-resolution 8-bit grayscale PNG by area coverage (8 × 8 samples per
+  pixel) with marker centres at their exact, unsnapped positions. Returns the
+  fitted `target_spec.json` and the screen placement. Exposed as
+  `ringgrid gen-screen`, the Python method of the same name,
+  `render_fitted_screen_target_json` in WASM, and a dialog in the review tool.
+  The print PNG is binary and, at a display's own resolution, matches the
+  binary mode of `docs/studies/displayed-target.md` (5.0 µm marker-to-marker
+  photometric centre error against 0.6 µm with 16 grey levels in that
+  simulation of a 166 dpi e-reader). See the book's *Screen targets* section.
+
 ## [0.16.0] - 2026-11-17
 
 Detection fails closed: it reports fewer markers rather than a wrong ID,

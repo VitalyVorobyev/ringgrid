@@ -89,6 +89,33 @@ let detector = Detector::new(target);
 Complete step-by-step target generation docs (Rust API, Rust CLI, Python script, and helper tools):
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
 
+## Screen targets
+
+To show a target on a display (an e-reader, a monitor) instead of printing it,
+fit it to the screen. `render_fitted_screen_target` scales a template target to
+the requested drawn marker diameter, fits the grid with the most markers, and
+renders a native-resolution 8-bit grayscale PNG with area-coverage edges and
+unsnapped (fractional-pixel) marker centers:
+
+```rust,no_run
+use ringgrid::{ScreenTargetOptions, TargetLayout};
+
+// width_px, height_px, pixel_pitch_mm (25.4 / ppi), marker_diameter_mm
+let options = ScreenTargetOptions::new(825, 1200, 25.4 / 150.0, 10.752);
+let screen = TargetLayout::default_hex().render_fitted_screen_target(&options)?;
+std::fs::write("target_screen.png", &screen.png_bytes)?; // show 1:1
+std::fs::write("target_spec.json", &screen.json_text)?; // detect against this
+println!("{} markers", screen.metadata.marker_count);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The CLI equivalent is `ringgrid gen-screen`. In the project's simulation of a
+166 dpi e-reader, a binary PNG at display resolution costs 5.0 µm of
+marker-to-marker photometric center error, against 0.6 µm with 16 gray levels
+and 0.5 µm on print. The guide covers why, how the fit works, and how to choose
+the marker diameter:
+- https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html#screen-targets
+
 ## Simple Detection
 
 ```rust,no_run

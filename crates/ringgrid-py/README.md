@@ -95,6 +95,36 @@ is a thin wrapper over this same installed-package surface.
 Complete target-generation tutorial and full flag reference:
 - https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html
 
+## Screen targets
+
+To show a target on a display (an e-reader, a monitor) instead of printing it,
+fit it to the screen. The template's lattice, proportions and coding are
+kept; it is scaled to the requested drawn marker diameter, the grid with the
+most markers is fitted, and the PNG is rendered at native resolution in 8-bit
+grayscale:
+
+```python
+from pathlib import Path
+import ringgrid
+
+screen = ringgrid.TargetLayout.default_hex().render_fitted_screen_target({
+    "width_px": 825,
+    "height_px": 1200,
+    "pixel_pitch_mm": 25.4 / 150,   # physical size of one display pixel
+    "marker_diameter_mm": 10.752,   # drawn outer diameter
+    # "margin_px": 8,
+})
+Path("target_screen.png").write_bytes(screen.png_bytes)  # display 1:1
+Path("target_spec.json").write_text(screen.json_text)    # detect against this
+print(screen.metadata["marker_count"], screen.metadata["code_band_width_px"])
+```
+
+`screen.metadata` also holds `board_origin_px`: a board point in mm maps to
+screen pixels as `mm / pixel_pitch_mm + board_origin_px`. Display the PNG
+without scaling, dithering or thresholding. Why gray levels matter and how to
+choose the marker diameter:
+- https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html#screen-targets
+
 ## Target layouts
 
 `TargetLayout` is the typed, first-class target model — the Python mirror of the
@@ -153,6 +183,7 @@ assert ringgrid.TargetLayout.from_dict(restored.to_dict()) == restored
 
 - Typed `TargetLayout` (`ringgrid.target.v6`) — hex/rect lattices, coded/plain markers, origin fiducials
 - Native `TargetLayout` target generation for canonical spec JSON + printable SVG/PNG/DXF
+- Screen targets: `TargetLayout.render_fitted_screen_target` fits a grid to a display and renders a native grayscale PNG
 - Native `Detector` API with NumPy input support
 - Slim `DetectionResult` model objects with JSON round-trips
 - Opt-in `DetectionDiagnostics` channel (`detector.detect_with_diagnostics(...)`)

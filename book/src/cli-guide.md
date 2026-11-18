@@ -10,13 +10,16 @@ cargo install ringgrid --features cli
 This produces a `ringgrid` binary on your `PATH`. (Library users add the crate
 with `cargo add ringgrid`; Python users `pip install ringgrid`.)
 
-The binary has four subcommands:
+The binary has five subcommands:
 
 ```text
-ringgrid gen     <recipe.toml>  --out DIR         # target artifacts
-ringgrid detect  --image P --target T --out J     # one image
-ringgrid batch   --images DIR --target T --out-dir D
-ringgrid example --list | --name NAME [--out FILE]
+ringgrid gen        <recipe.toml> --out DIR          # printable target artifacts
+ringgrid gen-screen <template> --width-px W --height-px H \
+                    --pixel-pitch-mm P --marker-diameter-mm D --out DIR
+                                                     # grayscale target for a display
+ringgrid detect     --image P --target T --out J     # one image
+ringgrid batch      --images DIR --target T --out-dir D
+ringgrid example    --list | --name NAME [--out FILE]
 ```
 
 ## Recipes
@@ -96,6 +99,35 @@ ringgrid gen hex_coded.toml --out ./out/target
 | `--formats <list>` | recipe value | Override the emitted formats (comma-separated: `json,svg,png,dxf`). |
 
 CLI flags override the corresponding recipe fields.
+
+## `ringgrid gen-screen` — fit a target to a screen
+
+Builds a target for one display: it scales a template target to the requested
+marker diameter, fits the grid with the most markers on the screen, and renders
+a native-resolution grayscale PNG for 1:1 display. Writes `target_screen.png`,
+`target_spec.json` (the fitted target, for `detect --target`) and
+`screen.json` (the fit and the board-to-screen pixel mapping).
+
+```bash
+ringgrid gen-screen hex_coded.toml \
+    --width-px 825 --height-px 1200 --pixel-pitch-mm 0.16933333333333334 \
+    --marker-diameter-mm 10.752 --out ./out/screen
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `<template>` | required | Target spec or recipe — positional. Supplies lattice kind, marker proportions, coding and origin dots; its size is ignored. |
+| `--out <dir>` | `out` | Output directory (created if absent). |
+| `--width-px <n>` | required | Native screen width in pixels, in the orientation you will display it. |
+| `--height-px <n>` | required | Native screen height in pixels. |
+| `--pixel-pitch-mm <x>` | required | Physical size of one display pixel in mm (`25.4 / ppi`, or measured active width / `width-px`). |
+| `--marker-diameter-mm <x>` | required | Drawn outer marker diameter in mm, including the outer ring stroke. |
+| `--margin-px <n>` | `8` | Minimum white margin on each edge, in display pixels. |
+
+It prints the fitted marker count and the realized marker diameter and code-band
+width in display pixels; the command fails when not even a 2 × 2 grid fits. Why
+the PNG is grayscale, how the fit works and how to choose the diameter are in
+[Target Generation → Screen targets](target-generation.md#screen-targets).
 
 ## `ringgrid detect` — detect markers in an image
 

@@ -7,7 +7,8 @@ This chapter documents the complete workflow for generating:
 - a printable raster target (`.png`)
 - a 2D CAD target for laser/CNC fabrication (`.dxf`, millimeters)
 
-for physical calibration targets.
+for physical calibration targets. To show a target on a display instead of
+printing it, see [Screen targets](#screen-targets).
 
 ## Overview
 
@@ -314,12 +315,243 @@ ruler, mounting flat, and archiving the spec are covered in
 > tooling. See [ID Assignment Optimization](id-optimization.md) and
 > [Development](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/development.md).
 
+## Screen targets
+
+A target can also be shown on a display — an e-reader, a monitor, a tablet —
+instead of being printed. `ringgrid gen-screen` (and
+`TargetLayout::render_fitted_screen_target` in every binding) produces a PNG
+made for one specific screen: one image pixel per display pixel, gray levels
+at every edge, and the largest grid that fits at the marker size you ask for.
+
+### Why not show the print PNG
+
+The print PNG from `ringgrid gen` is the wrong input for a display. Its
+renderer tests each pixel at one point and writes 0 or 255, so it is
+**binary**, and the point it tests is the pixel's corner, so the drawn
+pattern sits **half a pixel off** the layout (a common shift, harmless on its
+own). Rendered at a display's native resolution it is exactly the `binary`
+mode of the [displayed-target study](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/studies/displayed-target.md).
+
+That study simulated an e-reader at **166 dpi (0.1530 mm per display
+pixel)** with the default coded hex marker (10.752 mm, 70.3 display px
+across), seen at 20–56 camera px per marker. The error that matters for
+calibration is the *marker-to-marker* part of the
+[photometric](detection-pipeline/photometric-center.md) center error: the
+part that is repeatable per marker and is not a common board shift. At 32
+camera px per marker and blur σ 0.8 camera px:
+
+| display raster | decoded % | photometric RMS, camera px | marker-to-marker, µm on the board |
+|---|---:|---:|---:|
+| print | 92.8 | 0.007 | 0.5 |
+| binary | 91.5 | 0.017 | 5.0 |
+| 4 gray levels (area coverage) | 92.8 | 0.010 | 2.0 |
+| 16 gray levels (area coverage) | 93.4 | 0.008 | 0.6 |
+| 256 gray levels (area coverage) | 92.7 | 0.008 | 0.5 |
+
+A wider-band variant at 34 camera px per marker gives the same picture: the
+per-marker repeatable error is 0.008–0.018 camera px (2.5–5.7 µm) for a
+binary display at 0.4–0.6 camera px per display pixel, and 0.002 px for 16
+gray levels, against 0.003 px for print.
+
+- **Gray output removes the display term.** With area coverage at 16 or more
+  levels the centers match print, from about 30 display px per marker up. A
+  binary display needs 140–200 display px per marker to get within about
+  1–2 µm of print.
+- **The display barely affects decoding.** Gray output moves decode rates by
+  2 percentage points or less. A binary display matters only below about 45
+  display px per marker: at 20 display px it decodes 70–78 % of markers and
+  41–46 % of those decodes are wrong, while 16-level area coverage still
+  matches print there.
+- **Snapping markers to whole pixels is worse, not better.** Moving each
+  center to the nearest pixel center costs 62.6 µm marker-to-marker against
+  the layout, which cannot represent the moved positions.
+- **Decode failures on real displayed targets come from camera blur against
+  the code band,** not from the display. The default band is 0.448 mm, 1/24
+  of the drawn diameter; once the camera blur reaches σ ≈ 1.5–2 camera px at
+  a band 0.8–1.3 camera px wide, most of the band's contrast is gone.
+
+Projective centers (0.11–0.29 camera px RMS at blur 0.8–1.5) are dominated
+by their own bias and do not see the display at all; the gain shows up with
+`CircleRefinementMethod::Photometric`. The study is a simulation: it does not
+model e-ink pixel gaps, the panel's gray response, glare, or what the reader
+software does to the image. See its *Limits* section.
+
+### How the fit works
+
+`gen-screen` takes a **template** target (a recipe or a `target_spec.json`)
+and a screen, and builds a new target for that screen.
+
+1. **Scale.** The template is scaled uniformly so its drawn outer diameter
+   (outer ring plus its stroke) equals `marker_diameter_mm`. Lattice pitch,
+   ring radii, code-band width and origin-dot radius scale together, so the
+   template's proportions, lattice kind (hex or rect), coding and codebook are
+   kept.
+2. **Search.** The usable area is the screen minus `margin_px` on each edge,
+   converted to millimeters with `pixel_pitch_mm`. Every grid of at least
+   2 × 2 whose drawn content (rings and origin dots) fits that area is a
+   candidate. The fit keeps the one with the most markers; ties go to the
+   grid whose emptier axis is filled more, then to more rows. A coded grid
+   never has more markers than its codebook (893 base, 2180 extended).
+3. **IDs.** The fitted grid gets sequential codebook IDs. An explicit
+   `id_assignment` in the template is kept only when the fit lands on the
+   template's own rows and columns; otherwise the command fails rather than
+   silently invent a different assignment.
+4. **Placement.** The content's bounding box is centered on the screen. Marker
+   centers keep their exact lattice positions, usually at fractional pixel
+   coordinates; nothing is snapped.
+5. **Rasterization.** Each display pixel gets the ink fraction of its own
+   area, from 8 × 8 samples, written as an 8-bit gray level (65 distinct
+   values). Code-sector boundaries are integrated the same way as ring edges.
+   This is the area-coverage mode of the study, and because coverage is taken
+   over the pixel's area it has no half-pixel offset. A panel with fewer gray
+   levels quantizes the PNG; the study found 16 levels indistinguishable from
+   256.
+
+The result is three files:
+
+| file | contents |
+|---|---|
+| `target_screen.png` | `width_px` × `height_px`, 8-bit grayscale, for 1:1 display |
+| `target_spec.json` | the fitted target (`ringgrid.target.v6`) in millimeters — pass it to the detector |
+| `screen.json` | the screen options, the fit (`rows`, `columns`, `marker_count`), the realized `drawn_marker_diameter_mm` / `_px`, `code_band_width_px` (coded only) and `board_origin_px` |
+
+`screen.json` maps the board frame onto the screen. A board point
+`(x_mm, y_mm)` from `target_spec.json` is displayed at
+
+```text
+x_px = x_mm / pixel_pitch_mm + board_origin_px[0]
+y_px = y_mm / pixel_pitch_mm + board_origin_px[1]
+```
+
+where integer pixel coordinates are pixel **centers**.
+
+### How to use it
+
+1. **Get the pixel pitch.** `pixel_pitch_mm` is the physical size of one
+   display pixel: `25.4 / ppi` from the panel's nominal density, or better,
+   the active area's measured width in millimeters divided by its width in
+   pixels. The target spec's millimeters are only as right as this number —
+   a 1 % pitch error is a 1 % scale error, as with a mis-scaled print — so
+   measure it when it matters.
+2. **Give the native resolution in the orientation you will use.**
+   `--width-px` / `--height-px` are the panel's native pixels; for a portrait
+   display, pass the portrait dimensions.
+3. **Choose the marker diameter.** `gen-screen` prints the realized marker
+   diameter and code-band width in display pixels. Keep the marker at about
+   **30 display px or more** across, which with the default proportions puts
+   the code band at **1.2 display px or more**; the study found that enough for
+   decoding and centers to match print with 4 or more gray levels. A display
+   that shows only black and white needs at least 45 display px per marker for
+   decoding and 140–200 for print-grade centers. Then check the camera side:
+   the code band should stay well above the camera blur. If the band is about
+   1 camera px wide and blur is 1.5–2 camera px, use a larger marker or a
+   template with a wider band (see the study's recommended recipe).
+4. **Display it 1:1.** Show `target_screen.png` with one image pixel on one
+   display pixel: no viewer scaling, no fit-to-screen, no dithering, no
+   thresholding. Any resampling changes both the pattern and its physical
+   size. A macro photograph of the screen tells you whether the viewer honors
+   the gray levels.
+5. **Detect against `target_spec.json`.** It is a normal target spec; detection
+   is unchanged. Use `CircleRefinementMethod::Photometric` (CLI
+   `--refine photometric`) when you want the center accuracy the gray raster
+   preserves.
+
+#### CLI
+
+For an InkPad Lite e-reader (825 × 1200 px, nominal 150 ppi, so `25.4 / 150`
+mm per pixel) with the default coded hex marker at its print size:
+
+```bash
+ringgrid example --name hex_coded --out hex_coded.toml
+ringgrid gen-screen hex_coded.toml \
+  --width-px 825 --height-px 1200 --pixel-pitch-mm 0.16933333333333334 \
+  --marker-diameter-mm 10.752 --out out/inkpad-lite
+```
+
+```console
+wrote out/inkpad-lite/target_screen.png
+wrote out/inkpad-lite/target_spec.json
+wrote out/inkpad-lite/screen.json
+152 markers (16 rows, up to 10 columns), diameter 10.7520 mm / 63.50 px
+code band 2.65 display px wide
+```
+
+The 16 rows alternate 10 and 9 rings. `--marker-diameter-mm 7.168` divides
+marker size and spacing by 1.5 and fits 363 markers (25 rows of 15 and 14) at
+42.33 px, with a 1.76 px code band. See the [CLI Guide](cli-guide.md#ringgrid-gen-screen--fit-a-target-to-a-screen)
+for every flag.
+
+#### Rust
+
+```rust,no_run
+use ringgrid::{ScreenTargetOptions, TargetLayout};
+
+let template = TargetLayout::default_hex();
+let options = ScreenTargetOptions::new(825, 1200, 25.4 / 150.0, 10.752).with_margin_px(8);
+let screen = template.render_fitted_screen_target(&options)?;
+
+std::fs::write("target_screen.png", &screen.png_bytes)?;
+std::fs::write("target_spec.json", &screen.json_text)?;
+
+// Where the first marker is drawn, in screen pixels.
+let target = TargetLayout::from_json_str(&screen.json_text)?;
+let [x_mm, y_mm] = target.cells()[0].xy_mm;
+let origin = screen.metadata.board_origin_px;
+let x_px = f64::from(x_mm) / options.pixel_pitch_mm + origin[0];
+let y_px = f64::from(y_mm) / options.pixel_pitch_mm + origin[1];
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`ScreenTargetOptions` is serde-serializable (`margin_px` defaults to 8), and
+failures are typed `ScreenTargetError`s: `NoFit` when not even a 2 × 2 grid
+fits, `ExplicitIds` for the ID case above.
+
+#### Python
+
+```python
+from pathlib import Path
+import ringgrid
+
+template = ringgrid.TargetLayout.default_hex()
+screen = template.render_fitted_screen_target({
+    "width_px": 825,
+    "height_px": 1200,
+    "pixel_pitch_mm": 25.4 / 150,
+    "marker_diameter_mm": 10.752,
+    # "margin_px": 8,
+})
+Path("target_screen.png").write_bytes(screen.png_bytes)
+Path("target_spec.json").write_text(screen.json_text)
+print(screen.metadata["marker_count"], screen.metadata["code_band_width_px"])
+```
+
+#### JavaScript / WebAssembly
+
+```js
+import init, { default_board_json, render_fitted_screen_target_json } from "@vitavision/ringgrid";
+
+await init();
+const screen = render_fitted_screen_target_json(
+  default_board_json(),
+  JSON.stringify({ width_px: 825, height_px: 1200, pixel_pitch_mm: 25.4 / 150, marker_diameter_mm: 10.752 }),
+);
+// screen.png_bytes: Uint8Array, screen.json_text: string, screen.metadata: object
+```
+
+#### Review app
+
+The repository's local review app (`tools/review/`) has a **Generate screen
+target** dialog with an InkPad Lite preset (825 × 1200, `25.4 / 150` mm,
+10.752 mm markers). It downloads the same three files. See
+`tools/review/README.md`.
+
 ## Related Chapters
 
 - [The Compositional Target Model](targets/target-model.md)
 - [Target JSON (schema v6)](targets/target-json-v6.md)
 - [Origin Fiducials](targets/origin-fiducials.md)
 - [Print & Verify](targets/print-and-verify.md)
+- [Photometric Center Refinement](detection-pipeline/photometric-center.md)
 - [Fast Start](fast-start.md)
 - [CLI Guide](cli-guide.md)
 - [Adaptive Scale Detection](detection-modes/adaptive-scale.md)

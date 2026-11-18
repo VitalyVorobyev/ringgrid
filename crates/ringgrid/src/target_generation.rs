@@ -13,6 +13,11 @@ use std::io::BufWriter;
 use std::path::Path;
 
 const CODE_SECTORS: usize = 16;
+
+mod screen;
+pub use screen::{
+    ScreenTargetArtifacts, ScreenTargetError, ScreenTargetMetadata, ScreenTargetOptions,
+};
 const MM_PER_INCH: f64 = 25.4;
 const DEFAULT_PNG_DPI: f32 = 300.0;
 
@@ -387,7 +392,6 @@ impl TargetLayout {
                 square(outer_mm * pixels_per_mm),
             )
         });
-        let two_pi = 2.0 * PI;
         let bound = outer_draw_extent_px + 2.0;
 
         for cell in self.cells() {
@@ -421,11 +425,7 @@ impl TargetLayout {
                             if let Some((code_min_sq, code_max_sq)) = code_band_sq
                                 && (code_min_sq..=code_max_sq).contains(&dist_sq)
                             {
-                                let angle = dy.atan2(dx);
-                                let sector =
-                                    (((angle / two_pi) + 0.5) * CODE_SECTORS as f64).floor() as i32;
-                                let sector = sector.rem_euclid(CODE_SECTORS as i32) as u32;
-                                pixel.0[0] = if ((codeword >> sector) & 1) == 1 {
+                                pixel.0[0] = if sector_is_white(codeword, dx, dy) {
                                     255
                                 } else {
                                     0
@@ -869,6 +869,13 @@ fn encode_png<W: std::io::Write>(
     let mut writer = encoder.write_header()?;
     writer.write_image_data(image.as_raw())?;
     Ok(())
+}
+
+fn sector_is_white(codeword: u32, dx: f64, dy: f64) -> bool {
+    let angle = dy.atan2(dx);
+    let sector = (((angle / (2.0 * PI)) + 0.5) * CODE_SECTORS as f64).floor() as i32;
+    let sector = sector.rem_euclid(CODE_SECTORS as i32) as u32;
+    ((codeword >> sector) & 1) == 1
 }
 
 /// Codeword table this target's markers are drawn from.

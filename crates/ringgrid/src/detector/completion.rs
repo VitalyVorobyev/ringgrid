@@ -347,6 +347,33 @@ fn completion_seed(
         .unwrap_or_else(|| project(h, cell_xy[0], cell_xy[1]))
 }
 
+/// Labeled rings within this many nearest-neighbour spacings of a cell
+/// count as its local support.
+const LOCAL_SUPPORT_SPACINGS: f64 = 3.05;
+/// Fewest labeled rings near a cell for a completion refit there.
+const MIN_LOCAL_SUPPORT: usize = 3;
+
+/// Whether at least [`MIN_LOCAL_SUPPORT`] labeled rings of the detection
+/// itself (not earlier refits: a chain of refits extrapolates as surely as a
+/// homography) lie within [`LOCAL_SUPPORT_SPACINGS`] lattice spacings of the
+/// cell (board frame of `scope`), so its predicted position interpolates.
+fn has_local_support(
+    cell_xy: [f64; 2],
+    markers: &[MarkerRecord],
+    target: &TargetLayout,
+    scope: CompletionScope,
+) -> bool {
+    let reach = LOCAL_SUPPORT_SPACINGS * f64::from(target.min_center_spacing_mm());
+    markers
+        .iter()
+        .filter(|m| m.source != DetectionSource::Completion)
+        .filter_map(|m| scope.cell_xy(target, marker_cell_coord(m, target)?))
+        .filter(|xy| (xy[0] - cell_xy[0]).hypot(xy[1] - cell_xy[1]) <= reach)
+        .take(MIN_LOCAL_SUPPORT)
+        .count()
+        >= MIN_LOCAL_SUPPORT
+}
+
 fn compute_candidate_quality(
     edge: &EdgeSampleResult,
     outer: &Ellipse,
@@ -692,6 +719,17 @@ pub(crate) fn complete_with_h(
                 continue;
             }
             if !is_center_in_bounds(seed, f64::from(w), f64::from(h_img), safe_margin) {
+                continue;
+            }
+            // A refit takes the ID of the cell its seed predicts; with no
+            // labeled ring nearby that prediction is an extrapolation, which
+            // uncorrected lens distortion shifts by a whole cell at the
+            // periphery (precision harness, hex at lambda 0.20 / 0.25: refits
+            // sitting exactly on the neighbouring ring, labeled with this
+            // cell's ID). Plain targets' labels come from this growth itself
+            // and are verified by the anchor and geometric verification; the
+            // gate there costs a third of their distorted-view recall.
+            if target.is_coded() && !has_local_support(cell_xy, markers, target, scope) {
                 continue;
             }
             stats.n_in_image += 1;

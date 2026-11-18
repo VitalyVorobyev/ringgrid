@@ -13,7 +13,7 @@ a small structured result — no OpenCV bindings, all image processing in Rust.
 
 ## At a Glance
 
-- Subpixel ring-marker detection via direct ellipse fitting and projective center correction
+- Subpixel ring-marker detection via direct ellipse fitting and projective center correction, with optional [photometric center refinement](#photometric-center-refinement) that fits each marker's blurred printed pattern
 - Two ways to identify markers: **coded** 16-sector rings (decode to stable IDs) or **plain** rings anchored by origin dots or a complete-board layout
 - Hex or rectangular lattices, from one compositional `TargetLayout`
 - Optional camera-distortion handling and self-undistort estimation
@@ -106,6 +106,67 @@ See the [Configuration guide](https://vitalyvorobyev.github.io/ringgrid/book/con
 Per-marker fit/decode metrics and RANSAC stats are an opt-in channel — call
 `detector.detect_with_diagnostics(&image)`. The result serializes to JSON via
 `serde`; the exact shape is in the [Detection Output Format](https://vitalyvorobyev.github.io/ringgrid/book/output-format.html).
+
+## Photometric center refinement
+
+The default center estimate, `ProjectiveCenter`, comes from the fitted inner and
+outer ellipses. Under defocus blur, the blurred code sectors push each edge
+point in or out depending on the neighbouring bit, and the resulting center
+error does not average out across markers.
+`CircleRefinementMethod::Photometric` adds a final stage that fits each
+marker's pixels with a model of the blurred printed pattern (Gaussian PSF,
+affine illumination, a local board-to-image map) and reports the center the fit
+implies, together with a 2×2 center covariance.
+
+Synthetic benchmark ([`docs/performance.md`](docs/performance.md#blur-benchmark-photometric-centers-2026-11)):
+720×540 frames of the default hex board printed with 0.84 mm strokes, ≈33 px
+markers, tilts 0/20/30°, an illumination gradient, a glare blob and σ = 2
+grey-level noise. Center RMS / p95 over decoded markers, px:
+
+| blur σ | contrast | projective center | photometric |
+|---:|---:|---:|---:|
+| 0.8 | 40 | 0.485 / 0.559 | 0.013 / 0.023 |
+| 1.5 | 40 | 0.449 / 0.693 | 0.022 / 0.038 |
+| 0.8 | 80 | 0.614 / 0.924 | 0.008 / 0.014 |
+| 1.5 | 80 | 0.715 / 1.095 | 0.013 / 0.022 |
+| 2.5 | 80 | 0.600 / 1.118 | 0.028 / 0.052 |
+| 3.0 | 80 | 0.736 / 1.387 | 0.040 / 0.073 |
+
+Decoded counts are identical for every method; the stage only moves centers.
+
+Real images ([ADR-022](docs/decisions/022-photometric-center-refinement.md),
+2026-11-17 amendment): a precision plain plate, 58 × 58 rings on a 2 mm rect
+lattice, 2 cameras × 28 views at 2048 × 1536, rings 80–120 px across, fitted
+blur σ 0.8–6 px. All 6356 reported markers got a photometric center, and the
+smooth-fit residual over every accepted marker (6210) is 0.0163 px. The
+smooth-fit residual is the leave-one-out residual against a per-image degree-4
+board-to-image polynomial: a consistency measure, not an error against ground
+truth.
+
+**Cost.** About 6–15 ms per marker fit in release (two passes when print radii
+are estimated), which is why it is opt-in and `ProjectiveCenter` stays the
+default.
+
+**When to use it.** When the centers feed a calibration and their accuracy
+matters more than detection time, and whenever the optics blur the markers:
+defocus, a shallow depth of field, tilted focus. It needs a board homography;
+markers without a board position keep their previous center.
+
+```rust,no_run
+use ringgrid::{CircleRefinementMethod, DetectConfig, Detector, TargetLayout};
+
+let mut config = DetectConfig::from_target(TargetLayout::default_hex());
+config.circle_refinement = CircleRefinementMethod::Photometric;
+let detector = Detector::with_config(config);
+```
+
+- CLI: `ringgrid detect … --refine photometric`
+- Python: `cfg.circle_refinement = ringgrid.CircleRefinementMethod.PHOTOMETRIC`
+- JavaScript: `detector.update_config(JSON.stringify({ circle_refinement: "Photometric" }))`
+
+The model, the covariance and the outputs are described in the
+[Photometric Center Refinement](https://vitalyvorobyev.github.io/ringgrid/book/detection-pipeline/photometric-center.html)
+chapter.
 
 ## Generate a target
 

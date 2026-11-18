@@ -11,6 +11,7 @@ homography. No OpenCV dependency.
 
 - **Subpixel edge detection** — gradient-based radial sampling produces edge points fed to a direct ellipse fit, yielding subpixel-accurate marker localization
 - **Projective center correction** — recovers the true projected center from inner/outer conic pencil geometry, correcting the systematic bias of ellipse-fit centers
+- **Photometric center refinement (opt-in)** — fits each marker's pixels with a model of the blurred printed pattern; on the synthetic blur benchmark the center RMS is 0.008–0.040 px against 0.449–0.736 px for the projective center (see [below](#photometric-center-refinement))
 - **Consistency-first ID correction** — verifies decoded IDs against local hex-lattice structure, clears contradictory IDs, and recovers safe missing IDs before global filtering
 - **Stable baseline IDs plus opt-in extension** — shipped `base` profile keeps 893 stable IDs at minimum cyclic Hamming distance 2; opt-in `extended` grows capacity to 2180 IDs with a weaker minimum distance of 1 without introducing new polarity ambiguity beyond the shipped baseline
 - **Distortion-aware** — supports external camera models (Brown-Conrady) via the `PixelMapper` trait, or blind single-parameter self-undistort estimation
@@ -198,6 +199,38 @@ let result = detector.detect_multiscale(&image, &tiers).unwrap();
 
 Adaptive scale guide:
 - https://vitalyvorobyev.github.io/ringgrid/book/detection-modes/adaptive-scale.html
+
+## Photometric Center Refinement
+
+`CircleRefinementMethod::Photometric` runs after projective-center correction
+and fits each marker's pixels with a model of the blurred printed pattern
+(Gaussian PSF, affine illumination, a local board-to-image map). It costs about
+6–15 ms per marker fit in release, so it is opt-in; `ProjectiveCenter` stays
+the default.
+
+```rust,no_run
+use ringgrid::{CircleRefinementMethod, DetectConfig, Detector, TargetLayout};
+
+let mut config = DetectConfig::from_target(TargetLayout::default_hex());
+config.circle_refinement = CircleRefinementMethod::Photometric;
+let detector = Detector::with_config(config);
+```
+
+Synthetic blur benchmark (720×540, default hex board with 0.84 mm strokes,
+≈33 px markers, tilts 0/20/30°, an illumination gradient, a glare blob,
+contrast 80 grey levels, σ = 2 noise). Center
+RMS / p95 over decoded markers, px:
+
+| blur σ | projective center | photometric |
+|---:|---:|---:|
+| 0.8 | 0.614 / 0.924 | 0.008 / 0.014 |
+| 1.5 | 0.715 / 1.095 | 0.013 / 0.022 |
+| 2.5 | 0.600 / 1.118 | 0.028 / 0.052 |
+| 3.0 | 0.736 / 1.387 | 0.040 / 0.073 |
+
+Use it when the centers feed a calibration, and whenever the optics blur the
+markers. Full tables (including contrast 40 and real-image results):
+- https://vitalyvorobyev.github.io/ringgrid/book/detection-pipeline/photometric-center.html
 
 ## Detection with Camera Model
 

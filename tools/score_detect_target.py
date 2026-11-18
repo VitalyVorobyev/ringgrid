@@ -104,12 +104,15 @@ def coord_agreement(matched_coords, rotation, translation):
     return n_ok / max(1, len(matched_coords))
 
 
-def best_symmetry_agreement(matched_coords, rotations):
-    """Best coordinate agreement over lattice rotations x solved translations."""
-    best = 0.0
+def best_symmetry_map(matched_coords, rotations):
+    """Best (agreement, rotation, translation) mapping predicted to GT coordinates.
+
+    Searches the given lattice rotations, solving each one's translation from
+    the most common offset. Returns ``(0.0, None, None)`` without pairs.
+    """
+    best = (0.0, None, None)
     for rotation in rotations:
         (a, b), (c, d) = rotation
-        # Solve the translation from the most common offset.
         offsets = {}
         for (pu, pv), (gu, gv) in matched_coords:
             t = (gu - (a * pu + b * pv), gv - (c * pu + d * pv))
@@ -117,8 +120,15 @@ def best_symmetry_agreement(matched_coords, rotations):
         if not offsets:
             continue
         translation = max(offsets, key=offsets.get)
-        best = max(best, coord_agreement(matched_coords, rotation, translation))
+        agreement = coord_agreement(matched_coords, rotation, translation)
+        if best[1] is None or agreement > best[0]:
+            best = (agreement, rotation, translation)
     return best
+
+
+def best_symmetry_agreement(matched_coords, rotations):
+    """Best coordinate agreement over lattice rotations x solved translations."""
+    return best_symmetry_map(matched_coords, rotations)[0]
 
 
 def project(h, x, y):

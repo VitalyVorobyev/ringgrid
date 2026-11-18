@@ -133,6 +133,54 @@ a marker that could not be placed on the board at all reports
   with the same final-homography step finalize ends with: the refit is kept
   when it reprojects the centers better than the homography finalize fitted.
 
+## Accuracy
+
+**Synthetic blur benchmark** (`crates/ringgrid/tests/blur_center_accuracy.rs`,
+from [`docs/performance.md`](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/performance.md#blur-benchmark-photometric-centers-2026-11)):
+720×540 frames of the default hex board printed with 0.84 mm strokes (a
+1.15 mm code band), detected with `detect_adaptive`; ≈33 px markers, tilts
+0/20/30°, an illumination gradient, a saturated glare blob and σ = 2
+grey-level noise. Center RMS / p95 over decoded markers, px:
+
+| blur σ | contrast | projective-center | photometric |
+|---:|---:|---:|---:|
+| 0.8 | 40 | 0.485 / 0.559 | 0.013 / 0.023 |
+| 1.5 | 40 | 0.449 / 0.693 | 0.022 / 0.038 |
+| 0.8 | 80 | 0.614 / 0.924 | 0.008 / 0.014 |
+| 1.5 | 80 | 0.715 / 1.095 | 0.013 / 0.022 |
+| 2.5 | 80 | 0.600 / 1.118 | 0.028 / 0.052 |
+| 3.0 | 80 | 0.736 / 1.387 | 0.040 / 0.073 |
+
+Decoded counts are identical for every method (the photometric stage runs
+after detection). At 40 grey levels and blur ≥ 2.5, and at blur 4 for any
+contrast, the decoder loses or mis-decodes most markers for every method.
+
+**Every target kind** (`crates/ringgrid/tests/photometric_target_matrix.rs`):
+seven kinds — coded hex/rect, plain hex/rect with and without origin dots, a
+thin plain ring — at marker outer radius 8/17/33 px, blur 0.8/1.5/3, contrast
+40/80 and tilt 0/20/30°. For 17–33 px markers the photometric RMS is
+0.012–0.016 px (median over cells) and at most 0.045 px for every kind except
+one detection-limited coded-rect cell; the projective center errs by
+0.05–1.3 px.
+
+**Real images** (ADR-022, 2026-11-17 amendment): a precision plain plate,
+58 × 58 rings on a rect 2 mm lattice (outer radius 0.8 mm, inner 0.4 mm,
+origin dots), 2 cameras × 28 views, 2048 × 1536, rings 80–120 px across,
+fitted blur σ 0.8–6 px; `detect_adaptive`, 6356 reported markers. Every one of
+them gets a photometric center, and the smooth-fit residual over every
+accepted marker is 0.0163 px (6210 markers). The smooth-fit residual is, per
+image, the leave-one-out residual of the photometric centers against a
+degree-4 polynomial from board to image, pooled over the 43 images with ≥ 25
+markers accepted in both runs of the amendment's before/after comparison: a
+consistency measure, not an error against ground truth.
+
+**Cost.** About 6–15 ms per fit in release, two passes when print radii are
+estimated — the reason the method is opt-in rather than the default.
+
+The per-kind tables, Monte-Carlo covariance checks and the model-misfit study
+are in
+[ADR-022](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/decisions/022-photometric-center-refinement.md).
+
 ## Configuration
 
 ```rust

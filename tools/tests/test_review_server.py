@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -311,6 +312,29 @@ class Http(unittest.TestCase):
         self.assertEqual(names, ["strip_a_00", "strip_a_01", "strip_b_00", "strip_b_01"])
         self.assertEqual(st["dataset"]["tiles"][0]["width"], 64)
         self.assertEqual(st["feedback"]["schema"], srv.SCHEMA)
+
+    def test_screen_target_endpoint(self):
+        try:
+            from ringgrid import TargetLayout
+        except ImportError:
+            self.skipTest("RingGrid bindings are unavailable")
+        if not hasattr(TargetLayout, "render_fitted_screen_target"):
+            self.skipTest("RingGrid bindings lack screen rendering")
+        body = {
+            "template": "coded_hex",
+            "screen": {
+                "width_px": 825, "height_px": 1200, "pixel_pitch_mm": 25.4 / 150,
+                "marker_diameter_mm": 10.752,
+            },
+        }
+        code, data, _ = self.req("/api/screen-target", body)
+        self.assertEqual(code, 200, data[:300])
+        response = json.loads(data)
+        self.assertEqual(response["metadata"]["marker_count"], 152)
+        self.assertEqual(json.loads(response["json_text"])["lattice"]["rows"], 16)
+        self.assertTrue(base64.b64decode(response["png_base64"]).startswith(b"\x89PNG"))
+        self.assertEqual(self.req("/api/screen-target", {**body, "template": "../unknown"})[0], 400)
+        self.assertEqual(self.req("/api/screen-target", body, {"Origin": "https://example.com"})[0], 403)
 
     def test_tile_image_is_a_cropped_png(self):
         code, body, hdr = self.req("/api/tile/strip_a_01/image")

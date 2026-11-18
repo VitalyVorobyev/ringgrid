@@ -190,6 +190,7 @@ the `ringgrid.target.v6` form, the only schema the loaders accept.
 | `canonical_target_spec_json(target_json)` | Validate a v6 spec and re-serialize it in canonical form |
 | `target_fiducial_dots_mm(target_json)` | Origin-dot centers in board mm, as JSON `[x, y]` pairs |
 | `render_target_bundle_json(target_json, options_json)` | `TargetBundle` — see [Target rendering](#target-rendering) |
+| `render_fitted_screen_target_json(target_json, options_json)` | Native grayscale PNG, fitted target spec and screen placement |
 | `target_page_size_mm(target_json, options_json)` | JSON `[width_mm, height_mm]` of the printed page |
 | `default_config_json(board_json)` | Default detection config for a target |
 | `scale_tiers_four_tier_wide_json()` | Four-tier preset (8-220 px) |
@@ -232,6 +233,14 @@ draws it into the SVG and PNG. An application that draws its own scale line must
 pass `false`, or the print carries two. The DXF never carries a scale bar or any
 other page furniture — it is board-frame millimeters for fabrication — so there
 the application's own line is the only one.
+
+### Screen targets
+
+Use `render_fitted_screen_target_json` to fit rows and columns at a specified
+drawn marker diameter. Pass native `width_px` and `height_px`,
+`pixel_pitch_mm`, `marker_diameter_mm`, and optional `margin_px` (default 8).
+The returned `png_bytes` are for 1:1 display. Load `json_text` into the
+detector and use `metadata` for the fit and board-to-screen placement.
 
 ## Output format
 

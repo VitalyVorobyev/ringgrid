@@ -43,6 +43,7 @@ from ._ringgrid import (
     proposal_json_path as _proposal_json_path,
     proposal_with_scale_json_array as _proposal_with_scale_json_array,
     proposal_with_scale_json_path as _proposal_with_scale_json_path,
+    render_fitted_screen_target as _render_fitted_screen_target,
     render_target_bundle as _render_target_bundle,
     scale_tiers_four_tier_wide_json as _scale_tiers_four_tier_wide_json,
     scale_tiers_two_tier_standard_json as _scale_tiers_two_tier_standard_json,
@@ -588,6 +589,19 @@ class TargetLayout:
             dxf_text=raw["dxf_text"],
         )
 
+    def render_fitted_screen_target(self, options: Mapping[str, Any]) -> ScreenTargetArtifacts:
+        """Fit the largest grid at the requested drawn diameter and render a 1:1 PNG.
+
+        Options are `width_px`, `height_px`, `pixel_pitch_mm`, `marker_diameter_mm`,
+        and optional `margin_px` (default 8).
+        """
+        bundle = _render_fitted_screen_target(self.to_spec_json(), json.dumps(dict(options)))
+        return ScreenTargetArtifacts(
+            png_bytes=bundle["png_bytes"],
+            json_text=bundle["json_text"],
+            metadata=json.loads(bundle["metadata_json"]),
+        )
+
     def page_size_mm(self, options: Mapping[str, Any] | None = None) -> tuple[float, float]:
         """Printed page size as ``(width_mm, height_mm)``.
 
@@ -598,6 +612,15 @@ class TargetLayout:
         (343.2, 343.2)
         """
         return _target_page_size_mm(self.to_spec_json(), json.dumps(options or {}))
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenTargetArtifacts:
+    """Native PNG, canonical target JSON, and the fitted placement on the screen."""
+
+    png_bytes: bytes
+    json_text: str
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)

@@ -477,3 +477,59 @@ fn displayed_target_centre_error() {
         }
     }
 }
+
+#[test]
+fn fitted_screen_target_preserves_ids_and_centers_across_display_phase() {
+    use ringgrid::ScreenTargetOptions;
+
+    let template = TargetLayout::default_hex();
+    let pitch_mm = 25.4 / 150.0;
+    let mut by_phase = Vec::new();
+    for [width, height] in [[460, 520], [461, 521]] {
+        let artifacts = template
+            .render_fitted_screen_target(&ScreenTargetOptions::new(width, height, pitch_mm, 10.752))
+            .unwrap();
+        let board = BoardRaster::from_screen_artifacts(&artifacts);
+        let target = &board.target;
+        let mut spec = SceneSpec::for_target(target, OUTER_RADIUS_PX, 0.8, 0.0, CONTRAST, 1);
+        spec.image_size = [440, 440];
+        spec.supersample = 12;
+        spec.roll_deg = 7.0;
+        let scene = expose(&radiance(&board, &spec), &spec, 1000);
+        let result = detector(target, CircleRefinementMethod::Photometric)
+            .detect(&scene.image)
+            .unwrap();
+        let mut errors = BTreeMap::new();
+        for marker in result.detected_markers {
+            let id = marker.id.expect("absolute board id");
+            let xy = target
+                .xy_mm_of_id(id)
+                .expect("id present on the exported target");
+            let want = scene.project(xy.map(f64::from));
+            let error = [marker.center[0] - want[0], marker.center[1] - want[1]];
+            assert!(
+                error[0].hypot(error[1]) < 1.0,
+                "id {id} has wrong center: {error:?}"
+            );
+            assert!(errors.insert(id, error).is_none());
+        }
+        assert!(
+            errors.len() * 10 >= target.n_cells() * 9,
+            "{}/{} markers",
+            errors.len(),
+            target.n_cells()
+        );
+        by_phase.push(errors);
+    }
+    let differences: Vec<f64> = by_phase[0]
+        .iter()
+        .filter_map(|(id, a)| {
+            by_phase[1]
+                .get(id)
+                .map(|b| (a[0] - b[0]).hypot(a[1] - b[1]))
+        })
+        .collect();
+    assert!(differences.len() >= 20);
+    let rms = (differences.iter().map(|d| d * d).sum::<f64>() / differences.len() as f64).sqrt();
+    assert!(rms < 0.10, "phase changes centers by {rms} camera px RMS");
+}

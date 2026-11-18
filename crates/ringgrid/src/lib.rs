@@ -176,7 +176,10 @@ pub use target::{
 
 pub use conic::Ellipse;
 pub use marker::MarkerSpecConfig;
-pub use target_generation::{TargetArtifacts, TargetGenerationError, TargetRenderOptions};
+pub use target_generation::{
+    ScreenTargetArtifacts, ScreenTargetError, ScreenTargetMetadata, ScreenTargetOptions,
+    TargetArtifacts, TargetGenerationError, TargetRenderOptions,
+};
 
 // Camera / distortion
 pub use pixelmap::{

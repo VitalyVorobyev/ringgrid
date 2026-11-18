@@ -833,6 +833,30 @@ fn render_target_bundle<'py>(
     Ok(dict)
 }
 
+/// Fit and render the target template for a native grayscale screen.
+#[pyfunction]
+fn render_fitted_screen_target<'py>(
+    py: Python<'py>,
+    spec_json: &str,
+    options_json: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let target = target_from_spec_json(spec_json)?;
+    let options: ringgrid::ScreenTargetOptions =
+        serde_json::from_str(options_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let bundle = target
+        .render_fitted_screen_target(&options)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let dict = PyDict::new(py);
+    dict.set_item("json_text", bundle.json_text)?;
+    dict.set_item("png_bytes", PyBytes::new(py, &bundle.png_bytes))?;
+    dict.set_item(
+        "metadata_json",
+        serde_json::to_string(&bundle.metadata)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    )?;
+    Ok(dict)
+}
+
 /// Printed page size of a target as a `(width_mm, height_mm)` tuple.
 #[pyfunction]
 #[pyo3(signature = (spec_json, options_json="{}"))]
@@ -1007,6 +1031,7 @@ fn _ringgrid(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_target_png, m)?)?;
     m.add_function(wrap_pyfunction!(write_target_dxf, m)?)?;
     m.add_function(wrap_pyfunction!(render_target_bundle, m)?)?;
+    m.add_function(wrap_pyfunction!(render_fitted_screen_target, m)?)?;
     m.add_function(wrap_pyfunction!(target_page_size_mm, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_path, m)?)?;
     m.add_function(wrap_pyfunction!(proposal_json_array, m)?)?;

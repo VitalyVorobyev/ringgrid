@@ -747,6 +747,58 @@ pub fn render_target_bundle_json(
     bundle_to_js(&bundle)
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const SCREEN_TARGET_BUNDLE_TS: &'static str = r#"
+export interface ScreenTargetOptions {
+    width_px: number;
+    height_px: number;
+    pixel_pitch_mm: number;
+    marker_diameter_mm: number;
+    margin_px?: number;
+}
+export interface ScreenTargetMetadata {
+    screen: ScreenTargetOptions;
+    board_origin_px: [number, number];
+    rows: number;
+    columns: number;
+    marker_count: number;
+    drawn_marker_diameter_mm: number;
+    drawn_marker_diameter_px: number;
+    code_band_width_px: number | null;
+}
+export interface ScreenTargetBundle {
+    png_bytes: Uint8Array;
+    json_text: string;
+    metadata: ScreenTargetMetadata;
+}
+"#;
+
+/// Fit and render the target template for a native grayscale screen.
+///
+/// Pass `ScreenTargetOptions` as JSON. The returned metadata uses native
+/// pixel-center coordinates and `json_text` holds the fitted detector spec.
+#[wasm_bindgen(unchecked_return_type = "ScreenTargetBundle")]
+pub fn render_fitted_screen_target_json(
+    target_json: &str,
+    options_json: &str,
+) -> Result<JsValue, JsValue> {
+    let target = parse_target(target_json)?;
+    let options: ringgrid::ScreenTargetOptions =
+        serde_json::from_str(options_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let bundle = target
+        .render_fitted_screen_target(&options)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let result = js_sys::Object::new();
+    let png = js_sys::Uint8Array::from(bundle.png_bytes.as_slice());
+    let metadata_json =
+        serde_json::to_string(&bundle.metadata).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let metadata = js_sys::JSON::parse(&metadata_json)?;
+    js_sys::Reflect::set(&result, &"png_bytes".into(), &png)?;
+    js_sys::Reflect::set(&result, &"json_text".into(), &bundle.json_text.into())?;
+    js_sys::Reflect::set(&result, &"metadata".into(), &metadata)?;
+    Ok(result.into())
+}
+
 /// Printed page size of a target as a JSON `[width_mm, height_mm]` pair.
 ///
 /// The companion to [`render_target_bundle_json`] for a "will this fit?" check

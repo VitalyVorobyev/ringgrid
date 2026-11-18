@@ -72,3 +72,23 @@ fn a_target_too_large_for_the_page_throws() {
     let message = err.as_string().expect("string error");
     assert!(message.contains("printable area"), "{message}");
 }
+
+#[wasm_bindgen_test]
+fn fitted_screen_png_and_metadata_cross_the_boundary() {
+    let bundle = ringgrid_wasm::render_fitted_screen_target_json(
+        &default_board_json(),
+        r#"{"width_px":460,"height_px":600,"pixel_pitch_mm":0.2,"marker_diameter_mm":10.752}"#,
+    )
+    .expect("screen bundle");
+    let png = js_sys::Uint8Array::new(&field(&bundle, "png_bytes")).to_vec();
+    let image = image::load_from_memory(&png).expect("decode screen PNG");
+    assert_eq!((image.width(), image.height()), (460, 600));
+    let metadata = field(&bundle, "metadata");
+    assert!(field(&metadata, "marker_count").as_f64().unwrap() > 10.0);
+    assert!(
+        field(&bundle, "json_text")
+            .as_string()
+            .unwrap()
+            .contains("ringgrid.target.v6")
+    );
+}

@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { GeneralPanel, SelectionPanel, TilePanel } from "./components/Inspector";
 import { HelpDialog, RunDialog } from "./components/Dialogs";
+import { ScreenTargetDialog } from "./components/ScreenTargetDialog";
 import { ReviewStage, type LayerVisibility } from "./components/ReviewStage";
 import { passesFilter, TileList, type TileFilter } from "./components/TileList";
 import { api, type Comparison, type Detection, type FlagKind, type PinType, type ServerState, type Verdict } from "./model/api";
@@ -92,6 +93,7 @@ function Review({ initial }: { initial: ServerState }) {
   const stage = useRef<StageHandle>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
+  const [screenTargetOpen, setScreenTargetOpen] = useState(false);
 
   const comparing = compare && runB !== null && runB !== runA;
   const visibleTiles = useMemo(
@@ -377,6 +379,9 @@ function Review({ initial }: { initial: ServerState }) {
         </div>
       </Popover>
       <div className="ml-auto flex items-center gap-1.5">
+        <Button size="sm" variant="secondary" onClick={() => setScreenTargetOpen(true)}>
+          Generate screen target
+        </Button>
         <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} onClick={() => setRunDialogOpen(true)}>
           New run
         </Button>
@@ -502,6 +507,7 @@ function Review({ initial }: { initial: ServerState }) {
           />
         }
       />
+      <ScreenTargetDialog open={screenTargetOpen} onOpenChange={setScreenTargetOpen} />
       <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
       <RunDialog
         open={runDialogOpen}

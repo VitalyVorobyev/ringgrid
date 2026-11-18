@@ -54,6 +54,7 @@ const COVERAGE_TAPS: usize = 8;
 /// Display pixel values in 0..=15 (15 = white), row-major.
 struct DisplayGrid {
     spec: DisplaySpec,
+    phase: f64,
     w: usize,
     h: usize,
     levels: Vec<u8>,
@@ -371,8 +372,45 @@ impl BoardRaster {
             raster: self.raster.clone(),
             px_per_mm: self.px_per_mm,
             offset_mm: self.offset_mm,
-            display: Some(std::sync::Arc::new(DisplayGrid { spec, w, h, levels })),
+            display: Some(std::sync::Arc::new(DisplayGrid {
+                spec,
+                phase: DISPLAY_PHASE,
+                w,
+                h,
+                levels,
+            })),
             keep: self.keep,
+        }
+    }
+
+    /// Use the actual screen export as piecewise-constant 16-level pixels.
+    pub fn from_screen_artifacts(artifacts: &ringgrid::ScreenTargetArtifacts) -> Self {
+        let raster = image::load_from_memory(&artifacts.png_bytes)
+            .unwrap()
+            .into_luma8();
+        let target = TargetLayout::from_json_str(&artifacts.json_text).unwrap();
+        let pitch_mm = artifacts.metadata.screen.pixel_pitch_mm;
+        let (w, h) = raster.dimensions();
+        let levels = raster
+            .pixels()
+            .map(|p| ((u16::from(p[0]) * 15 + 127) / 255) as u8)
+            .collect();
+        Self {
+            target,
+            raster: std::sync::Arc::new(raster),
+            px_per_mm: pitch_mm.recip(),
+            offset_mm: artifacts.metadata.board_origin_px.map(|p| p * pitch_mm),
+            display: Some(std::sync::Arc::new(DisplayGrid {
+                spec: DisplaySpec {
+                    pitch_mm,
+                    raster: DisplayRaster::Grey16,
+                },
+                phase: 0.5,
+                w: w as usize,
+                h: h as usize,
+                levels,
+            })),
+            keep: None,
         }
     }
 
@@ -388,8 +426,8 @@ impl BoardRaster {
             return self.ideal_reflectance(xy_mm);
         };
         let p = d.spec.pitch_mm;
-        let i = ((xy_mm[0] + self.offset_mm[0]) / p - DISPLAY_PHASE + 1.0).floor();
-        let j = ((xy_mm[1] + self.offset_mm[1]) / p - DISPLAY_PHASE + 1.0).floor();
+        let i = ((xy_mm[0] + self.offset_mm[0]) / p - d.phase + 1.0).floor();
+        let j = ((xy_mm[1] + self.offset_mm[1]) / p - d.phase + 1.0).floor();
         if i < 0.0 || j < 0.0 || i >= d.w as f64 || j >= d.h as f64 {
             return 1.0;
         }

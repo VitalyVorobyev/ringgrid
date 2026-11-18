@@ -17,6 +17,7 @@ a small structured result — no OpenCV bindings, all image processing in Rust.
 - Two ways to identify markers: **coded** 16-sector rings (decode to stable IDs) or **plain** rings anchored by origin dots or a complete-board layout
 - Hex or rectangular lattices, from one compositional `TargetLayout`
 - Optional camera-distortion handling and self-undistort estimation
+- Printable targets (SVG/PNG/DXF) and [screen targets](https://vitalyvorobyev.github.io/ringgrid/book/target-generation.html#screen-targets): a grid fitted to a display and rendered as a native-resolution grayscale PNG
 - One library, many surfaces: a Rust crate, a Python package, C/C++ bindings, a WebAssembly package, and a CLI
 
 ## Visual Overview
@@ -192,7 +193,7 @@ automatically (`fiducials = "auto"`) so the pattern always resolves orientation.
 - **Rust** — the core library. See [`crates/ringgrid/README.md`](crates/ringgrid/README.md) and the [API reference](https://vitalyvorobyev.github.io/ringgrid/ringgrid/).
 - **Python** — `pip install ringgrid`. See [`crates/ringgrid-py/README.md`](crates/ringgrid-py/README.md).
 - **C / C++** — `vcpkg install ringgrid` (or CMake from source); a stable C ABI + header-only C++ wrapper. See [`crates/ringgrid-c/README.md`](crates/ringgrid-c/README.md).
-- **CLI** — `cargo install ringgrid --features cli`; `ringgrid gen | detect | batch | example`. See the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
+- **CLI** — `cargo install ringgrid --features cli`; `ringgrid gen | gen-screen | detect | batch | example`. See the [CLI Guide](https://vitalyvorobyev.github.io/ringgrid/book/cli-guide.html).
 - **WASM / npm** — `npm install @vitavision/ringgrid`; in-browser detection. Try the [live demo](https://vitalyvorobyev.github.io/ringgrid/demo/).
 
 ## Documentation

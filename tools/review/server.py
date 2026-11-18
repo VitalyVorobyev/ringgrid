@@ -14,6 +14,7 @@ inputs). See ``tools/review/README.md``.
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures
 import ipaddress
 import json
@@ -920,6 +921,11 @@ def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
             path = urlsplit(self.path).path
             try:
                 body = self._read_json()
+                if path == "/api/screen-target":
+                    try:
+                        return self._json(generate_screen_target(body))
+                    except RuntimeError as exc:
+                        return self._err(503, str(exc))
                 if path == "/api/feedback":
                     if not isinstance(body, dict):
                         raise FeedbackError("body must be an object")
@@ -954,6 +960,29 @@ def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
                 return self._err(500, "internal error")
 
     return Handler
+
+
+def generate_screen_target(body):
+    if not isinstance(body, dict):
+        raise ValueError("body must be an object")
+    _only_keys(body, ("template", "screen"), "body")
+    if body.get("template") not in ("coded_hex", "plain_rect"):
+        raise ValueError("unknown screen target template")
+    options = body.get("screen")
+    if not isinstance(options, dict):
+        raise ValueError("screen must be an object")
+    try:
+        from ringgrid import TargetLayout
+        render = TargetLayout.render_fitted_screen_target
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError("Build the RingGrid Python bindings in the Review server environment to generate targets.") from exc
+    target = TargetLayout.default_hex() if body["template"] == "coded_hex" else TargetLayout.rect_24x24()
+    bundle = render(target, options)
+    return {
+        "png_base64": base64.b64encode(bundle.png_bytes).decode("ascii"),
+        "json_text": bundle.json_text,
+        "metadata": bundle.metadata,
+    }
 
 
 def require_loopback(host: str) -> str:

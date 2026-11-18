@@ -145,7 +145,7 @@ jobs:
       - name: Create venv and install Python dependencies
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip maturin pytest numpy matplotlib
+          .venv/bin/python -m pip install --upgrade pip maturin pytest numpy matplotlib pillow
 
       - name: Check generated typing artifacts
         run: .venv/bin/python crates/ringgrid-py/tools/generate_typing_artifacts.py --check
@@ -155,6 +155,9 @@ jobs:
 
       - name: Run Python tests
         run: .venv/bin/python -m pytest crates/ringgrid-py/tests -q
+
+      - name: Run tools tests
+        run: .venv/bin/python -m pytest tools/tests -q
 
   check-docs:
     name: Documentation (ubuntu)

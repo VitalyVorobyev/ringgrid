@@ -279,7 +279,12 @@ class Http(unittest.TestCase):
         imported.mkdir()
         (imported / "strip_a_00_whatever.json").write_text(json.dumps(NEXT))
         cls.app.runs.import_dir("imp", imported)
-        cls.server = srv.make_server(cls.app, "127.0.0.1", 0)
+        # A stand-in build, so the test does not depend on whether the real
+        # app has been built in this checkout.
+        dist = cls.tmp / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text('<!doctype html><script type="module" src="/assets/app.js"></script>')
+        cls.server = srv.make_server(cls.app, "127.0.0.1", 0, app_dir=dist)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 

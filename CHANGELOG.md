@@ -76,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Completion refits anchored rings whose centre correction failed.
   - Coded completion refits need 3 fitted rings within 3 lattice spacings
     (no extrapolated IDs under lens distortion).
+- **The last recall tail on large plain plates (ADR-028).** On the same 56
+  views `detect_adaptive` with photometric centres now reports 99.0 % of the
+  fully visible rings (was 94 %), no wrong label.
+  - Geometric verification's local test takes second differences of each
+    marker's deviation from the final homography (perspective cancels; the
+    raw neighbour midpoint missed by 2–3 px on large oblique rings), runs on
+    the markers the global test keeps, tests corner markers one-sided, and
+    removes labelled markers no test can vouch for (no labelled neighbour,
+    global threshold loosened past half a pitch by uncorrected distortion).
+  - With photometric refinement verification runs after the photometric
+    stage, on the refined centres.
+  - An accepted photometric centre's `confidence` uses the fit's centre
+    covariance instead of rim coverage and inner-edge agreement.
+  - `detect_adaptive` joins the anchored markers other candidates found at
+    cells the selected one lacks (same board placement), then re-verifies.
 - **Coverage tooling:** `tools/score_coverage.py` scores a detection on a real
   image without ground truth (expected rings from a homography fit, wrong-label
   suspects, H / H+k1 residuals); `tools/run_ipgs_eval.py` drives it on the

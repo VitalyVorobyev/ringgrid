@@ -14,20 +14,35 @@ markers (including those filled in by completion). It removes any marker the hex
 lattice judges geometrically inconsistent, using two complementary, hex-aware
 tests and rejecting on their **union**:
 
-1. **Local hex-midpoint test (primary).** Each marker's center is compared with
-   the position predicted by averaging the midpoints of its opposite hex
-   neighbors. Midpoint interpolation is *exact under any affine map*, so under
-   smooth lens distortion the prediction error is only a second-difference
-   (curvature) term — a few tenths of a pixel — while a marker in the wrong board
-   cell sits a full pitch (tens of pixels) away. This test uses **no homography**,
-   so it cannot be fooled by a homography that a cluster of bad detections might
-   have corrupted.
+1. **Local lattice-midpoint test (primary).** Each marker's *deviation from the
+   final homography* (its center minus its cell's projection) is compared with
+   the average midpoint of its opposite lattice neighbors' deviations. The
+   homography's own curvature cancels — a raw neighbor midpoint is exact only
+   under an affine map and misses by 2–3 px for large rings under strong
+   perspective — so what remains is the curvature of smooth lens distortion,
+   a few tenths of a pixel, while a marker in the wrong board cell sits a full
+   pitch (tens of pixels) away. The test runs on the markers the global test
+   keeps, so a gross blunder does not drag its correct neighbors over the
+   threshold. A marker without an opposite neighbor pair (a corner of the
+   visible patch) is tested one-sided, against `2·f(c+d) − f(c+2d)`. Without a
+   homography it compares the centers themselves. A labeled marker neither
+   variant reaches (no labeled neighbor) is removed when the global threshold
+   has grown past half a cell pitch — under strong uncorrected distortion the
+   global test alone cannot tell its cell from the next.
 
 2. **Global final-H reprojection test (backstop).** Each marker's board position
    is projected through the final homography and compared with its center. This
    catches **boundary** markers that lack a complete neighbor pair for the local
    test (a false detection on the board edge is invisible to the local test but
-   projects far from its claimed board cell).
+   projects far from its claimed board cell). An ellipse-shape test runs with
+   it: a marker whose outer ellipse's axis ratio departs from the one the
+   homography predicts at its cell (a ring cut by the border or merged with a
+   neighbor) is removed.
+
+With photometric center refinement the gate runs after the photometric stage,
+on the refined centers, against the homography that best fits the photometric
+centers (an edge-fitted center of a blurred, eccentric ring is biased by
+2–3 px; its photometric center is not).
 
 ### Recall-safe adaptive thresholds
 

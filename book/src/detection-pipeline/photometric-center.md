@@ -132,6 +132,14 @@ a marker that could not be placed on the board at all reports
   from the centers now in the result (refined and unrefined markers alike),
   with the same final-homography step finalize ends with: the refit is kept
   when it reprojects the centers better than the homography finalize fitted.
+- An accepted fit sets the marker's `confidence` from its own precision (the
+  centre covariance) in place of the edge fit's rim coverage and inner-edge
+  agreement, and measures sharpness against the ring's size (see
+  [`DetectedMarker::confidence`](../output-types/detected-marker.md)).
+- Geometric verification runs after this stage, on the refined centers,
+  against the homography that best fits the photometric centers; finalize
+  skips it for this configuration (see
+  [Detection Quality & Rejection](../detection-quality.md)).
 
 ## Accuracy
 

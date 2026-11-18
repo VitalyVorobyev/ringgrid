@@ -9,8 +9,9 @@ in view, rings of the other board can be labeled into this one; the detector
 does not guard against it.
 
 Every reported marker carries a `confidence` that predicts how far its
-centre can be trusted (rim coverage, inner-edge agreement, outer-edge
-sharpness, distance to the image border, decode/fit evidence);
+centre can be trusted (rim coverage and inner-edge agreement for an
+edge-fitted centre, the fit's own centre covariance for a photometric one;
+outer-edge sharpness, distance to the image border, decode/fit evidence);
 `DetectConfig::min_confidence` (default 0.03) drops the markers below it on
 the finished result — the one knob trading recall for centre accuracy.
 
@@ -48,14 +49,16 @@ When no grid can be labeled (coded targets: or anchored), coded views fall back 
 
 When `use_global_filter` is `false`, finalize runs projective center correction and returns the markers without labeling or homography.
 
-With `circle_refinement = Photometric` (opt-in), [photometric center refinement](photometric-center.md) runs after finalize, once per detection call on the finished result, and the final homography is then refit from the refined centers.
+With `circle_refinement = Photometric` (opt-in), [photometric center refinement](photometric-center.md) runs after finalize, once per detection call on the finished result, and the final homography is then refit from the refined centers. Geometric verification then runs there, on the refined centers, instead of inside finalize (see below).
 
 ## Geometric Verification
 
 After the final homography, a precision-first gate (`pipeline/geometric_verify.rs`, enabled by `advanced.geometric_verify`, default `true`) checks every labeled marker against the target lattice and **removes** the geometrically inconsistent ones, so only trusted board correspondences reach the output. Two complementary tests run, rejecting on their union:
 
-1. **Local lattice-midpoint** (homography-free, distortion-robust primary): each marker's center versus the midpoint predicted by its lattice neighbors. Being locally affine, it sees only second-difference curvature under smooth lens distortion, while a wrong-cell marker sits ~1 pitch off.
-2. **Global final-H reprojection** (gross-blunder backstop): each marker's center versus its board position projected through the final homography. Catches boundary markers that lack a complete neighbor pair for the local test.
+1. **Global final-H reprojection** (gross-blunder backstop) and an ellipse-shape test: each marker's center versus its board position projected through the final homography, and its outer ellipse's axis ratio versus the one the homography predicts at its cell.
+2. **Local lattice-midpoint** (distortion-robust primary), on the markers the global tests keep: each marker's deviation from the final homography versus the midpoint of its lattice neighbors' deviations. A second difference of what the homography cannot explain, so perspective cancels and it sees only the curvature of smooth lens distortion, while a wrong-cell marker sits ~1 pitch off. Corner markers without an opposite pair are tested one-sided; a labeled marker with no labeled neighbor is removed when distortion has loosened the global threshold past half a cell pitch. Without a homography the centers themselves are compared.
+
+With photometric refinement the gate runs after the photometric stage, on the refined centers and against the homography that best fits the photometric centers: an edge-fitted center of a blurred, eccentric ring is biased by 2–3 px, beyond the 2 px floors, while its photometric center is not.
 
 Both thresholds adapt to the observed inlier-residual distribution (`max(floor, median + k·MAD)`), so the gate stays recall-safe on clean and distorted boards alike. It is lattice-generic and coordinate-keyed, so it applies to coded and plain targets identically. See [Detection Quality & Rejection](../detection-quality.md).
 
@@ -120,7 +123,9 @@ one or more scale tiers:
 3. Merge markers across tiers with size-aware dedup.
 4. Run grid labeling + anchoring + completion + final homography refit once.
 
-See [Adaptive Scale Detection](../detection-modes/adaptive-scale.md).
+`detect_adaptive` runs several such tier candidates, keeps the best and joins
+in the anchored markers of the others at cells it lacks. See [Adaptive Scale
+Detection](../detection-modes/adaptive-scale.md).
 
 ## Seed Injection in Two-Pass Modes
 

@@ -45,12 +45,27 @@ let r3 = detector.detect_multiscale(&image, &tiers).unwrap();
 
 ## How `detect_adaptive` Chooses Tiers
 
-1. Runs a lightweight scale probe to estimate dominant code-band radii.
-2. Builds one or more tiers from probe clusters (`ScaleTiers::from_detected_radii`).
-3. Falls back to `ScaleTiers::four_tier_wide()` if probe signal is unavailable.
-4. Runs one full detect pass per tier.
-5. Merges all markers with size-consistency-aware dedup.
-6. Runs global filter + completion + final homography refit once on merged results.
+`detect_adaptive` runs several tier *candidates* over the image and keeps the
+best one:
+
+1. Candidates: tiers from a lightweight scale probe of the code band (coded
+   targets, or any target with a diameter hint — plain rings have no code
+   band), `two_tier_standard`, `four_tier_wide`, the configured prior, and a
+   few curated single priors.
+2. Each candidate is one multi-scale detection: one full detect pass per tier,
+   markers merged with size-consistency-aware dedup, then grid labeling,
+   anchoring, completion, final homography refit and geometric verification
+   once on the merged pool.
+3. Candidates are ranked on what the output contract would report: markers
+   with a board position first, then homography support, decoded markers and
+   residual tie-breakers.
+4. The best candidate is joined with the markers other candidates labeled at
+   cells it lacks, from every candidate in the same board placement (absolute
+   board frame, its labeled centres within 2 px of the best candidate's
+   homography by median); the union's homography is refit and verified again.
+   Each candidate's tiers fit a different subset of the rings, so on large
+   oblique views the union reports rings no single candidate does.
+5. Photometric refinement, when requested, runs once on the joined result.
 
 ## When To Prefer Each Method
 

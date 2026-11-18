@@ -192,6 +192,6 @@ the proposal stage may miss markers in those areas. In that case:
 | `inner_fit_reason: estimate_not_ok` | Reduce `marker_spec.min_theta_consistency` |
 | Many `inner_fit_status: failed` | Enable `inner_as_outer_recovery`, widen `inner_fit.ransac.inlier_threshold` |
 | Missed markers in blurry regions | Enable `completion`, reduce `completion.min_fit_confidence` |
-| Wrong IDs | Lower `id_correction.seed_min_decode_confidence`, enable `id_correction` |
+| Wrong IDs | Lower `id_correction.seed_min_confidence`, enable `id_correction` |
 | Low overall confidence | Check `outer_fit.max_angular_gap_rad` and the outer edge sharpness (blur) |
 | Ellipses look systematically off-center | Use `--refine projective-center` |

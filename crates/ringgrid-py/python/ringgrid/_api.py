@@ -1963,7 +1963,7 @@ class IdCorrectionConfig:
     homography_min_inliers: int = 12
     max_iters: int = 5
     remove_unverified: bool = False
-    seed_min_decode_confidence: float = 0.7
+    seed_min_confidence: float = 0.7
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "IdCorrectionConfig":
@@ -1985,7 +1985,7 @@ class IdCorrectionConfig:
             homography_min_inliers=int(data["homography_min_inliers"]),
             max_iters=int(data["max_iters"]),
             remove_unverified=bool(data["remove_unverified"]),
-            seed_min_decode_confidence=float(data["seed_min_decode_confidence"]),
+            seed_min_confidence=float(data["seed_min_confidence"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -2006,7 +2006,7 @@ class IdCorrectionConfig:
             "homography_min_inliers": int(self.homography_min_inliers),
             "max_iters": int(self.max_iters),
             "remove_unverified": bool(self.remove_unverified),
-            "seed_min_decode_confidence": float(self.seed_min_decode_confidence),
+            "seed_min_confidence": float(self.seed_min_confidence),
         }
 
 

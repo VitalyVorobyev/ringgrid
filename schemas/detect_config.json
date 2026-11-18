@@ -63,7 +63,6 @@
               4.2,
               5.0
             ],
-            "confirm_by_consistency": true,
             "consistency_max_contradiction_frac": 0.5,
             "consistency_min_neighbors": 1,
             "consistency_min_support_edges": 1,
@@ -78,7 +77,7 @@
             "min_votes": 2,
             "min_votes_recover": 1,
             "remove_unverified": false,
-            "seed_min_decode_confidence": 0.7,
+            "seed_min_confidence": 0.7,
             "soft_lock_exact_decode": true
           },
           "description": "Structural ID verification and correction using hex neighborhood\nconsensus; runs only in the decode-anchored fallback (no grid labeled\nand anchored), hex coded targets only."
@@ -467,11 +466,6 @@
           },
           "type": "array"
         },
-        "confirm_by_consistency": {
-          "default": true,
-          "description": "Promote a decoded ID to trusted when its local neighborhood structurally\nconfirms it (support edges ≥ `consistency_min_support_edges`, zero\ncontradiction edges, and no confident vote against it), even when the\nvoting stages produced no candidate. Recovers correct IDs in\nsparse/partial/blurry views that would otherwise be cleared by\ncleanup. Default: true.",
-          "type": "boolean"
-        },
         "consistency_max_contradiction_frac": {
           "default": 0.5,
           "description": "Maximum allowed fraction (0 to 1) of contradicting neighbor edges in local consistency checks.",
@@ -550,7 +544,7 @@
           "description": "When `true`, remove markers that cannot be verified or corrected.\nWhen `false` (default), clear their ID (set to `None`) and keep the\ndetection so its geometry is available for debugging.",
           "type": "boolean"
         },
-        "seed_min_decode_confidence": {
+        "seed_min_confidence": {
           "default": 0.7,
           "description": "Minimum marker confidence (0 to 1) for a weak seed: a marker carrying an\nID without its own decode (e.g. kept by inner-as-outer recovery).\nMarkers with their own decode are always strong seeds. Default: 0.7.",
           "type": "number"
@@ -1181,7 +1175,6 @@
             4.2,
             5.0
           ],
-          "confirm_by_consistency": true,
           "consistency_max_contradiction_frac": 0.5,
           "consistency_min_neighbors": 1,
           "consistency_min_support_edges": 1,
@@ -1196,7 +1189,7 @@
           "min_votes": 2,
           "min_votes_recover": 1,
           "remove_unverified": false,
-          "seed_min_decode_confidence": 0.7,
+          "seed_min_confidence": 0.7,
           "soft_lock_exact_decode": true
         },
         "inner_as_outer_recovery": {

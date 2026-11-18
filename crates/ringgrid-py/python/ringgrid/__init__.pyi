@@ -788,7 +788,7 @@ class IdCorrectionConfig:
     homography_min_inliers: int
     max_iters: int
     remove_unverified: bool
-    seed_min_decode_confidence: float
+    seed_min_confidence: float
     def __init__(
         self,
         enable: bool = ...,
@@ -807,7 +807,7 @@ class IdCorrectionConfig:
         homography_min_inliers: int = ...,
         max_iters: int = ...,
         remove_unverified: bool = ...,
-        seed_min_decode_confidence: float = ...,
+        seed_min_confidence: float = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> IdCorrectionConfig: ...

@@ -161,9 +161,11 @@ anchor when their rotation disagrees (and would without the check).
   anchor: the old decoder's 109 decodes held 6 correct ones, 5 of which
   happened to agree; the new decoder's 22 hold 2.
 - ID correction (fallback path): every decode is exact, so decoded markers are
-  always strong seeds and `confirm_by_consistency` no longer finds an
-  untrusted decode to confirm; `seed_min_decode_confidence` now only applies
-  to markers carrying an ID without their own decode.
+  always strong seeds. The confirm-by-consistency pass, which promoted
+  untrusted non-exact decodes, could no longer find one and is removed with
+  its `confirm_by_consistency` switch; `seed_min_decode_confidence`, which now
+  only gates markers carrying an ID without their own decode by their marker
+  confidence, is renamed `seed_min_confidence`.
 - Breaking API and config changes: see
   [`docs/migrations/0.16-to-0.17.md`](../migrations/0.16-to-0.17.md).
 

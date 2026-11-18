@@ -4,7 +4,7 @@ use crate::target::TargetLayout;
 
 use super::bootstrap::bootstrap_trust_anchors;
 use super::cleanup::{cleanup_unverified_markers, finalize_correction_stats};
-use super::consistency::{confirm_ids_by_consistency, scrub_inconsistent_ids};
+use super::consistency::scrub_inconsistent_ids;
 use super::diagnostics::diagnose_unverified_reasons;
 use super::homography::{fit_anchor_homography_for_local_stage, run_homography_fallback};
 use super::local::{run_adaptive_local_recovery, run_post_consistency_refill};
@@ -53,12 +53,6 @@ pub(crate) fn verify_and_correct_ids(
     }
 
     run_post_consistency_refill(&mut ws);
-
-    // Promote correct non-exact decodes that the voting stages could not reach
-    // but whose neighborhood structurally confirms them, so cleanup does not
-    // drop them in sparse/partial views.
-    let n_confirmed = confirm_ids_by_consistency(&mut ws);
-    tracing::debug!(n_confirmed, "id_correction confirm-by-consistency complete");
 
     diagnose_unverified_reasons(&mut ws, final_outer_mul);
     cleanup_unverified_markers(&mut ws);
@@ -189,12 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn confirm_by_consistency_requires_trusted_support() {
-        // Precision (codex review on #49): two mutually board-adjacent but
-        // *untrusted*, non-exact decodes must NOT self-confirm. Each sees the
-        // other as a decoded board-neighbor, but neither is trusted, so
-        // confirm-by-consistency must leave them unconfirmed (and cleanup clears
-        // them) rather than locking in a possibly-false ID chain.
+    fn untrusted_board_adjacent_chain_is_cleared() {
+        // Precision (codex review on #49): two mutually board-adjacent markers
+        // carrying IDs without their own decode, at low confidence, must not
+        // vouch for each other: each sees the other as a board-neighbor, but
+        // neither is trusted, so cleanup clears them rather than locking in a
+        // possibly-false ID chain.
         let board = TargetLayout::default_hex();
         let board_index = BoardIndex::build(&board);
         let (&center_id, neighbors) = board_index
@@ -230,19 +224,14 @@ mod tests {
             marker_with_id(far_ids[1], [center_px[0], center_px[1] + 300.0], 0.95, true),
         ];
         let cfg = IdCorrectionConfig {
-            confirm_by_consistency: true,
             homography_fallback_enable: false,
             auto_search_radius_outer_muls: vec![2.4, 3.5],
             max_iters: 3,
             ..IdCorrectionConfig::default()
         };
-        let stats = verify_and_correct_ids(&mut markers, &board, &cfg);
+        verify_and_correct_ids(&mut markers, &board, &cfg);
 
-        assert_eq!(
-            stats.n_confirmed_by_consistency, 0,
-            "an untrusted board-adjacent chain must not self-confirm"
-        );
-        // The untrusted decodes are not promoted, so cleanup clears them.
+        // The untrusted IDs are never promoted, so cleanup clears them.
         let id_at = |p: [f64; 2]| markers.iter().find(|m| m.center == p).and_then(|m| m.id);
         assert_eq!(id_at(center_px), None, "untrusted center must be cleared");
         assert_eq!(

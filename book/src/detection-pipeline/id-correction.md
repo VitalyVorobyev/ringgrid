@@ -29,7 +29,7 @@ Frame semantics:
 
 Markers are bootstrapped into trust classes:
 - `AnchorStrong`: markers whose ID is their own decode (every decode is an exact codeword match)
-- `AnchorWeak`: markers carrying an ID without their own decode, with marker confidence at least `seed_min_decode_confidence`
+- `AnchorWeak`: markers carrying an ID without their own decode, with marker confidence at least `seed_min_confidence`
 - recovered markers: assigned later by local/homography recovery
 
 Soft-lock policy (`soft_lock_exact_decode=true`):

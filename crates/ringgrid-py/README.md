@@ -585,7 +585,7 @@ lattice structure.
 | `homography_min_inliers` | `12` | Minimum inliers required for the fallback homography. |
 | `max_iters` | `5` | Maximum iterative correction passes. |
 | `remove_unverified` | `False` | Default keeps the detection but clears the ID. Set to `True` to drop unverifiable markers entirely. |
-| `seed_min_decode_confidence` | `0.7` | Minimum marker confidence for a weak seed: a marker carrying an ID without its own decode. Markers with their own decode are always strong seeds. |
+| `seed_min_confidence` | `0.7` | Minimum marker confidence for a weak seed: a marker carrying an ID without its own decode. Markers with their own decode are always strong seeds. |
 
 ### `inner_as_outer_recovery`
 

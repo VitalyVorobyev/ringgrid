@@ -16,7 +16,7 @@ pub(super) fn bootstrap_trust_anchors(ws: &mut IdCorrectionWorkspace<'_>) -> usi
         if is_exact_decode(&ws.markers[i]) {
             ws.trust[i] = Trust::AnchorStrong;
             n_seeds += 1;
-        } else if ws.markers[i].confidence >= ws.config.seed_min_decode_confidence {
+        } else if ws.markers[i].confidence >= ws.config.seed_min_confidence {
             ws.trust[i] = Trust::AnchorWeak;
             n_seeds += 1;
         }

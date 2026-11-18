@@ -49,7 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target's); the matching `ringgrid-dev` flags and Python aliases.
 - `DecodeMetrics::best_dist`, `margin`, `decode_confidence`;
   `best_rotation: u8` is replaced by the continuous `rotation: f32`.
-- The inverted-polarity decode fallback. See
+- The inverted-polarity decode fallback.
+- `IdCorrectionConfig::confirm_by_consistency` and its pass (it promoted
+  non-exact decodes, which no longer exist); `seed_min_decode_confidence` is
+  renamed `seed_min_confidence` (it gates IDs without their own decode by
+  marker confidence). See
   [`docs/migrations/0.16-to-0.17.md`](docs/migrations/0.16-to-0.17.md).
 
 ## [0.16.0] - 2026-11-17

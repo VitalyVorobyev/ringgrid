@@ -86,7 +86,7 @@
       "homography_min_inliers": 12,
       "max_iters": 5,
       "remove_unverified": false,
-      "seed_min_decode_confidence": 0.7
+      "seed_min_confidence": 0.7
     }
   }
 }

@@ -111,44 +111,36 @@ matching.
 
 ### 1. Sampling sector intensities
 
-For each of the 16 sectors, the detector samples pixel intensities at multiple
-points within the code band. Sampling is controlled by `DecodeConfig`:
+The code band is sampled along the fitted outer ellipse at uniform
+*parametric* angle, scaled to the code-band radius. Sampling is controlled by
+`DecodeConfig`:
 
 ```rust
 pub struct DecodeConfig {
-    /// Embedded codebook profile.
-    pub codebook_profile: CodebookProfile, // default: base
-    /// Ratio of code band center radius to outer ellipse semi-major axis.
-    pub code_band_ratio: f32,        // default: 0.76
-    /// Number of angular samples per sector.
-    pub samples_per_sector: usize,   // default: 5
+    /// Ratio of code band center radius to outer ellipse semi-major axis
+    /// (derived from the target).
+    pub code_band_ratio: f32,
+    /// Angular samples per sector; also the number of sub-sector phases tried.
+    pub samples_per_sector: usize,   // default: 8
     /// Number of radial rings to sample.
     pub n_radial_rings: usize,       // default: 3
-    /// Maximum Hamming distance for a valid decode.
-    pub max_decode_dist: u8,         // default: 3
-    /// Minimum confidence for a valid decode.
-    pub min_decode_confidence: f32,  // default: 0.30
-    /// Minimum Hamming margin for a valid decode.
-    pub min_decode_margin: u8,       // default: 1
+    /// Minimum sector contrast before decoding.
+    pub min_decode_contrast: f32,    // default: 0.03
+    // … 2-means threshold iteration controls
 }
 ```
 
-The sampling radius is `code_band_ratio * r_mean`, where `r_mean` is the
-mean semi-axis of the fitted outer ellipse. Multiple angular samples per
-sector (spaced evenly within the sector) and multiple radial rings (spanning
-+/-10% of the center ratio) provide robustness against localized noise.
-
-The mean semi-axis is used rather than the ellipse angle because the ellipse
-angle reflects perspective distortion of the circular marker, not the
-board-to-image rotation. Sector angular alignment is handled entirely by the
-cyclic rotation matching.
-
-Each sector's intensity is the average of all valid samples (those falling
-within image bounds).
+Where the printed sector boundaries fall in parametric angle is a continuous
+unknown, and cyclic matching only absorbs whole sectors. The decoder
+therefore samples `16 × samples_per_sector` points (each averaged over
+`n_radial_rings` radii spanning ±10 % of the code-band ratio), and for every
+sub-sector phase averages the central half of each sector; the phase whose
+16 means vary the most is the one aligned with the printed sectors (a sector
+straddling a boundary averages bright and dark toward the middle).
 
 ### 2. Thresholding
 
-The sampled intensities are binarized using an iterative 2-means clustering
+The 16 sector means are binarized using an iterative 2-means clustering
 algorithm:
 
 1. Initialize the threshold at the midpoint of the intensity range.
@@ -162,42 +154,25 @@ or uniform code band.
 
 ### 3. Binarization
 
-Each sector with intensity above the threshold is assigned bit 1; below gets
-bit 0. This produces a 16-bit **observed word**.
+Each sector with intensity above the threshold is assigned bit 1 (bright);
+below gets bit 0. This produces a 16-bit **observed word**. Targets are
+printed dark on light; the complement word is never tried.
 
-### 4. Codebook matching
+### 4. Matching against the target's codewords
 
-The observed word is matched against the selected embedded profile. For each
-codeword, all 16 cyclic rotations are tried, and the Hamming distance is
-computed for each:
+The observed word is matched against every cyclic rotation of every codeword
+**the target's cells carry** (not the whole profile):
 
 ```
 distance = popcount(observed_word XOR rotate(codeword, k))
 ```
 
-The match with the smallest Hamming distance wins. If the best match has a
-high distance or low confidence, the detector also tries the **inverted
-polarity** (`!observed_word`), which handles the case where marker contrast is
-reversed (dark-on-light vs. light-on-dark).
-
-The better of the normal and inverted matches is selected based on the
-confidence heuristic:
-
-```
-confidence = clamp(1 - dist/6) * clamp(margin / active_profile_min_cyclic_dist)
-```
-
-where `margin = second_best_dist - best_dist`. In the shipped baseline profile,
-`active_profile_min_cyclic_dist = 2`, so a perfect decode with margin 2 or
-greater scores 1.0. In the opt-in `extended` profile that denominator is `1`,
-which makes exact matches easier to accept but reflects the profile's weaker
-minimum-distance guarantee. High confidence still requires both a low distance
-to the best match and a comfortable gap to the runner-up.
-
-A decode is accepted only if:
-- `best_dist <= max_decode_dist` (default: 3)
-- `margin >= min_decode_margin` (default: 1)
-- `confidence >= min_decode_confidence` (default: 0.30)
+and accepted only when the distance is 0. With the baseline's minimum cyclic
+Hamming distance of 2, 99.9 % of all 16-bit words lie within one bit of some
+codeword, so a non-zero distance is no evidence for the nearest codeword; and
+restricting matching to the target's own IDs (203 of 893 on the default board)
+lowers the share of random words that match exactly from 22 % to 5 %
+(ADR-027).
 
 The generator preserves the committed baseline profile as the fixed prefix, then
 appends the remaining valid rotational equivalence classes whose complement
@@ -209,29 +184,21 @@ profile. For the committed `--n 893 --seed 1` artifacts:
 
 ## Decode metrics
 
-Every decode attempt produces a `DecodeMetrics` record with full diagnostic
-information:
+An accepted decode produces a `DecodeMetrics` record (diagnostics channel):
 
 ```rust
 pub struct DecodeMetrics {
-    /// Raw 16-bit word sampled from the code band.
+    /// 16-bit word sampled on the phase-aligned grid.
     pub observed_word: u16,
-    /// Best-matching codebook entry index.
+    /// Matched codebook ID.
     pub best_id: usize,
-    /// Cyclic rotation that produced the best match.
-    pub best_rotation: u8,
-    /// Hamming distance to the best-matching codeword.
-    pub best_dist: u8,
-    /// Margin: second_best_dist - best_dist.
-    pub margin: u8,
-    /// Confidence heuristic in [0, 1].
-    pub decode_confidence: f32,
+    /// Code rotation in sectors, [0, 16): printed sector j starts at
+    /// parametric angle (j + rotation)·2π/16 on the fitted outer ellipse.
+    pub rotation: f32,
 }
 ```
 
-The `margin` field is particularly useful for assessing decode reliability. A
-margin of 0 means the best and second-best matches are equally close -- the
-decode is ambiguous. Higher margins indicate increasingly unambiguous matches.
+There is no distance or margin: every accepted decode is an exact match.
 
 ## Cyclic matching in detail
 
@@ -248,26 +215,16 @@ pub fn rotate_left_16(word: u16, k: u32) -> u16 {
 For each codeword in the codebook, the matcher rotates the codeword by
 0, 1, 2, ..., 15 positions and computes the Hamming distance to the
 observed word at each offset. The rotation that produces the minimum distance
-is recorded as `best_rotation`.
+is the whole part of `rotation`; the estimated sub-sector phase is its
+fractional part.
 
-This design means the detector never needs to determine the marker's
-orientation independently -- rotation recovery is a free byproduct of the
-codebook match.
+Rotation recovery is a free byproduct of the match, and the anchor stage uses
+it: under a candidate board placement the code rotation at each ring is
+predictable, and a decode votes only for the placements it agrees with.
 
-## Polarity fallback
+## Polarity
 
-In some imaging conditions the marker contrast may be inverted relative to the
-expected dark-ring-on-light-background convention. Rather than requiring a
-fixed polarity, the decoder tries both:
-
-1. Match `observed_word` against the codebook (normal polarity).
-2. Match `!observed_word` (bitwise complement) against the codebook (inverted
-   polarity).
-3. Select whichever match yields higher confidence.
-
-The appended profile entries exclude new complement-equivalent duplicates, so
-enabling `extended` does not widen the baseline profile's existing polarity
-ambiguity.
-
-The `DecodeDiagnostics` struct records whether the inverted polarity was used
-via the `inverted_used` flag.
+Targets are printed dark rings on a light background, and the sampled word is
+matched as is. Earlier versions also matched the complement word as a
+fallback; on the rtv3d captures every one of the 508 decodes it produced was
+wrong (ADR-027), so it was removed.

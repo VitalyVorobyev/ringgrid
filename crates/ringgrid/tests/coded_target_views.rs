@@ -48,11 +48,9 @@ fn report(name: &str, stats: &CenterStats) {
     );
 }
 
-/// Default decode acceptance gates (`DecodeConfig` defaults): a ring whose own
-/// code band decoded to an accepted ID.
+/// The ID a ring's own code band decoded to, if any.
 fn decode_accepted(diag: &ringgrid::diagnostics::MarkerDiagnostics) -> Option<usize> {
-    let d = diag.decode.as_ref()?;
-    (d.best_dist <= 3 && d.margin >= 1 && d.decode_confidence >= 0.3).then_some(d.best_id)
+    diag.decode.as_ref().map(|d| d.best_id)
 }
 
 #[test]
@@ -78,8 +76,8 @@ fn coded_rect_tilted_55_identifies_undecoded_rings_from_the_grid() {
     );
 
     // Fitted (not completed) rings whose own decode did not yield their ID
-    // contribute: undecoded rings take their cell's ID, and a decode naming
-    // no board cell (a misread) is overridden by the cell's ID. A decode
+    // contribute: undecoded rings take their cell's ID. Decodes match only
+    // the target's own codewords, so none names an ID off the board; a decode
     // naming another board cell is never overridden — such a ring leaves the
     // labeling (the scorer above already proved every ID correct).
     let (mut undecoded, mut off_board, mut on_board) = (0, 0, 0);
@@ -94,11 +92,11 @@ fn coded_rect_tilted_55_identifies_undecoded_rings_from_the_grid() {
             Some(_) => {}
         }
     }
-    println!(
-        "  undecoded fitted rings identified {undecoded}, off-board misreads overridden {off_board}"
-    );
-    assert!(undecoded >= 10, "undecoded rings identified: {undecoded}");
-    assert!(off_board >= 1, "off-board misreads overridden: {off_board}");
+    println!("  undecoded fitted rings identified {undecoded}");
+    // Most fitted rings here decode themselves (phase-aligned sampling); the
+    // few that do not still take their cell's ID.
+    assert!(undecoded >= 1, "undecoded rings identified: {undecoded}");
+    assert_eq!(off_board, 0, "decodes never name an ID off the board");
     assert_eq!(
         on_board, 0,
         "on-board contradicting decodes are not overridden"

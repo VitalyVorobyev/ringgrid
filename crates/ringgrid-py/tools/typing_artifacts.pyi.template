@@ -269,11 +269,8 @@ class Ellipse:
 class DecodeMetrics:
     observed_word: int
     best_id: int
-    best_rotation: int
-    best_dist: int
-    margin: int
-    decode_confidence: float
-    def __init__(self, observed_word: int, best_id: int, best_rotation: int, best_dist: int, margin: int, decode_confidence: float) -> None: ...
+    rotation: float
+    def __init__(self, observed_word: int, best_id: int, rotation: float) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DecodeMetrics: ...
     def to_dict(self) -> dict[str, Any]: ...
@@ -661,25 +658,17 @@ class EdgeSampleConfig:
     def to_dict(self) -> dict[str, Any]: ...
 
 class DecodeConfig:
-    codebook_profile: str
     code_band_ratio: float
     samples_per_sector: int
     n_radial_rings: int
-    max_decode_dist: int
-    min_decode_confidence: float
-    min_decode_margin: int
     min_decode_contrast: float
     threshold_max_iters: int
     threshold_convergence_eps: float
     def __init__(
         self,
-        codebook_profile: str = ...,
         code_band_ratio: float = ...,
         samples_per_sector: int = ...,
         n_radial_rings: int = ...,
-        max_decode_dist: int = ...,
-        min_decode_confidence: float = ...,
-        min_decode_margin: int = ...,
         min_decode_contrast: float = ...,
         threshold_max_iters: int = ...,
         threshold_convergence_eps: float = ...,
@@ -941,18 +930,6 @@ class DetectConfig:
     def self_undistort_enable(self) -> bool: ...
     @self_undistort_enable.setter
     def self_undistort_enable(self, value: bool) -> None: ...
-    @property
-    def decode_min_margin(self) -> int: ...
-    @decode_min_margin.setter
-    def decode_min_margin(self, value: int) -> None: ...
-    @property
-    def decode_max_dist(self) -> int: ...
-    @decode_max_dist.setter
-    def decode_max_dist(self, value: int) -> None: ...
-    @property
-    def decode_min_confidence(self) -> float: ...
-    @decode_min_confidence.setter
-    def decode_min_confidence(self, value: float) -> None: ...
     @property
     def circle_refinement(self) -> CircleRefinementMethod: ...
     @circle_refinement.setter

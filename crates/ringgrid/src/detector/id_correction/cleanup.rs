@@ -52,7 +52,6 @@ mod tests {
     use super::*;
     use crate::detector::config::IdCorrectionConfig;
     use crate::detector::marker_build::MarkerRecord;
-    use crate::marker::codec::Codebook;
     use crate::target::TargetLayout;
 
     fn marker(id: Option<usize>, center: [f64; 2], confidence: f32) -> MarkerRecord {
@@ -62,10 +61,6 @@ mod tests {
             confidence,
             ..MarkerRecord::default()
         }
-    }
-
-    fn min_cyclic() -> usize {
-        Codebook::default().min_cyclic_dist()
     }
 
     #[test]
@@ -80,7 +75,7 @@ mod tests {
             marker(Some(1), [140.0, 100.0], 0.5),
             marker(None, [180.0, 100.0], 0.4),
         ];
-        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         // Marker 0 is trusted; markers 1 and 2 remain untrusted.
         ws.trust[0] = Trust::AnchorStrong;
 
@@ -109,7 +104,7 @@ mod tests {
             marker(Some(1), [140.0, 100.0], 0.5),
             marker(None, [180.0, 100.0], 0.4),
         ];
-        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         ws.trust[0] = Trust::AnchorStrong;
 
         cleanup_unverified_markers(&mut ws);
@@ -133,7 +128,7 @@ mod tests {
             marker(Some(0), [140.0, 100.0], 0.5), // duplicate id, lower confidence
             marker(Some(1), [180.0, 100.0], 0.8),
         ];
-        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         ws.trust[0] = Trust::AnchorStrong;
         ws.trust[1] = Trust::AnchorWeak;
         ws.trust[2] = Trust::RecoveredLocal;

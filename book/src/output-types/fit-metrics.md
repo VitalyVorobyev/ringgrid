@@ -95,45 +95,19 @@ local ellipse fit looked good.
 
 ## DecodeMetrics
 
-`DecodeMetrics` is present on a `MarkerDiagnostics` entry when code decoding was attempted. It reports the raw sampled word and the quality of the codebook match.
+`DecodeMetrics` is present on a `MarkerDiagnostics` entry when the marker's own code band decoded. A decode is accepted only as an exact match (in some rotation) of one of the target's codewords, so it carries no distance or margin.
 
 ### Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `observed_word` | `u16` | Raw 16-bit word sampled from the code band. Each bit corresponds to one sector (bright = 1, dark = 0). |
-| `best_id` | `usize` | Index of the best-matching codebook entry in the active profile. |
-| `best_rotation` | `u8` | Cyclic rotation (0--15) that produced the best match. Each unit is 22.5 degrees. |
-| `best_dist` | `u8` | Hamming distance between the observed word (at best rotation) and the codebook entry. |
-| `margin` | `u8` | Gap between the best and second-best Hamming distances: `second_best_dist - best_dist`. |
-| `decode_confidence` | `f32` | Heuristic confidence score in `[0, 1]`, combining Hamming distance and margin. |
+| `observed_word` | `u16` | 16-bit word sampled from the code band on the phase-aligned sector grid. Each bit corresponds to one sector (bright = 1, dark = 0). |
+| `best_id` | `usize` | Codebook ID of the matched codeword. |
+| `rotation` | `f32` | Rotation of the printed code in sectors, `[0, 16)`: printed sector `j` starts at parametric angle `(j + rotation)·2π/16` on the fitted outer ellipse. The whole part is the cyclic shift that maps the codeword onto `observed_word`; the fraction is the estimated sub-sector phase. Each unit is 22.5°. |
 
-### Interpreting DecodeMetrics
+### Polarity
 
-**Hamming distance** (`best_dist`) tells how many of the 16 sectors disagree with the matched codeword:
-
-| `best_dist` | Interpretation |
-|-------------|----------------|
-| 0 | Exact match -- no bit errors |
-| 1 -- 2 | Minor noise, still reliable |
-| 3 | At the default acceptance threshold |
-| > 3 | Rejected by default (configurable via `DecodeConfig::max_decode_dist`) |
-
-**Margin** (`margin`) measures how unambiguous the match is. It is the difference in Hamming distance between the best and second-best codebook matches:
-
-| `margin` | Interpretation |
-|----------|----------------|
-| >= 4 | Highly unambiguous |
-| 3 | Reliable |
-| 2 | Acceptable but less certain |
-| 1 | Risky -- two codewords are nearly tied |
-| 0 | Ambiguous -- the match could be wrong |
-
-**Decode confidence** (`decode_confidence`) is a composite heuristic in `[0, 1]` that accounts for both Hamming distance and margin. Higher values indicate more reliable decodes. The default minimum threshold is 0.30 (configurable via `DecodeConfig::min_decode_confidence`).
-
-### Polarity handling
-
-The decoder tries both normal and inverted polarity of the sampled word (bitwise NOT) and picks whichever produces the better codebook match. The `observed_word` in `DecodeMetrics` reflects the polarity that was actually used for matching.
+Targets are printed dark on light; the decoder matches the sampled word as is and never tries its complement.
 
 ## Serialization
 

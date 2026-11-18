@@ -15,7 +15,6 @@ use crate::detector::MarkerRecord;
 use crate::detector::id_correction::{affine_to_image, fit_local_affine};
 use crate::detector::marker_build::DetectionSource;
 use crate::homography::homography_project as project;
-use crate::marker::codec::Codebook;
 use crate::ring::edge_sample::EdgeSampleResult;
 
 use super::{
@@ -473,7 +472,6 @@ fn evaluate_completion_candidate(
     projected_center: [f64; 2],
     r_expected: f32,
     config: &DetectConfig,
-    active_codebook_min_cyclic_dist: u8,
     stats: &mut CompletionStats,
 ) -> Result<CandidateQuality, ()> {
     let params = &config.advanced.completion;
@@ -501,23 +499,16 @@ fn evaluate_completion_candidate(
         return Err(());
     }
 
-    // Plain cells have no code band, so the decode gate cannot apply.
-    if params.require_perfect_decode && config.target.is_coded() {
-        let is_perfect = cand
-            .decode_result
-            .as_ref()
-            .is_some_and(|d| d.dist == 0 && d.margin >= active_codebook_min_cyclic_dist);
-        if !is_perfect {
-            tracing::trace!(
-                "Completion {} gate_reject={} (dist={:?}, margin={:?})",
-                target_cell,
-                CompletionGateRejectReason::PerfectDecodeRequired.code(),
-                cand.decode_result.as_ref().map(|d| d.dist),
-                cand.decode_result.as_ref().map(|d| d.margin),
-            );
-            stats.n_failed_gate += 1;
-            return Err(());
-        }
+    // Plain cells have no code band, so the decode gate cannot apply. Every
+    // accepted decode is an exact codeword match.
+    if params.require_perfect_decode && config.target.is_coded() && cand.decode_result.is_none() {
+        tracing::trace!(
+            "Completion {} gate_reject={}",
+            target_cell,
+            CompletionGateRejectReason::PerfectDecodeRequired.code(),
+        );
+        stats.n_failed_gate += 1;
+        return Err(());
     }
 
     Ok(quality)
@@ -568,8 +559,6 @@ fn try_complete_marker(
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     stats: &mut CompletionStats,
 ) -> Option<MarkerRecord> {
-    let active_codebook_min_cyclic_dist =
-        Codebook::from_profile(config.advanced.decode.codebook_profile).min_cyclic_dist() as u8;
     let r_expected = median_neighbor_outer_radius_px(
         projected_center,
         markers,
@@ -600,7 +589,6 @@ fn try_complete_marker(
         projected_center,
         r_expected,
         config,
-        active_codebook_min_cyclic_dist,
         stats,
     ) {
         Ok(q) => q,

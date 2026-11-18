@@ -9,8 +9,9 @@
 //! - **Decoded IDs** (coded targets): every labeled marker whose code band
 //!   decoded knows its board cell, so it votes for the one (symmetry,
 //!   translation) per symmetry that maps its relative coordinate onto that
-//!   cell. A robust majority of agreeing votes wins; see
-//!   [`resolve_by_decoded_ids`].
+//!   cell — for the symmetries under which its decoded code rotation is the
+//!   one the board predicts at that ring. Agreeing votes beyond chance win;
+//!   see [`resolve_by_decoded_ids`].
 //! - **Dots** (plain targets with origin fiducials): the triad surrounds board
 //!   cell `(0, 0)`, so a placement is a symmetry plus the relative-frame cell
 //!   that carries the triad. Every placement with that cell at or next to the
@@ -38,6 +39,7 @@ use image::GrayImage;
 use nalgebra::Matrix3;
 use projective_grid::{Coord, expert::lattice::GridTransform};
 
+use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;
 use crate::detector::completion::coord_bbox;
 use crate::homography::{estimate_homography_dlt, homography_project};
@@ -75,6 +77,24 @@ const MAX_CHANCE_WINNER: f64 = 1e-3;
 /// rect board at 60° labeled with a row skipped split its correct decodes
 /// 7 / 6 between two placements; accepting the 7 gave 78 wrong IDs).
 const MIN_CHANCE_RUNNER_UP: f64 = 0.1;
+/// Largest difference (sectors, of 16) between a decode's code rotation and
+/// the rotation a placement predicts at that ring for it to vote for the
+/// placement (see [`predicted_code_rotation`]). Measured against the true
+/// homography (ADR-027): correct decodes deviate at most 0.31 sector on the
+/// rtv3d captures (4141 decodes) and 0.58 on the synthetic sweep, where
+/// 99.96 % of 7444 stay within 0.5.
+const ROTATION_TOL_SECTORS: f64 = 0.5;
+/// Probability that a misread's code rotation agrees within
+/// [`ROTATION_TOL_SECTORS`] with the true symmetry's prediction. Misreads are
+/// mostly a few flipped bits of the true code read at the true rotation, so
+/// this is far above the uniform 1/16. Measured (ADR-027): 0.39 on the
+/// synthetic sweep (274 misreads), 0.54 on rtv3d (13); rounded up for margin.
+const P_ROTATION_AGREES_TRUE: f64 = 0.6;
+/// Probability that a misread's code rotation agrees within
+/// [`ROTATION_TOL_SECTORS`] with one given other symmetry's prediction.
+/// Measured (ADR-027): at most 0.055 per symmetry on the synthetic sweep,
+/// 0.077 on rtv3d; rounded up for margin.
+const P_ROTATION_AGREES_OTHER: f64 = 0.1;
 /// Distance (in nearest-neighbor spacings) within which a placement's board
 /// points count as one line (see [`placement_homography`]).
 const COLLINEAR_TOL_SPACINGS: f64 = 1e-3;
@@ -176,6 +196,14 @@ pub(crate) fn resolve_origin(
 /// invertible, so distinct coordinates give distinct translations), and
 /// misreads vote for unrelated placements.
 ///
+/// A decode also fixes the code's rotation on its ring, and a symmetry fixes
+/// where the board's sectors land there (through the labeled patch's
+/// homography): a decode votes only for the symmetries whose predicted code
+/// rotation it matches within [`ROTATION_TOL_SECTORS`]. Correct decodes all
+/// pass for the true symmetry; a misread passes for any one symmetry with a
+/// small measured probability, which the chance model accounts for
+/// ([`ln_chance_votes`]).
+///
 /// The winner must have an orientation-preserving board→image homography,
 /// more votes than chance gives any placement ([`MAX_CHANCE_WINNER`]), more
 /// votes than the runner-up, and a runner-up at chance level
@@ -185,16 +213,36 @@ fn resolve_by_decoded_ids(
     entries: &[(Coord, [f64; 2])],
     target: &TargetLayout,
 ) -> Option<OriginResolution> {
+    // A patch on one lattice line has no homography, and neither has any of
+    // its placements (see `placement_homography`): nothing can anchor it.
+    let patch = PatchFrame::fit(entries, target)?;
     let transforms = target.lattice_kind().symmetry_transforms();
+    // Board-mm → relative-frame-mm linear part of each symmetry.
+    let to_relative: Vec<Option<[[f64; 2]; 2]>> = transforms
+        .iter()
+        .map(|g| patch.board_to_relative_mm(*g))
+        .collect();
     let mut tally: HashMap<(usize, [i32; 2]), usize> = HashMap::new();
     let mut n_decoded = 0usize;
     for m in markers {
-        let (Some(c), Some(cell)) = (m.grid_coord, m.id.and_then(|id| target.coord_of_id(id)))
-        else {
+        let (Some(c), Some(cell), Some(decode), Some(ellipse)) = (
+            m.grid_coord,
+            m.id.and_then(|id| target.coord_of_id(id)),
+            m.decode.as_ref(),
+            m.ellipse_outer.as_ref(),
+        ) else {
             continue;
         };
         n_decoded += 1;
+        let jacobian = patch.jacobian([f64::from(c[0]), f64::from(c[1])]);
         for (k, g) in transforms.iter().enumerate() {
+            let Some(to_rel) = to_relative[k] else {
+                continue;
+            };
+            let predicted = predicted_code_rotation(mat2_mul(jacobian, to_rel), ellipse);
+            if circular_sector_diff(f64::from(decode.rotation), predicted) > ROTATION_TOL_SECTORS {
+                continue;
+            }
             let r = g.apply(Coord::new(c[0], c[1]));
             *tally.entry((k, [cell.u - r.u, cell.v - r.v])).or_default() += 1;
         }
@@ -239,11 +287,14 @@ fn resolve_by_decoded_ids(
 }
 
 /// ln of the expected number of placements that `votes` of `n_decoded`
-/// decodes agree on by chance: `R · C(n_decoded, votes) · n_cells^(1 − votes)`,
+/// decodes agree on by chance:
+/// `C(n_decoded, votes) · (p_t^v + (R − 1) · p_o^v) · n_cells^(1 − votes)`,
 /// with `R` orientation-preserving symmetries. A misread names a near-uniform
-/// random cell, so two misreads vote for the same placement with probability
-/// about `R / n_cells`, and `v` of them with `R / n_cells^(v−1)`. Fewer than
-/// two votes are always at chance level (0).
+/// random cell, so `v` misreads vote for the same translation of one symmetry
+/// with probability `n_cells^(1−v)`; each also has to pass the rotation check
+/// for that symmetry — with probability `p_t` ([`P_ROTATION_AGREES_TRUE`]) for
+/// the true one, `p_o` ([`P_ROTATION_AGREES_OTHER`]) for each other one.
+/// Fewer than two votes are always at chance level (0).
 fn ln_chance_votes(n_decoded: usize, votes: usize, n_rotations: usize, n_cells: usize) -> f64 {
     if votes < 2 {
         return 0.0;
@@ -251,7 +302,67 @@ fn ln_chance_votes(n_decoded: usize, votes: usize, n_rotations: usize, n_cells: 
     let ln_binom: f64 = (0..votes)
         .map(|i| ((n_decoded - i) as f64).ln() - ((i + 1) as f64).ln())
         .sum();
-    ln_binom + (n_rotations as f64).ln() + (1.0 - votes as f64) * (n_cells as f64).ln()
+    let v = votes as i32;
+    let rotation_pass = P_ROTATION_AGREES_TRUE.powi(v)
+        + n_rotations.saturating_sub(1) as f64 * P_ROTATION_AGREES_OTHER.powi(v);
+    ln_binom + rotation_pass.ln() + (1.0 - votes as f64) * (n_cells as f64).ln()
+}
+
+/// Code rotation (sectors, see `DecodeMetrics::rotation`) the decoder reports
+/// for a ring whose board directions map to image directions by `board_to_image`
+/// (the local linear part of the board→image map at the ring), measured
+/// against the parametric angle of its fitted outer `ellipse`.
+///
+/// Printed sector `j` is centred on board angle `−π + (j + ½)·2π/16`
+/// (`target_generation`); its image direction, expressed as a parametric angle
+/// `t` on the ellipse, gives one estimate `t·16/2π − j − ½`. The 16 estimates
+/// agree up to the affine approximation; their circular mean is returned.
+fn predicted_code_rotation(board_to_image: [[f64; 2]; 2], ellipse: &Ellipse) -> f64 {
+    const SECTOR: f64 = std::f64::consts::TAU / 16.0;
+    let (sin_a, cos_a) = ellipse.angle.sin_cos();
+    let (mut s, mut c) = (0.0, 0.0);
+    for j in 0..16 {
+        let phi = -std::f64::consts::PI + (f64::from(j) + 0.5) * SECTOR;
+        let (dx_b, dy_b) = (phi.cos(), phi.sin());
+        let dx = board_to_image[0][0] * dx_b + board_to_image[0][1] * dy_b;
+        let dy = board_to_image[1][0] * dx_b + board_to_image[1][1] * dy_b;
+        let u = cos_a * dx + sin_a * dy;
+        let v = -sin_a * dx + cos_a * dy;
+        let t = (v / ellipse.b).atan2(u / ellipse.a);
+        let estimate = t / SECTOR - f64::from(j) - 0.5;
+        s += (estimate * SECTOR).sin();
+        c += (estimate * SECTOR).cos();
+    }
+    (s.atan2(c) / SECTOR).rem_euclid(16.0)
+}
+
+/// `|a − b|` on the 16-sector circle, in `[0, 8]`.
+fn circular_sector_diff(a: f64, b: f64) -> f64 {
+    let d = (a - b).rem_euclid(16.0);
+    d.min(16.0 - d)
+}
+
+fn mat2_mul(a: [[f64; 2]; 2], b: [[f64; 2]; 2]) -> [[f64; 2]; 2] {
+    [
+        [
+            a[0][0] * b[0][0] + a[0][1] * b[1][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1],
+        ],
+        [
+            a[1][0] * b[0][0] + a[1][1] * b[1][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1],
+        ],
+    ]
+}
+
+fn mat2_inverse(m: [[f64; 2]; 2]) -> Option<[[f64; 2]; 2]> {
+    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    det.is_normal().then(|| {
+        [
+            [m[1][1] / det, -m[0][1] / det],
+            [-m[1][0] / det, m[0][0] / det],
+        ]
+    })
 }
 
 /// Dot anchoring. A placement is fixed by a lattice symmetry `g` and the
@@ -428,6 +539,44 @@ impl PatchFrame {
     /// Relative-frame lattice millimetres of a (fractional) lattice coordinate.
     fn mm(&self, coord: [f64; 2]) -> [f64; 2] {
         lattice_mm(self.basis, coord)
+    }
+
+    /// Linear part (relative-frame mm → working px) of the patch homography
+    /// at a (fractional) relative lattice coordinate.
+    fn jacobian(&self, coord: [f64; 2]) -> [[f64; 2]; 2] {
+        let [x, y] = self.mm(coord);
+        let h = &self.h;
+        let w = h[(2, 0)] * x + h[(2, 1)] * y + h[(2, 2)];
+        let px = (h[(0, 0)] * x + h[(0, 1)] * y + h[(0, 2)]) / w;
+        let py = (h[(1, 0)] * x + h[(1, 1)] * y + h[(1, 2)]) / w;
+        [
+            [
+                (h[(0, 0)] - px * h[(2, 0)]) / w,
+                (h[(0, 1)] - px * h[(2, 1)]) / w,
+            ],
+            [
+                (h[(1, 0)] - py * h[(2, 0)]) / w,
+                (h[(1, 1)] - py * h[(2, 1)]) / w,
+            ],
+        ]
+    }
+
+    /// Linear map from board-mm directions to relative-frame-mm directions
+    /// for a placement with symmetry `g`: board coords are `g·rel + t`, so in
+    /// millimetres the map is `B·g⁻¹·B⁻¹` with `B` the lattice basis.
+    fn board_to_relative_mm(&self, g: GridTransform) -> Option<[[f64; 2]; 2]> {
+        let m = g.matrix();
+        let g_mat = [
+            [f64::from(m[0][0]), f64::from(m[0][1])],
+            [f64::from(m[1][0]), f64::from(m[1][1])],
+        ];
+        // Columns of `B` are the lattice steps along `u` and `v`.
+        let b = [
+            [self.basis[0][0], self.basis[1][0]],
+            [self.basis[0][1], self.basis[1][1]],
+        ];
+        let rel_to_board = mat2_mul(mat2_mul(b, g_mat), mat2_inverse(b)?);
+        mat2_inverse(rel_to_board)
     }
 }
 
@@ -1027,5 +1176,222 @@ mod tests {
                 target.name()
             );
         }
+    }
+
+    // --- Decoded-ID anchoring with rotation agreement -----------------------
+
+    /// Board mm → image px similarity: `scale` px/mm, in-plane rotation `rot`.
+    fn similarity(scale: f64, rot: f64) -> Matrix3<f64> {
+        let (s, c) = rot.sin_cos();
+        Matrix3::new(
+            scale * c,
+            -scale * s,
+            400.0,
+            scale * s,
+            scale * c,
+            300.0,
+            0.0,
+            0.0,
+            1.0,
+        )
+    }
+
+    /// Code rotation the decoder reports on a circular image of a marker
+    /// under [`similarity`] with rotation `rot`: printed sector `j` is centred
+    /// on board angle `−π + (j + ½)·2π/16`, which the similarity turns by
+    /// `rot`, and a circle's parametric angle is its image angle — so sector
+    /// `j` starts at `(j + rot/Δ − 8)·Δ`.
+    fn code_rotation(rot: f64) -> f32 {
+        ((rot / (std::f64::consts::TAU / 16.0) - 8.0).rem_euclid(16.0)) as f32
+    }
+
+    /// Every cell labeled in a relative frame shifted by `shift` from the
+    /// board frame; the cells of `decoded` carry their decode `(id, rotation)`.
+    fn coded_scene(
+        target: &TargetLayout,
+        h_mat: &Matrix3<f64>,
+        relabel: impl Fn(Coord) -> Coord,
+        decoded: &[(Coord, usize, f32)],
+    ) -> Vec<MarkerRecord> {
+        let radius = f64::from(target.ring().outer_radius_mm) * h_mat[(0, 0)].hypot(h_mat[(1, 0)]);
+        let mut markers = labeled_markers(target, h_mat, relabel);
+        for (m, cell) in markers.iter_mut().zip(target.cells()) {
+            m.ellipse_outer = Some(Ellipse {
+                cx: m.center[0],
+                cy: m.center[1],
+                a: radius,
+                b: radius,
+                angle: 0.0,
+            });
+            if let Some(&(_, id, rotation)) = decoded.iter().find(|(c, _, _)| *c == cell.coord) {
+                m.id = Some(id);
+                m.decode = Some(crate::marker::DecodeMetrics {
+                    observed_word: 0,
+                    best_id: id,
+                    rotation,
+                });
+            }
+        }
+        markers
+    }
+
+    /// A coded hex board of more than 611 cells (two agreeing decodes beat
+    /// chance there) and the default 203-cell board (they do not).
+    fn large_coded_hex() -> TargetLayout {
+        let t = TargetLayout::coded_hex(8.0, 25, 26, 4.8, 3.2, 1.152).expect("valid");
+        assert!(t.n_cells() >= 611, "{}", t.n_cells());
+        t
+    }
+
+    fn two_cells(target: &TargetLayout) -> [Coord; 2] {
+        [
+            target.cells()[40].coord,
+            target.cells()[300.min(target.n_cells() - 1)].coord,
+        ]
+    }
+
+    #[test]
+    fn predicted_code_rotation_matches_a_similarity() {
+        for rot in [0.0f64, 0.3, 1.7, -2.5] {
+            let predicted = predicted_code_rotation(
+                [
+                    [3.0 * rot.cos(), -3.0 * rot.sin()],
+                    [3.0 * rot.sin(), 3.0 * rot.cos()],
+                ],
+                &Ellipse {
+                    cx: 0.0,
+                    cy: 0.0,
+                    a: 15.0,
+                    b: 15.0,
+                    angle: 0.0,
+                },
+            );
+            let expected = f64::from(code_rotation(rot));
+            assert!(
+                circular_sector_diff(predicted, expected) < 1e-5,
+                "rot {rot}: {predicted} vs {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_agreeing_decodes_anchor_a_large_board() {
+        let target = large_coded_hex();
+        let rot = 0.4;
+        let h_mat = similarity(2.0, rot);
+        let decoded: Vec<(Coord, usize, f32)> = two_cells(&target)
+            .iter()
+            .map(|&c| (c, target.id_of(c).unwrap(), code_rotation(rot)))
+            .collect();
+        let shift = [3, -2];
+        let markers = coded_scene(
+            &target,
+            &h_mat,
+            |c| Coord::new(c.u - shift[0], c.v - shift[1]),
+            &decoded,
+        );
+        let img = GrayImage::new(1, 1);
+        let res = resolve_origin(&img, &markers, &target, None).expect("two decodes anchor");
+        for cell in target.cells() {
+            let rel = Coord::new(cell.coord.u - shift[0], cell.coord.v - shift[1]);
+            assert_eq!(res.coord_map.apply(rel), cell.coord);
+        }
+    }
+
+    /// The relative labeling differs from the board frame by any lattice
+    /// rotation; the predicted code rotation must follow it.
+    #[test]
+    fn every_relative_rotation_anchors_with_rotation_agreement() {
+        let target = TargetLayout::default_hex();
+        let rot = -1.1;
+        let h_mat = similarity(3.0, rot);
+        let cells: Vec<Coord> = [20usize, 70, 120, 160]
+            .iter()
+            .map(|&i| target.cells()[i].coord)
+            .collect();
+        let decoded: Vec<(Coord, usize, f32)> = cells
+            .iter()
+            .map(|&c| (c, target.id_of(c).unwrap(), code_rotation(rot)))
+            .collect();
+        let img = GrayImage::new(1, 1);
+        let mut n_checked = 0;
+        for &g in target.lattice_kind().symmetry_transforms() {
+            if g.determinant() <= 0 {
+                continue;
+            }
+            let g_inv = g.inverse().expect("invertible");
+            let relabel = |c: Coord| {
+                let r = g_inv.apply(c);
+                Coord::new(r.u + 2, r.v - 1)
+            };
+            let markers = coded_scene(&target, &h_mat, relabel, &decoded);
+            let res = resolve_origin(&img, &markers, &target, None)
+                .unwrap_or_else(|| panic!("{g:?} must anchor"));
+            for cell in target.cells() {
+                assert_eq!(
+                    res.coord_map.apply(relabel(cell.coord)),
+                    cell.coord,
+                    "{g:?}"
+                );
+            }
+            n_checked += 1;
+        }
+        assert_eq!(n_checked, 6);
+    }
+
+    #[test]
+    fn two_agreeing_decodes_do_not_anchor_a_small_board() {
+        // 203 cells: two agreeing decodes are within chance (rotation agreement
+        // included), so the default board still needs three.
+        let target = TargetLayout::default_hex();
+        let rot = 0.4;
+        let h_mat = similarity(3.0, rot);
+        let cells = [target.cells()[20].coord, target.cells()[150].coord];
+        let decoded: Vec<(Coord, usize, f32)> = cells
+            .iter()
+            .map(|&c| (c, target.id_of(c).unwrap(), code_rotation(rot)))
+            .collect();
+        let markers = coded_scene(&target, &h_mat, |c| c, &decoded);
+        let img = GrayImage::new(1, 1);
+        assert!(resolve_origin(&img, &markers, &target, None).is_none());
+
+        // A third agreeing decode anchors it.
+        let mut three = decoded.clone();
+        let c = target.cells()[100].coord;
+        three.push((c, target.id_of(c).unwrap(), code_rotation(rot)));
+        let markers = coded_scene(&target, &h_mat, |c| c, &three);
+        let res = resolve_origin(&img, &markers, &target, None).expect("three decodes anchor");
+        assert_eq!(res.coord_map.apply(c), c);
+    }
+
+    /// Two misreads that name cells consistent with one wrong placement but
+    /// were read at a rotation the placement does not predict cast no votes.
+    #[test]
+    fn misreads_at_a_disagreeing_rotation_do_not_anchor() {
+        let target = large_coded_hex();
+        let rot = 0.4;
+        let h_mat = similarity(2.0, rot);
+        // Both decodes name the cell 5 steps along +u of their own: one wrong
+        // translation, agreeing with each other.
+        let decoded: Vec<(Coord, usize, f32)> = two_cells(&target)
+            .iter()
+            .map(|&c| {
+                let wrong = Coord::new(c.u + 5, c.v);
+                let id = target.id_of(wrong).expect("on board");
+                (c, id, code_rotation(rot) + 3.0)
+            })
+            .collect();
+        let markers = coded_scene(&target, &h_mat, |c| c, &decoded);
+        let img = GrayImage::new(1, 1);
+        assert!(resolve_origin(&img, &markers, &target, None).is_none());
+
+        // The same two decodes at the predicted rotation would anchor the
+        // wrong placement: the rotation check is what rejects them.
+        let agreeing: Vec<(Coord, usize, f32)> = decoded
+            .iter()
+            .map(|&(c, id, _)| (c, id, code_rotation(rot)))
+            .collect();
+        let markers = coded_scene(&target, &h_mat, |c| c, &agreeing);
+        assert!(resolve_origin(&img, &markers, &target, None).is_some());
     }
 }

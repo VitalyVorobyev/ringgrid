@@ -2,7 +2,6 @@ use image::GrayImage;
 
 use crate::conic::{self, Ellipse};
 use crate::marker::DecodeMetrics;
-use crate::marker::codec::distance_confidence;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_quality::{border_distance_radii, outer_edge_width_px};
@@ -348,10 +347,7 @@ pub(crate) fn decode_metrics_from_result(
     decode_result.map(|d| DecodeMetrics {
         observed_word: d.raw_word,
         best_id: d.id,
-        best_rotation: d.rotation,
-        best_dist: d.dist,
-        margin: d.margin,
-        decode_confidence: d.confidence,
+        rotation: d.rotation,
     })
 }
 
@@ -409,8 +405,9 @@ pub(crate) fn compute_marker_confidence(
     border_radii: f32,
     inner_fit_config: &InnerFitConfig,
 ) -> f32 {
+    // A decode is an exact codeword match: full evidence.
     let evidence = decode_result
-        .map(|d| distance_confidence(d.dist))
+        .map(|_| 1.0)
         .unwrap_or_else(|| fit_support_score(edge, outer_ransac));
     let inlier = outer_ransac
         .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)

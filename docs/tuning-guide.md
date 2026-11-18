@@ -67,7 +67,7 @@ both suffer from noisy sector samples.
 |---|---|---|
 | `decode.min_decode_contrast` | `0.01` | Default 0.03 rejects very low-contrast markers |
 | `decode.n_radial_rings` | `5` | More rings average out noise |
-| `decode.samples_per_sector` | `7` | More angular samples per sector for robustness |
+| `decode.samples_per_sector` | `12` | More angular samples per sector (default 8) for robustness |
 
 ```json
 {
@@ -75,7 +75,7 @@ both suffer from noisy sector samples.
     "decode": {
       "min_decode_contrast": 0.01,
       "n_radial_rings": 5,
-      "samples_per_sector": 7
+      "samples_per_sector": 12
     }
   }
 }
@@ -193,5 +193,5 @@ the proposal stage may miss markers in those areas. In that case:
 | Many `inner_fit_status: failed` | Enable `inner_as_outer_recovery`, widen `inner_fit.ransac.inlier_threshold` |
 | Missed markers in blurry regions | Enable `completion`, reduce `completion.min_fit_confidence` |
 | Wrong IDs | Lower `id_correction.seed_min_decode_confidence`, enable `id_correction` |
-| Low overall confidence | Check `decode.min_decode_confidence` and `outer_fit.max_angular_gap_rad` |
+| Low overall confidence | Check `outer_fit.max_angular_gap_rad` and the outer edge sharpness (blur) |
 | Ellipses look systematically off-center | Use `--refine projective-center` |

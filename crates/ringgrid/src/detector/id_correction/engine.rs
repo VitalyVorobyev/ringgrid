@@ -1,6 +1,5 @@
 use crate::detector::config::IdCorrectionConfig;
 use crate::detector::marker_build::MarkerRecord;
-use crate::marker::codec::{Codebook, CodebookProfile};
 use crate::target::TargetLayout;
 
 use super::bootstrap::bootstrap_trust_anchors;
@@ -19,10 +18,8 @@ pub(crate) fn verify_and_correct_ids(
     markers: &mut Vec<MarkerRecord>,
     target: &TargetLayout,
     config: &IdCorrectionConfig,
-    codebook_profile: CodebookProfile,
 ) -> IdCorrectionStats {
-    let codebook_min_cyclic_dist = Codebook::from_profile(codebook_profile).min_cyclic_dist();
-    let mut ws = IdCorrectionWorkspace::new(markers, target, config, codebook_min_cyclic_dist);
+    let mut ws = IdCorrectionWorkspace::new(markers, target, config);
     if !config.enable || ws.markers.is_empty() {
         return ws.stats;
     }
@@ -74,27 +71,17 @@ mod tests {
     use super::*;
     use crate::conic::Ellipse;
     use crate::detector::id_correction::index::BoardIndex;
-    use crate::marker::codec::Codebook;
     use crate::marker::decode::DecodeMetrics;
 
-    fn marker_with_id(
-        id: usize,
-        center: [f64; 2],
-        conf: f32,
-        dist: u8,
-        margin: u8,
-    ) -> MarkerRecord {
+    fn marker_with_id(id: usize, center: [f64; 2], conf: f32, own_decode: bool) -> MarkerRecord {
         MarkerRecord {
             id: Some(id),
             center,
             confidence: conf,
-            decode: Some(DecodeMetrics {
+            decode: own_decode.then_some(DecodeMetrics {
                 observed_word: 0,
                 best_id: id,
-                best_rotation: 0,
-                best_dist: dist,
-                margin,
-                decode_confidence: conf,
+                rotation: 0.0,
             }),
             ellipse_outer: Some(Ellipse {
                 cx: center[0],
@@ -132,12 +119,7 @@ mod tests {
         ];
         let cfg = IdCorrectionConfig::default();
 
-        let ws = IdCorrectionWorkspace::new(
-            &mut markers,
-            &board,
-            &cfg,
-            Codebook::default().min_cyclic_dist(),
-        );
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         assert_eq!(ws.markers.len(), 2);
         assert_eq!(ws.trust.len(), 2);
         assert_eq!(ws.outer_radii_px.len(), 2);
@@ -152,12 +134,7 @@ mod tests {
             marker_no_id([30.0, 40.0], 0.2),
         ];
 
-        let stats = verify_and_correct_ids(
-            &mut markers,
-            &board,
-            &IdCorrectionConfig::default(),
-            CodebookProfile::Base,
-        );
+        let stats = verify_and_correct_ids(&mut markers, &board, &IdCorrectionConfig::default());
         assert_eq!(stats.n_verified, 0);
         assert_eq!(stats.n_ids_recovered, 0);
         assert!(markers.iter().all(|m| m.id.is_none()));
@@ -181,15 +158,13 @@ mod tests {
 
         let scale = 4.0f64;
         let mut markers = Vec::<MarkerRecord>::new();
-        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];
             markers.push(marker_with_id(
                 nid,
                 [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale],
                 0.95,
-                0,
-                min_cyclic_dist,
+                true,
             ));
         }
         let cxy = board_index.id_to_xy[&center_id];
@@ -198,8 +173,7 @@ mod tests {
             wrong_id,
             [f64::from(cxy[0]) * scale, f64::from(cxy[1]) * scale],
             0.7,
-            1,
-            1,
+            false,
         ));
 
         let cfg = IdCorrectionConfig {
@@ -209,104 +183,9 @@ mod tests {
             ..IdCorrectionConfig::default()
         };
 
-        let stats = verify_and_correct_ids(&mut markers, &board, &cfg, CodebookProfile::Base);
+        let stats = verify_and_correct_ids(&mut markers, &board, &cfg);
         assert!(stats.n_ids_cleared_inconsistent_pre >= 1);
         assert!(markers.iter().any(|m| m.id == Some(center_id)));
-    }
-
-    #[test]
-    fn confirm_by_consistency_rescues_sparse_correct_decode() {
-        // Sparse/partial view: a correctly-decoded but non-exact, low-confidence
-        // center marker has exactly one board-adjacent decoded neighbor. Voting
-        // cannot promote it (1 neighbor ⇒ no affine, no adjacent pair ⇒ no
-        // votes), so without confirm-by-consistency cleanup drops it despite the
-        // ID being correct. With the promotion path it survives.
-        let board = TargetLayout::default_hex();
-        let board_index = BoardIndex::build(&board);
-        let (&center_id, neighbors) = board_index
-            .board_neighbors
-            .iter()
-            .find(|(_, nbrs)| !nbrs.is_empty())
-            .expect("board must have a marker with >=1 neighbor");
-        let near_id = neighbors[0];
-        let far_ids: Vec<usize> = board_index
-            .id_to_xy
-            .keys()
-            .copied()
-            .filter(|id| *id != center_id && *id != near_id)
-            .take(2)
-            .collect();
-        assert_eq!(far_ids.len(), 2, "need two extra ids for bootstrap seeds");
-
-        let scale = 4.0f64;
-        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
-        let px = |id: usize| {
-            let xy = board_index.id_to_xy[&id];
-            [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale]
-        };
-        let center_px = px(center_id);
-
-        // Markers: one near exact anchor (board-adjacent to center) + two far
-        // exact anchors (out of the center's neighborhood, purely to satisfy the
-        // ≥2 bootstrap seeds) + the non-exact, low-confidence center decode.
-        let build = || {
-            vec![
-                marker_with_id(near_id, px(near_id), 0.95, 0, min_cyclic_dist),
-                marker_with_id(
-                    far_ids[0],
-                    [center_px[0] + 200.0, center_px[1]],
-                    0.95,
-                    0,
-                    min_cyclic_dist,
-                ),
-                marker_with_id(
-                    far_ids[1],
-                    [center_px[0], center_px[1] + 200.0],
-                    0.95,
-                    0,
-                    min_cyclic_dist,
-                ),
-                marker_with_id(center_id, center_px, 0.5, 1, 1),
-            ]
-        };
-        let center_of = |markers: &[MarkerRecord]| {
-            markers
-                .iter()
-                .find(|m| m.center == center_px)
-                .expect("center marker present")
-                .id
-        };
-
-        // Disabled: the correct id is cleared (reproduces the bug).
-        let mut off = build();
-        let cfg_off = IdCorrectionConfig {
-            homography_fallback_enable: false,
-            auto_search_radius_outer_muls: vec![2.4, 3.5],
-            max_iters: 3,
-            confirm_by_consistency: false,
-            ..IdCorrectionConfig::default()
-        };
-        let stats_off = verify_and_correct_ids(&mut off, &board, &cfg_off, CodebookProfile::Base);
-        assert_eq!(
-            center_of(&off),
-            None,
-            "without confirm, correct id is dropped"
-        );
-        assert_eq!(stats_off.n_confirmed_by_consistency, 0);
-
-        // Enabled: the correct id survives via confirm-by-consistency.
-        let mut on = build();
-        let cfg_on = IdCorrectionConfig {
-            confirm_by_consistency: true,
-            ..cfg_off.clone()
-        };
-        let stats_on = verify_and_correct_ids(&mut on, &board, &cfg_on, CodebookProfile::Base);
-        assert_eq!(
-            center_of(&on),
-            Some(center_id),
-            "with confirm, the correct non-exact id is promoted and kept"
-        );
-        assert!(stats_on.n_confirmed_by_consistency >= 1);
     }
 
     #[test]
@@ -334,34 +213,21 @@ mod tests {
         assert_eq!(far_ids.len(), 2, "need two far bootstrap seeds");
 
         let scale = 4.0f64;
-        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         let px = |id: usize| {
             let xy = board_index.id_to_xy[&id];
             [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale]
         };
         let center_px = px(center_id);
 
-        // center + near are BOTH non-exact, low-confidence (never become anchors)
+        // center + near are BOTH undecoded-ID, low-confidence (never become anchors)
         // and mutually board-adjacent. The two far *exact* anchors sit 300px away
         // (outside any neighbor gate) purely to satisfy the >=2 bootstrap seeds,
         // so center/near have no trusted neighbor.
         let mut markers = vec![
-            marker_with_id(center_id, center_px, 0.5, 1, 1),
-            marker_with_id(near_id, px(near_id), 0.5, 1, 1),
-            marker_with_id(
-                far_ids[0],
-                [center_px[0] + 300.0, center_px[1]],
-                0.95,
-                0,
-                min_cyclic_dist,
-            ),
-            marker_with_id(
-                far_ids[1],
-                [center_px[0], center_px[1] + 300.0],
-                0.95,
-                0,
-                min_cyclic_dist,
-            ),
+            marker_with_id(center_id, center_px, 0.5, false),
+            marker_with_id(near_id, px(near_id), 0.5, false),
+            marker_with_id(far_ids[0], [center_px[0] + 300.0, center_px[1]], 0.95, true),
+            marker_with_id(far_ids[1], [center_px[0], center_px[1] + 300.0], 0.95, true),
         ];
         let cfg = IdCorrectionConfig {
             confirm_by_consistency: true,
@@ -370,7 +236,7 @@ mod tests {
             max_iters: 3,
             ..IdCorrectionConfig::default()
         };
-        let stats = verify_and_correct_ids(&mut markers, &board, &cfg, CodebookProfile::Base);
+        let stats = verify_and_correct_ids(&mut markers, &board, &cfg);
 
         assert_eq!(
             stats.n_confirmed_by_consistency, 0,
@@ -398,15 +264,13 @@ mod tests {
 
         let scale = 4.0f64;
         let mut base = Vec::<MarkerRecord>::new();
-        let min_cyclic_dist = Codebook::default().min_cyclic_dist() as u8;
         for &nid in &neighbors[..3] {
             let xy = board_index.id_to_xy[&nid];
             base.push(marker_with_id(
                 nid,
                 [f64::from(xy[0]) * scale, f64::from(xy[1]) * scale],
                 0.95,
-                0,
-                min_cyclic_dist,
+                true,
             ));
         }
         let cxy = board_index.id_to_xy[&center_id];
@@ -424,8 +288,8 @@ mod tests {
 
         let mut run_a = base.clone();
         let mut run_b = base;
-        let stats_a = verify_and_correct_ids(&mut run_a, &board, &cfg, CodebookProfile::Base);
-        let stats_b = verify_and_correct_ids(&mut run_b, &board, &cfg, CodebookProfile::Base);
+        let stats_a = verify_and_correct_ids(&mut run_a, &board, &cfg);
+        let stats_b = verify_and_correct_ids(&mut run_b, &board, &cfg);
 
         assert_eq!(
             run_a.iter().map(|m| m.id).collect::<Vec<_>>(),

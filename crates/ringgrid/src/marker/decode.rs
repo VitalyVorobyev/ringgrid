@@ -1,51 +1,65 @@
-//! Elliptical 16-sector sampling and codebook matching.
+//! Elliptical 16-sector sampling and exact matching against the target's
+//! codewords.
 //!
-//! Samples sector intensities along the fitted outer ellipse scaled to the
-//! code band ratio. The board's sectors are equal-angle in board space; under
-//! the affine approximation of the fitted ellipse that corresponds to uniform
-//! *parametric* angle on the ellipse, so sampling in parametric angle keeps
-//! every sector's angular support equal regardless of eccentricity (a circle
-//! of mean radius drifts off the elliptical code band on tilted views and
-//! corrupts sectors near the minor axis). The unknown constant offset between
-//! parametric angle and board rotation is absorbed by cyclic codebook
-//! matching over all 16 sector offsets, exactly as image rotation is.
-//! Inverted polarity is also tried as fallback.
+//! **Geometry.** The board's sectors are equal-angle in board space; under the
+//! affine approximation of the fitted outer ellipse that corresponds to
+//! uniform *parametric* angle on the ellipse, so the code band is sampled at
+//! uniform parametric angle on the ellipse scaled by the code-band ratio (a
+//! circle of mean radius drifts off the elliptical band on tilted views).
+//!
+//! **Rotation phase.** Where the printed sector boundaries land in parametric
+//! angle is a *continuous* unknown: board rotation plus the ellipse's own
+//! angle origin. Cyclic codebook matching absorbs only whole sectors. A
+//! fractional offset makes every fixed sampling sector straddle two printed
+//! ones — on the rtv3d captures 89 % of the decodes accepted at an offset of
+//! 0.4–0.5 sector were wrong (ADR-027). The band is therefore sampled densely
+//! and the sub-sector phase is estimated first: the phase whose sector means,
+//! each taken over the central half of its sector, vary the most is the one
+//! aligned with the printed boundaries. The reported rotation is continuous
+//! (whole sectors plus that phase).
+//!
+//! **Polarity.** Targets are printed dark on light, so the sampled word is
+//! matched as is. Trying the complement as a fallback only ever produced
+//! misreads (all 508 inverted decodes on rtv3d were wrong).
+//!
+//! **Matching.** The word is matched against the codewords of the target's own
+//! cells and accepted only on an exact match. The embedded profiles have
+//! minimum cyclic Hamming distance 2 (base) or 1 (extended): 99.9 % of all
+//! 16-bit words lie within one bit of a base codeword, so a word one bit off
+//! a codeword is no evidence for it, and a distance tolerance only admits
+//! noise.
 
 use image::GrayImage;
 
 use crate::conic::Ellipse;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::DistortionAwareSampler;
+use crate::target::{MarkerCoding, TargetLayout};
 
-use super::codec::{Codebook, CodebookProfile};
+use super::codec::{Codebook, Match};
 
-/// Decode quality metrics for a detected marker.
+/// Number of code sectors (bits) per marker.
+const SECTORS: usize = 16;
+
+/// Decode metrics for a decoded marker.
 ///
-/// Reports how confidently a 16-sector binary code was matched against the
-/// active embedded codebook profile. A `best_dist` of 0 means an exact match;
-/// `margin` measures how far the second-best codeword is (higher = more
-/// confident).
+/// Only exact matches against the target's codewords are accepted, so a
+/// decode carries no distance or margin: the observed word *is* the codeword
+/// of `best_id`, rotated.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct DecodeMetrics {
-    /// Raw 16-bit word sampled from the code band.
+    /// 16-bit word sampled from the code band (bit `s` = sector `s` of the
+    /// phase-aligned sampling grid; 1 = bright).
     pub observed_word: u16,
-    /// Best-matching codebook entry index within the active profile.
+    /// Codebook ID of the matched codeword.
     pub best_id: usize,
-    /// Cyclic rotation (0–15 sectors) that produced the best match.
-    pub best_rotation: u8,
-    /// Hamming distance (bit errors) to the best-matching codeword.
-    pub best_dist: u8,
-    /// Margin: `second_best_dist - best_dist`. Higher values indicate
-    /// a more reliable decode. A margin of 3 or more is typically very confident.
-    pub margin: u8,
-    /// Combined confidence heuristic in \[0, 1\].
-    ///
-    /// Equals `clamp(1 - dist/6) * clamp(margin / active_min_cyclic_dist)`.
-    /// A margin equal to the selected profile's minimum cyclic Hamming distance
-    /// yields `conf_margin = 1.0`, so a perfect decode scores 1.0 regardless of
-    /// that profile's density.
-    pub decode_confidence: f32,
+    /// Rotation of the printed code in sectors, in `[0, 16)`: printed sector
+    /// `j` starts at parametric angle `(j + rotation) · 2π/16` on the fitted
+    /// outer ellipse (whose parametric angle 0 is its major axis). The whole
+    /// part is the cyclic shift that maps the codeword onto `observed_word`;
+    /// the fraction is the estimated sub-sector phase.
+    pub rotation: f32,
 }
 
 /// Configuration for sector decoding.
@@ -54,19 +68,6 @@ pub struct DecodeMetrics {
 #[serde(default)]
 #[non_exhaustive]
 pub struct DecodeConfig {
-    /// Embedded codebook profile to match against.
-    ///
-    /// **Derived from the target**, not set by hand: attaching a target with
-    /// [`DetectConfig::with_target`](crate::DetectConfig::with_target) copies
-    /// the profile from its `CodedRingSpec`, so a target printed from one table
-    /// is never decoded against another. Set `codebook_profile` on the target's
-    /// coding to change it.
-    ///
-    /// Defaults to [`CodebookProfile::Base`], which preserves the shipped stable
-    /// IDs `0..892`. `extended` expands the codebook at the cost of a weaker
-    /// minimum cyclic Hamming distance.
-    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true)))]
-    pub codebook_profile: CodebookProfile,
     /// Ratio of code band center radius to outer ellipse semi-major axis.
     /// The code band is sampled at `code_band_ratio * (a, b)` in the
     /// ellipse coordinate frame.
@@ -74,30 +75,14 @@ pub struct DecodeConfig {
     /// Default: `0.76` (see the `Default` impl).
     #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true)))]
     pub code_band_ratio: f32,
-    /// Number of angular samples per sector.
-    /// Default: `5` (see the `Default` impl).
+    /// Angular samples per sector. Also the number of sub-sector phases tried
+    /// when aligning the sampling grid with the printed sector boundaries
+    /// (phase step `1 / samples_per_sector` sector). Clamped to `[2, 32]`.
+    /// Default: `8` (see the `Default` impl).
     pub samples_per_sector: usize,
     /// Number of radial rings to sample within the code band.
     /// Default: `3` (see the `Default` impl).
     pub n_radial_rings: usize,
-    /// Maximum Hamming distance (bit errors out of 16 sectors) for a valid decode.
-    /// Default: `3` (see the `Default` impl).
-    pub max_decode_dist: u8,
-    /// Minimum decode confidence (0 to 1) for a valid decode.
-    /// Default: `0.3` (see the `Default` impl).
-    pub min_decode_confidence: f32,
-    /// Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.
-    ///
-    /// A margin of 0 means the two closest codewords are equidistant from the
-    /// observed word — genuinely ambiguous. Default rejects ties (margin = 0).
-    /// For setups without homography validation (e.g. no camera intrinsics),
-    /// setting this to the selected profile's minimum cyclic Hamming distance
-    /// accepts only matches that are unambiguous within that profile's distance
-    /// guarantee. For the shipped baseline profile this value is `2`.
-    ///
-    /// Default: `1` (see the `Default` impl).
-    #[serde(default = "DecodeConfig::default_min_decode_margin")]
-    pub min_decode_margin: u8,
     /// Minimum accepted sector-intensity contrast (`max - min`, in normalized 0 to 1 intensity units) before decode; negative values are treated as 0.
     /// Default: `0.03` (see the `Default` impl).
     #[serde(default = "DecodeConfig::default_min_decode_contrast")]
@@ -117,35 +102,22 @@ pub struct DecodeConfig {
 impl DecodeConfig {
     /// Default radial location of the code band as a fraction of outer radius.
     pub(crate) const DEFAULT_CODE_BAND_RATIO: f32 = 0.76;
-    /// Default number of angular intensity samples per bit sector.
-    pub(crate) const DEFAULT_SAMPLES_PER_SECTOR: usize = 5;
+    /// Default number of angular intensity samples (and phases) per sector.
+    pub(crate) const DEFAULT_SAMPLES_PER_SECTOR: usize = 8;
     /// Default number of concentric rings used for radial sampling.
     pub(crate) const DEFAULT_N_RADIAL_RINGS: usize = 3;
-    /// Default maximum Hamming distance accepted by decode.
-    pub(crate) const DEFAULT_MAX_DECODE_DIST: u8 = 3;
-    /// Minimum decode confidence with the corrected formula
-    /// `clamp(1-dist/6) * clamp(margin/profile.min_cyclic_dist)`.
-    /// A perfect decode (dist=0, margin≥2) scores 1.0; this threshold accepts
-    /// matches down to dist=2 with margin≥1 on the shipped baseline profile.
-    pub(crate) const DEFAULT_MIN_DECODE_CONFIDENCE: f32 = 0.3;
-    /// Minimum Hamming margin required for a valid decode.
-    ///
-    /// A margin of 0 means two codewords are equidistant from the observed word
-    /// (genuinely ambiguous). Setting this to 1 (default) rejects such ties.
-    pub(crate) const DEFAULT_MIN_DECODE_MARGIN: u8 = 1;
     /// Default minimum sector-intensity contrast (`max - min`) before decode.
     pub(crate) const DEFAULT_MIN_DECODE_CONTRAST: f32 = 0.03;
     /// Default iteration cap for iterative 2-means threshold refinement.
     pub(crate) const DEFAULT_THRESHOLD_MAX_ITERS: usize = 10;
     /// Default convergence epsilon for iterative 2-means threshold refinement.
     pub(crate) const DEFAULT_THRESHOLD_CONVERGENCE_EPS: f32 = 1e-4;
+    /// Bounds of the effective `samples_per_sector`: at least two phases, and
+    /// a dense ring of at most 512 samples.
+    const SAMPLES_PER_SECTOR_RANGE: (usize, usize) = (2, 32);
 
     fn default_min_decode_contrast() -> f32 {
         Self::DEFAULT_MIN_DECODE_CONTRAST
-    }
-
-    fn default_min_decode_margin() -> u8 {
-        Self::DEFAULT_MIN_DECODE_MARGIN
     }
 
     fn default_threshold_max_iters() -> usize {
@@ -155,18 +127,19 @@ impl DecodeConfig {
     fn default_threshold_convergence_eps() -> f32 {
         Self::DEFAULT_THRESHOLD_CONVERGENCE_EPS
     }
+
+    fn effective_samples_per_sector(&self) -> usize {
+        let (lo, hi) = Self::SAMPLES_PER_SECTOR_RANGE;
+        self.samples_per_sector.clamp(lo, hi)
+    }
 }
 
 impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
-            codebook_profile: CodebookProfile::Base,
             code_band_ratio: Self::DEFAULT_CODE_BAND_RATIO,
             samples_per_sector: Self::DEFAULT_SAMPLES_PER_SECTOR,
             n_radial_rings: Self::DEFAULT_N_RADIAL_RINGS,
-            max_decode_dist: Self::DEFAULT_MAX_DECODE_DIST,
-            min_decode_confidence: Self::DEFAULT_MIN_DECODE_CONFIDENCE,
-            min_decode_margin: Self::DEFAULT_MIN_DECODE_MARGIN,
             min_decode_contrast: Self::DEFAULT_MIN_DECODE_CONTRAST,
             threshold_max_iters: Self::DEFAULT_THRESHOLD_MAX_ITERS,
             threshold_convergence_eps: Self::DEFAULT_THRESHOLD_CONVERGENCE_EPS,
@@ -174,21 +147,42 @@ impl Default for DecodeConfig {
     }
 }
 
-/// Result of decoding a marker.
+/// The codewords a coded target carries: the codebook profile its coding
+/// names, restricted to the IDs of its cells. Exists only for coded targets.
+pub(crate) struct TargetCodes<'a> {
+    codebook: Codebook,
+    target: &'a TargetLayout,
+}
+
+impl<'a> TargetCodes<'a> {
+    /// The target's codewords, or `None` for a plain target.
+    pub(crate) fn of(target: &'a TargetLayout) -> Option<Self> {
+        match target.coding() {
+            MarkerCoding::Coded16(spec) => Some(Self {
+                codebook: Codebook::from_profile(spec.codebook_profile),
+                target,
+            }),
+            MarkerCoding::Plain => None,
+        }
+    }
+
+    /// Nearest of the target's codewords (over all rotations) to `word`.
+    fn match_word(&self, word: u16) -> Match {
+        self.codebook
+            .match_word_among(word, self.target.marker_ids())
+    }
+}
+
+/// Result of decoding a marker: an exact match against one of the target's
+/// codewords.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeResult {
     /// Matched marker ID (codebook index).
     pub id: usize,
-    /// Overall confidence [0, 1].
-    pub confidence: f32,
-    /// Raw 16-bit word sampled from image (before codebook matching).
+    /// 16-bit word sampled from the image (phase-aligned grid).
     pub raw_word: u16,
-    /// Hamming distance to best codebook match.
-    pub dist: u8,
-    /// Margin (second_best - best distance).
-    pub margin: u8,
-    /// Cyclic rotation applied to the codeword.
-    pub rotation: u8,
+    /// Continuous rotation in sectors (see [`DecodeMetrics::rotation`]).
+    pub rotation: f32,
 }
 
 /// Stable reject code for a decode attempt.
@@ -197,9 +191,8 @@ pub struct DecodeResult {
 pub(crate) enum DecodeRejectReason {
     InvalidEllipse,
     LowContrast,
-    DistTooHigh,
-    MarginTooLow,
-    ConfidenceTooLow,
+    /// The sampled word is not (a rotation of) any of the target's codewords.
+    NotACodeword,
 }
 
 impl DecodeRejectReason {
@@ -207,9 +200,7 @@ impl DecodeRejectReason {
         match self {
             Self::InvalidEllipse => "invalid_ellipse",
             Self::LowContrast => "low_contrast",
-            Self::DistTooHigh => "dist_too_high",
-            Self::MarginTooLow => "margin_too_low",
-            Self::ConfidenceTooLow => "confidence_too_low",
+            Self::NotACodeword => "not_a_codeword",
         }
     }
 }
@@ -234,40 +225,32 @@ pub(crate) enum DecodeRejectContext {
         contrast: f32,
         min_required_contrast: f32,
     },
-    DistTooHigh {
-        observed_dist: u8,
-        max_allowed_dist: u8,
-    },
-    MarginTooLow {
-        observed_margin: u8,
-        min_required_margin: u8,
-    },
-    ConfidenceTooLow {
-        observed_confidence: f32,
-        min_required_confidence: f32,
+    NotACodeword {
+        nearest_dist: u8,
     },
 }
 
 /// Debug/diagnostic information about a decode attempt.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeDiagnostics {
-    /// Per-sector average intensities sampled from the code band.
+    /// Per-sector average intensities sampled from the code band (at `phase`).
     pub sector_intensities: [f32; 16],
+    /// Sub-sector phase of the sampling grid: where its sector 0 starts, in
+    /// sectors of parametric angle.
+    pub phase: f32,
     /// Threshold used to binarize sector intensities.
     pub threshold: f32,
-    /// Word actually matched against the codebook (possibly inverted).
-    pub used_word: u16,
-    /// Whether the matched word was polarity-inverted before matching.
-    pub inverted_used: bool,
-    /// Best-matching codebook id.
+    /// Binarized word matched against the target's codewords.
+    pub word: u16,
+    /// Nearest target codeword ID.
     pub best_id: usize,
-    /// Rotation (in sectors) of the best match.
+    /// Rotation (in whole sectors) of the nearest codeword.
     pub best_rotation: u8,
-    /// Hamming distance of the best match.
+    /// Hamming distance to the nearest target codeword (0 when accepted).
     pub best_dist: u8,
-    /// Distance margin to the second-best match.
-    pub margin: u8,
-    /// Decode confidence in `[0, 1]`.
+    /// Graded match quality in `[0, 1]` (distance and margin to the nearest
+    /// target codeword): evidence for ranking outer-fit hypotheses, also for
+    /// rejected words.
     pub decode_confidence: f32,
     /// Stable reject code, if rejected.
     pub reject_reason: Option<DecodeRejectReason>,
@@ -275,16 +258,58 @@ pub struct DecodeDiagnostics {
     pub reject_context: Option<DecodeRejectContext>,
 }
 
-/// Decode a marker and return `(accepted_result, diagnostics)`.
+impl DecodeDiagnostics {
+    fn rejected(
+        sector_intensities: [f32; 16],
+        phase: f32,
+        threshold: f32,
+        reason: DecodeRejectReason,
+        context: DecodeRejectContext,
+    ) -> Self {
+        Self {
+            sector_intensities,
+            phase,
+            threshold,
+            word: 0,
+            best_id: 0,
+            best_rotation: 0,
+            best_dist: u8::MAX,
+            decode_confidence: 0.0,
+            reject_reason: Some(reason),
+            reject_context: Some(context),
+        }
+    }
+}
+
+/// Decode a marker against the target's codewords and return
+/// `(accepted_result, diagnostics)`.
 ///
 /// Uses an optional working<->image mapper for distortion-aware sampling.
-pub fn decode_marker_with_diagnostics_and_mapper(
+pub(crate) fn decode_marker_with_diagnostics_and_mapper(
     gray: &GrayImage,
     outer_ellipse: &Ellipse,
     config: &DecodeConfig,
+    codes: &TargetCodes<'_>,
     mapper: Option<&dyn PixelMapper>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    decode_marker_impl(gray, outer_ellipse, config, mapper)
+    if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
+        let diag = DecodeDiagnostics::rejected(
+            [0.0; 16],
+            0.0,
+            0.0,
+            DecodeRejectReason::InvalidEllipse,
+            DecodeRejectContext::InvalidEllipse {
+                is_valid: outer_ellipse.is_valid(),
+                semi_axis_a: outer_ellipse.a,
+                semi_axis_b: outer_ellipse.b,
+                min_allowed_semi_axis: 2.0,
+            },
+        );
+        return (None, diag);
+    }
+    let sampler = DistortionAwareSampler::new(gray, mapper);
+    let band = sample_code_band(&sampler, outer_ellipse, config);
+    threshold_and_match(band, config, codes)
 }
 
 #[inline]
@@ -342,136 +367,107 @@ fn compute_iterative_two_means_threshold(
     threshold
 }
 
-/// Validate the outer ellipse and return it as the code band sampling frame.
-///
-/// Returns `Err(diagnostics)` if the ellipse is invalid or too small to sample.
-#[allow(clippy::result_large_err)]
-fn validate_decode_ellipse(
-    outer_ellipse: &Ellipse,
-) -> Result<(), (Option<DecodeResult>, DecodeDiagnostics)> {
-    if !outer_ellipse.is_valid() || outer_ellipse.a < 2.0 || outer_ellipse.b < 2.0 {
-        return Err((
-            None,
-            DecodeDiagnostics {
-                sector_intensities: [0.0; 16],
-                threshold: 0.0,
-                used_word: 0,
-                inverted_used: false,
-                best_id: 0,
-                best_rotation: 0,
-                best_dist: u8::MAX,
-                margin: 0,
-                decode_confidence: 0.0,
-                reject_reason: Some(DecodeRejectReason::InvalidEllipse),
-                reject_context: Some(DecodeRejectContext::InvalidEllipse {
-                    is_valid: outer_ellipse.is_valid(),
-                    semi_axis_a: outer_ellipse.a,
-                    semi_axis_b: outer_ellipse.b,
-                    min_allowed_semi_axis: 2.0,
-                }),
-            },
-        ));
-    }
-    Ok(())
+/// Phase-aligned sector means of the code band.
+struct CodeBand {
+    /// Mean intensity per sector of the phase-aligned grid.
+    sectors: [f32; 16],
+    /// Where grid sector 0 starts, in sectors of parametric angle (the
+    /// sub-sector phase; within `(-1/2, 1)`).
+    phase: f32,
 }
 
-/// Sample the 16 sector intensities from the code band.
+/// Sample the code band densely and align the sector grid with the printed
+/// sector boundaries.
 ///
-/// Each sector's intensity is the average of `samples_per_sector * n_radial_rings`
-/// bilinear samples taken along the code band annulus of the fitted ellipse:
-/// sample points sit at uniform parametric angle on the ellipse scaled by the
-/// code band ratio, which keeps the samples on the (affine-approximated) code
-/// band and every sector's angular support equal under perspective.
-fn sample_sector_intensities(
+/// `n = samples_per_sector` samples per sector at uniform parametric angle
+/// (each averaged over `n_radial_rings` radii across the band) form a ring of
+/// `16·n` values. For each of the `n` sub-sector phases the sector means are
+/// taken over the central half of each sector; the phase with the largest
+/// variance of the 16 means is the one whose sectors do not straddle printed
+/// boundaries (a straddling sector averages a bright and a dark sector toward
+/// the middle).
+fn sample_code_band(
     sampler: &DistortionAwareSampler<'_>,
     ellipse: &Ellipse,
     config: &DecodeConfig,
-) -> [f32; 16] {
-    let mut sector_intensities = [0.0f32; 16];
-    let (cx, cy) = (ellipse.cx, ellipse.cy);
+) -> CodeBand {
+    let n = config.effective_samples_per_sector();
+    let n_rad = config.n_radial_rings.max(1);
     let (sin_rot, cos_rot) = ellipse.angle.sin_cos();
+    let radial_ratio = |k: usize| -> f64 {
+        let r = f64::from(config.code_band_ratio);
+        if n_rad == 1 {
+            r
+        } else {
+            r * (0.90 + 0.20 * k as f64 / (n_rad - 1) as f64)
+        }
+    };
 
-    for s in 0..16u32 {
-        let mut sum = 0.0f32;
-        let mut count = 0u32;
-
-        for j in 0..config.samples_per_sector {
-            let t = (j as f64 + 0.5) / config.samples_per_sector as f64;
-            let theta = (s as f64 + t) / 16.0 * 2.0 * std::f64::consts::PI;
-            // Axis-aligned point at parametric angle theta, before rotation.
+    // (sum, count) of the valid samples at each dense angular position.
+    let n_dense = SECTORS * n;
+    let dense: Vec<(f32, u32)> = (0..n_dense)
+        .map(|i| {
+            let theta = (i as f64 + 0.5) / n_dense as f64 * std::f64::consts::TAU;
             let px = ellipse.a * theta.cos();
             let py = ellipse.b * theta.sin();
-
-            for k in 0..config.n_radial_rings {
-                let r_ratio = if config.n_radial_rings == 1 {
-                    config.code_band_ratio as f64
-                } else {
-                    let t_r = k as f64 / (config.n_radial_rings - 1) as f64;
-                    config.code_band_ratio as f64 * (0.90 + 0.20 * t_r)
-                };
-
-                let x_img = cx + r_ratio * (cos_rot * px - sin_rot * py);
-                let y_img = cy + r_ratio * (sin_rot * px + cos_rot * py);
-
-                if let Some(intensity) = sampler.sample_checked(x_img as f32, y_img as f32) {
-                    sum += intensity;
-                    count += 1;
+            (0..n_rad).fold((0.0f32, 0u32), |(sum, count), k| {
+                let r = radial_ratio(k);
+                let x = ellipse.cx + r * (cos_rot * px - sin_rot * py);
+                let y = ellipse.cy + r * (sin_rot * px + cos_rot * py);
+                match sampler.sample_checked(x as f32, y as f32) {
+                    Some(v) => (sum + v, count + 1),
+                    None => (sum, count),
                 }
-            }
+            })
+        })
+        .collect();
+
+    let core = (n / 2).max(1);
+    let core_start = (n - core) / 2;
+    let sectors_at = |p: usize| -> [f32; 16] {
+        std::array::from_fn(|s| {
+            let (sum, count) = (0..core)
+                .map(|j| dense[(s * n + p + core_start + j) % n_dense])
+                .fold((0.0f32, 0u32), |(a, c), (v, k)| (a + v, c + k));
+            if count > 0 { sum / count as f32 } else { 0.5 }
+        })
+    };
+    let variance = |v: &[f32; 16]| -> f32 {
+        let mean = v.iter().sum::<f32>() / 16.0;
+        v.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>()
+    };
+
+    // Every phase whose central half stays inside the printed sectors scores
+    // the same on a sharp band; smoothing the score over neighbouring phases
+    // (cyclic: phase `n` is phase 0 with the sectors relabelled) picks the
+    // middle of that plateau, the phase farthest from the boundaries.
+    let var: Vec<f32> = (0..n).map(|p| variance(&sectors_at(p))).collect();
+    let smoothed = |p: usize| var[(p + n - 1) % n] + 2.0 * var[p] + var[(p + 1) % n];
+    let best_p = (1..n).fold(0usize, |best, p| {
+        if smoothed(p) > smoothed(best) {
+            p
+        } else {
+            best
         }
-
-        sector_intensities[s as usize] = if count > 0 { sum / count as f32 } else { 0.5 };
+    });
+    // Grid sector `s` averages samples centred on `s + centre` sectors, so it
+    // starts at `s + centre - 1/2`.
+    let centre = (best_p as f32 + core_start as f32 + 0.5 * core as f32) / n as f32;
+    CodeBand {
+        sectors: sectors_at(best_p),
+        phase: centre - 0.5,
     }
-
-    sector_intensities
 }
 
-/// Check decode quality gates (distance, margin, confidence) and return the
-/// first failing reason, if any.
-fn check_decode_quality_gates(
-    best_match: &super::codec::Match,
+/// Binarize the sector means, match the word against the target's codewords
+/// and accept an exact match.
+fn threshold_and_match(
+    band: CodeBand,
     config: &DecodeConfig,
-) -> Option<(DecodeRejectReason, DecodeRejectContext)> {
-    if best_match.dist > config.max_decode_dist {
-        return Some((
-            DecodeRejectReason::DistTooHigh,
-            DecodeRejectContext::DistTooHigh {
-                observed_dist: best_match.dist,
-                max_allowed_dist: config.max_decode_dist,
-            },
-        ));
-    }
-    if best_match.margin < config.min_decode_margin {
-        return Some((
-            DecodeRejectReason::MarginTooLow,
-            DecodeRejectContext::MarginTooLow {
-                observed_margin: best_match.margin,
-                min_required_margin: config.min_decode_margin,
-            },
-        ));
-    }
-    if best_match.confidence < config.min_decode_confidence {
-        return Some((
-            DecodeRejectReason::ConfidenceTooLow,
-            DecodeRejectContext::ConfidenceTooLow {
-                observed_confidence: best_match.confidence,
-                min_required_confidence: config.min_decode_confidence,
-            },
-        ));
-    }
-    None
-}
-
-/// Binarize sector intensities, match against the codebook in both polarities,
-/// and apply quality gates.
-///
-/// Returns the final `(Option<DecodeResult>, DecodeDiagnostics)` pair.
-fn threshold_and_match_codebook(
-    sector_intensities: [f32; 16],
-    config: &DecodeConfig,
+    codes: &TargetCodes<'_>,
 ) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    // Check that there is reasonable contrast
-    let (min_intensity, max_intensity) = intensity_range(&sector_intensities);
+    let CodeBand { sectors, phase } = band;
+    let (min_intensity, max_intensity) = intensity_range(&sectors);
     let contrast = max_intensity - min_intensity;
     let min_decode_contrast = if config.min_decode_contrast.is_finite() {
         config.min_decode_contrast.max(0.0)
@@ -479,108 +475,52 @@ fn threshold_and_match_codebook(
         DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST
     };
     if contrast < min_decode_contrast {
-        return (
-            None,
-            DecodeDiagnostics {
-                sector_intensities,
-                threshold: 0.5 * (min_intensity + max_intensity),
-                used_word: 0,
-                inverted_used: false,
-                best_id: 0,
-                best_rotation: 0,
-                best_dist: u8::MAX,
-                margin: 0,
-                decode_confidence: 0.0,
-                reject_reason: Some(DecodeRejectReason::LowContrast),
-                reject_context: Some(DecodeRejectContext::LowContrast {
-                    contrast,
-                    min_required_contrast: min_decode_contrast,
-                }),
+        let diag = DecodeDiagnostics::rejected(
+            sectors,
+            phase,
+            0.5 * (min_intensity + max_intensity),
+            DecodeRejectReason::LowContrast,
+            DecodeRejectContext::LowContrast {
+                contrast,
+                min_required_contrast: min_decode_contrast,
             },
         );
+        return (None, diag);
     }
 
     let threshold = compute_iterative_two_means_threshold(
-        &sector_intensities,
+        &sectors,
         config.threshold_max_iters,
         config.threshold_convergence_eps,
     );
+    let word = sectors
+        .iter()
+        .enumerate()
+        .filter(|&(_, &v)| v > threshold)
+        .fold(0u16, |w, (s, _)| w | (1 << s));
 
-    let mut word: u16 = 0;
-    for (s, &intensity) in sector_intensities.iter().enumerate() {
-        if intensity > threshold {
-            word |= 1 << s;
-        }
-    }
-
-    let cb = Codebook::from_profile(config.codebook_profile);
-    let [m_normal, m_inverted] = cb.match_word_both_polarities(word);
-
-    let (best_match, used_word, inverted) = if m_normal.confidence >= m_inverted.confidence {
-        (m_normal, word, false)
-    } else {
-        (m_inverted, !word, true)
-    };
-
-    if let Some((reason, context)) = check_decode_quality_gates(&best_match, config) {
-        return (
-            None,
-            DecodeDiagnostics {
-                sector_intensities,
-                threshold,
-                used_word,
-                inverted_used: inverted,
-                best_id: best_match.id,
-                best_rotation: best_match.rotation,
-                best_dist: best_match.dist,
-                margin: best_match.margin,
-                decode_confidence: best_match.confidence,
-                reject_reason: Some(reason),
-                reject_context: Some(context),
-            },
-        );
-    }
-
-    let result = DecodeResult {
-        id: best_match.id,
-        confidence: best_match.confidence,
-        raw_word: used_word,
-        dist: best_match.dist,
-        margin: best_match.margin,
-        rotation: best_match.rotation,
-    };
-
+    let m = codes.match_word(word);
+    let exact = m.dist == 0;
     let diag = DecodeDiagnostics {
-        sector_intensities,
+        sector_intensities: sectors,
+        phase,
         threshold,
-        used_word,
-        inverted_used: inverted,
-        best_id: best_match.id,
-        best_rotation: best_match.rotation,
-        best_dist: best_match.dist,
-        margin: best_match.margin,
-        decode_confidence: best_match.confidence,
-        reject_reason: None,
-        reject_context: None,
+        word,
+        best_id: m.id,
+        best_rotation: m.rotation,
+        best_dist: m.dist,
+        decode_confidence: m.confidence,
+        reject_reason: (!exact).then_some(DecodeRejectReason::NotACodeword),
+        reject_context: (!exact).then_some(DecodeRejectContext::NotACodeword {
+            nearest_dist: m.dist,
+        }),
     };
-
-    (Some(result), diag)
-}
-
-fn decode_marker_impl(
-    gray: &GrayImage,
-    outer_ellipse: &Ellipse,
-    config: &DecodeConfig,
-    mapper: Option<&dyn PixelMapper>,
-) -> (Option<DecodeResult>, DecodeDiagnostics) {
-    if let Err(early) = validate_decode_ellipse(outer_ellipse) {
-        return early;
-    }
-
-    let sampler = DistortionAwareSampler::new(gray, mapper);
-    let sector_intensities = sample_sector_intensities(&sampler, outer_ellipse, config);
-
-    threshold_and_match_codebook(sector_intensities, config)
+    let result = exact.then(|| DecodeResult {
+        id: m.id,
+        raw_word: word,
+        rotation: (f32::from(m.rotation) + phase).rem_euclid(SECTORS as f32),
+    });
+    (result, diag)
 }
 
 #[cfg(test)]
@@ -590,49 +530,31 @@ mod tests {
     use super::super::codebook::{CODEBOOK, CODEBOOK_EXTENDED, CODEBOOK_N};
     use super::super::codec::CodebookProfile;
     use super::*;
+    use crate::target::CodedRingSpec;
 
-    /// Paint a synthetic ring marker with known code on a small image.
-    fn make_coded_ring_image(
-        w: u32,
-        h: u32,
-        ellipse: &Ellipse,
-        codeword: u16,
-        inverted: bool,
-    ) -> GrayImage {
+    /// Paint a ring marker with `codeword` on its code band. Printed sector
+    /// `j` spans parametric angle `[-π + (j + offset)·2π/16, …)`, i.e. the
+    /// decoder should report rotation `8 + offset`.
+    fn paint_marker(ellipse: &Ellipse, codeword: u16, offset: f64, inverted: bool) -> GrayImage {
+        let (w, h) = (80, 80);
         let mut img = GrayImage::new(w, h);
-        let cx = ellipse.cx;
-        let cy = ellipse.cy;
-        let cos_a = ellipse.angle.cos();
-        let sin_a = ellipse.angle.sin();
-
+        let (sin_a, cos_a) = ellipse.angle.sin_cos();
         for y in 0..h {
             for x in 0..w {
-                let dx = x as f64 - cx;
-                let dy = y as f64 - cy;
-
-                // Map to canonical coords
-                let xc = cos_a * dx + sin_a * dy;
-                let yc = -sin_a * dx + cos_a * dy;
-                let xn = xc / ellipse.a;
-                let yn = yc / ellipse.b;
-                let r = (xn * xn + yn * yn).sqrt();
-
-                let val = if (0.90..=1.10).contains(&r) {
-                    // Outer ring: dark
+                let dx = x as f64 - ellipse.cx;
+                let dy = y as f64 - ellipse.cy;
+                let xn = (cos_a * dx + sin_a * dy) / ellipse.a;
+                let yn = (-sin_a * dx + cos_a * dy) / ellipse.b;
+                let r = xn.hypot(yn);
+                let val = if (0.90..=1.10).contains(&r) || (0.55..=0.75).contains(&r) {
                     30u8
-                } else if (0.55..=0.75).contains(&r) {
-                    // Inner ring: dark
-                    30u8
-                } else if (0.76..=0.89).contains(&r) {
-                    // Code band
-                    let angle = yn.atan2(xn);
-                    let sector = ((angle / (2.0 * std::f64::consts::PI) + 0.5) * 16.0) as i32 % 16;
-                    let sector = if sector < 0 { sector + 16 } else { sector } as u32;
-                    let bit = (codeword >> sector) & 1;
-                    let bright = if inverted { bit == 0 } else { bit == 1 };
-                    if bright { 220u8 } else { 40u8 }
+                } else if (0.75..0.90).contains(&r) {
+                    let u = (yn.atan2(xn) / std::f64::consts::TAU + 0.5) * 16.0 - offset;
+                    let sector = (u.floor() as i64).rem_euclid(16) as u32;
+                    let bright = ((codeword >> sector) & 1 == 1) != inverted;
+                    if bright { 220 } else { 40 }
                 } else {
-                    200u8 // background
+                    200
                 };
                 img.put_pixel(x, y, image::Luma([val]));
             }
@@ -640,143 +562,108 @@ mod tests {
         img
     }
 
+    fn circle() -> Ellipse {
+        Ellipse {
+            cx: 40.0,
+            cy: 40.0,
+            a: 15.0,
+            b: 15.0,
+            angle: 0.0,
+        }
+    }
+
+    /// Sampling at the painted band's centre (0.825 of the outer radius).
+    fn config() -> DecodeConfig {
+        DecodeConfig {
+            code_band_ratio: 0.825,
+            ..DecodeConfig::default()
+        }
+    }
+
+    fn decode(
+        img: &GrayImage,
+        ellipse: &Ellipse,
+        target: &TargetLayout,
+    ) -> (Option<DecodeResult>, DecodeDiagnostics) {
+        let codes = TargetCodes::of(target).expect("coded target");
+        decode_marker_with_diagnostics_and_mapper(img, ellipse, &config(), &codes, None)
+    }
+
+    fn rotation_error(rotation: f32, expected: f64) -> f64 {
+        let d = (f64::from(rotation) - expected).rem_euclid(16.0);
+        d.min(16.0 - d)
+    }
+
     #[test]
     fn decode_config_defaults_are_stable() {
         let cfg = DecodeConfig::default();
-        assert_eq!(cfg.codebook_profile, CodebookProfile::Base);
-        assert_abs_diff_eq!(
-            cfg.code_band_ratio,
-            DecodeConfig::DEFAULT_CODE_BAND_RATIO,
-            epsilon = 1e-6
-        );
+        assert_abs_diff_eq!(cfg.code_band_ratio, 0.76, epsilon = 1e-6);
+        assert_eq!(cfg.samples_per_sector, 8);
+        assert_eq!(cfg.n_radial_rings, 3);
+        assert_abs_diff_eq!(cfg.min_decode_contrast, 0.03, epsilon = 1e-6);
+        assert_eq!(cfg.threshold_max_iters, 10);
+        assert_abs_diff_eq!(cfg.threshold_convergence_eps, 1e-4, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn decode_config_deserialize_fills_missing_fields() {
+        let json = r#"{ "code_band_ratio": 0.76, "n_radial_rings": 3 }"#;
+        let cfg: DecodeConfig = serde_json::from_str(json).expect("decode config json");
         assert_eq!(
             cfg.samples_per_sector,
             DecodeConfig::DEFAULT_SAMPLES_PER_SECTOR
         );
-        assert_eq!(cfg.n_radial_rings, DecodeConfig::DEFAULT_N_RADIAL_RINGS);
-        assert_eq!(cfg.max_decode_dist, DecodeConfig::DEFAULT_MAX_DECODE_DIST);
-        assert_abs_diff_eq!(
-            cfg.min_decode_confidence,
-            DecodeConfig::DEFAULT_MIN_DECODE_CONFIDENCE,
-            epsilon = 1e-6
-        );
-        assert_eq!(
-            cfg.min_decode_margin,
-            DecodeConfig::DEFAULT_MIN_DECODE_MARGIN
-        );
         assert_abs_diff_eq!(
             cfg.min_decode_contrast,
             DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
             epsilon = 1e-6
         );
-        assert_eq!(
-            cfg.threshold_max_iters,
-            DecodeConfig::DEFAULT_THRESHOLD_MAX_ITERS
-        );
-        assert_abs_diff_eq!(
-            cfg.threshold_convergence_eps,
-            DecodeConfig::DEFAULT_THRESHOLD_CONVERGENCE_EPS,
-            epsilon = 1e-8
-        );
     }
 
     #[test]
-    fn decode_config_deserialize_missing_hidden_threshold_fields_uses_defaults() {
-        let json = r#"{
-            "code_band_ratio": 0.76,
-            "samples_per_sector": 5,
-            "n_radial_rings": 3,
-            "max_decode_dist": 3,
-            "min_decode_confidence": 0.15
-        }"#;
-
-        let cfg: DecodeConfig =
-            serde_json::from_str(json).expect("decode config json should parse");
-        assert_eq!(cfg.codebook_profile, CodebookProfile::Base);
-        assert_abs_diff_eq!(
-            cfg.min_decode_contrast,
-            DecodeConfig::DEFAULT_MIN_DECODE_CONTRAST,
-            epsilon = 1e-6
-        );
-        assert_eq!(
-            cfg.min_decode_margin,
-            DecodeConfig::DEFAULT_MIN_DECODE_MARGIN
-        );
-        assert_eq!(
-            cfg.threshold_max_iters,
-            DecodeConfig::DEFAULT_THRESHOLD_MAX_ITERS
-        );
-        assert_abs_diff_eq!(
-            cfg.threshold_convergence_eps,
-            DecodeConfig::DEFAULT_THRESHOLD_CONVERGENCE_EPS,
-            epsilon = 1e-8
+    fn decodes_known_codeword_with_its_rotation() {
+        let target = TargetLayout::default();
+        let img = paint_marker(&circle(), CODEBOOK[42], 0.0, false);
+        let (result, diag) = decode(&img, &circle(), &target);
+        let result = result.expect("exact codeword decodes");
+        assert_eq!(result.id, 42);
+        assert_eq!(diag.best_dist, 0);
+        assert!(
+            rotation_error(result.rotation, 8.0) < 0.15,
+            "{}",
+            result.rotation
         );
     }
 
+    /// The printed sector boundaries may land anywhere in parametric angle.
+    /// A fixed sampling grid half a sector off averages every sector with its
+    /// neighbour; the phase-aligned grid decodes every offset and reports the
+    /// continuous rotation.
     #[test]
-    fn decode_config_roundtrips_extended_profile() {
-        let cfg = DecodeConfig {
-            codebook_profile: CodebookProfile::Extended,
-            ..DecodeConfig::default()
-        };
-        let json = serde_json::to_string(&cfg).expect("serialize decode config");
-        let decoded: DecodeConfig = serde_json::from_str(&json).expect("deserialize decode config");
-        assert_eq!(decoded.codebook_profile, CodebookProfile::Extended);
+    fn decodes_at_every_sub_sector_phase_offset() {
+        let target = TargetLayout::default();
+        for id in [0usize, 42, 101, 202] {
+            for step in 0..=10 {
+                let offset = step as f64 * 0.05;
+                let img = paint_marker(&circle(), CODEBOOK[id], offset, false);
+                let (result, diag) = decode(&img, &circle(), &target);
+                let result = result.unwrap_or_else(|| {
+                    panic!("id {id} offset {offset}: rejected {:?}", diag.reject_reason)
+                });
+                assert_eq!(result.id, id, "id {id} offset {offset}");
+                assert!(
+                    rotation_error(result.rotation, 8.0 + offset) < 0.2,
+                    "id {id} offset {offset}: rotation {}",
+                    result.rotation
+                );
+            }
+        }
     }
 
     #[test]
-    fn test_decode_known_codeword() {
-        let cw = CODEBOOK[42];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
-        let config = DecodeConfig::default();
-
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert!(result.is_some(), "should decode successfully");
-        let result = result.unwrap();
-        assert_eq!(result.id, 42, "decoded id should be 42, got {}", result.id);
-        assert!(!diag.inverted_used, "should not use inverted polarity");
-    }
-
-    #[test]
-    fn test_decode_known_codeword_stays_stable_in_extended_profile() {
-        let cw = CODEBOOK[42];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
-        let config = DecodeConfig {
-            codebook_profile: CodebookProfile::Extended,
-            ..DecodeConfig::default()
-        };
-
-        let (result, _) = decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert_eq!(
-            result
-                .expect("baseline word should decode in extended profile")
-                .id,
-            42
-        );
-    }
-
-    #[test]
-    fn test_decode_eccentric_ellipse() {
-        // Strongly eccentric marker (tilted board): a circle of mean radius
-        // (14 px) would leave the code band near both axes (normalized radius
-        // 14/18 ≈ 0.78 at the major axis but 14/10 = 1.4 at the minor axis),
-        // corrupting sectors. Elliptical sampling must decode it exactly.
-        let cw = CODEBOOK[123];
+    fn eccentric_marker_decodes() {
+        // A circle of mean radius would leave the code band near both axes of
+        // this strongly eccentric ellipse; parametric sampling stays on it.
         let ellipse = Ellipse {
             cx: 40.0,
             cy: 40.0,
@@ -784,142 +671,77 @@ mod tests {
             b: 10.0,
             angle: 0.5,
         };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
-        let config = DecodeConfig::default();
+        let target = TargetLayout::default();
+        let img = paint_marker(&ellipse, CODEBOOK[123], 0.3, false);
+        let (result, _) = decode(&img, &ellipse, &target);
+        assert_eq!(result.expect("eccentric marker decodes").id, 123);
+    }
 
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        let result = result.expect("eccentric marker should decode");
-        assert_eq!(
-            result.id, 123,
-            "decoded id should be 123, got {}",
-            result.id
-        );
-        assert_eq!(result.dist, 0, "eccentric decode should be exact");
-        assert!(!diag.inverted_used);
+    /// Targets are printed dark on light: a light-on-dark code band is never
+    /// read as the painted ID (its complement may be another board codeword).
+    /// A few codewords are their own complement up to rotation (e.g. ID 84);
+    /// no polarity rule can tell those apart, so they are skipped.
+    #[test]
+    fn inverted_code_band_is_not_decoded_as_the_painted_id() {
+        let target = TargetLayout::default();
+        let self_complementary =
+            |w: u16| (0..16).any(|k| super::super::codec::rotate_left_16(w, k) == !w);
+        let mut n_checked = 0;
+        for (id, &cw) in CODEBOOK.iter().enumerate().take(target.n_cells()) {
+            if self_complementary(cw) {
+                continue;
+            }
+            n_checked += 1;
+            let img = paint_marker(&circle(), cw, 0.0, true);
+            let (result, _) = decode(&img, &circle(), &target);
+            assert_ne!(result.map(|r| r.id), Some(id), "id {id}");
+        }
+        assert!(n_checked > 190, "only {n_checked} codewords checked");
+    }
+
+    /// Only the target's own codewords match: a profile codeword that no cell
+    /// carries is rejected, not decoded to itself.
+    #[test]
+    fn codewords_off_the_target_are_rejected() {
+        let target = TargetLayout::default();
+        assert!(target.coord_of_id(500).is_none());
+        let img = paint_marker(&circle(), CODEBOOK[500], 0.0, false);
+        let (result, diag) = decode(&img, &circle(), &target);
+        assert!(result.is_none());
+        assert_eq!(diag.reject_reason, Some(DecodeRejectReason::NotACodeword));
+        assert!(diag.best_dist > 0);
     }
 
     #[test]
-    fn test_decode_inverted_polarity() {
-        // Use codeword 0 whose complement is NOT a rotation of any codebook entry
-        let cw = CODEBOOK[0];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        // Paint with inverted polarity
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
-        let config = DecodeConfig::default();
-
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert!(
-            result.is_some(),
-            "should decode successfully with inverted polarity"
-        );
-        let result = result.unwrap();
-        assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
-        assert!(diag.inverted_used, "should use inverted polarity");
-    }
-
-    #[test]
-    fn test_decode_inverted_polarity_stays_stable_in_extended_profile() {
-        let cw = CODEBOOK[0];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
-        let config = DecodeConfig {
-            codebook_profile: CodebookProfile::Extended,
-            ..DecodeConfig::default()
-        };
-
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert!(
-            result.is_some(),
-            "should decode successfully with inverted polarity in extended mode"
-        );
-        let result = result.unwrap();
-        assert_eq!(result.id, 0, "decoded id should be 0, got {}", result.id);
-        assert!(diag.inverted_used, "should use inverted polarity");
-    }
-
-    #[test]
-    fn test_decode_appended_word_requires_extended_profile_for_appended_id() {
+    fn appended_extended_codeword_needs_an_extended_target() {
         let cw = CODEBOOK_EXTENDED[CODEBOOK_N];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
+        let img = paint_marker(&circle(), cw, 0.0, false);
+        let base = TargetLayout::default();
+        assert!(decode(&img, &circle(), &base).0.is_none());
 
-        let base_cfg = DecodeConfig::default();
-        let (base_result, _) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &base_cfg, None);
-        assert_ne!(base_result.map(|r| r.id), Some(CODEBOOK_N));
-
-        let extended_cfg = DecodeConfig {
-            codebook_profile: CodebookProfile::Extended,
-            ..DecodeConfig::default()
-        };
-        let (extended_result, _) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &extended_cfg, None);
-        assert_eq!(
-            extended_result
-                .expect("appended word should decode in extended profile")
-                .id,
-            CODEBOOK_N
-        );
-    }
-
-    #[test]
-    fn test_decode_appended_word_inverted_polarity_stays_stable_in_extended_profile() {
-        let cw = CODEBOOK_EXTENDED[CODEBOOK_N];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, true);
-        let config = DecodeConfig {
-            codebook_profile: CodebookProfile::Extended,
-            ..DecodeConfig::default()
-        };
-
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert!(
-            result.is_some(),
-            "should decode appended word with inverted polarity in extended mode"
-        );
-        let result = result.unwrap();
-        assert_eq!(
-            result.id, CODEBOOK_N,
-            "decoded id should be {}, got {}",
-            CODEBOOK_N, result.id
-        );
-        assert!(diag.inverted_used, "should use inverted polarity");
+        // The default board's geometry, carrying the first appended IDs.
+        let extended = TargetLayout::new(
+            "extended_test",
+            *base.lattice(),
+            base.ring(),
+            MarkerCoding::Coded16(CodedRingSpec {
+                ring_width_mm: 1.152,
+                codebook_profile: CodebookProfile::Extended,
+                id_assignment: Some((CODEBOOK_N..CODEBOOK_N + base.n_cells()).collect()),
+            }),
+            None,
+        )
+        .expect("extended target");
+        let (result, _) = decode(&img, &circle(), &extended);
+        assert_eq!(result.expect("appended word decodes").id, CODEBOOK_N);
     }
 
     #[test]
     fn decode_reject_reason_serialization_is_stable() {
-        let reason = DecodeRejectReason::LowContrast;
-        assert_eq!(reason.to_string(), "low_contrast");
+        let reason = DecodeRejectReason::NotACodeword;
+        assert_eq!(reason.to_string(), "not_a_codeword");
         let json = serde_json::to_string(&reason).expect("serialize reject reason");
-        assert_eq!(json, "\"low_contrast\"");
+        assert_eq!(json, "\"not_a_codeword\"");
     }
 
     #[test]
@@ -936,8 +758,10 @@ mod tests {
             min_decode_contrast: 0.2,
             ..DecodeConfig::default()
         };
+        let target = TargetLayout::default();
+        let codes = TargetCodes::of(&target).unwrap();
         let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
+            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, &codes, None);
         assert!(result.is_none());
         assert_eq!(diag.reject_reason, Some(DecodeRejectReason::LowContrast));
         match diag.reject_context {
@@ -945,12 +769,16 @@ mod tests {
                 contrast,
                 min_required_contrast,
             }) => {
-                assert!(contrast < min_required_contrast);
                 assert_abs_diff_eq!(contrast, 0.0, epsilon = 1e-6);
                 assert_abs_diff_eq!(min_required_contrast, 0.2, epsilon = 1e-6);
             }
             other => panic!("unexpected reject context: {other:?}"),
         }
+    }
+
+    #[test]
+    fn plain_targets_have_no_codes() {
+        assert!(TargetCodes::of(&TargetLayout::rect_24x24()).is_none());
     }
 
     #[test]
@@ -981,39 +809,5 @@ mod tests {
         assert_abs_diff_eq!(t_loose, 0.666, epsilon = 1e-6);
         assert_abs_diff_eq!(t_tight, 0.6906032, epsilon = 1e-6);
         assert!(t_tight > t_loose);
-    }
-
-    #[test]
-    fn decode_confidence_gate_reports_typed_reason_with_context() {
-        let cw = CODEBOOK[7];
-        let ellipse = Ellipse {
-            cx: 40.0,
-            cy: 40.0,
-            a: 15.0,
-            b: 15.0,
-            angle: 0.0,
-        };
-        let img = make_coded_ring_image(80, 80, &ellipse, cw, false);
-        let config = DecodeConfig {
-            min_decode_confidence: 1.1,
-            ..DecodeConfig::default()
-        };
-
-        let (result, diag) =
-            decode_marker_with_diagnostics_and_mapper(&img, &ellipse, &config, None);
-        assert!(result.is_none(), "confidence gate should reject");
-        assert_eq!(
-            diag.reject_reason,
-            Some(DecodeRejectReason::ConfidenceTooLow)
-        );
-        match diag.reject_context {
-            Some(DecodeRejectContext::ConfidenceTooLow {
-                observed_confidence,
-                min_required_confidence,
-            }) => {
-                assert!(observed_confidence < min_required_confidence);
-            }
-            other => panic!("unexpected reject context: {other:?}"),
-        }
     }
 }

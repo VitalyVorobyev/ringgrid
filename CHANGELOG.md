@@ -25,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   photometric centre error against 0.6 µm with 16 grey levels in that
   simulation of a 166 dpi e-reader). See the book's *Screen targets* section.
 
+### Changed
+
+- **Decoding reads the code band at its true sub-sector phase and accepts only
+  exact matches of the target's own codewords.** The 16 sectors were sampled
+  on a fixed grid; cyclic matching absorbs whole sectors only, so at a
+  half-sector offset every sampled sector straddled two printed ones. The
+  decoder now samples densely, picks the phase that separates the sector
+  means best, matches dark-on-light only, against the codewords the target's
+  cells carry, and accepts distance 0 only. Raw decodes contradicting their
+  lattice cell on the rtv3d captures: 26.9 % → 0.31 %; correctly decoded
+  rings 59 % → 89 %; final IDs on the 86 anchored tiles 4021 → 4062, none
+  wrong before or after (ADR-027).
+- **Anchor votes check the code rotation.** A decode votes only for lattice
+  symmetries under which its decoded code rotation is the one the board
+  predicts at that ring; the chance model counts the measured agreement rate
+  of misreads. Two agreeing decodes now anchor boards of 611 cells or more.
+
+### Removed
+
+- `DecodeConfig::max_decode_dist`, `min_decode_margin`,
+  `min_decode_confidence` and `codebook_profile` (the profile is the
+  target's); the matching `ringgrid-dev` flags and Python aliases.
+- `DecodeMetrics::best_dist`, `margin`, `decode_confidence`;
+  `best_rotation: u8` is replaced by the continuous `rotation: f32`.
+- The inverted-polarity decode fallback. See
+  [`docs/migrations/0.16-to-0.17.md`](docs/migrations/0.16-to-0.17.md).
+
 ## [0.16.0] - 2026-11-17
 
 Detection fails closed: it reports fewer markers rather than a wrong ID,

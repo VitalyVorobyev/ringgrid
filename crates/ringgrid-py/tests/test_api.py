@@ -48,9 +48,6 @@ README_ALIAS_NAMES = (
     "self_undistort_enable",
     "inner_fit_required",
     "homography_inlier_threshold_px",
-    "decode_min_margin",
-    "decode_max_dist",
-    "decode_min_confidence",
 )
 
 
@@ -292,9 +289,6 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
 
     cfg.completion_enable = False
     cfg.use_global_filter = False
-    cfg.decode_min_margin = 2
-    cfg.decode_max_dist = 2
-    cfg.decode_min_confidence = 0.4
     cfg.circle_refinement = ringgrid.CircleRefinementMethod.PROJECTIVE_CENTER
     cfg.inner_fit_required = True
     cfg.homography_inlier_threshold_px = 4.0
@@ -303,9 +297,6 @@ def test_detect_config_curated_properties_and_dict_roundtrip() -> None:
     adv = d["advanced"]
     assert adv["completion"]["enable"] is False
     assert adv["use_global_filter"] is False
-    assert adv["decode"]["min_decode_margin"] == 2
-    assert adv["decode"]["max_decode_dist"] == 2
-    assert adv["decode"]["min_decode_confidence"] == pytest.approx(0.4)
     assert adv["inner_fit"]["require_inner_fit"] is True
     assert adv["ransac_homography"]["inlier_threshold"] == pytest.approx(4.0)
 
@@ -348,7 +339,7 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     cfg.edge_sample = edge_sample
 
     decode = cfg.decode
-    decode.min_decode_margin = 3
+    decode.n_radial_rings = 5
     cfg.decode = decode
 
     marker_spec = cfg.marker_spec
@@ -391,7 +382,7 @@ def test_detect_config_typed_sections_are_settable_without_mapping_overlays() ->
     assert adv["seed_proposals"]["max_seeds"] == 128
     assert adv["proposal"]["max_candidates"] == 64
     assert adv["edge_sample"]["n_rays"] == 56
-    assert adv["decode"]["min_decode_margin"] == 3
+    assert adv["decode"]["n_radial_rings"] == 5
     assert adv["marker_spec"]["theta_samples"] == 120
     assert adv["ransac_homography"]["inlier_threshold"] == pytest.approx(5.5)
     assert d["self_undistort"]["enable"] is True
@@ -416,12 +407,12 @@ def test_detect_config_uses_cached_snapshot_and_returns_copies() -> None:
     assert cfg._resolved_cache is cache
     assert decode_second.to_dict() == decode_first.to_dict()
 
-    decode_first.min_decode_margin = 99
-    assert cfg.decode.min_decode_margin != 99
+    decode_first.n_radial_rings = 99
+    assert cfg.decode.n_radial_rings != 99
 
     snapshot = cfg.to_dict()
-    snapshot["advanced"]["decode"]["min_decode_margin"] = 123
-    assert cfg.to_dict()["advanced"]["decode"]["min_decode_margin"] != 123
+    snapshot["advanced"]["decode"]["n_radial_rings"] = 123
+    assert cfg.to_dict()["advanced"]["decode"]["n_radial_rings"] != 123
     assert cfg._resolved_cache is cache
 
 
@@ -433,48 +424,14 @@ def test_decode_config_matches_resolved_dump_surface() -> None:
     assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
     decode = cfg.decode
-    decode.min_decode_margin = 2
+    decode.n_radial_rings = 4
     cfg.decode = decode
 
-    assert cfg.decode.min_decode_margin == 2
+    assert cfg.decode.n_radial_rings == 4
     assert cfg.decode.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
     roundtrip = ringgrid.DecodeConfig.from_dict(cfg.to_dict()["advanced"]["decode"])
     assert roundtrip.to_dict() == cfg.to_dict()["advanced"]["decode"]
-
-
-def test_codebook_profile_follows_the_target_not_the_config() -> None:
-    """The codeword table is a property of the printed target.
-
-    A target printed from the extended table must be decoded against it, so the
-    profile is derived from the target and an overlay cannot pull the two apart.
-    """
-    base = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
-    assert base.decode.codebook_profile == "base"
-
-    # Asking for `extended` on a baseline target does not take: re-deriving from
-    # the target puts it back, rather than decoding against the wrong table.
-    decode = base.decode
-    decode.codebook_profile = "extended"
-    base.decode = decode
-    assert base.decode.codebook_profile == "base"
-
-    # Setting it on the target is what changes decoding.
-    spec = ringgrid.TargetLayout.coded_hex(8.0, 5, 5, 4.8, 3.2, 1.152).to_dict()
-    spec["coding"]["codebook_profile"] = "extended"
-    extended = ringgrid.DetectConfig(ringgrid.TargetLayout.from_dict(spec))
-    assert extended.decode.codebook_profile == "extended"
-
-
-def test_decode_config_from_dict_defaults_missing_profile_to_base() -> None:
-    cfg = ringgrid.DetectConfig(ringgrid.TargetLayout.default_hex())
-    legacy_payload = dict(cfg.to_dict()["advanced"]["decode"])
-    del legacy_payload["codebook_profile"]
-
-    decoded = ringgrid.DecodeConfig.from_dict(legacy_payload)
-
-    assert decoded.codebook_profile == "base"
-    assert decoded.to_dict() == cfg.to_dict()["advanced"]["decode"]
 
 
 def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> None:
@@ -485,11 +442,13 @@ def test_detect_config_to_dict_matches_native_dump_after_mixed_overlays() -> Non
     native = NativeDetectConfigCore(target._spec_json_str())
 
     # Stage tuning nests under "advanced" in both the dump and the overlay.
-    cfg.decode_min_confidence = 0.4
+    decode = cfg.decode
+    decode.min_decode_contrast = 0.04
+    cfg.decode = decode
     native_decode = ringgrid.DecodeConfig.from_dict(
         json.loads(native.dump_json())["advanced"]["decode"]
     )
-    native_decode.min_decode_confidence = 0.4
+    native_decode.min_decode_contrast = 0.04
     native.apply_overlay_json(
         json.dumps({"advanced": {"decode": native_decode.to_dict()}})
     )
@@ -616,7 +575,7 @@ def test_detector_refreshes_native_core_after_config_update() -> None:
     detector = ringgrid.Detector(cfg)
 
     before_version = detector._core_config_version
-    cfg.decode_min_margin = cfg.decode_min_margin + 1
+    cfg.completion_enable = not cfg.completion_enable
     assert cfg._version > before_version
     assert detector._core_config_version == before_version
 

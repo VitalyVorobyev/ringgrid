@@ -43,14 +43,13 @@ This design provides several advantages over other encoding approaches:
 |---|---:|---:|---:|---:|
 | Unique IDs | 893 | 50 | 250 | 0 |
 | Rotation invariant | Yes | No (4 orientations) | No | N/A |
-| Error tolerance | Hamming distance | Hamming distance | Hamming distance | N/A |
+| Error tolerance | Exact match + lattice | Hamming distance | Hamming distance | N/A |
 | Encoding mechanism | Angular sectors | Binary grid | Binary grid | None |
 
 Key properties of the coding scheme:
 
 - **Rotation invariance**: The 16-sector code is sampled relative to the marker's geometry, and the decoder tries all 16 cyclic rotations. No marker orientation assumption is needed.
-- **Polarity invariance**: The decoder also checks the inverted contrast pattern, handling both dark-on-light and light-on-dark printing.
-- **Error tolerance**: The codebook's minimum cyclic Hamming distance of 2 prevents a single-bit error from silently mapping to a different valid codeword, though it does not guarantee single-bit correction.
+- **Exact matching**: The codebook's minimum cyclic Hamming distance of 2 detects a single-bit error but cannot correct it, so the decoder accepts only exact matches against the target's own codewords; identity errors are caught by the lattice (grid labeling and the anchor vote), not by the code.
 
 ## Comparison with Other Calibration Targets
 

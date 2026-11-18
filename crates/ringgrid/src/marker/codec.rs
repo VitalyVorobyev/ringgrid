@@ -110,12 +110,9 @@ pub struct Match {
     pub confidence: f32,
 }
 
-/// Distance part of the decode confidence: `1 − dist/6`, clamped to [0, 1].
-///
-/// The one definition shared by codebook matching ([`Match::confidence`]
-/// multiplies it with a margin term) and marker scoring (which uses it alone).
+/// Distance part of [`Match::confidence`]: `1 − dist/6`, clamped to [0, 1].
 #[inline]
-pub(crate) fn distance_confidence(dist: u8) -> f32 {
+fn distance_confidence(dist: u8) -> f32 {
     (1.0 - dist as f32 / 6.0).clamp(0.0, 1.0)
 }
 
@@ -185,28 +182,31 @@ impl Codebook {
     /// The margin denominator equals the codebook minimum cyclic Hamming distance,
     /// so a perfect decode (dist=0) with the minimum attainable margin scores 1.0.
     pub fn match_word(&self, obs: u16) -> Match {
-        self.match_word_both_polarities(obs)[0]
+        self.match_word_among(obs, 0..self.words.len())
     }
 
-    /// [`Self::match_word`] for `obs` and its complement `!obs`, in one scan.
+    /// [`Self::match_word`] restricted to the codewords of `ids` (IDs outside
+    /// the profile are skipped). Decoding matches against the target's own
+    /// IDs only: a board uses a fraction of the profile, and every codeword it
+    /// does not carry is one more word a misread could land on exactly.
     ///
-    /// Returns `[match(obs), match(!obs)]`. The complement's distance to any
-    /// rotated codeword is `16 − d`, so a single pass over the codebook yields
-    /// both matches.
-    pub(crate) fn match_word_both_polarities(&self, obs: u16) -> [Match; 2] {
-        let mut normal = RotationLanes::new();
-        let mut inverted = RotationLanes::new();
+    /// Ties resolve deterministically for a given `ids` order. An exact match
+    /// (distance 0) is never tied: codewords are rotation-unique.
+    pub(crate) fn match_word_among(&self, obs: u16, ids: impl IntoIterator<Item = usize>) -> Match {
+        let mut lanes = RotationLanes::new();
         // Lane `k` holds rotation `k`: popcount(obs ^ rotl(cw, k)) equals
         // popcount(rotr(obs, k) ^ cw), so rotating the observation once per
         // call replaces rotating every codeword.
         let obs_rot: [u16; ROTATIONS] = std::array::from_fn(|k| obs.rotate_right(k as u32));
-        for (id, &cw) in self.words.iter().enumerate() {
+        for id in ids {
+            let Some(&cw) = self.words.get(id) else {
+                continue;
+            };
             let dist: [u16; ROTATIONS] =
                 std::array::from_fn(|k| (obs_rot[k] ^ cw).count_ones() as u16);
-            normal.push(id as u16, &dist);
-            inverted.push(id as u16, &dist.map(|d| CODEBOOK_BITS as u16 - d));
+            lanes.push(id as u16, &dist);
         }
-        [normal.finish(self), inverted.finish(self)]
+        lanes.finish(self)
     }
 
     fn match_from_search(&self, id: usize, rotation: u8, best_dist: u8, second_dist: u8) -> Match {
@@ -567,12 +567,13 @@ mod tests {
     /// The straightforward sequential scan `match_word` replaced: every
     /// rotation of every codeword in (ID, rotation) order, keeping the first
     /// strict minimum and the multiset second minimum.
-    fn match_word_reference(cb: &Codebook, obs: u16) -> Match {
+    fn match_word_reference(cb: &Codebook, obs: u16, ids: &[usize]) -> Match {
         let mut best_id = 0usize;
         let mut best_rot = 0u8;
         let mut best_dist = u8::MAX;
         let mut second_dist = u8::MAX;
-        for (id, &cw) in cb.words.iter().enumerate() {
+        for &id in ids {
+            let cw = cb.words[id];
             for k in 0u32..16 {
                 let d = popcount(obs ^ rotate_left_16(cw, k));
                 if d < best_dist {
@@ -608,22 +609,33 @@ mod tests {
     fn match_word_equals_sequential_reference_scan() {
         for profile in [CodebookProfile::Base, CodebookProfile::Extended] {
             let cb = Codebook::from_profile(profile);
+            let all: Vec<usize> = (0..cb.len()).collect();
+            // A board-sized subset in ascending order (ties resolve to the
+            // lowest ID in both scans).
+            let subset: Vec<usize> = (0..cb.len()).step_by(4).collect();
             for obs in equivalence_probe_words(&cb) {
-                let [normal, inverted] = cb.match_word_both_polarities(obs);
                 assert_eq!(
-                    normal,
-                    match_word_reference(&cb, obs),
+                    cb.match_word(obs),
+                    match_word_reference(&cb, obs, &all),
                     "{profile:?} obs=0x{obs:04X}"
                 );
                 assert_eq!(
-                    inverted,
-                    match_word_reference(&cb, !obs),
-                    "{profile:?} !obs=0x{:04X}",
-                    !obs
+                    cb.match_word_among(obs, subset.iter().copied()),
+                    match_word_reference(&cb, obs, &subset),
+                    "{profile:?} subset obs=0x{obs:04X}"
                 );
-                assert_eq!(cb.match_word(obs), normal);
             }
         }
+    }
+
+    #[test]
+    fn match_among_ignores_codewords_outside_the_subset() {
+        let cb = Codebook::default();
+        let w = cb.word(7).unwrap();
+        assert_eq!(cb.match_word(w).dist, 0);
+        let m = cb.match_word_among(w, [3usize, 11, 900_000]);
+        assert_ne!(m.id, 7);
+        assert!(m.dist > 0, "an off-subset codeword must not match exactly");
     }
 
     #[test]

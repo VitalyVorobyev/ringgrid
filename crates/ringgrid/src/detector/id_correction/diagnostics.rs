@@ -99,11 +99,8 @@ pub(super) fn count_inconsistent_remaining(ws: &IdCorrectionWorkspace<'_>) -> us
             continue;
         }
         let evidence = consistency_evidence_for_id(ws, i, id);
-        let is_soft_locked = is_soft_locked_assignment(
-            &ws.markers[i],
-            ws.config.soft_lock_exact_decode,
-            ws.codebook_min_cyclic_dist,
-        );
+        let is_soft_locked =
+            is_soft_locked_assignment(&ws.markers[i], ws.config.soft_lock_exact_decode);
         if should_clear_by_consistency(evidence, is_soft_locked, ws.config) {
             n += 1;
         }
@@ -117,7 +114,6 @@ mod tests {
     use crate::detector::config::IdCorrectionConfig;
     use crate::detector::id_correction::index::BoardIndex;
     use crate::detector::marker_build::MarkerRecord;
-    use crate::marker::codec::Codebook;
     use crate::target::TargetLayout;
 
     fn marker(id: Option<usize>, center: [f64; 2]) -> MarkerRecord {
@@ -127,10 +123,6 @@ mod tests {
             confidence: 0.9,
             ..MarkerRecord::default()
         }
-    }
-
-    fn min_cyclic() -> usize {
-        Codebook::default().min_cyclic_dist()
     }
 
     /// A board-adjacent id pair from the default hex layout (deterministic).
@@ -156,7 +148,7 @@ mod tests {
             marker(Some(id_a), [10.0, 10.0]),
             marker(Some(id_b), [50.0, 10.0]),
         ];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
 
         let spacing = estimate_adjacent_spacing_px(&ws).expect("adjacent pair yields a spacing");
         assert!((spacing - 40.0).abs() < 1e-9, "spacing = {spacing}");
@@ -168,7 +160,7 @@ mod tests {
         let cfg = IdCorrectionConfig::default();
         // A single decoded marker has no adjacent partner → no spacing sample.
         let mut markers = vec![marker(Some(0), [10.0, 10.0])];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         assert!(estimate_adjacent_spacing_px(&ws).is_none());
     }
 
@@ -178,7 +170,7 @@ mod tests {
         let cfg = IdCorrectionConfig::default();
         let off_board = board.n_cells() + 100_000;
         let mut markers = vec![marker(Some(off_board), [10.0, 10.0])];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         assert_eq!(count_inconsistent_remaining(&ws), 1);
     }
 
@@ -189,7 +181,7 @@ mod tests {
         // A valid on-board id with no neighbors: below min_neighbors, so it is
         // never counted as inconsistent (avoids clearing isolated-but-correct).
         let mut markers = vec![marker(Some(0), [10.0, 10.0])];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, min_cyclic());
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         assert_eq!(count_inconsistent_remaining(&ws), 0);
     }
 }

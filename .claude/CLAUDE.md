@@ -108,7 +108,7 @@ crates/ringgrid/src/
 │   ├── edge_sample.rs       # Edge point sampling (distortion-aware)
 │   └── projective_center.rs # Unbiased center from inner+outer conics
 ├── marker/             # Code decoding & marker specification
-│   ├── decode.rs       # 16-sector code sampling → codebook match
+│   ├── decode.rs       # Phase-aligned 16-sector sampling → exact match on the target's codewords
 │   ├── codec.rs        # Codebook matching logic
 │   ├── codebook.rs     # Generated codeword tables: base (893) + extended (2180)
 │   └── marker_spec.rs  # MarkerSpec type
@@ -155,12 +155,12 @@ crates/ringgrid/src/
 1. **Proposal** (`proposal/mod.rs`) — radsym fused RSD (Scharr gradient + magnitude voting + NMS) → candidate centers
 2. **Outer Estimate** (`ring/outer_estimate.rs`) — radius hypotheses via radial profile peaks
 3. **Outer Fit** (`detector/outer_fit/`) — RANSAC ellipse fitting (Fitzgibbon direct LS)
-4. **Decode** (`marker/decode.rs`) — 16-sector code sampling → codebook match (base 893 / extended 2180, selected by the target)
+4. **Decode** (`marker/decode.rs`) — 16-sector code band sampled at the estimated sub-sector phase, dark-on-light only, accepted only as an exact match (any rotation) of a codeword the target's cells carry (profile base 893 / extended 2180 from the target); no distance/margin gates — reports a continuous code rotation (ADR-027)
 5. **Inner Fit** (`detector/inner_fit.rs`) — inner ring ellipse fit
 6. **Dedup** (`detector/dedup.rs`) — spatial + ID-based deduplication
 7. **Projective Center** (`detector/center_correction.rs`) — correct fit-decode marker centers (once per marker)
 8. **Grid Labeling** (`pipeline/assign.rs`) — label every fitted ring, decoded or not, with lattice coords (relative frame)
-9. **Anchor + Identify** (`pipeline/anchor.rs`, `finalize/grid.rs`) — decoded IDs vote for the board placement (coded) or origin dots verify it (plain); each labeled ring takes its cell's ID (a contradicting decode is overridden)
+9. **Anchor + Identify** (`pipeline/anchor.rs`, `finalize/grid.rs`) — decoded IDs vote for the board placement (coded; a vote counts only for symmetries whose predicted code rotation matches the decoded one) or origin dots verify it (plain); each labeled ring takes its cell's ID (a contradicting decode is overridden)
 10. **Join + Completion** (`finalize/grid.rs`, `detector/completion.rs`) — decoded dropped rings join via RANSAC; completion grows from the patch, adopting dropped rings before refitting missing cells
 11. **Final H Refit + Geometric Verify** (`finalize/common.rs`, `pipeline/geometric_verify.rs`)
 
@@ -191,7 +191,7 @@ Key public types (root tier):
 - `DetectionResult`, `DetectedMarker`, `BoardFrame`, `DetectionFrame` — stable results
 - `TargetLayout` + `LatticeGeometry`/`RingGeometry`/`MarkerCoding`/`OriginFiducials` — target geometry (JSON is `ringgrid.target.v6` only: v4/v5 files are rejected with an "unsupported schema" error, convert them by loading with 0.15 and re-saving; the `BoardLayout`/`BoardMarker` types were removed in 0.9). `TARGET_SCHEMA_VERSION` is the one definition of the emitted schema string.
 - `TargetRenderOptions`, `TargetArtifacts`, `PageSpec`/`PageSize`/`PageOrientation`, `TargetGenerationError` — target rendering. `render_target_artifacts` returns all four formats in memory and works without the `std` feature, so every binding shares one contract.
-- `CodebookProfile` — `Base` (893) or `Extended` (2180). Lives on `CodedRingSpec`, i.e. on the **target**: rendering draws from it and `DetectConfig::with_target` derives `advanced.decode.codebook_profile` from it, so a printed target can never be decoded against a different table.
+- `CodebookProfile` — `Base` (893) or `Extended` (2180). Lives on `CodedRingSpec`, i.e. on the **target**: rendering draws from it and decoding matches only the target's own codewords from it (`TargetCodes`), so a printed target can never be decoded against a different table.
 - `CameraModel`, `CameraIntrinsics`, `PixelMapper` — camera/distortion
 - `Ellipse` — conic geometry
 - `Proposal`, `ProposalConfig`, `ProposalResult` — proposal types

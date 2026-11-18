@@ -17,12 +17,11 @@ use super::workspace::{
 fn config_soft_lock_blocks_override(
     marker: &MarkerRecord,
     soft_lock_enable: bool,
-    codebook_min_cyclic_dist: usize,
     candidate_id: usize,
 ) -> bool {
     let current_id = marker.id;
     soft_lock_enable
-        && is_soft_locked_assignment(marker, soft_lock_enable, codebook_min_cyclic_dist)
+        && is_soft_locked_assignment(marker, soft_lock_enable)
         && current_id.is_some()
         && current_id != Some(candidate_id)
 }
@@ -128,7 +127,6 @@ fn run_local_stage(
             if config_soft_lock_blocks_override(
                 &ws.markers[i],
                 ws.config.soft_lock_exact_decode,
-                ws.codebook_min_cyclic_dist,
                 candidate_id,
             ) {
                 continue;
@@ -220,7 +218,6 @@ fn select_topology_candidate(
         if config_soft_lock_blocks_override(
             &ws.markers[marker_index],
             ws.config.soft_lock_exact_decode,
-            ws.codebook_min_cyclic_dist,
             cand_id,
         ) {
             continue;
@@ -380,7 +377,7 @@ mod tests {
             marker_at(exact, 0.4),
             marker_at([exact[0] + 6.0, exact[1]], 0.95),
         ];
-        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+        let mut ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
         ws.anchor_h = Some(h);
 
         let resolved = resolve_batch_id_claims(&ws, vec![(0, claimed_id), (1, claimed_id)]);
@@ -392,7 +389,7 @@ mod tests {
         let board = TargetLayout::default_hex();
         let cfg = IdCorrectionConfig::default();
         let mut markers = vec![marker_at([0.0, 0.0], 0.4), marker_at([10.0, 0.0], 0.9)];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
 
         let resolved = resolve_batch_id_claims(&ws, vec![(0, 7), (1, 7)]);
         assert_eq!(resolved, vec![(1, 7)], "higher confidence wins without H");
@@ -403,7 +400,7 @@ mod tests {
         let board = TargetLayout::default_hex();
         let cfg = IdCorrectionConfig::default();
         let mut markers = vec![marker_at([0.0, 0.0], 0.4), marker_at([10.0, 0.0], 0.9)];
-        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg, 2);
+        let ws = IdCorrectionWorkspace::new(&mut markers, &board, &cfg);
 
         let mut resolved = resolve_batch_id_claims(&ws, vec![(0, 3), (1, 9)]);
         resolved.sort_unstable();

@@ -378,12 +378,10 @@ fn precision_inspect() {
         let (true_id, err) = near.map_or((None, f64::NAN), |c| {
             (c.id, (c.px[0] - m.center[0]).hypot(c.px[1] - m.center[1]))
         });
-        let dec = d.decode.as_ref().map(|x| {
-            format!(
-                "dec {} d{} m{} c{:.2}",
-                x.best_id, x.best_dist, x.margin, x.decode_confidence
-            )
-        });
+        let dec = d
+            .decode
+            .as_ref()
+            .map(|x| format!("dec {} rot {:.2}", x.best_id, x.rotation));
         println!(
             "  id {:?} true {:?} err {err:.2} src {:?} grid {:?} {}",
             m.id,
@@ -994,7 +992,7 @@ fn precision_quality_dump() {
     let path = std::env::var("RINGGRID_QUALITY_CSV").expect("set RINGGRID_QUALITY_CSV");
     let mut boards = Boards::default();
     let mut rows = String::from(
-        "scene,board,group,err,correct,visible,conf,best_dist,margin,gap_outer,gap_inner,\
+        "scene,board,group,err,correct,visible,conf,decoded,gap_outer,gap_inner,\
          inlier_outer,inlier_inner,rms_outer,rms_inner,cover_outer,n_inner,theta_inner,\
          radii_std_rel,h_reproj,border_r,step,blur_px,blur_rel,cnr,shape_res,ratio_dev,\
          shift_rel,a_px,axis_ratio,nbr_ratio\n",
@@ -1046,17 +1044,14 @@ fn precision_quality_dump() {
             let shift = (m.center[0] - e.cx).hypot(m.center[1] - e.cy) / e.a;
             writeln!(
                 rows,
-                "{si},{},{},{err},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{border},{step},\
+                "{si},{},{},{err},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{border},{step},\
                  {blur_px},{},{cnr},{},{},{shift},{},{},{}",
                 truth.board,
                 truth.group,
                 u8::from(ok.contains(&c.coord)),
                 u8::from(c.visible),
                 m.confidence,
-                d.decode
-                    .as_ref()
-                    .map_or(f64::NAN, |x| f64::from(x.best_dist)),
-                d.decode.as_ref().map_or(f64::NAN, |x| f64::from(x.margin)),
+                u8::from(d.decode.is_some()),
                 o(f.max_angular_gap_outer),
                 o(f.max_angular_gap_inner),
                 of(f.ransac_inlier_ratio_outer),

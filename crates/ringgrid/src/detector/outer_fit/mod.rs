@@ -1,7 +1,7 @@
 use image::GrayImage;
 
 use crate::conic::Ellipse;
-use crate::marker::decode::decode_marker_with_diagnostics_and_mapper;
+use crate::marker::decode::{TargetCodes, decode_marker_with_diagnostics_and_mapper};
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig, EdgeSampleResult};
 use crate::ring::inner_estimate::Polarity;
@@ -181,22 +181,24 @@ fn evaluate_hypothesis(
     // Evidence for the decode-confidence scoring slot: the sampled code band
     // for coded targets, photometric ring evidence for plain ones (which have
     // no code band to sample).
-    let (decode_result, evidence_confidence) = if ctx.config.target.is_coded() {
-        let (decode_result, diagnostics) = decode_marker_with_diagnostics_and_mapper(
-            ctx.gray,
-            &outer,
-            &ctx.config.advanced.decode,
-            ctx.mapper,
-        );
-        (decode_result, diagnostics.decode_confidence)
-    } else {
-        let evidence = scoring::plain_ring_evidence(
-            ctx.sampler,
-            &outer,
-            ctx.config.advanced.marker_spec.r_inner_expected,
-        );
-        (None, evidence)
-    };
+    let (decode_result, evidence_confidence) =
+        if let Some(codes) = TargetCodes::of(&ctx.config.target) {
+            let (decode_result, diagnostics) = decode_marker_with_diagnostics_and_mapper(
+                ctx.gray,
+                &outer,
+                &ctx.config.advanced.decode,
+                &codes,
+                ctx.mapper,
+            );
+            (decode_result, diagnostics.decode_confidence)
+        } else {
+            let evidence = scoring::plain_ring_evidence(
+                ctx.sampler,
+                &outer,
+                ctx.config.advanced.marker_spec.r_inner_expected,
+            );
+            (None, evidence)
+        };
 
     let score = scoring::score_outer_candidate(
         &edge,

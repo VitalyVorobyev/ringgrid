@@ -490,12 +490,6 @@ fn read_only_fields_are_overwritten_on_load() {
             json!(0.9),
         ),
         ("DecodeConfig", "decode", "code_band_ratio", json!(0.5)),
-        (
-            "DecodeConfig",
-            "decode",
-            "codebook_profile",
-            json!("extended"),
-        ),
     ];
     let base = DetectConfig::default();
     for (def, section, field, value) in derived {

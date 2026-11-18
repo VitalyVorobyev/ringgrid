@@ -251,12 +251,7 @@ fn phase_id_correction(markers: &mut Vec<MarkerRecord>, config: &DetectConfig) {
     if !id_correction_applies(config) {
         return;
     }
-    let stats = verify_and_correct_ids(
-        markers,
-        &config.target,
-        &config.advanced.id_correction,
-        config.advanced.decode.codebook_profile,
-    );
+    let stats = verify_and_correct_ids(markers, &config.target, &config.advanced.id_correction);
     log_id_correction_summary(&stats);
 }
 

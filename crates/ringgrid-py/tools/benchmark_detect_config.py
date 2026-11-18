@@ -30,14 +30,14 @@ def benchmark_scenarios(
     def get_decode_section() -> ringgrid.DecodeConfig:
         return cfg.decode
 
-    def get_decode_min_confidence() -> float:
-        return cfg.decode_min_confidence
+    def get_homography_inlier_threshold_px() -> float:
+        return cfg.homography_inlier_threshold_px
 
     def get_completion_enable() -> bool:
         return cfg.completion_enable
 
-    def set_decode_min_confidence() -> None:
-        cfg.decode_min_confidence = 0.31 if state_conf[0] else 0.41
+    def set_homography_inlier_threshold_px() -> None:
+        cfg.homography_inlier_threshold_px = 3.1 if state_conf[0] else 4.1
         state_conf[0] = not state_conf[0]
 
     def set_completion_enable() -> None:
@@ -50,9 +50,9 @@ def benchmark_scenarios(
 
     scenarios = [
         ("get_decode_section", get_decode_section, getter_number),
-        ("get_decode_min_confidence", get_decode_min_confidence, getter_number),
+        ("get_homography_inlier_threshold_px", get_homography_inlier_threshold_px, getter_number),
         ("get_completion_enable", get_completion_enable, getter_number),
-        ("set_decode_min_confidence", set_decode_min_confidence, setter_number),
+        ("set_homography_inlier_threshold_px", set_homography_inlier_threshold_px, setter_number),
         ("set_completion_enable", set_completion_enable, setter_number),
         ("set_use_global_filter", set_use_global_filter, setter_number),
     ]

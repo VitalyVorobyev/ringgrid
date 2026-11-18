@@ -44,8 +44,8 @@ pub struct CompletionConfig {
     /// Skip attempts whose projected center lies closer than this distance (pixels) to the image boundary.
     #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub image_margin_px: f32,
-    /// Require a perfect decode (dist=0 and margin ≥ the active profile's
-    /// minimum cyclic Hamming distance) for a completion marker to be accepted.
+    /// Require a decode (an exact match against one of the target's codewords)
+    /// for a completion marker to be accepted.
     ///
     /// When homography prediction accuracy is low (e.g. significant lens distortion
     /// without a calibrated mapper), the H-projected seed can be several pixels off.
@@ -223,16 +223,9 @@ pub struct IdCorrectionConfig {
     pub consistency_min_support_edges: usize,
     /// Maximum allowed fraction (0 to 1) of contradicting neighbor edges in local consistency checks.
     pub consistency_max_contradiction_frac: f32,
-    /// Promote a decoded ID to trusted when its local neighborhood structurally
-    /// confirms it (support edges ≥ `consistency_min_support_edges`, zero
-    /// contradiction edges, and no confident vote against it), even when the
-    /// voting stages produced no candidate. Recovers correct non-exact decodes
-    /// in sparse/partial/blurry views that would otherwise be cleared by
-    /// cleanup. Default: true.
-    pub confirm_by_consistency: bool,
-    /// When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:
-    /// they are not overridden during normal recovery and only cleared on
-    /// strict structural contradiction.
+    /// When enabled, a marker whose ID is its own decode (every decode is an
+    /// exact codeword match) is soft-locked: not overridden during normal
+    /// recovery and only cleared on strict structural contradiction.
     pub soft_lock_exact_decode: bool,
     /// Minimum number of independent neighbor votes required to accept a
     /// candidate ID for a marker that already has an id. Default: 2.
@@ -265,8 +258,10 @@ pub struct IdCorrectionConfig {
     /// When `false` (default), clear their ID (set to `None`) and keep the
     /// detection so its geometry is available for debugging.
     pub remove_unverified: bool,
-    /// Minimum decode confidence (0 to 1) for bootstrapping trusted seeds when no homography is available. Default: 0.7.
-    pub seed_min_decode_confidence: f32,
+    /// Minimum marker confidence (0 to 1) for a weak seed: a marker carrying an
+    /// ID without its own decode (e.g. kept by inner-as-outer recovery).
+    /// Markers with their own decode are always strong seeds. Default: 0.7.
+    pub seed_min_confidence: f32,
 }
 
 impl IdCorrectionConfig {
@@ -290,7 +285,6 @@ impl Default for IdCorrectionConfig {
             consistency_min_neighbors: 1,
             consistency_min_support_edges: 1,
             consistency_max_contradiction_frac: 0.5,
-            confirm_by_consistency: true,
             soft_lock_exact_decode: true,
             min_votes: 2,
             min_votes_recover: 1,
@@ -301,7 +295,7 @@ impl Default for IdCorrectionConfig {
             homography_min_inliers: 12,
             max_iters: 5,
             remove_unverified: false,
-            seed_min_decode_confidence: 0.7,
+            seed_min_confidence: 0.7,
         }
     }
 }
@@ -407,7 +401,7 @@ mod tests {
         assert_eq!(cfg.homography_min_inliers, 12);
         assert_eq!(cfg.max_iters, 5);
         assert!(!cfg.remove_unverified);
-        assert!((cfg.seed_min_decode_confidence - 0.7).abs() < 1e-6);
+        assert!((cfg.seed_min_confidence - 0.7).abs() < 1e-6);
     }
 
     #[test]

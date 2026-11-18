@@ -428,20 +428,6 @@ fn extended_profile_round_trips_through_the_target_spec() {
 }
 
 #[test]
-fn detection_config_follows_the_targets_codebook_profile() {
-    let extended = coded_hex_with_profile(5, 5, CodebookProfile::Extended).expect("valid");
-    let config = ringgrid::DetectConfig::default().with_target(extended);
-    assert_eq!(
-        config.advanced.decode.codebook_profile,
-        CodebookProfile::Extended,
-        "decoding must use the table the target was printed from"
-    );
-
-    let base = ringgrid::DetectConfig::default().with_target(fixture_target());
-    assert_eq!(base.advanced.decode.codebook_profile, CodebookProfile::Base);
-}
-
-#[test]
 fn dxf_is_page_independent() {
     // Documented contract: the DXF is board-frame millimeters for fabrication,
     // so page, margin and scale bar must not reach it. Guarding it here means

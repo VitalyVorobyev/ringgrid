@@ -518,18 +518,6 @@ struct CliDetectArgs {
     #[arg(long)]
     outer_second_peak_min_rel: Option<f32>,
 
-    /// Minimum decode margin for accepted marker IDs.
-    #[arg(long)]
-    decode_min_margin: Option<u8>,
-
-    /// Maximum decode Hamming distance for accepted marker IDs.
-    #[arg(long)]
-    decode_max_dist: Option<u8>,
-
-    /// Minimum decode confidence for accepted marker IDs.
-    #[arg(long)]
-    decode_min_confidence: Option<f32>,
-
     /// Size-term weight in outer-hypothesis scoring.
     #[arg(long)]
     outer_size_score_weight: Option<f32>,
@@ -859,9 +847,6 @@ struct DetectOverrides {
     min_inner_edge_points: Option<usize>,
     outer_min_theta_consistency: Option<f32>,
     outer_second_peak_min_rel: Option<f32>,
-    decode_min_margin: Option<u8>,
-    decode_max_dist: Option<u8>,
-    decode_min_confidence: Option<f32>,
     outer_size_score_weight: Option<f32>,
     id_correct_enable: bool,
     disable_inner_as_outer_recovery: bool,
@@ -920,9 +905,6 @@ impl CliDetectArgs {
             min_inner_edge_points: self.min_inner_edge_points,
             outer_min_theta_consistency: self.outer_min_theta_consistency,
             outer_second_peak_min_rel: self.outer_second_peak_min_rel,
-            decode_min_margin: self.decode_min_margin,
-            decode_max_dist: self.decode_max_dist,
-            decode_min_confidence: self.decode_min_confidence,
             outer_size_score_weight: self.outer_size_score_weight,
             id_correct_enable: self.id_correct,
             disable_inner_as_outer_recovery: self.no_inner_as_outer_recovery,
@@ -1028,17 +1010,6 @@ fn build_detect_config(
         && v.is_finite()
     {
         adv.outer_estimation.second_peak_min_rel = v.clamp(0.0, 1.0);
-    }
-    if let Some(v) = overrides.decode_min_margin {
-        adv.decode.min_decode_margin = v;
-    }
-    if let Some(v) = overrides.decode_max_dist {
-        adv.decode.max_decode_dist = v;
-    }
-    if let Some(v) = overrides.decode_min_confidence
-        && v.is_finite()
-    {
-        adv.decode.min_decode_confidence = v.clamp(0.0, 1.0);
     }
     if let Some(v) = overrides.outer_size_score_weight
         && v.is_finite()
@@ -1837,9 +1808,6 @@ mod tests {
         let overrides = DetectOverrides {
             outer_min_theta_consistency: Some(0.61),
             outer_second_peak_min_rel: Some(0.77),
-            decode_min_margin: Some(2),
-            decode_max_dist: Some(1),
-            decode_min_confidence: Some(0.5),
             outer_size_score_weight: Some(0.33),
             ..DetectOverrides::default()
         };
@@ -1857,9 +1825,6 @@ mod tests {
 
         assert!((cfg.advanced.outer_estimation.min_theta_consistency - 0.61).abs() < 1e-6);
         assert!((cfg.advanced.outer_estimation.second_peak_min_rel - 0.77).abs() < 1e-6);
-        assert_eq!(cfg.advanced.decode.min_decode_margin, 2);
-        assert_eq!(cfg.advanced.decode.max_decode_dist, 1);
-        assert!((cfg.advanced.decode.min_decode_confidence - 0.5).abs() < 1e-6);
         assert!((cfg.advanced.outer_fit.size_score_weight - 0.33).abs() < 1e-6);
     }
 

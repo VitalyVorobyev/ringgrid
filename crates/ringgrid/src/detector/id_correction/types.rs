@@ -8,11 +8,6 @@ pub(super) enum Trust {
     AnchorStrong,
     RecoveredLocal,
     RecoveredHomography,
-    /// Decoded ID kept unchanged but promoted to trusted because the local
-    /// neighborhood structurally confirms it (support edges ≥ 1, no
-    /// contradictions). Recovers correct non-exact decodes in sparse/partial
-    /// views that voting cannot reach.
-    ConfirmedConsistent,
 }
 
 impl Trust {
@@ -40,7 +35,6 @@ mod tests {
             Trust::AnchorStrong,
             Trust::RecoveredLocal,
             Trust::RecoveredHomography,
-            Trust::ConfirmedConsistent,
         ] {
             assert!(t.is_trusted(), "{t:?} should be trusted");
         }
@@ -52,7 +46,6 @@ mod tests {
             Trust::Untrusted,
             Trust::RecoveredLocal,
             Trust::RecoveredHomography,
-            Trust::ConfirmedConsistent,
         ] {
             assert!(!t.is_anchor(), "{t:?} should not be an anchor");
         }
@@ -131,9 +124,6 @@ pub(crate) struct IdCorrectionStats {
     pub n_recovered_local: usize,
     /// IDs recovered by homography fallback stage.
     pub n_recovered_homography: usize,
-    /// Decoded IDs promoted to trusted by the confirm-by-consistency pass
-    /// (correct non-exact decodes the voting stages could not reach).
-    pub n_confirmed_by_consistency: usize,
     /// Remaining IDs that still violate consistency rules after full pipeline.
     pub n_inconsistent_remaining: usize,
 }

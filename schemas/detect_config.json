@@ -22,13 +22,9 @@
           "$ref": "#/$defs/DecodeConfig",
           "default": {
             "code_band_ratio": 0.76,
-            "codebook_profile": "base",
-            "max_decode_dist": 3,
-            "min_decode_confidence": 0.3,
             "min_decode_contrast": 0.03,
-            "min_decode_margin": 1,
             "n_radial_rings": 3,
-            "samples_per_sector": 5,
+            "samples_per_sector": 8,
             "threshold_convergence_eps": 0.0001,
             "threshold_max_iters": 10
           },
@@ -67,7 +63,6 @@
               4.2,
               5.0
             ],
-            "confirm_by_consistency": true,
             "consistency_max_contradiction_frac": 0.5,
             "consistency_min_neighbors": 1,
             "consistency_min_support_edges": 1,
@@ -82,7 +77,7 @@
             "min_votes": 2,
             "min_votes_recover": 1,
             "remove_unverified": false,
-            "seed_min_decode_confidence": 0.7,
+            "seed_min_confidence": 0.7,
             "soft_lock_exact_decode": true
           },
           "description": "Structural ID verification and correction using hex neighborhood\nconsensus; runs only in the decode-anchored fallback (no grid labeled\nand anchored), hex coded targets only."
@@ -291,21 +286,6 @@
         }
       ]
     },
-    "CodebookProfile": {
-      "description": "Explicit embedded codebook profile selector.",
-      "oneOf": [
-        {
-          "const": "base",
-          "description": "Shipped baseline profile with stable IDs `0..892`.",
-          "type": "string"
-        },
-        {
-          "const": "extended",
-          "description": "Additive opt-in profile that appends the remaining valid 16-bit words\nwithout introducing new complement collisions beyond the shipped\nbaseline.",
-          "type": "string"
-        }
-      ]
-    },
     "CompletionConfig": {
       "description": "Configuration for homography-guided completion: attempt local fits for\nmissing IDs at H-projected board locations.",
       "properties": {
@@ -352,7 +332,7 @@
         },
         "require_perfect_decode": {
           "default": false,
-          "description": "Require a perfect decode (dist=0 and margin ≥ the active profile's\nminimum cyclic Hamming distance) for a completion marker to be accepted.\n\nWhen homography prediction accuracy is low (e.g. significant lens distortion\nwithout a calibrated mapper), the H-projected seed can be several pixels off.\nUnder those conditions, the geometry gates alone are insufficient; requiring a\nperfect decode provides an independent quality signal that does not depend on H.\n\nDefault: `false` (backward-compatible). Set to `true` for Scheimpflug / high-\ndistortion setups where no calibrated camera model is available.",
+          "description": "Require a decode (an exact match against one of the target's codewords)\nfor a completion marker to be accepted.\n\nWhen homography prediction accuracy is low (e.g. significant lens distortion\nwithout a calibrated mapper), the H-projected seed can be several pixels off.\nUnder those conditions, the geometry gates alone are insufficient; requiring a\nperfect decode provides an independent quality signal that does not depend on H.\n\nDefault: `false` (backward-compatible). Set to `true` for Scheimpflug / high-\ndistortion setups where no calibrated camera model is available.",
           "type": "boolean"
         },
         "roi_radius_px": {
@@ -374,36 +354,11 @@
           "readOnly": true,
           "type": "number"
         },
-        "codebook_profile": {
-          "$ref": "#/$defs/CodebookProfile",
-          "default": "base",
-          "description": "Embedded codebook profile to match against.\n\n**Derived from the target**, not set by hand: attaching a target with\n`DetectConfig::with_target` copies\nthe profile from its `CodedRingSpec`, so a target printed from one table\nis never decoded against another. Set `codebook_profile` on the target's\ncoding to change it.\n\nDefaults to `CodebookProfile::Base`, which preserves the shipped stable\nIDs `0..892`. `extended` expands the codebook at the cost of a weaker\nminimum cyclic Hamming distance.",
-          "readOnly": true
-        },
-        "max_decode_dist": {
-          "default": 3,
-          "description": "Maximum Hamming distance (bit errors out of 16 sectors) for a valid decode.\nDefault: `3` (see the `Default` impl).",
-          "maximum": 255,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "min_decode_confidence": {
-          "default": 0.3,
-          "description": "Minimum decode confidence (0 to 1) for a valid decode.\nDefault: `0.3` (see the `Default` impl).",
-          "type": "number"
-        },
         "min_decode_contrast": {
           "default": 0.03,
           "description": "Minimum accepted sector-intensity contrast (`max - min`, in normalized 0 to 1 intensity units) before decode; negative values are treated as 0.\nDefault: `0.03` (see the `Default` impl).",
           "minimum": 0.0,
           "type": "number"
-        },
-        "min_decode_margin": {
-          "default": 1,
-          "description": "Minimum Hamming margin (`second_best_dist - best_dist`) for a valid decode.\n\nA margin of 0 means the two closest codewords are equidistant from the\nobserved word — genuinely ambiguous. Default rejects ties (margin = 0).\nFor setups without homography validation (e.g. no camera intrinsics),\nsetting this to the selected profile's minimum cyclic Hamming distance\naccepts only matches that are unambiguous within that profile's distance\nguarantee. For the shipped baseline profile this value is `2`.\n\nDefault: `1` (see the `Default` impl).",
-          "maximum": 255,
-          "minimum": 0,
-          "type": "integer"
         },
         "n_radial_rings": {
           "default": 3,
@@ -412,8 +367,8 @@
           "type": "integer"
         },
         "samples_per_sector": {
-          "default": 5,
-          "description": "Number of angular samples per sector.\nDefault: `5` (see the `Default` impl).",
+          "default": 8,
+          "description": "Angular samples per sector. Also the number of sub-sector phases tried\nwhen aligning the sampling grid with the printed sector boundaries\n(phase step `1 / samples_per_sector` sector). Clamped to `[2, 32]`.\nDefault: `8` (see the `Default` impl).",
           "minimum": 0,
           "type": "integer"
         },
@@ -511,11 +466,6 @@
           },
           "type": "array"
         },
-        "confirm_by_consistency": {
-          "default": true,
-          "description": "Promote a decoded ID to trusted when its local neighborhood structurally\nconfirms it (support edges ≥ `consistency_min_support_edges`, zero\ncontradiction edges, and no confident vote against it), even when the\nvoting stages produced no candidate. Recovers correct non-exact decodes\nin sparse/partial/blurry views that would otherwise be cleared by\ncleanup. Default: true.",
-          "type": "boolean"
-        },
         "consistency_max_contradiction_frac": {
           "default": 0.5,
           "description": "Maximum allowed fraction (0 to 1) of contradicting neighbor edges in local consistency checks.",
@@ -594,14 +544,14 @@
           "description": "When `true`, remove markers that cannot be verified or corrected.\nWhen `false` (default), clear their ID (set to `None`) and keep the\ndetection so its geometry is available for debugging.",
           "type": "boolean"
         },
-        "seed_min_decode_confidence": {
+        "seed_min_confidence": {
           "default": 0.7,
-          "description": "Minimum decode confidence (0 to 1) for bootstrapping trusted seeds when no homography is available. Default: 0.7.",
+          "description": "Minimum marker confidence (0 to 1) for a weak seed: a marker carrying an\nID without its own decode (e.g. kept by inner-as-outer recovery).\nMarkers with their own decode are always strong seeds. Default: 0.7.",
           "type": "number"
         },
         "soft_lock_exact_decode": {
           "default": true,
-          "description": "When enabled, exact decodes (`best_dist=0, margin>=2`) are soft-locked:\nthey are not overridden during normal recovery and only cleared on\nstrict structural contradiction.",
+          "description": "When enabled, a marker whose ID is its own decode (every decode is an\nexact codeword match) is soft-locked: not overridden during normal\nrecovery and only cleared on strict structural contradiction.",
           "type": "boolean"
         }
       },
@@ -1201,13 +1151,9 @@
         },
         "decode": {
           "code_band_ratio": 0.74404764,
-          "codebook_profile": "base",
-          "max_decode_dist": 3,
-          "min_decode_confidence": 0.3,
           "min_decode_contrast": 0.03,
-          "min_decode_margin": 1,
           "n_radial_rings": 3,
-          "samples_per_sector": 5,
+          "samples_per_sector": 8,
           "threshold_convergence_eps": 0.0001,
           "threshold_max_iters": 10
         },
@@ -1229,7 +1175,6 @@
             4.2,
             5.0
           ],
-          "confirm_by_consistency": true,
           "consistency_max_contradiction_frac": 0.5,
           "consistency_min_neighbors": 1,
           "consistency_min_support_edges": 1,
@@ -1244,7 +1189,7 @@
           "min_votes": 2,
           "min_votes_recover": 1,
           "remove_unverified": false,
-          "seed_min_decode_confidence": 0.7,
+          "seed_min_confidence": 0.7,
           "soft_lock_exact_decode": true
         },
         "inner_as_outer_recovery": {

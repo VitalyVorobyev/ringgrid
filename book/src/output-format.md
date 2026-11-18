@@ -179,10 +179,7 @@ the homography RANSAC stats are nested under `diagnostics`. The
         "decode": {
           "observed_word": 45231,
           "best_id": 42,
-          "best_rotation": 3,
-          "best_dist": 0,
-          "margin": 5,
-          "decode_confidence": 0.95
+          "rotation": 3.25
         },
         "source": "fit_decoded"
       }

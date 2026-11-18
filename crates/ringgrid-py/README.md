@@ -251,17 +251,16 @@ cfg = ringgrid.DetectConfig(target)
 
 # Section properties return copies: mutate, then reassign.
 decode = cfg.decode
-decode.codebook_profile = "extended"
-decode.min_decode_margin = 2
+decode.min_decode_contrast = 0.02
 cfg.decode = decode
 
 # Or use convenience aliases for common one-field tweaks.
 cfg.completion_enable = False
-cfg.decode_min_confidence = 0.4
+cfg.homography_inlier_threshold_px = 4.0
 
 snapshot = cfg.to_dict()
 # Stage tuning nests under "advanced" in the wire view.
-print(snapshot["advanced"]["decode"]["codebook_profile"])  # "extended"
+print(snapshot["advanced"]["decode"]["min_decode_contrast"])  # 0.02
 ```
 
 How Python `DetectConfig` behaves:
@@ -276,7 +275,7 @@ How Python `DetectConfig` behaves:
 - Section getters such as `cfg.decode`, `cfg.inner_fit`, and `cfg.self_undistort`
   stay flat on the Python `DetectConfig` object — they return copies. Reassign
   the section after editing it, or use a convenience alias such as
-  `cfg.decode_min_margin = 2`. (The flat Python accessors map onto the nested
+  `cfg.completion_enable = False`. (The flat Python accessors map onto the nested
   `advanced` wire fields automatically.)
 - `cfg.marker_scale` defaults to `14-66` px outer diameter and re-derives the
   scale-coupled search windows when you replace it.
@@ -342,9 +341,6 @@ Deeper theory and Rust-side derivation details:
 | `cfg.self_undistort_enable` | `cfg.self_undistort.enable` | Quick toggle for division-model self-undistort inside `detect()` |
 | `cfg.inner_fit_required` | `cfg.inner_fit.require_inner_fit` | Promote missing inner fits from soft penalty to hard reject |
 | `cfg.homography_inlier_threshold_px` | `cfg.ransac_homography.inlier_threshold` | Tighten or loosen global homography inlier gating |
-| `cfg.decode_min_margin` | `cfg.decode.min_decode_margin` | Reject ambiguous decodes more aggressively |
-| `cfg.decode_max_dist` | `cfg.decode.max_decode_dist` | Limit how many bit errors a decode may contain |
-| `cfg.decode_min_confidence` | `cfg.decode.min_decode_confidence` | Raise or lower overall decode strictness without rebuilding the section |
 
 ### `marker_scale`
 
@@ -464,26 +460,23 @@ confidence. Nested `ransac` is a `ringgrid.RansacFitConfig`.
 
 ### `decode`
 
-Controls code-band sampling and codebook matching.
+Controls code-band sampling. The sampled word is accepted only as an exact
+match (in any rotation) of one of the target's own codewords; the codebook
+profile is the target's (`TargetLayout` coding), not a detection setting.
 
 | Field | Default | Practical notes |
 |---|---|---|
-| `codebook_profile` | `"base"` | String selector: `"base"` keeps the stable shipped IDs `0..892`; `"extended"` opts into the additive larger profile. |
 | `code_band_ratio` | derived -> `0.74404764` | Sampling radius inside the outer ellipse. Derived from board geometry and usually not tuned directly. |
-| `samples_per_sector` | `5` | Angular intensity samples per bit sector. Raise for blur, lower only for aggressive speed tradeoffs. |
+| `samples_per_sector` | `8` | Angular samples per sector, also the number of sub-sector phases tried when aligning the sampling grid with the printed sectors. |
 | `n_radial_rings` | `3` | Radial samples across the code band. More rings improve robustness on soft edges. |
-| `max_decode_dist` | `3` | Maximum Hamming distance accepted. Lower it to reject noisy decodes more aggressively. |
-| `min_decode_confidence` | `0.3` | Overall decode-confidence floor. Raise this first when you want stricter decoding. |
-| `min_decode_margin` | `1` | Rejects ambiguous ties by default. Raising it is a strong way to prefer only very clear decodes. |
 | `min_decode_contrast` | `0.03` | Minimum sampled code-band contrast before decoding. Lower only for low-contrast images. |
 | `threshold_max_iters` | `10` | Iteration cap for the internal 2-means threshold refinement. |
 | `threshold_convergence_eps` | `0.0001` | Convergence epsilon for that refinement loop. |
 
 Typical decode tuning:
 
-- Too many ambiguous IDs: raise `cfg.decode_min_margin` or lower `cfg.decode_max_dist`.
 - Good geometry but noisy contrast: lower `min_decode_contrast` slightly before widening geometry gates.
-- Need IDs beyond the stable shipped set: set `codebook_profile` to `"extended"` explicitly.
+- Need IDs beyond the stable shipped set: build the target with the `"extended"` codebook profile.
 
 ### `seed_proposals`
 
@@ -592,7 +585,7 @@ lattice structure.
 | `homography_min_inliers` | `12` | Minimum inliers required for the fallback homography. |
 | `max_iters` | `5` | Maximum iterative correction passes. |
 | `remove_unverified` | `False` | Default keeps the detection but clears the ID. Set to `True` to drop unverifiable markers entirely. |
-| `seed_min_decode_confidence` | `0.7` | Minimum decode confidence used when bootstrapping trusted seeds without a homography. |
+| `seed_min_confidence` | `0.7` | Minimum marker confidence for a weak seed: a marker carrying an ID without its own decode. Markers with their own decode are always strong seeds. |
 
 ### `inner_as_outer_recovery`
 
@@ -613,7 +606,6 @@ inner ring.
 Typical tuning sequence:
 
 - Known scale: tighten `cfg.marker_scale` before touching low-level proposal thresholds.
-- Too many weak IDs: raise `cfg.decode_min_confidence` or `cfg.decode_min_margin`.
 - Good local fits but unstable global cleanup: tighten `cfg.homography_inlier_threshold_px`.
 - Distorted scenes without calibration: try `cfg.self_undistort_enable = True`.
 - Want direct detections only: set `cfg.completion_enable = False`.

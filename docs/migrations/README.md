@@ -10,6 +10,8 @@ changes are documented here per release.
   positions, target schema v6.
 - [0.15 → 0.16](0.15-to-0.16.md) — v4/v5 target JSON is no longer loaded; dead and
   research-only items removed; confidence, `min_confidence` and fail-closed output.
+- [0.16 → 0.17](0.16-to-0.17.md) — exact decoding against the target's codewords:
+  decode gates, `codebook_profile` and the distance fields of `DecodeMetrics` removed.
 
 Legacy v4 and v5 `board_spec.json` / `target_spec.json` files auto-migrated to
 the v6 schema through 0.15. From 0.16 only `ringgrid.target.v6` loads; convert

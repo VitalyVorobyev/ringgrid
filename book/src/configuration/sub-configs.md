@@ -58,7 +58,7 @@ Controls structural ID verification/recovery that runs in finalize after project
 | `homography_min_inliers` | `usize` | `12` | Minimum inliers for fallback homography acceptance. |
 | `max_iters` | `usize` | `5` | Max local iterative passes per local-stage multiplier. |
 | `remove_unverified` | `bool` | `false` | Remove unresolved markers instead of clearing their IDs. |
-| `seed_min_decode_confidence` | `f32` | `0.7` | Confidence threshold for weak anchor bootstrap. |
+| `seed_min_confidence` | `f32` | `0.7` | Minimum marker confidence for a weak seed (an ID without its own decode). |
 
 **Source:** `crates/ringgrid/src/detector/config/`, `crates/ringgrid/src/detector/id_correction/`
 

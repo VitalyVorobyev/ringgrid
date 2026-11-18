@@ -48,11 +48,8 @@
       }
     },
     "decode": {
-      "max_decode_dist": 3,
-      "min_decode_margin": 1,
-      "min_decode_confidence": 0.3,
       "min_decode_contrast": 0.03,
-      "samples_per_sector": 5,
+      "samples_per_sector": 8,
       "n_radial_rings": 3,
       "threshold_max_iters": 10,
       "threshold_convergence_eps": 0.0001
@@ -89,7 +86,7 @@
       "homography_min_inliers": 12,
       "max_iters": 5,
       "remove_unverified": false,
-      "seed_min_decode_confidence": 0.7
+      "seed_min_confidence": 0.7
     }
   }
 }

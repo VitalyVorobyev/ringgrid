@@ -105,7 +105,7 @@ knobs are reached through the `advanced` sub-config.
 | `advanced.proposal` | `ProposalConfig` | (derived from scale) | Scharr gradient voting and NMS proposal generation. `r_min`, `r_max`, `nms_radius` are auto-derived. |
 | `advanced.seed_proposals` | `SeedProposalConfig` | max=512 | Controls seed injection for multi-pass detection. |
 | `advanced.edge_sample` | `EdgeSampleConfig` | (derived from scale) | Radial edge sampling range and ray count. `r_min`, `r_max` are auto-derived. |
-| `advanced.decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry; `codebook_profile` defaults to `base`. |
+| `advanced.decode` | `DecodeConfig` | (derived from board) | 16-sector code sampling. `code_band_ratio` is auto-derived from board geometry; the codebook profile is the target's. |
 | `advanced.marker_spec` | `MarkerSpecConfig` | (derived from board) | Marker geometry specification. `r_inner_expected` is auto-derived from board inner/outer radius ratio. |
 | `advanced.inner_fit` | `InnerFitConfig` | (see sub-configs) | Robust inner ellipse fitting: RANSAC params, validation gates. |
 | `advanced.outer_fit` | `OuterFitConfig` | (see sub-configs) | Robust outer ellipse fitting: RANSAC params, scoring weights. |

@@ -921,34 +921,30 @@ class Ellipse:
 
 @dataclass(slots=True)
 class DecodeMetrics:
-    """Decode confidence and codeword matching details."""
+    """The decoded codeword: an exact match against one of the target's codewords.
+
+    ``rotation`` is the printed code's rotation in sectors (``[0, 16)``,
+    continuous): printed sector ``j`` starts at parametric angle
+    ``(j + rotation) * 2π/16`` on the fitted outer ellipse.
+    """
 
     observed_word: int
     best_id: int
-    best_rotation: int
-    best_dist: int
-    margin: int
-    decode_confidence: float
+    rotation: float
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DecodeMetrics":
         return cls(
             observed_word=int(data["observed_word"]),
             best_id=int(data["best_id"]),
-            best_rotation=int(data["best_rotation"]),
-            best_dist=int(data["best_dist"]),
-            margin=int(data["margin"]),
-            decode_confidence=float(data["decode_confidence"]),
+            rotation=float(data["rotation"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "observed_word": int(self.observed_word),
             "best_id": int(self.best_id),
-            "best_rotation": int(self.best_rotation),
-            "best_dist": int(self.best_dist),
-            "margin": int(self.margin),
-            "decode_confidence": float(self.decode_confidence),
+            "rotation": float(self.rotation),
         }
 
 
@@ -1759,13 +1755,9 @@ class EdgeSampleConfig:
 
 @dataclass(slots=True)
 class DecodeConfig:
-    codebook_profile: str = "base"
     code_band_ratio: float = 0.74404764
-    samples_per_sector: int = 5
+    samples_per_sector: int = 8
     n_radial_rings: int = 3
-    max_decode_dist: int = 3
-    min_decode_confidence: float = 0.3
-    min_decode_margin: int = 1
     min_decode_contrast: float = 0.03
     threshold_max_iters: int = 10
     threshold_convergence_eps: float = 0.0001
@@ -1774,13 +1766,9 @@ class DecodeConfig:
     def from_dict(cls, data: Mapping[str, Any]) -> "DecodeConfig":
         data = _require_mapping(data, name="data")
         return cls(
-            codebook_profile=str(data.get("codebook_profile", "base")),
             code_band_ratio=float(data["code_band_ratio"]),
             samples_per_sector=int(data["samples_per_sector"]),
             n_radial_rings=int(data["n_radial_rings"]),
-            max_decode_dist=int(data["max_decode_dist"]),
-            min_decode_confidence=float(data["min_decode_confidence"]),
-            min_decode_margin=int(data["min_decode_margin"]),
             min_decode_contrast=float(data["min_decode_contrast"]),
             threshold_max_iters=int(data["threshold_max_iters"]),
             threshold_convergence_eps=float(data["threshold_convergence_eps"]),
@@ -1788,13 +1776,9 @@ class DecodeConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "codebook_profile": str(self.codebook_profile),
             "code_band_ratio": float(self.code_band_ratio),
             "samples_per_sector": int(self.samples_per_sector),
             "n_radial_rings": int(self.n_radial_rings),
-            "max_decode_dist": int(self.max_decode_dist),
-            "min_decode_confidence": float(self.min_decode_confidence),
-            "min_decode_margin": int(self.min_decode_margin),
             "min_decode_contrast": float(self.min_decode_contrast),
             "threshold_max_iters": int(self.threshold_max_iters),
             "threshold_convergence_eps": float(self.threshold_convergence_eps),
@@ -1979,7 +1963,7 @@ class IdCorrectionConfig:
     homography_min_inliers: int = 12
     max_iters: int = 5
     remove_unverified: bool = False
-    seed_min_decode_confidence: float = 0.7
+    seed_min_confidence: float = 0.7
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "IdCorrectionConfig":
@@ -2001,7 +1985,7 @@ class IdCorrectionConfig:
             homography_min_inliers=int(data["homography_min_inliers"]),
             max_iters=int(data["max_iters"]),
             remove_unverified=bool(data["remove_unverified"]),
-            seed_min_decode_confidence=float(data["seed_min_decode_confidence"]),
+            seed_min_confidence=float(data["seed_min_confidence"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -2022,7 +2006,7 @@ class IdCorrectionConfig:
             "homography_min_inliers": int(self.homography_min_inliers),
             "max_iters": int(self.max_iters),
             "remove_unverified": bool(self.remove_unverified),
-            "seed_min_decode_confidence": float(self.seed_min_decode_confidence),
+            "seed_min_confidence": float(self.seed_min_confidence),
         }
 
 
@@ -2471,39 +2455,6 @@ class DetectConfig:
         parsed = bool(value)
         section.enable = parsed
         self._apply_section_field_overlay("self_undistort", section, "enable", parsed)
-
-    @property
-    def decode_min_margin(self) -> int:
-        return int(self.decode.min_decode_margin)
-
-    @decode_min_margin.setter
-    def decode_min_margin(self, value: int) -> None:
-        section = self.decode
-        parsed = int(value)
-        section.min_decode_margin = parsed
-        self._apply_section_field_overlay("decode", section, "min_decode_margin", parsed)
-
-    @property
-    def decode_max_dist(self) -> int:
-        return int(self.decode.max_decode_dist)
-
-    @decode_max_dist.setter
-    def decode_max_dist(self, value: int) -> None:
-        section = self.decode
-        parsed = int(value)
-        section.max_decode_dist = parsed
-        self._apply_section_field_overlay("decode", section, "max_decode_dist", parsed)
-
-    @property
-    def decode_min_confidence(self) -> float:
-        return float(self.decode.min_decode_confidence)
-
-    @decode_min_confidence.setter
-    def decode_min_confidence(self, value: float) -> None:
-        section = self.decode
-        parsed = float(value)
-        section.min_decode_confidence = parsed
-        self._apply_section_field_overlay("decode", section, "min_decode_confidence", parsed)
 
 
 class Detector:

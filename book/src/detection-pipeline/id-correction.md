@@ -28,8 +28,8 @@ Frame semantics:
 ## Trust Model and Soft Lock
 
 Markers are bootstrapped into trust classes:
-- `AnchorStrong`: exact decodes (`best_dist=0`, sufficient margin)
-- `AnchorWeak`: valid decoded IDs with enough decode confidence
+- `AnchorStrong`: markers whose ID is their own decode (every decode is an exact codeword match)
+- `AnchorWeak`: markers carrying an ID without their own decode, with marker confidence at least `seed_min_confidence`
 - recovered markers: assigned later by local/homography recovery
 
 Soft-lock policy (`soft_lock_exact_decode=true`):

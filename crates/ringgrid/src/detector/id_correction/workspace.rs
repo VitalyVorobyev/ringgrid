@@ -16,7 +16,6 @@ pub(super) struct IdCorrectionWorkspace<'a> {
     pub(super) stats: IdCorrectionStats,
     pub(super) config: &'a IdCorrectionConfig,
     pub(super) anchor_h: Option<nalgebra::Matrix3<f64>>,
-    pub(super) codebook_min_cyclic_dist: usize,
 }
 
 impl<'a> IdCorrectionWorkspace<'a> {
@@ -24,7 +23,6 @@ impl<'a> IdCorrectionWorkspace<'a> {
         markers: &'a mut Vec<MarkerRecord>,
         target: &TargetLayout,
         config: &'a IdCorrectionConfig,
-        codebook_min_cyclic_dist: usize,
     ) -> Self {
         let board_index = BoardIndex::build(target);
         let outer_radii_px = compute_outer_radii_px(markers);
@@ -39,7 +37,6 @@ impl<'a> IdCorrectionWorkspace<'a> {
             stats: IdCorrectionStats::default(),
             config,
             anchor_h: None,
-            codebook_min_cyclic_dist,
         }
     }
 
@@ -68,29 +65,22 @@ fn marker_outer_radius_px(marker: &MarkerRecord) -> Option<f64> {
         .filter(|r| r.is_finite() && *r > 0.0)
 }
 
+/// Whether the marker carries its own decode. Decodes are exact matches
+/// against the target's codewords, so every decode is an exact one.
 #[inline]
-pub(super) fn is_exact_decode(marker: &MarkerRecord, codebook_min_cyclic_dist: usize) -> bool {
-    marker
-        .decode
-        .as_ref()
-        .is_some_and(|d| d.best_dist == 0 && usize::from(d.margin) >= codebook_min_cyclic_dist)
+pub(super) fn is_exact_decode(marker: &MarkerRecord) -> bool {
+    marker.decode.is_some()
 }
 
 #[inline]
-pub(super) fn is_soft_locked_assignment(
-    marker: &MarkerRecord,
-    soft_lock_enable: bool,
-    codebook_min_cyclic_dist: usize,
-) -> bool {
+pub(super) fn is_soft_locked_assignment(marker: &MarkerRecord, soft_lock_enable: bool) -> bool {
     if !soft_lock_enable {
         return false;
     }
     let Some(id) = marker.id else {
         return false;
     };
-    marker.decode.as_ref().is_some_and(|d| {
-        d.best_dist == 0 && usize::from(d.margin) >= codebook_min_cyclic_dist && d.best_id == id
-    })
+    marker.decode.as_ref().is_some_and(|d| d.best_id == id)
 }
 
 fn compute_outer_radii_px(markers: &[MarkerRecord]) -> Vec<f64> {
@@ -178,18 +168,13 @@ pub(super) fn clear_marker_id(
     trust: &mut [Trust],
     stats: &mut IdCorrectionStats,
     soft_lock_enable: bool,
-    codebook_min_cyclic_dist: usize,
     stage: ScrubStage,
 ) -> bool {
     if markers[marker_index].id.is_none() {
         trust[marker_index] = Trust::Untrusted;
         return false;
     }
-    let was_soft_locked = is_soft_locked_assignment(
-        &markers[marker_index],
-        soft_lock_enable,
-        codebook_min_cyclic_dist,
-    );
+    let was_soft_locked = is_soft_locked_assignment(&markers[marker_index], soft_lock_enable);
     markers[marker_index].id = None;
     trust[marker_index] = Trust::Untrusted;
     stats.n_ids_cleared += 1;
@@ -209,14 +194,11 @@ mod tests {
     use crate::conic::Ellipse;
     use crate::marker::decode::DecodeMetrics;
 
-    fn decode(best_id: usize, best_dist: u8, margin: u8) -> DecodeMetrics {
+    fn decode(best_id: usize) -> DecodeMetrics {
         DecodeMetrics {
             observed_word: 0,
             best_id,
-            best_rotation: 0,
-            best_dist,
-            margin,
-            decode_confidence: 1.0,
+            rotation: 0.0,
         }
     }
 
@@ -247,59 +229,41 @@ mod tests {
     }
 
     #[test]
-    fn is_exact_decode_requires_zero_dist_and_sufficient_margin() {
-        let min_cyclic = 2usize;
-        let exact = MarkerRecord {
-            decode: Some(decode(7, 0, 2)),
+    fn is_exact_decode_requires_an_own_decode() {
+        let decoded = MarkerRecord {
+            decode: Some(decode(7)),
             ..MarkerRecord::default()
         };
-        assert!(is_exact_decode(&exact, min_cyclic));
-
-        // dist > 0 is never exact.
-        let noisy = MarkerRecord {
-            decode: Some(decode(7, 1, 5)),
-            ..MarkerRecord::default()
-        };
-        assert!(!is_exact_decode(&noisy, min_cyclic));
-
-        // Margin below the codebook minimum cyclic distance fails.
-        let low_margin = MarkerRecord {
-            decode: Some(decode(7, 0, 1)),
-            ..MarkerRecord::default()
-        };
-        assert!(!is_exact_decode(&low_margin, min_cyclic));
-
-        // No decode → not exact.
-        assert!(!is_exact_decode(&MarkerRecord::default(), min_cyclic));
+        assert!(is_exact_decode(&decoded));
+        assert!(!is_exact_decode(&MarkerRecord::default()));
     }
 
     #[test]
-    fn is_soft_locked_requires_enable_and_matching_exact_decode() {
-        let min_cyclic = 2usize;
+    fn is_soft_locked_requires_enable_and_matching_decode() {
         let locked = MarkerRecord {
             id: Some(7),
-            decode: Some(decode(7, 0, 2)),
+            decode: Some(decode(7)),
             ..MarkerRecord::default()
         };
-        assert!(is_soft_locked_assignment(&locked, true, min_cyclic));
+        assert!(is_soft_locked_assignment(&locked, true));
         // Disabled globally → never locked.
-        assert!(!is_soft_locked_assignment(&locked, false, min_cyclic));
+        assert!(!is_soft_locked_assignment(&locked, false));
 
         // Decoded best_id must match the currently-assigned id.
         let mismatched = MarkerRecord {
             id: Some(9),
-            decode: Some(decode(7, 0, 2)),
+            decode: Some(decode(7)),
             ..MarkerRecord::default()
         };
-        assert!(!is_soft_locked_assignment(&mismatched, true, min_cyclic));
+        assert!(!is_soft_locked_assignment(&mismatched, true));
 
         // No id → cannot be soft-locked.
         let no_id = MarkerRecord {
             id: None,
-            decode: Some(decode(7, 0, 2)),
+            decode: Some(decode(7)),
             ..MarkerRecord::default()
         };
-        assert!(!is_soft_locked_assignment(&no_id, true, min_cyclic));
+        assert!(!is_soft_locked_assignment(&no_id, true));
     }
 
     #[test]
@@ -453,11 +417,10 @@ mod tests {
 
     #[test]
     fn clear_marker_id_tracks_stage_and_soft_lock() {
-        let min_cyclic = 2usize;
-        // A soft-locked exact decode cleared in the Post stage.
+        // A soft-locked decode cleared in the Post stage.
         let mut markers = vec![MarkerRecord {
             id: Some(7),
-            decode: Some(decode(7, 0, 2)),
+            decode: Some(decode(7)),
             ..MarkerRecord::default()
         }];
         let mut trust = vec![Trust::AnchorStrong];
@@ -468,7 +431,6 @@ mod tests {
             &mut trust,
             &mut stats,
             true,
-            min_cyclic,
             ScrubStage::Post,
         );
         assert!(cleared);
@@ -489,7 +451,6 @@ mod tests {
             &mut none_trust,
             &mut none_stats,
             true,
-            min_cyclic,
             ScrubStage::Pre,
         );
         assert!(!cleared);

@@ -371,6 +371,10 @@ pub(crate) fn fit_support_score(
 const COVERAGE_GAP_SCALE_RAD: f64 = std::f64::consts::FRAC_PI_4;
 /// Outer edge width (px) at which the sharpness factor is one half.
 const EDGE_WIDTH_SCALE_PX: f32 = 3.0;
+/// For a photometric centre, the half-sharpness edge width grows with the
+/// ring beyond a 16 px outer radius (in outer radii): the same 3 px at 16 px,
+/// 8.4 px at 45 px (see [`confidence_of_photometric_centre`]).
+const PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII: f32 = 3.0 / 16.0;
 /// Distance to the image border (outer radii) below which the border factor
 /// falls linearly to zero.
 const BORDER_SCALE_RADII: f32 = 2.0;
@@ -387,7 +391,9 @@ const BORDER_SCALE_RADII: f32 = 2.0;
 ///   the inner ring's radius, times `miss_confidence_factor` when no inner
 ///   ellipse was fitted;
 /// - **sharpness** — `1/(1 + (w / 3 px)²)`, `w` the outer edge width
-///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable);
+///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable); measured
+///   against the ring's size once a photometric fit has replaced the centre
+///   ([`confidence_of_photometric_centre`]);
 /// - **border** — `min(1, d / 2)`, `d` the centre's distance to the image
 ///   border in outer radii.
 ///
@@ -427,11 +433,39 @@ pub(crate) fn compute_marker_confidence(
     } else {
         agreement * inner_fit_config.miss_confidence_factor
     };
-    let sharpness = fit_metrics
-        .outer_edge_width_px
-        .map_or(0.0, |w| 1.0 / (1.0 + (w / EDGE_WIDTH_SCALE_PX).powi(2)));
+    let sharpness = sharpness_factor(fit_metrics.outer_edge_width_px, EDGE_WIDTH_SCALE_PX);
     let border = (border_radii / BORDER_SCALE_RADII).min(1.0);
     (evidence * inlier * rms * coverage * inner * sharpness * border).clamp(0.0, 1.0)
+}
+
+/// `1/(1 + (w / scale)²)` for an outer edge width `w`; 0 when unmeasurable.
+fn sharpness_factor(edge_width_px: Option<f32>, scale_px: f32) -> f32 {
+    edge_width_px.map_or(0.0, |w| 1.0 / (1.0 + (w / scale_px).powi(2)))
+}
+
+/// The confidence of a marker whose centre the photometric fit just
+/// replaced: [`compute_marker_confidence`] with the sharpness factor measured
+/// against the ring's size, `s = max(3 px, 0.1875 r)` (`r` the outer
+/// ellipse's mean semi-axis), instead of the absolute 3 px.
+///
+/// The absolute scale predicts the error of an edge-fitted centre under blur
+/// (precision harness: ROC AUC for centre errors beyond 1 px drops from 0.90
+/// to 0.84 when edge-fitted centres are judged ring-relative). The
+/// photometric fit models the blur (its PSF width is a fit parameter), so
+/// what remains is blur relative to the ring the fit integrates over: over
+/// the harness in photometric mode, ring-relative sharpness reports 360 more
+/// centres, none off by more than 1 px. Rings up to 32 px across are
+/// unaffected.
+pub(crate) fn confidence_of_photometric_centre(marker: &MarkerRecord) -> f32 {
+    let w = marker.fit.outer_edge_width_px;
+    let absolute = sharpness_factor(w, EDGE_WIDTH_SCALE_PX);
+    let Some(outer) = marker.ellipse_outer.filter(|_| absolute > 0.0) else {
+        return marker.confidence;
+    };
+    let scale =
+        EDGE_WIDTH_SCALE_PX.max(PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII * outer.mean_axis() as f32);
+    let relative = sharpness_factor(w, scale);
+    (marker.confidence / absolute * relative).clamp(0.0, 1.0)
 }
 
 /// Turn an accepted outer-fit candidate into a marker: fit the inner ring from

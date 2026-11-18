@@ -1,3 +1,4 @@
+use crate::conic::Ellipse;
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleConfig};
 use crate::ring::inner_estimate::Polarity;
 
@@ -100,23 +101,123 @@ pub(super) fn collect_outer_edge_points_near_radius(
     edge_cfg: &EdgeSampleConfig,
     refine_halfwidth_px: f32,
 ) -> (Vec<[f64; 2]>, Vec<f32>) {
-    let n_t = edge_cfg.n_rays.max(8);
-    let r0 = hyp.r_outer_px;
+    let collect = |ray_r0: &dyn Fn(f32) -> f32| {
+        collect_outer_edge_points(
+            sampler,
+            center_prior,
+            |theta| Some(ray_r0(theta)),
+            Some(r_expected),
+            pol,
+            edge_cfg,
+            refine_halfwidth_px,
+        )
+    };
+    let r_star = hyp.r_outer_px;
+    let Some(model) = hyp.radius_model else {
+        return collect(&|_| r_star);
+    };
+    // Eccentric markers: recenter each ray's local search on the
+    // eccentricity model, so the narrow refine window tracks the elliptical
+    // edge instead of losing the rays near the major/minor axes. Anchored at
+    // the aggregated peak `r_star` (the model's differential offset added) or
+    // at the model's own mean radius `c0`: the two agree on a mildly
+    // eccentric ring, but the attach gate lets them differ by up to a quarter
+    // search window, and which one sits on the edge depends on the ring (the
+    // aggregate of a strongly eccentric ring smears over its radius range).
+    // When they differ by more than the window, both are sampled and the
+    // centring that finds more edge points seeds the fit.
+    let anchored = collect(&|theta| r_star + (model.radius_at(theta) - model.c0));
+    if (r_star - model.c0).abs() <= refine_halfwidth_px {
+        return anchored;
+    }
+    let own = collect(&|theta| model.radius_at(theta));
+    if own.0.len() > anchored.0.len() {
+        own
+    } else {
+        anchored
+    }
+}
 
+/// Re-sample the outer edge along every ray at the radius where the ray
+/// meets a fitted `ellipse` — the exact ring model, where the hypothesis's
+/// second-harmonic radius model is only a first-order one (its error grows
+/// past the refine window for axis ratios below ~0.7, and a sharp edge then
+/// falls outside the window on most rays). Points keep the same per-ray gate
+/// against the scale prior's expected radius as the hypothesis pass.
+pub(super) fn collect_outer_edge_points_near_ellipse(
+    sampler: DistortionAwareSampler<'_>,
+    center_prior: [f32; 2],
+    ellipse: &Ellipse,
+    r_expected: f32,
+    pol: Polarity,
+    edge_cfg: &EdgeSampleConfig,
+    refine_halfwidth_px: f32,
+) -> (Vec<[f64; 2]>, Vec<f32>) {
+    let ray_r0 = |theta: f32| ray_ellipse_radius(ellipse, center_prior, [theta.cos(), theta.sin()]);
+    collect_outer_edge_points(
+        sampler,
+        center_prior,
+        ray_r0,
+        Some(r_expected),
+        pol,
+        edge_cfg,
+        refine_halfwidth_px,
+    )
+}
+
+/// Distance from `origin` along the unit direction `dir` to the boundary of
+/// `ellipse`, or `None` when the ray misses it.
+pub(super) fn ray_ellipse_radius(
+    ellipse: &Ellipse,
+    origin: [f32; 2],
+    dir: [f32; 2],
+) -> Option<f32> {
+    let (s, c) = ellipse.angle.sin_cos();
+    let ox = f64::from(origin[0]) - ellipse.cx;
+    let oy = f64::from(origin[1]) - ellipse.cy;
+    let (dx, dy) = (f64::from(dir[0]), f64::from(dir[1]));
+    // Origin and direction in the ellipse's axis frame, scaled to the unit circle.
+    let (qx, qy) = (
+        (c * ox + s * oy) / ellipse.a,
+        (-s * ox + c * oy) / ellipse.b,
+    );
+    let (ux, uy) = (
+        (c * dx + s * dy) / ellipse.a,
+        (-s * dx + c * dy) / ellipse.b,
+    );
+    let qa = ux * ux + uy * uy;
+    let qb = 2.0 * (qx * ux + qy * uy);
+    let qc = qx * qx + qy * qy - 1.0;
+    let disc = qb * qb - 4.0 * qa * qc;
+    if qa <= 0.0 || disc < 0.0 {
+        return None;
+    }
+    let r = (-qb + disc.sqrt()) / (2.0 * qa);
+    (r.is_finite() && r > 0.0).then_some(r as f32)
+}
+
+/// Outer edge points on `edge_cfg.n_rays` rays from `center_prior`, each
+/// searched within `refine_halfwidth_px` of `ray_r0(theta)` and, when
+/// `r_expected` is given, kept only within `MAX_EXPECTED_RADIUS_DEVIATION_FRAC`
+/// of it.
+fn collect_outer_edge_points(
+    sampler: DistortionAwareSampler<'_>,
+    center_prior: [f32; 2],
+    ray_r0: impl Fn(f32) -> Option<f32>,
+    r_expected: Option<f32>,
+    pol: Polarity,
+    edge_cfg: &EdgeSampleConfig,
+    refine_halfwidth_px: f32,
+) -> (Vec<[f64; 2]>, Vec<f32>) {
+    let n_t = edge_cfg.n_rays.max(8);
     let mut outer_points = Vec::with_capacity(n_t);
     let mut outer_radii = Vec::with_capacity(n_t);
 
     for ti in 0..n_t {
         let theta = ti as f32 * 2.0 * std::f32::consts::PI / n_t as f32;
         let ray_dir = [theta.cos(), theta.sin()];
-
-        // Eccentric markers: recenter this ray's local search on the
-        // hypothesis radius plus the model's differential radius offset, so
-        // the narrow refine window tracks the elliptical edge instead of
-        // losing the rays near the major/minor axes.
-        let ray_r0 = match &hyp.radius_model {
-            Some(model) => r0 + (model.radius_at(theta) - model.c0),
-            None => r0,
+        let Some(ray_r0) = ray_r0(theta) else {
+            continue;
         };
 
         let Some(r) = pick_best_radius_on_ray(
@@ -131,7 +232,9 @@ pub(super) fn collect_outer_edge_points_near_radius(
             continue;
         };
 
-        if (r - r_expected).abs() > r_expected.max(1.0) * MAX_EXPECTED_RADIUS_DEVIATION_FRAC {
+        if r_expected
+            .is_some_and(|re| (r - re).abs() > re.max(1.0) * MAX_EXPECTED_RADIUS_DEVIATION_FRAC)
+        {
             continue;
         }
 

@@ -145,6 +145,101 @@ struct OuterFitEvalContext<'a> {
     mapper: Option<&'a dyn PixelMapper>,
 }
 
+/// Ellipse-exact resampling rounds after the hypothesis-model pass.
+const MAX_ELLIPSE_RESAMPLE_ROUNDS: usize = 2;
+
+fn edge_result(
+    ctx: &OuterFitEvalContext<'_>,
+    outer_points: Vec<[f64; 2]>,
+    outer_radii: Vec<f32>,
+) -> EdgeSampleResult {
+    // The outer edge sampler only records rays where an outer edge is found.
+    EdgeSampleResult {
+        n_good_rays: outer_points.len(),
+        outer_points,
+        outer_radii,
+        n_total_rays: ctx.edge_cfg.n_rays.max(8),
+    }
+}
+
+/// Refine half-window for the hypothesis-model (seed) pass: the configured
+/// window, widened to the second-harmonic model's own error bound on an
+/// eccentric ring, so the seed fit gets enough rays.
+///
+/// A second-harmonic fit `c0 + A cos 2θ` to an ellipse's polar radius is off
+/// by the fourth harmonic, at most about `A² / c0` (axis ratio 0.56: bound
+/// 3.5 px, true maximum 3.3 px; 0.70: 1.5 vs 1.3; 0.81: 0.6 vs 0.5). The
+/// widening is capped at half the dark band's width along the minor axis, so
+/// the search cannot reach the ring's inner edge or the paper beyond the
+/// neighbouring ring. A circle (`A = 0`) keeps the configured window.
+fn seed_refine_halfwidth_px(ctx: &OuterFitEvalContext<'_>, hyp: &OuterHypothesis) -> f32 {
+    let Some(model) = hyp.radius_model.as_ref().filter(|m| m.c0 > 0.0) else {
+        return ctx.refine_halfwidth_px;
+    };
+    let amplitude = model.amplitude();
+    let model_error = amplitude * amplitude / model.c0;
+    let inner_ratio = ctx
+        .config
+        .advanced
+        .marker_spec
+        .r_inner_expected
+        .clamp(0.05, 0.95);
+    let band_cap = 0.5 * (model.c0 - amplitude).max(0.0) * (1.0 - inner_ratio);
+    ctx.refine_halfwidth_px.max(model_error.min(band_cap))
+}
+
+/// Fit the outer ellipse to the hypothesis-model edge points, then re-sample
+/// the edge at the fitted ellipse on every ray and refit, for as long as that
+/// finds more edge points.
+///
+/// The hypothesis tracks the edge with a second-harmonic radius model, exact
+/// only to first order in the eccentricity: at an axis ratio of 0.56 it is
+/// off by up to 3.3 px against a ±1 px refine window, so a sharp edge is lost
+/// on most rays (a blurred one, wider than the error, survives). Any ellipse
+/// through the rays that did hit is a far better model; the seed fit
+/// therefore needs only the solver's own minimum of points, while the
+/// accepted fit still needs `min_rays_with_ring`.
+fn fit_with_ellipse_resampling(
+    ctx: &OuterFitEvalContext<'_>,
+    outer_points: Vec<[f64; 2]>,
+    outer_radii: Vec<f32>,
+) -> Option<(
+    EdgeSampleResult,
+    Ellipse,
+    Option<crate::conic::RansacResult>,
+)> {
+    let min_rays = ctx.edge_cfg.min_rays_with_ring;
+    let mut edge = edge_result(ctx, outer_points, outer_radii);
+    let mut best = None;
+    for round in 0..=MAX_ELLIPSE_RESAMPLE_ROUNDS {
+        let Ok((outer, ransac)) = solver::fit_outer_ellipse_with_reason(&edge, ctx.config) else {
+            break;
+        };
+        let n_points = edge.outer_points.len();
+        let seed = outer;
+        if n_points >= min_rays {
+            best = Some((edge, outer, ransac));
+        }
+        if round == MAX_ELLIPSE_RESAMPLE_ROUNDS {
+            break;
+        }
+        let (points, radii) = sampling::collect_outer_edge_points_near_ellipse(
+            ctx.sampler,
+            ctx.center_prior,
+            &seed,
+            ctx.r_expected,
+            ctx.pol,
+            ctx.edge_cfg,
+            ctx.refine_halfwidth_px,
+        );
+        if points.len() <= n_points {
+            break;
+        }
+        edge = edge_result(ctx, points, radii);
+    }
+    best
+}
+
 fn evaluate_hypothesis(
     ctx: &OuterFitEvalContext<'_>,
     hyp: &OuterHypothesis,
@@ -156,22 +251,10 @@ fn evaluate_hypothesis(
         ctx.r_expected,
         ctx.pol,
         ctx.edge_cfg,
-        ctx.refine_halfwidth_px,
+        seed_refine_halfwidth_px(ctx, hyp),
     );
 
-    if outer_points.len() < ctx.edge_cfg.min_rays_with_ring {
-        return None;
-    }
-
-    // The outer edge sampler only records rays where an outer edge is found.
-    let edge = EdgeSampleResult {
-        n_good_rays: outer_points.len(),
-        outer_points,
-        outer_radii,
-        n_total_rays: ctx.edge_cfg.n_rays.max(8),
-    };
-
-    let (outer, outer_ransac) = solver::fit_outer_ellipse_with_reason(&edge, ctx.config).ok()?;
+    let (edge, outer, outer_ransac) = fit_with_ellipse_resampling(ctx, outer_points, outer_radii)?;
 
     let gap = sampling::max_angular_gap(outer.center(), &edge.outer_points);
     if gap > ctx.config.advanced.outer_fit.max_angular_gap_rad {
@@ -407,6 +490,82 @@ mod tests {
         let out = fit_outer_candidate_from_prior(&img, center, outer_radius, &cfg, None)
             .expect("baseline outer fit should produce a candidate");
         assert!(out.edge.outer_points.len() >= cfg.advanced.edge_sample.min_rays_with_ring);
+    }
+
+    /// A sharp, 2×-supersampled plain ring (filled annulus) whose outer
+    /// boundary is the ellipse `(a, b, angle)` and inner boundary the same
+    /// ellipse scaled by one half.
+    fn draw_eccentric_ring(w: u32, h: u32, e: Ellipse) -> GrayImage {
+        let (s, c) = e.angle.sin_cos();
+        let inside = |x: f64, y: f64, k: f64| {
+            let (dx, dy) = (x - e.cx, y - e.cy);
+            let (u, v) = (c * dx + s * dy, -s * dx + c * dy);
+            (u / (k * e.a)).powi(2) + (v / (k * e.b)).powi(2) <= 1.0
+        };
+        GrayImage::from_fn(w, h, |x, y| {
+            let mut ink = 0u32;
+            for (ox, oy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                let (px, py) = (f64::from(x) + ox - 0.5, f64::from(y) + oy - 0.5);
+                ink += u32::from(inside(px, py, 1.0) && !inside(px, py, 0.5));
+            }
+            image::Luma([(230 - ink * 50) as u8])
+        })
+    }
+
+    /// The second-harmonic hypothesis model is off by up to ~3 px at an axis
+    /// ratio of 0.55: on a sharp edge the ±1 px refine window loses most
+    /// rays. The seed window and the ellipse-exact resampling recover them.
+    #[test]
+    fn sharp_eccentric_ring_is_fitted() {
+        let truth = Ellipse {
+            cx: 100.3,
+            cy: 90.6,
+            a: 57.0,
+            b: 31.0,
+            angle: 0.5,
+        };
+        let img = draw_eccentric_ring(200, 180, truth);
+        let mut cfg = DetectConfig::from_target(crate::TargetLayout::rect_24x24());
+        cfg.set_marker_scale_prior(crate::MarkerScalePrior::new(40.0, 140.0));
+        let center = [truth.cx as f32, truth.cy as f32];
+        let out = fit_outer_candidate_from_prior(
+            &img,
+            center,
+            cfg.marker_scale.nominal_outer_radius_px(),
+            &cfg,
+            None,
+        )
+        .expect("eccentric sharp ring must fit");
+        assert!((out.outer.a - truth.a).abs() < 1.0, "a {}", out.outer.a);
+        assert!((out.outer.b - truth.b).abs() < 1.0, "b {}", out.outer.b);
+        let err = (out.outer.cx - truth.cx).hypot(out.outer.cy - truth.cy);
+        assert!(err < 0.3, "centre error {err}");
+    }
+
+    #[test]
+    fn ray_ellipse_radius_matches_the_polar_form() {
+        let e = Ellipse {
+            cx: 10.0,
+            cy: -4.0,
+            a: 30.0,
+            b: 12.0,
+            angle: 0.3,
+        };
+        for k in 0..16 {
+            let t = f64::from(k) * std::f64::consts::TAU / 16.0;
+            let r = sampling::ray_ellipse_radius(
+                &e,
+                [e.cx as f32, e.cy as f32],
+                [t.cos() as f32, t.sin() as f32],
+            )
+            .expect("ray from the centre hits the ellipse");
+            let phi = t - e.angle;
+            let polar = e.a * e.b / ((e.b * phi.cos()).powi(2) + (e.a * phi.sin()).powi(2)).sqrt();
+            assert!(
+                (f64::from(r) - polar).abs() < 1e-3,
+                "theta {t}: {r} vs {polar}"
+            );
+        }
     }
 
     #[test]

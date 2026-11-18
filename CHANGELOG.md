@@ -56,6 +56,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   marker confidence). See
   [`docs/migrations/0.16-to-0.17.md`](docs/migrations/0.16-to-0.17.md).
 
+### Fixed
+
+- **Large plain rings on oblique views (ADR-026).** On 56 real views of a
+  58 × 58 plain precision plate (rings ~110 px, axis ratio down to 0.57, a
+  focus gradient) `detect_adaptive` with photometric centres reported 62 %
+  of the fully visible rings and left three views unanchored; it now reports
+  94 %, every view anchored, no wrong label. Precision harness: +12 %
+  correct markers, wrong IDs / positions / labels unchanged in scope.
+  - The outer fit re-samples every ray at the fitted ellipse (ellipse-exact
+    refinement) after a seed pass whose window covers the second-harmonic
+    model's error on eccentric rings.
+  - Grid labels are checked against the fitted ring shapes: a sheared lattice
+    basis is re-indexed, an unexplainable labeling refused.
+  - A photometric centre's confidence measures sharpness against the ring's
+    size (`max(3 px, 0.1875 r)`).
+  - `detect_adaptive` ranks candidates by reported board positions and skips
+    the code-band scale probe for plain targets.
+  - Completion refits anchored rings whose centre correction failed.
+  - Coded completion refits need 3 fitted rings within 3 lattice spacings
+    (no extrapolated IDs under lens distortion).
+- **Coverage tooling:** `tools/score_coverage.py` scores a detection on a real
+  image without ground truth (expected rings from a homography fit, wrong-label
+  suspects, H / H+k1 residuals); `tools/run_ipgs_eval.py` drives it on the
+  private plate dataset.
+
 ## [0.16.0] - 2026-11-17
 
 Detection fails closed: it reports fewer markers rather than a wrong ID,

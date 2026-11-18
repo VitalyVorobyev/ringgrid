@@ -21,6 +21,7 @@ mod axis_ratio_filter;
 mod finalize;
 mod fit_decode;
 mod geometric_verify;
+mod lattice_basis;
 mod photometric;
 mod prelude;
 mod result;

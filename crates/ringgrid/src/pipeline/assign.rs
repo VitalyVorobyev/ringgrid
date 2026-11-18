@@ -18,8 +18,10 @@ use projective_grid::{
 
 use crate::conic::RansacConfig;
 use crate::detector::MarkerRecord;
-use crate::homography::{RansacStats, fit_homography_ransac};
+use crate::homography::{RansacHomographyResult, RansacStats, fit_homography_ransac};
 use crate::target::{LatticeGeometry, TargetLayout};
+
+use super::lattice_basis::{BasisCheck, LabeledRing, check_labeling};
 
 /// Assignment-frame position (mm) of a lattice coordinate.
 ///
@@ -51,7 +53,9 @@ pub(crate) struct GridAssignment {
 /// `grid_coord` set (canonical relative frame) and `board_xy_mm` set to the
 /// assignment-frame mm position; unlabeled and RANSAC-outlier markers are
 /// moved to [`GridAssignment::unlabeled`] — mirroring the coded global filter,
-/// which also keeps homography inliers only. On failure (`None`) `markers` is
+/// which also keeps homography inliers only. A labeling in a sheared basis of
+/// the lattice is re-indexed, and one no basis reconciles with the rings'
+/// shapes is refused ([`check_labeling`]). On failure (`None`) `markers` is
 /// left untouched.
 pub(crate) fn assign_plain_grid(
     markers: &mut Vec<MarkerRecord>,
@@ -109,31 +113,36 @@ pub(crate) fn assign_plain_grid(
     // for both lattice families.
     canonicalize_entries(target.lattice_kind(), &mut entries);
 
-    let labeled: Vec<(usize, Coord)> = entries.iter().map(|e| (e.source_index, e.coord)).collect();
+    let (mut labeled, mut result) = fit_frame_homography(markers, &entries, target, config)?;
+    // The labeler sees positions only; on a strongly foreshortened view it
+    // can walk a sheared basis of the lattice, which the homography fits just
+    // as well. The rings' shapes decide (see `lattice_basis`).
+    let rings: Vec<LabeledRing> = labeled
+        .iter()
+        .zip(&result.inlier_mask)
+        .filter(|(_, inlier)| **inlier)
+        .filter_map(|((i, c), _)| {
+            Some(LabeledRing {
+                coord: *c,
+                outer: markers[*i].ellipse_outer?,
+            })
+        })
+        .collect();
+    match check_labeling(&rings, &result.h, target) {
+        BasisCheck::Consistent => {}
+        BasisCheck::Relabel(a) => {
+            for e in &mut entries {
+                e.coord = a.apply(e.coord);
+            }
+            canonicalize_entries(target.lattice_kind(), &mut entries);
+            (labeled, result) = fit_frame_homography(markers, &entries, target, config)?;
+        }
+        BasisCheck::Inconsistent => return None,
+    }
     let n_labeled = labeled.len();
     // Rejection details moved to projective-grid's opt-in diagnostics API in
     // 0.12. The aggregate count remains derivable from our unique input list.
     let n_rejected = n_input.saturating_sub(n_labeled);
-    if n_labeled < 4 {
-        tracing::warn!(
-            n_labeled,
-            "too few labeled ring centers for frame homography"
-        );
-        return None;
-    }
-
-    let src: Vec<[f64; 2]> = labeled
-        .iter()
-        .map(|(_, c)| frame_xy_mm(target, *c))
-        .collect();
-    let dst: Vec<[f64; 2]> = labeled.iter().map(|(i, _)| markers[*i].center).collect();
-    let result = match fit_homography_ransac(&src, &dst, config) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "frame homography RANSAC failed");
-            return None;
-        }
-    };
 
     let ransac = RansacStats::from_ransac(&result, n_labeled, config.inlier_threshold);
 
@@ -153,6 +162,37 @@ pub(crate) fn assign_plain_grid(
         ransac,
         unlabeled,
     })
+}
+
+/// Labels of the entries (`(marker index, coord)`) and the frame homography
+/// fitted to them by RANSAC; `None` (logged) with fewer than four labels or
+/// when the fit fails.
+fn fit_frame_homography(
+    markers: &[MarkerRecord],
+    entries: &[GridEntry],
+    target: &TargetLayout,
+    config: &RansacConfig,
+) -> Option<(Vec<(usize, Coord)>, RansacHomographyResult)> {
+    let labeled: Vec<(usize, Coord)> = entries.iter().map(|e| (e.source_index, e.coord)).collect();
+    if labeled.len() < 4 {
+        tracing::warn!(
+            n_labeled = labeled.len(),
+            "too few labeled ring centers for frame homography"
+        );
+        return None;
+    }
+    let src: Vec<[f64; 2]> = labeled
+        .iter()
+        .map(|(_, c)| frame_xy_mm(target, *c))
+        .collect();
+    let dst: Vec<[f64; 2]> = labeled.iter().map(|(i, _)| markers[*i].center).collect();
+    match fit_homography_ransac(&src, &dst, config) {
+        Ok(r) => Some((labeled, r)),
+        Err(e) => {
+            tracing::warn!(error = %e, "frame homography RANSAC failed");
+            None
+        }
+    }
 }
 
 /// Keep labeled homography inliers only, writing each survivor's `grid_coord`

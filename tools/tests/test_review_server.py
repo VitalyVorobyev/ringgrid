@@ -403,7 +403,7 @@ class Http(unittest.TestCase):
 @unittest.skipIf(Image is None, "Pillow not available")
 class AppBundle(unittest.TestCase):
     """The built front end is served from its directory only, with a CSP that
-    allows nothing but 'self'; without a build the legacy page is served."""
+    allows nothing but 'self'; without a build the page answers 503."""
 
     @classmethod
     def setUpClass(cls):
@@ -468,11 +468,10 @@ class AppBundle(unittest.TestCase):
             self.assertEqual(code, 404, path)
             self.assertNotIn(b"secret", body)
 
-    def test_unbuilt_app_falls_back_to_the_legacy_page(self):
-        code, body, hdr = self.get("unbuilt", "/")
-        self.assertEqual(code, 200)
-        self.assertIn(b"ringgrid review", body)
-        self.assertEqual(hdr["Content-Security-Policy"], srv.LEGACY_CSP)
+    def test_unbuilt_app_answers_with_the_build_hint(self):
+        code, body, _ = self.get("unbuilt", "/")
+        self.assertEqual(code, 503)
+        self.assertIn(b"bun run build", body)
         self.assertEqual(self.get("unbuilt", "/assets/app.js")[0], 404)
         self.assertFalse(srv.app_built(self.empty))
         self.assertFalse(srv.app_built(None))

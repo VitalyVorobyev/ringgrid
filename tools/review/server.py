@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Local review UI for ringgrid detection results.
 
-Serves the review app (built into ``app/dist``; the single-file ``index.html``
-until it is built) plus a small JSON API on 127.0.0.1. Everything stays on
+Serves the review app (built into ``app/dist``) plus a small JSON API on
+127.0.0.1. Everything stays on
 the local machine: the server refuses to bind a non-loopback address, the page
 is served with a CSP that forbids any external request, and the output
 directory (feedback, tile cache, detection runs) must be git-ignored.
@@ -63,12 +63,6 @@ CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; "
     "img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
-# The single-file page (index.html) the bundle replaces: served only while the
-# bundle has not been built. Its script and styles are inline.
-LEGACY_CSP = (
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-    "img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'"
-)
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -79,7 +73,7 @@ STATIC_TYPES = {
     ".ico": "image/x-icon",
     ".txt": "text/plain; charset=utf-8",
 }
-BUILD_HINT = "the review app is not built: run `bun install && bun run build` in tools/review/app (serving the legacy page meanwhile)"
+BUILD_HINT = "the review app is not built: run `bun install && bun run build` in tools/review/app"
 
 
 def now_iso() -> str:
@@ -804,9 +798,8 @@ def static_file(app_dir: Path, parts: list[str]) -> Path | None:
 
 def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
     """Request handler. ``app_dir`` is the built front end; while it has no
-    index.html (not built yet) the legacy single-file page is served instead.
+    index.html (not built yet) the page answers 503 with the build command.
     Checked per request, so building the app needs no server restart."""
-    legacy_html = (HERE / "index.html").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ringgrid-review"
@@ -871,7 +864,7 @@ def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
                 if not parts:
                     if app_built(app_dir):
                         return self._send(200, (app_dir / "index.html").read_bytes(), STATIC_TYPES[".html"])
-                    return self._send(200, legacy_html, STATIC_TYPES[".html"], csp=LEGACY_CSP)
+                    return self._err(503, BUILD_HINT)
                 if parts[0] != "api":
                     path = static_file(app_dir, parts) if app_built(app_dir) else None
                     if path is None:

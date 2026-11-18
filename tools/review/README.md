@@ -17,7 +17,7 @@ cd tools/review/app && bun install && bun run build   # -> app/dist, served by s
 lab-ui but not released yet (`ImageLayer` gain/gamma, `ShortcutList`); each
 says which import replaces it once released.
 
-Until it is built the server serves the older single-file `index.html` and says
+Until it is built the server answers the page with the build command and says
 so at startup. `bun run dev` serves the app with hot reload on 127.0.0.1:5174,
 proxying `/api` to a server on port 8766 (`REVIEW_API` to change it).
 

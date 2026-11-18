@@ -1,8 +1,8 @@
 //! Final precision-first geometric verification gate.
 //!
 //! After the final homography, each decoded marker is checked against the
-//! target lattice — via its neighbor-midpoint prediction (locally affine, so
-//! distortion-robust) and its final-H reprojection residual — and removed when
+//! target lattice — via its neighbor-midpoint prediction (second differences,
+//! so distortion-robust) and its final-H reprojection residual — and removed when
 //! geometrically inconsistent. Only trusted board correspondences reach the
 //! output, which is what sensor calibration needs. See [`geometric_verify_filter`].
 
@@ -51,6 +51,43 @@ pub(crate) fn build_grid_map(markers: &[MarkerRecord], target: &TargetLayout) ->
 /// Minimum residual samples before the adaptive MAD term is trusted; below this
 /// the threshold falls back to its floor alone.
 const MIN_SAMPLES: usize = 8;
+/// The field the local lattice-midpoint test takes second differences of:
+/// each labeled marker's deviation from its cell's projection through
+/// `final_h`, or its centre when there is no homography.
+///
+/// The midpoint of two neighbours is the image of the cell between them only
+/// under an affine map. Under perspective the gap grows with the square of
+/// the pitch in pixels — 2–3 px for 56 px rings at 30° tilt (precision
+/// harness), the residual of every correct marker there — and only the
+/// scatter of blur-biased centres had kept the threshold above it. The
+/// deviation field takes out the homography's own curvature and leaves what
+/// it cannot explain: lens distortion's (smooth), centre noise, and the
+/// ~1-pitch jump of a mis-celled marker.
+fn local_test_field(
+    markers: &[MarkerRecord],
+    final_h: Option<&Matrix3<f64>>,
+    target: &TargetLayout,
+) -> GridMap {
+    let Some(h) = final_h else {
+        return build_grid_map(markers, target);
+    };
+    markers
+        .iter()
+        .filter_map(|m| {
+            let coord = marker_cell_coord(m, target)?;
+            let [x, y] = m.board_xy_mm?;
+            let p = homography_project(h, x, y);
+            let (dx, dy) = (m.center[0] - p[0], m.center[1] - p[1]);
+            (dx.is_finite() && dy.is_finite()).then(|| {
+                (
+                    coord,
+                    projective_grid::nalgebra::Point2::new(dx as f32, dy as f32),
+                )
+            })
+        })
+        .collect()
+}
+
 /// Floor (px) for the local lattice-midpoint residual threshold. An order of
 /// magnitude below the ~1-pitch residual of a mis-celled marker, several times
 /// the sub-pixel center-estimation noise of a true marker.
@@ -158,10 +195,11 @@ pub(super) fn annotate_h_reproj_err_px(
 /// markers the target lattice judges geometrically inconsistent via two
 /// complementary tests, rejecting on their union:
 ///
-/// 1. **Local lattice-midpoint** (H-free, distortion-robust primary): each marker's
-///    center vs the midpoint predicted by its lattice neighbors. Affine-exact, so it
-///    sees only second-difference curvature under smooth lens distortion while a
-///    wrong-cell marker sits ~1 pitch away.
+/// 1. **Local lattice-midpoint** (distortion-robust primary): each marker's
+///    deviation from `final_h` vs the midpoint of its lattice neighbors'
+///    deviations ([`local_test_field`]; the centres themselves without a
+///    homography). A second difference, so it sees only the curvature of smooth
+///    lens distortion while a wrong-cell marker sits ~1 pitch away.
 /// 2. **Global final-H reprojection** (gross-blunder backstop): each marker's
 ///    center vs its board position projected through `final_h`. Catches boundary
 ///    markers that lack a complete neighbor pair for the local test.
@@ -178,26 +216,6 @@ pub(super) fn geometric_verify_filter(
         .iter()
         .filter(|m| marker_cell_coord(m, target).is_some())
         .count();
-
-    // --- Local lattice-midpoint test (H-free) ---
-    let grid = build_grid_map(markers, target);
-    let lattice_kind = target.lattice_kind();
-    let local_by_coord: Vec<(Coord, f64)> = grid
-        .iter()
-        .filter_map(|(&idx, &pos)| {
-            let pred = predict_grid_position(&grid, idx, lattice_kind)?.position;
-            let dx = (pos.x - pred.x) as f64;
-            let dy = (pos.y - pred.y) as f64;
-            Some((idx, (dx * dx + dy * dy).sqrt()))
-        })
-        .collect();
-    let local_residuals: Vec<f64> = local_by_coord.iter().map(|(_, r)| *r).collect();
-    let t_local = adaptive_threshold(&local_residuals, FLOOR_LOCAL_PX, K_LOCAL);
-    let flagged_coords: HashSet<Coord> = local_by_coord
-        .iter()
-        .filter(|(_, r)| *r > t_local)
-        .map(|(c, _)| *c)
-        .collect();
 
     // --- Global final-H residual test (reads the annotated diagnostic) ---
     // Annotation is the sole writer of h_reproj_err_px and runs even when the
@@ -227,6 +245,30 @@ pub(super) fn geometric_verify_filter(
     if let Some(h) = final_h {
         flagged_global_coords.extend(shape_outliers(markers, h, target));
     }
+
+    // --- Local lattice-midpoint test (second differences) ---
+    // A marker the global test rejects is no evidence for its neighbours'
+    // positions: a ring 10 px off would push each neighbour's prediction by
+    // half that.
+    let mut grid = local_test_field(markers, final_h, target);
+    grid.retain(|c, _| !flagged_global_coords.contains(c));
+    let lattice_kind = target.lattice_kind();
+    let local_by_coord: Vec<(Coord, f64)> = grid
+        .iter()
+        .filter_map(|(&idx, &pos)| {
+            let pred = predict_grid_position(&grid, idx, lattice_kind)?.position;
+            let dx = (pos.x - pred.x) as f64;
+            let dy = (pos.y - pred.y) as f64;
+            Some((idx, (dx * dx + dy * dy).sqrt()))
+        })
+        .collect();
+    let local_residuals: Vec<f64> = local_by_coord.iter().map(|(_, r)| *r).collect();
+    let t_local = adaptive_threshold(&local_residuals, FLOOR_LOCAL_PX, K_LOCAL);
+    let flagged_coords: HashSet<Coord> = local_by_coord
+        .iter()
+        .filter(|(_, r)| *r > t_local)
+        .map(|(c, _)| *c)
+        .collect();
 
     // --- Reject = union, single retain pass ---
     let n_before = markers.len();
@@ -451,6 +493,50 @@ mod tests {
         assert!(
             (1.5..8.0).contains(&max_err),
             "expected a meaningful but sub-floor peripheral residual, got {max_err}"
+        );
+    }
+
+    #[test]
+    fn strong_perspective_lattice_survives_and_miscelled_marker_does_not() {
+        // A large pitch in pixels under a strong perspective: the neighbour
+        // midpoint misses the true cell image by more than the local floor, so
+        // a test on the centres themselves would flag correct markers.
+        let board = board();
+        let h = Matrix3::new(14.0, 0.0, 400.0, 0.0, 14.0, 400.0, 2.5e-3, 1.5e-3, 1.0);
+        let markers = clean_lattice(&board, &h);
+        let raw = build_grid_map(&markers, &board);
+        let worst_midpoint_gap = raw
+            .iter()
+            .filter_map(|(&c, p)| {
+                let pred = predict_grid_position(&raw, c, board.lattice_kind())?.position;
+                Some((p.x - pred.x).hypot(p.y - pred.y))
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            f64::from(worst_midpoint_gap) > 2.0 * FLOOR_LOCAL_PX,
+            "the scene must defeat an affine midpoint (gap {worst_midpoint_gap})"
+        );
+        let mut clean = markers.clone();
+        let stats = geometric_verify_filter(&mut clean, Some(&h), &board);
+        assert_eq!(stats.n_removed_total, 0, "true markers must survive");
+
+        // Label the interior marker with its neighbour's cell: ~1 pitch off.
+        let target = most_interior_id(&board, &h);
+        let tc = board.coord_of_id(target).unwrap();
+        let neighbour = board
+            .id_of(Coord::new(tc.u + 1, tc.v))
+            .expect("interior neighbour");
+        let mut miscelled: Vec<MarkerRecord> = markers
+            .into_iter()
+            .filter(|m| m.id != Some(neighbour))
+            .collect();
+        for m in miscelled.iter_mut().filter(|m| m.id == Some(target)) {
+            *m = marker_at(&board, neighbour, m.center);
+        }
+        geometric_verify_filter(&mut miscelled, Some(&h), &board);
+        assert!(
+            !miscelled.iter().any(|m| m.id == Some(neighbour)),
+            "a marker labeled one cell off must be removed"
         );
     }
 

@@ -564,7 +564,7 @@ fn judge(
 /// fit does not model ([`MarkerRecord::center_bias_px`]):
 /// `1.24 |∇σ| σ`, `σ` its fitted blur and `∇σ` the image gradient of the
 /// least-squares plane through the fitted blur of it and its
-/// [`BLUR_GRADIENT_NEIGHBOURS`] nearest accepted neighbours. `None` (no
+/// [`BLUR_GRADIENT_NEIGHBOURS`] nearest accepted neighbours (ties by index). `None` (no
 /// bias known) when the plane is undetermined.
 ///
 /// `accepted` holds `(marker index, fitted blur sigma)`; the markers' centres
@@ -577,11 +577,17 @@ fn attach_blur_gradient_bias(markers: &mut [MarkerRecord], accepted: &[(usize, f
     let dist2 = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2);
     let mut order: Vec<usize> = (0..points.len()).collect();
     for (&(i, sigma), &(c, _)) in accepted.iter().zip(&points) {
-        order.sort_by(|&a, &b| dist2(points[a].0, c).total_cmp(&dist2(points[b].0, c)));
-        let near = order
-            .iter()
-            .take(BLUR_GRADIENT_NEIGHBOURS + 1)
-            .map(|&j| (points[j].0, points[j].1));
+        // The K + 1 nearest (the marker itself included), by distance then
+        // index: a partial selection, O(n) per marker, then the few sorted.
+        let nearer = |&a: &usize, &b: &usize| {
+            dist2(points[a].0, c)
+                .total_cmp(&dist2(points[b].0, c))
+                .then(a.cmp(&b))
+        };
+        let k = BLUR_GRADIENT_NEIGHBOURS.min(order.len() - 1);
+        order.select_nth_unstable_by(k, nearer);
+        order[..=k].sort_unstable_by(nearer);
+        let near = order[..=k].iter().map(|&j| (points[j].0, points[j].1));
         markers[i].center_bias_px =
             plane_gradient(near).map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g * sigma);
     }
@@ -807,5 +813,61 @@ mod tests {
         ];
         let g = plane_gradient(square.into_iter()).expect("plane");
         assert!((g - 0.5).abs() < 1e-12, "{g}");
+    }
+
+    /// Accepted fits of a `side × side` plate (58 × 58: the IPGS plate),
+    /// jittered off the lattice, with a curved blur field.
+    fn plate_markers(side: usize) -> (Vec<MarkerRecord>, Vec<(usize, f64)>) {
+        let mut markers = Vec::new();
+        let mut accepted = Vec::new();
+        for k in 0..side * side {
+            let (r, c) = ((k / side) as f64, (k % side) as f64);
+            // Deterministic sub-pixel jitter, so no two distances tie.
+            let j = ((k as f64) * 0.618_034).fract() - 0.5;
+            let p = [30.0 * c + 3.0 * j, 30.0 * r - 2.0 * j];
+            accepted.push((k, 1.0 + 1e-3 * p[0] + 2e-6 * p[1] * p[1] + 0.05 * j));
+            markers.push(MarkerRecord {
+                center: p,
+                ..MarkerRecord::default()
+            });
+        }
+        (markers, accepted)
+    }
+
+    /// The neighbour selection is the plain `K + 1` nearest by a full sort.
+    #[test]
+    fn blur_gradient_bias_matches_a_full_sort() {
+        let (mut markers, accepted) = plate_markers(12);
+        attach_blur_gradient_bias(&mut markers, &accepted);
+        for &(i, sigma) in &accepted {
+            let c = markers[i].center;
+            let mut all: Vec<(f64, usize)> = accepted
+                .iter()
+                .map(|&(j, _)| {
+                    let p = markers[j].center;
+                    ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2), j)
+                })
+                .collect();
+            all.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let near = all[..=BLUR_GRADIENT_NEIGHBOURS].iter().map(|&(_, j)| {
+                let s = accepted.iter().find(|a| a.0 == j).unwrap().1;
+                (markers[j].center, s)
+            });
+            let expected = plane_gradient(near).map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g * sigma);
+            assert_eq!(markers[i].center_bias_px, expected, "marker {i}");
+        }
+    }
+
+    #[test]
+    #[ignore = "timing probe"]
+    fn blur_gradient_bias_time_on_a_plate() {
+        let (mut markers, accepted) = plate_markers(58);
+        let t = std::time::Instant::now();
+        attach_blur_gradient_bias(&mut markers, &accepted);
+        println!(
+            "{} accepted fits: {:.1} ms",
+            accepted.len(),
+            1e3 * t.elapsed().as_secs_f64()
+        );
     }
 }

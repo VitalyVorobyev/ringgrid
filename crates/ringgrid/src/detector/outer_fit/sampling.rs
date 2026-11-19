@@ -4,6 +4,13 @@ use crate::ring::inner_estimate::Polarity;
 
 const MAX_EXPECTED_RADIUS_DEVIATION_FRAC: f32 = 0.4;
 
+/// Largest radius (px) at which an outer edge point is accepted on a ring
+/// expected at `r_expected`: the upper bound of the per-ray expected-radius
+/// gate (`MAX_EXPECTED_RADIUS_DEVIATION_FRAC`), i.e. the sampler's reach.
+pub(crate) fn max_outer_edge_radius_px(r_expected: f32) -> f32 {
+    r_expected + r_expected.max(1.0) * MAX_EXPECTED_RADIUS_DEVIATION_FRAC
+}
+
 fn sample_signed_radial_derivative(
     sampler: DistortionAwareSampler<'_>,
     ray_origin: [f32; 2],
@@ -24,6 +31,33 @@ fn sample_signed_radial_derivative(
     Some((i1 - i0) / (2.0 * h))
 }
 
+/// How far past an outer edge point (px, as a fraction of its radius, at
+/// least [`MIN_EDGE_REACH_PX`]) the depth gate follows the edge's rise and
+/// measures the ray's swing: wide enough for the rise of a heavily blurred
+/// edge (σ = 6 px on a 50 px ring) to complete.
+const EDGE_REACH_FRAC: f32 = 0.5;
+const MIN_EDGE_REACH_PX: f32 = 4.0;
+
+/// Fraction of its ray's own ink-to-paper swing an outer edge point's step
+/// must carry.
+///
+/// The step is the edge's full monotone rise through the point (ink plateau
+/// to paper plateau, however wide blur makes it); the swing is max - min of
+/// the ray from the marker centre to the reach past the edge. Both scale
+/// with the image gain and offset, and both widen together under blur, so the
+/// gate passes the same edges in a dark, low-contrast or defocused image as
+/// in a sharp bright one. What fails it is a weak edge inside a marker of
+/// stronger contrast — a code-band or inner-ring transition that the refine
+/// window picked instead of the ring's ink-to-paper edge.
+const MIN_EDGE_SWING_FRACTION: f32 = 0.4;
+
+/// Whether the edge at radius `r` on a ray is a real ring edge of polarity
+/// `pol`: its rise reaches both the absolute noise floor `min_ring_depth` and
+/// [`MIN_EDGE_SWING_FRACTION`] of the ray's swing.
+///
+/// The rise is followed outward (inward) from `r` at 1 px spacing while the
+/// polarity-signed intensity stays within a small tolerance of its running
+/// maximum (minimum): a reversal larger than that ends it.
 fn passes_ring_depth_gate(
     sampler: DistortionAwareSampler<'_>,
     ray_origin: [f32; 2],
@@ -32,22 +66,80 @@ fn passes_ring_depth_gate(
     pol: Polarity,
     min_ring_depth: f32,
 ) -> bool {
-    let band = 2.0f32;
-    let x_in = ray_origin[0] + ray_dir[0] * (r - band);
-    let y_in = ray_origin[1] + ray_dir[1] * (r - band);
-    let x_out = ray_origin[0] + ray_dir[0] * (r + band);
-    let y_out = ray_origin[1] + ray_dir[1] * (r + band);
-    let Some(i_in) = sampler.sample_checked(x_in, y_in) else {
+    // Polarity-signed intensity: the edge always rises outward.
+    let at = |dr: f32| {
+        let v = sampler.sample_checked(
+            ray_origin[0] + ray_dir[0] * (r + dr),
+            ray_origin[1] + ray_dir[1] * (r + dr),
+        )?;
+        Some(match pol {
+            Polarity::Pos => v,
+            Polarity::Neg => -v,
+        })
+    };
+    let n_out = (EDGE_REACH_FRAC * r).max(MIN_EDGE_REACH_PX).ceil() as usize;
+    let n_in = r.floor() as usize;
+    // Samples from the reach past the edge (index 0) inward to the centre
+    // (index n_out + n_in); `None` off the image.
+    let profile: Vec<Option<f32>> = (0..=n_out + n_in)
+        .map(|i| at(n_out as f32 - i as f32))
+        .collect();
+    let Some(s0) = profile[n_out] else {
         return false;
     };
-    let Some(i_out) = sampler.sample_checked(x_out, y_out) else {
-        return false;
-    };
-    let signed_depth = match pol {
-        Polarity::Pos => i_out - i_in,
-        Polarity::Neg => i_in - i_out,
-    };
-    signed_depth >= min_ring_depth
+    let (lo, hi) = profile
+        .iter()
+        .flatten()
+        .fold((s0, s0), |(lo, hi), &s| (lo.min(s), hi.max(s)));
+    let swing = hi - lo;
+    // A reversal ends the rise once it exceeds the noise floor or a tenth of
+    // the swing, whichever is smaller (the latter keeps the walk
+    // gain-invariant on a dark, clean image).
+    let tol = min_ring_depth.min(MAX_RISE_REVERSAL_FRAC * swing);
+    // Outward from the edge: the rise's top; inward: its bottom.
+    let top = rise_extreme(
+        profile[..n_out].iter().rev(),
+        s0,
+        |s, top| s >= top - tol,
+        f32::max,
+    );
+    let bottom = rise_extreme(
+        profile[n_out + 1..].iter(),
+        s0,
+        |s, b| s <= b + tol,
+        f32::min,
+    );
+    let rise = top - bottom;
+    // The point must sit on the rise, not on a plateau beside it.
+    let on_rise = (s0 - bottom).min(top - s0) >= MIN_RISE_POSITION_FRAC * rise;
+    on_rise && rise >= min_ring_depth && rise >= MIN_EDGE_SWING_FRACTION * swing
+}
+
+/// Least share of the rise an edge point's own level must lie above the
+/// rise's bottom and below its top: the point is on the edge's transition,
+/// not on the ink or paper plateau next to it.
+const MIN_RISE_POSITION_FRAC: f32 = 0.2;
+
+/// Largest reversal, as a fraction of the ray's swing, that the depth gate's
+/// rise walk tolerates (it also never tolerates more than the noise floor).
+const MAX_RISE_REVERSAL_FRAC: f32 = 0.1;
+
+/// Walk `samples` from `start` while each continues the run (`cont(sample,
+/// extreme)`), returning the run's extreme (`pick` of the samples so far).
+fn rise_extreme<'a>(
+    samples: impl Iterator<Item = &'a Option<f32>>,
+    start: f32,
+    cont: impl Fn(f32, f32) -> bool,
+    pick: impl Fn(f32, f32) -> f32,
+) -> f32 {
+    let mut extreme = start;
+    for s in samples {
+        match s {
+            Some(s) if cont(*s, extreme) => extreme = pick(extreme, *s),
+            _ => break,
+        }
+    }
+    extreme
 }
 
 fn pick_best_radius_on_ray(
@@ -342,6 +434,78 @@ mod tests {
             16.0,
             Polarity::Pos,
             0.01,
+        ));
+    }
+
+    /// Concentric bands around `center`: `levels[i]` from `radii[i - 1]` (0
+    /// for the first) out to `radii[i]`, the last level beyond.
+    fn banded_image(center: [f32; 2], radii: &[f32], levels: &[u8]) -> GrayImage {
+        GrayImage::from_fn(96, 96, |x, y| {
+            let r = (x as f32 - center[0]).hypot(y as f32 - center[1]);
+            let band = radii.iter().take_while(|&&b| r >= b).count();
+            Luma([levels[band]])
+        })
+    }
+
+    #[test]
+    fn ring_depth_gate_is_gain_invariant() {
+        // Paper / ink / paper: the same ring at full contrast and at 18 grey
+        // levels on a dark background (a step the old absolute 0.08 floor,
+        // 20 levels, rejected).
+        let center = [48.0f32, 48.0];
+        let default_floor = EdgeSampleConfig::default().min_ring_depth;
+        for (paper, ink) in [(230u8, 24u8), (48, 30)] {
+            let img = banded_image(center, &[10.0, 24.0], &[paper, ink, paper]);
+            let sampler = DistortionAwareSampler::new(&img, None);
+            assert!(
+                passes_ring_depth_gate(
+                    sampler,
+                    center,
+                    [1.0, 0.0],
+                    23.5,
+                    Polarity::Pos,
+                    default_floor
+                ),
+                "paper {paper} / ink {ink}"
+            );
+        }
+    }
+
+    #[test]
+    fn ring_depth_gate_rejects_a_weak_edge_inside_a_strong_marker() {
+        // Paper centre, ink, a slightly lighter band from r = 14, paper from
+        // r = 24: the r = 14 step (15 levels, above the noise floor) carries a
+        // tenth of the ray's 160-level swing; the true outer edge carries all.
+        let center = [48.0f32, 48.0];
+        let img = banded_image(center, &[6.0, 14.0, 24.0], &[200, 40, 55, 200]);
+        let sampler = DistortionAwareSampler::new(&img, None);
+        let floor = EdgeSampleConfig::default().min_ring_depth;
+        let gate = |r| passes_ring_depth_gate(sampler, center, [1.0, 0.0], r, Polarity::Pos, floor);
+        assert!(!gate(13.5));
+        assert!(gate(23.5));
+        // On the paper plateau 3 px past the edge: not an edge point.
+        assert!(!gate(26.5));
+    }
+
+    #[test]
+    fn ring_depth_gate_passes_a_heavily_blurred_edge() {
+        // Ink to paper over a 16 px linear ramp (blur sigma ~ 5 px): the 4 px
+        // step at its centre is 0.25 of the contrast, the full rise all of it.
+        let center = [48.0f32, 48.0];
+        let img = GrayImage::from_fn(96, 96, |x, y| {
+            let r = (x as f32 - center[0]).hypot(y as f32 - center[1]);
+            let t = ((r - 22.0) / 16.0).clamp(0.0, 1.0);
+            Luma([(40.0 + 160.0 * t).round() as u8])
+        });
+        let sampler = DistortionAwareSampler::new(&img, None);
+        let floor = EdgeSampleConfig::default().min_ring_depth;
+        assert!(passes_ring_depth_gate(
+            sampler,
+            center,
+            [1.0, 0.0],
+            30.0,
+            Polarity::Pos,
+            floor
         ));
     }
 

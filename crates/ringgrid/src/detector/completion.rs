@@ -22,6 +22,7 @@ use super::{
     fit_outer_candidate_from_prior_for_completion,
     marker_build::{fit_support_score, marker_from_outer_fit},
     median_neighbor_outer_radius_px,
+    outer_fit::max_outer_edge_radius_px,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -576,26 +577,29 @@ fn is_center_in_bounds(center: [f64; 2], img_w: f64, img_h: f64, safe_margin: f6
         && center[1] < (img_h - safe_margin)
 }
 
-/// Attempt to fit and validate a single completion marker at a projected center.
+/// Expected outer radius (px) of the ring at `seed`: the median of the
+/// nearest fitted rings' outer radii, else the scale prior's nominal radius.
+fn expected_outer_radius_px(
+    seed: [f64; 2],
+    markers: &[MarkerRecord],
+    config: &DetectConfig,
+) -> f32 {
+    median_neighbor_outer_radius_px(seed, markers, EXPECTED_RADIUS_K_NEIGHBORS, None, 1)
+        .map(|r| r as f32)
+        .unwrap_or(config.marker_scale.nominal_outer_radius_px())
+}
+
+/// Attempt to fit and validate a single completion marker at a projected
+/// center, for a ring expected at `r_expected` px.
 fn try_complete_marker(
     gray: &GrayImage,
     target_cell: CompletionCell,
     projected_center: [f64; 2],
-    markers: &[MarkerRecord],
+    r_expected: f32,
     config: &DetectConfig,
     mapper: Option<&dyn crate::pixelmap::PixelMapper>,
     stats: &mut CompletionStats,
 ) -> Option<MarkerRecord> {
-    let r_expected = median_neighbor_outer_radius_px(
-        projected_center,
-        markers,
-        EXPECTED_RADIUS_K_NEIGHBORS,
-        None,
-        1,
-    )
-    .map(|r| r as f32)
-    .unwrap_or(config.marker_scale.nominal_outer_radius_px());
-
     let cand = match fit_outer_candidate_from_prior_for_completion(
         gray,
         [projected_center[0] as f32, projected_center[1] as f32],
@@ -686,8 +690,7 @@ pub(crate) fn complete_with_h(
     }
 
     let (w, h_img) = gray.dimensions();
-    let roi_radius = params.roi_radius_px.clamp(8.0, 200.0) as f64;
-    let safe_margin = roi_radius + params.image_margin_px.max(0.0) as f64;
+    let image_margin = f64::from(params.image_margin_px.max(0.0));
 
     let mut stats = CompletionStats::default();
     let mut tried: HashSet<Coord> = HashSet::new();
@@ -718,6 +721,10 @@ pub(crate) fn complete_with_h(
                 added_this_round += 1;
                 continue;
             }
+            // The refit samples the ring's edge out to the sampler's reach
+            // around the seed; that disc must lie inside the image.
+            let r_expected = expected_outer_radius_px(seed, markers, config);
+            let safe_margin = f64::from(max_outer_edge_radius_px(r_expected)) + image_margin;
             if !is_center_in_bounds(seed, f64::from(w), f64::from(h_img), safe_margin) {
                 continue;
             }
@@ -745,7 +752,7 @@ pub(crate) fn complete_with_h(
             tried.insert(cell.coord);
 
             let Some(mut marker) =
-                try_complete_marker(gray, cell, seed, markers, config, mapper, &mut stats)
+                try_complete_marker(gray, cell, seed, r_expected, config, mapper, &mut stats)
             else {
                 continue;
             };

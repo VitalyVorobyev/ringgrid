@@ -26,7 +26,7 @@ let cfg = DetectConfig::from_target_and_marker_diameter(target.clone(), 32.0);
 All three constructors call two internal derivation functions:
 
 - **`apply_target_geometry_priors`** -- derives `marker_spec.r_inner_expected` and `decode.code_band_ratio` from the target's inner/outer radius ratio (accounting for the ring stroke on coded targets; plain annuli expose the radii directly).
-- **`apply_marker_scale_prior`** -- derives proposal radii, edge sampling range, ellipse validation bounds, and completion ROI from the scale prior. See [MarkerScalePrior](marker-scale-prior.md) for the full derivation rules.
+- **`apply_marker_scale_prior`** -- derives proposal radii, edge sampling range and ellipse validation bounds from the scale prior. See [MarkerScalePrior](marker-scale-prior.md) for the full derivation rules.
 
 ## The Detector wrapper
 
@@ -111,7 +111,7 @@ knobs are reached through the `advanced` sub-config.
 | `advanced.outer_fit` | `OuterFitConfig` | (see sub-configs) | Robust outer ellipse fitting: RANSAC params, scoring weights. |
 | `advanced.projective_center` | `ProjectiveCenterConfig` | (see sub-configs) | Projective center recovery gates and tuning. `max_correction_shift_px` (renamed from `max_center_shift_px`) defaults to `None` = "auto" (nominal marker diameter at the point of use); explicit values survive target re-derivation. |
 | `advanced.photometric` | `PhotometricConfig` | (see sub-configs) | Photometric center refinement: saturation level, iteration budget, print-radii estimation, shift gate. Used only with `circle_refinement = Photometric`. |
-| `advanced.completion` | `CompletionConfig` | (see sub-configs) | Completion at missing H-projected board positions. `roi_radius_px` is auto-derived from scale. |
+| `advanced.completion` | `CompletionConfig` | (see sub-configs) | Completion at missing H-projected board positions. |
 | `advanced.max_aspect_ratio` | `f64` | 3.0 | Maximum aspect ratio (a/b) for a valid ellipse. |
 | `advanced.dedup_radius` | `f64` | 6.0 | NMS deduplication radius (px) for final markers. |
 | `advanced.use_global_filter` | `bool` | `true` | Enable RANSAC homography global filter (requires board layout with marker positions). |

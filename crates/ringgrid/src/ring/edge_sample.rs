@@ -23,7 +23,15 @@ pub struct EdgeSampleConfig {
     /// Step size along each ray (pixels).
     #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub r_step: f32,
-    /// Minimum intensity drop (0 to 1, normalized intensity) for a valid ring.
+    /// Absolute noise floor (0 to 1, normalized intensity) of the intensity
+    /// rise an outer edge point must sit on (the edge's full ink-to-paper
+    /// transition along the ray, however wide blur makes it).
+    ///
+    /// The gate is contrast-relative above this floor: the rise must also be
+    /// at least 0.4 of the ray's own swing (from the marker centre to half a
+    /// radius past the edge), so a dark, low-contrast or defocused image
+    /// passes the same edges as a sharp bright one. The floor only rejects
+    /// edges indistinguishable from sensor noise.
     pub min_ring_depth: f32,
     /// Minimum number of rays with a detected ring for a valid candidate.
     pub min_rays_with_ring: usize,
@@ -36,7 +44,7 @@ impl Default for EdgeSampleConfig {
             r_max: 14.0,
             r_min: 1.5,
             r_step: 0.5,
-            min_ring_depth: 0.08,
+            min_ring_depth: 0.03,
             min_rays_with_ring: 16,
         }
     }

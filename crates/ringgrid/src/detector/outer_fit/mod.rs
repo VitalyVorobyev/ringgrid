@@ -16,7 +16,7 @@ mod sampling;
 mod scoring;
 mod solver;
 
-pub(crate) use sampling::max_angular_gap;
+pub(crate) use sampling::{max_angular_gap, max_outer_edge_radius_px};
 
 /// Stable reject code for outer-fit candidate creation.
 #[derive(
@@ -121,10 +121,15 @@ fn baseline_edge_cfg(config: &DetectConfig) -> &EdgeSampleConfig {
     &config.advanced.edge_sample
 }
 
-fn completion_edge_cfg(config: &DetectConfig) -> EdgeSampleConfig {
+/// Edge sampling for a completion refit of a ring expected at `r_expected`
+/// (the neighbour-median outer radius at its cell): the detector's sampler,
+/// reaching exactly as far as the per-ray expected-radius gate accepts —
+/// whatever the scale prior's range — with the completion arc-coverage
+/// requirement.
+fn completion_edge_cfg(config: &DetectConfig, r_expected: f32) -> EdgeSampleConfig {
     let mut edge_cfg = config.advanced.edge_sample.clone();
     let params = &config.advanced.completion;
-    edge_cfg.r_max = params.roi_radius_px.clamp(8.0, 200.0);
+    edge_cfg.r_max = max_outer_edge_radius_px(r_expected);
 
     let n_rays = edge_cfg.n_rays.max(1);
     let min_rays = ((n_rays as f32) * params.min_arc_coverage).ceil().max(6.0) as usize;
@@ -326,7 +331,7 @@ pub(crate) fn fit_outer_candidate_from_prior_for_completion(
     config: &DetectConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> Result<OuterFitCandidate, OuterFitReject> {
-    let edge_cfg = completion_edge_cfg(config);
+    let edge_cfg = completion_edge_cfg(config, r_outer_expected_px);
     fit_outer_candidate_with_sampling(
         gray,
         center_prior,
@@ -422,15 +427,17 @@ mod tests {
     }
 
     #[test]
-    fn completion_edge_cfg_derivation_is_bounded() {
+    fn completion_edge_cfg_reach_follows_expected_radius() {
         let mut cfg = DetectConfig::default();
         cfg.advanced.edge_sample.n_rays = 20;
-        cfg.advanced.edge_sample.r_max = 99.0;
-        cfg.advanced.completion.roi_radius_px = 4.0;
+        cfg.advanced.edge_sample.r_max = 30.0;
         cfg.advanced.completion.min_arc_coverage = 0.42;
 
-        let edge_cfg = completion_edge_cfg(&cfg);
-        assert!((edge_cfg.r_max - 8.0).abs() < 1e-6);
+        // A ring larger than the scale prior's reach: completion reaches as
+        // far as the expected-radius gate accepts (1.4 x 50 px).
+        let edge_cfg = completion_edge_cfg(&cfg, 50.0);
+        assert!((edge_cfg.r_max - 70.0).abs() < 1e-4);
+        assert!((completion_edge_cfg(&cfg, 10.0).r_max - 14.0).abs() < 1e-4);
         assert_eq!(edge_cfg.min_rays_with_ring, 9);
         assert_eq!(edge_cfg.r_min, cfg.advanced.edge_sample.r_min);
         assert!((edge_cfg.r_step - cfg.advanced.edge_sample.r_step).abs() < 1e-6);
@@ -575,9 +582,10 @@ mod tests {
         let inner_radius = 12.0f32;
         let img = draw_ring_image(128, 128, center, outer_radius, inner_radius);
 
+        // The scale prior's reach (12 px) is short of the 24 px ring; the
+        // completion refit reaches from the ring's expected radius instead.
         let mut cfg = DetectConfig::default();
         cfg.advanced.edge_sample.r_max = 12.0;
-        cfg.advanced.completion.roi_radius_px = 40.0;
 
         let baseline = fit_outer_candidate_from_prior(&img, center, outer_radius, &cfg, None);
         assert!(baseline.is_err());
@@ -585,7 +593,7 @@ mod tests {
         let completion =
             fit_outer_candidate_from_prior_for_completion(&img, center, outer_radius, &cfg, None)
                 .expect("completion outer fit should use completion-derived edge config");
-        let completion_cfg = completion_edge_cfg(&cfg);
+        let completion_cfg = completion_edge_cfg(&cfg, outer_radius);
         assert!(completion.edge.outer_points.len() >= completion_cfg.min_rays_with_ring);
     }
 

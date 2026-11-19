@@ -1556,7 +1556,6 @@ class OuterFitConfig:
 @dataclass(slots=True)
 class CompletionConfig:
     enable: bool = True
-    roi_radius_px: float = 30.0
     reproj_gate_px: float = 3.0
     min_fit_confidence: float = 0.45
     min_arc_coverage: float = 0.35
@@ -1570,7 +1569,6 @@ class CompletionConfig:
         data = _require_mapping(data, name="data")
         return cls(
             enable=bool(data["enable"]),
-            roi_radius_px=float(data["roi_radius_px"]),
             reproj_gate_px=float(data["reproj_gate_px"]),
             min_fit_confidence=float(data["min_fit_confidence"]),
             min_arc_coverage=float(data["min_arc_coverage"]),
@@ -1583,7 +1581,6 @@ class CompletionConfig:
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "enable": bool(self.enable),
-            "roi_radius_px": float(self.roi_radius_px),
             "reproj_gate_px": float(self.reproj_gate_px),
             "min_fit_confidence": float(self.min_fit_confidence),
             "min_arc_coverage": float(self.min_arc_coverage),
@@ -1727,7 +1724,7 @@ class EdgeSampleConfig:
     r_max: float = 66.0
     r_min: float = 1.5
     r_step: float = 0.5
-    min_ring_depth: float = 0.08
+    min_ring_depth: float = 0.03
     min_rays_with_ring: int = 16
 
     @classmethod
@@ -2017,7 +2014,6 @@ class InnerAsOuterRecoveryConfig:
     k_neighbors: int = 6
     min_theta_consistency: float = 0.18
     min_theta_coverage: float = 0.4
-    min_ring_depth: float = 0.02
     refine_halfwidth_px: float = 2.5
     size_gate_tolerance: float = 0.25
 
@@ -2030,7 +2026,6 @@ class InnerAsOuterRecoveryConfig:
             k_neighbors=int(data["k_neighbors"]),
             min_theta_consistency=float(data["min_theta_consistency"]),
             min_theta_coverage=float(data["min_theta_coverage"]),
-            min_ring_depth=float(data["min_ring_depth"]),
             refine_halfwidth_px=float(data["refine_halfwidth_px"]),
             size_gate_tolerance=float(data["size_gate_tolerance"]),
         )
@@ -2042,7 +2037,6 @@ class InnerAsOuterRecoveryConfig:
             "k_neighbors": int(self.k_neighbors),
             "min_theta_consistency": float(self.min_theta_consistency),
             "min_theta_coverage": float(self.min_theta_coverage),
-            "min_ring_depth": float(self.min_ring_depth),
             "refine_halfwidth_px": float(self.refine_halfwidth_px),
             "size_gate_tolerance": float(self.size_gate_tolerance),
         }

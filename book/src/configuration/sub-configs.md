@@ -23,7 +23,6 @@ Controls the homography-guided completion stage. After the global homography fil
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enable` | `bool` | `true` | Master switch for the completion stage. |
-| `roi_radius_px` | `f32` | 24.0 | Radial sampling extent (px) for edge sampling around the projected center. Auto-derived from scale prior as `clamp(0.75 * d_nom, 24, 80)`. |
 | `reproj_gate_px` | `f32` | 3.0 | Maximum reprojection error (px) between the fitted center and the H-projected board center. Fits exceeding this gate are rejected. |
 | `min_fit_confidence` | `f32` | 0.45 | Minimum fit confidence score in [0, 1] for accepting a completion fit. |
 | `min_arc_coverage` | `f32` | 0.35 | Minimum arc coverage (fraction of rays with both edges found). Low coverage indicates the marker is partially occluded or near the image boundary. |

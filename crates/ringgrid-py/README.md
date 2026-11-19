@@ -294,7 +294,6 @@ Default `marker_scale` derivations for `DetectConfig(TargetLayout.default_hex())
 - `advanced.proposal.min_distance` — derived from marker spacing and diameter prior
 - `advanced.edge_sample.r_max = 2.0 * radius_max_px` -> `66.0`
 - `advanced.outer_estimation.search_halfwidth_px = max(max((radius_max_px - radius_min_px) * 0.5, 2.0), 13.0)` -> `13.0`
-- `advanced.completion.roi_radius_px = clamp(0.75 * nominal_diameter_px, 24.0, 80.0)` -> `30.0`
 - `advanced.projective_center.max_correction_shift_px` — stays `None` ("auto"): the gate falls back to the nominal marker diameter (`40.0` px here) at use time
 
 Deeper theory and Rust-side derivation details:
@@ -346,7 +345,7 @@ Deeper theory and Rust-side derivation details:
 
 This is the highest-leverage tuning section. Replacing `cfg.marker_scale`
 recomputes the scale-coupled defaults in `proposal`, `edge_sample`,
-`outer_estimation.search_halfwidth_px`, and `completion.roi_radius_px`; the
+and `outer_estimation.search_halfwidth_px`; the
 `projective_center.max_correction_shift_px` "auto" fallback also tracks it.
 
 | Field | Default | Practical notes |
@@ -383,7 +382,7 @@ proposal.
 | `r_max` | derived -> `66.0` | Maximum sampling radius. Re-derived from `cfg.marker_scale`. |
 | `r_min` | `1.5` | Minimum sampling radius. Rarely changed directly. |
 | `r_step` | `0.5` | Radial step in pixels. Lower values sample more densely but cost more. |
-| `min_ring_depth` | `0.08` | Minimum signed edge depth kept during sampling. Raise for noisy false edges; lower for low-contrast targets. |
+| `min_ring_depth` | `0.03` | Absolute noise floor of the intensity rise an outer edge point sits on (normalized intensity; the edge's full ink-to-paper transition, however blurred). Above it the gate is contrast-relative: the rise must also be 0.4 of the ray's own swing, so dark, low-contrast or defocused images need no retuning. Raise only for very noisy sensors. |
 | `min_rays_with_ring` | `16` | Minimum rays that must see a valid ring-like response. Raise for stricter geometry, lower for partial occlusion. |
 
 ### `outer_estimation`
@@ -520,7 +519,6 @@ locations. It only runs when a valid homography is available.
 | Field | Default | Practical notes |
 |---|---|---|
 | `enable` | `True` | Set to `False` to inspect only directly fit-decoded markers. |
-| `roi_radius_px` | derived -> `30.0` | Radius of the completion search ROI. Re-derived from `cfg.marker_scale`. |
 | `reproj_gate_px` | `3.0` | Maximum allowed distance between the fitted center and the projected board position. |
 | `min_fit_confidence` | `0.45` | Minimum confidence for a recovered completion marker. |
 | `min_arc_coverage` | `0.35` | Minimum fraction of rays that found both edges. Lower only for heavy occlusion. |
@@ -599,7 +597,6 @@ inner ring.
 | `k_neighbors` | `6` | Number of nearest neighbors used to estimate the expected outer radius. |
 | `min_theta_consistency` | `0.18` | Lower-than-normal consistency gate used by this recovery path. |
 | `min_theta_coverage` | `0.4` | Minimum angular coverage required during the re-fit. |
-| `min_ring_depth` | `0.02` | Relaxed edge-depth gate used for blurry outer edges. |
 | `refine_halfwidth_px` | `2.5` | Wider local radius refinement window for the recovery re-fit. |
 | `size_gate_tolerance` | `0.25` | Prevents the relaxed recovery fit from re-locking onto the inner ring. |
 

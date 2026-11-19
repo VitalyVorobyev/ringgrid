@@ -550,7 +550,6 @@ class OuterFitConfig:
 
 class CompletionConfig:
     enable: bool
-    roi_radius_px: float
     reproj_gate_px: float
     min_fit_confidence: float
     min_arc_coverage: float
@@ -561,7 +560,6 @@ class CompletionConfig:
     def __init__(
         self,
         enable: bool = ...,
-        roi_radius_px: float = ...,
         reproj_gate_px: float = ...,
         min_fit_confidence: float = ...,
         min_arc_coverage: float = ...,
@@ -819,7 +817,6 @@ class InnerAsOuterRecoveryConfig:
     k_neighbors: int
     min_theta_consistency: float
     min_theta_coverage: float
-    min_ring_depth: float
     refine_halfwidth_px: float
     size_gate_tolerance: float
     def __init__(
@@ -829,7 +826,6 @@ class InnerAsOuterRecoveryConfig:
         k_neighbors: int = ...,
         min_theta_consistency: float = ...,
         min_theta_coverage: float = ...,
-        min_ring_depth: float = ...,
         refine_halfwidth_px: float = ...,
         size_gate_tolerance: float = ...,
     ) -> None: ...

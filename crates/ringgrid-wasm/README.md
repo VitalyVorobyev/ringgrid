@@ -115,7 +115,7 @@ import detectConfigSchema from "@vitavision/ringgrid/schemas/detect_config.json"
 ```
 
 Fields derived from `marker_scale` and the target (proposal radii, edge-sampling
-radii, completion ROI, code-band ratio, ...) are marked `readOnly`: the library
+radii, code-band ratio, ...) are marked `readOnly`: the library
 overwrites them whenever a config is loaded, so a form should not offer them as
 inputs.
 

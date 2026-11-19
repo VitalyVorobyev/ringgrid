@@ -15,7 +15,7 @@ use crate::conic::Ellipse;
 use crate::detector::MarkerRecord;
 use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
-use crate::ring::{EdgeSampleConfig, OuterEstimationConfig};
+use crate::ring::OuterEstimationConfig;
 
 use super::{
     DetectConfig,
@@ -85,31 +85,20 @@ fn flagged_recovery_indices(markers: &[MarkerRecord], ratio_threshold: f32) -> V
         .collect()
 }
 
-/// Outer-fit sampling for recovery: the detector's outer-estimation and
-/// edge-sampling settings with the recovery-specific thresholds applied, and
-/// the default (unwidened) hypothesis search window — the neighbour-median
-/// radius prior is already close to the true outer radius.
-struct RecoverySampling {
-    estimation: OuterEstimationConfig,
-    edge: EdgeSampleConfig,
-}
-
-impl RecoverySampling {
-    fn new(config: &DetectConfig) -> Self {
-        let cfg = &config.advanced.inner_as_outer_recovery;
-        Self {
-            estimation: OuterEstimationConfig {
-                search_halfwidth_px: OuterEstimationConfig::default().search_halfwidth_px,
-                min_theta_consistency: cfg.min_theta_consistency,
-                min_theta_coverage: cfg.min_theta_coverage,
-                refine_halfwidth_px: cfg.refine_halfwidth_px,
-                ..config.advanced.outer_estimation.clone()
-            },
-            edge: EdgeSampleConfig {
-                min_ring_depth: cfg.min_ring_depth,
-                ..config.advanced.edge_sample.clone()
-            },
-        }
+/// Outer-radius estimation for recovery: the detector's settings with the
+/// recovery-specific thresholds applied, and the default (unwidened)
+/// hypothesis search window — the neighbour-median radius prior is already
+/// close to the true outer radius. Edge sampling is the detector's own: its
+/// depth gate is contrast-relative, so blur-softened edges need no separate,
+/// relaxed floor.
+fn recovery_estimation(config: &DetectConfig) -> OuterEstimationConfig {
+    let cfg = &config.advanced.inner_as_outer_recovery;
+    OuterEstimationConfig {
+        search_halfwidth_px: OuterEstimationConfig::default().search_halfwidth_px,
+        min_theta_consistency: cfg.min_theta_consistency,
+        min_theta_coverage: cfg.min_theta_coverage,
+        refine_halfwidth_px: cfg.refine_halfwidth_px,
+        ..config.advanced.outer_estimation.clone()
     }
 }
 
@@ -162,7 +151,7 @@ fn recover_marker_at_index(
     gray: &GrayImage,
     markers: &[MarkerRecord],
     config: &DetectConfig,
-    sampling: &RecoverySampling,
+    estimation: &OuterEstimationConfig,
     mapper: Option<&dyn PixelMapper>,
 ) -> Option<MarkerRecord> {
     let cfg = &config.advanced.inner_as_outer_recovery;
@@ -186,8 +175,8 @@ fn recover_marker_at_index(
         r_corrected,
         config,
         mapper,
-        &sampling.estimation,
-        &sampling.edge,
+        estimation,
+        &config.advanced.edge_sample,
     ) {
         Ok(candidate) => candidate,
         Err(reject) => {
@@ -254,11 +243,11 @@ pub(crate) fn try_recover_inner_as_outer(
         n_flagged = flagged.len(),
         "attempting inner-as-outer recovery for flagged markers"
     );
-    let sampling = RecoverySampling::new(config);
+    let estimation = recovery_estimation(config);
     let mut n_recovered = 0usize;
     for idx in flagged {
         let Some(recovered) =
-            recover_marker_at_index(idx, gray, markers, config, &sampling, mapper)
+            recover_marker_at_index(idx, gray, markers, config, &estimation, mapper)
         else {
             continue;
         };

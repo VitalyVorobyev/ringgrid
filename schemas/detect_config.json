@@ -13,8 +13,7 @@
             "min_arc_coverage": 0.35,
             "min_fit_confidence": 0.45,
             "reproj_gate_px": 3.0,
-            "require_perfect_decode": false,
-            "roi_radius_px": 24.0
+            "require_perfect_decode": false
           },
           "description": "Homography-guided completion controls."
         },
@@ -40,7 +39,7 @@
           "$ref": "#/$defs/EdgeSampleConfig",
           "default": {
             "min_rays_with_ring": 16,
-            "min_ring_depth": 0.08,
+            "min_ring_depth": 0.03,
             "n_rays": 48,
             "r_max": 14.0,
             "r_min": 1.5,
@@ -87,7 +86,6 @@
           "default": {
             "enable": true,
             "k_neighbors": 6,
-            "min_ring_depth": 0.02,
             "min_theta_consistency": 0.18,
             "min_theta_coverage": 0.4,
             "ratio_threshold": 0.75,
@@ -334,13 +332,6 @@
           "default": false,
           "description": "Require a decode (an exact match against one of the target's codewords)\nfor a completion marker to be accepted.\n\nWhen homography prediction accuracy is low (e.g. significant lens distortion\nwithout a calibrated mapper), the H-projected seed can be several pixels off.\nUnder those conditions, the geometry gates alone are insufficient; requiring a\nperfect decode provides an independent quality signal that does not depend on H.\n\nDefault: `false` (backward-compatible). Set to `true` for Scheimpflug / high-\ndistortion setups where no calibrated camera model is available.",
           "type": "boolean"
-        },
-        "roi_radius_px": {
-          "default": 24.0,
-          "description": "Radial sampling extent (pixels) around the prior center used for edge sampling.\nDerived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.",
-          "readOnly": true,
-          "type": "number",
-          "x-unit": "px"
         }
       },
       "type": "object"
@@ -396,8 +387,8 @@
           "type": "integer"
         },
         "min_ring_depth": {
-          "default": 0.08,
-          "description": "Minimum intensity drop (0 to 1, normalized intensity) for a valid ring.",
+          "default": 0.03,
+          "description": "Absolute noise floor (0 to 1, normalized intensity) of the intensity\nrise an outer edge point must sit on (the edge's full ink-to-paper\ntransition along the ray, however wide blur makes it).\n\nThe gate is contrast-relative above this floor: the rise must also be\nat least 0.4 of the ray's own swing (from the marker centre to half a\nradius past the edge), so a dark, low-contrast or defocused image\npasses the same edges as a sharp bright one. The floor only rejects\nedges indistinguishable from sensor noise.",
           "type": "number"
         },
         "n_rays": {
@@ -558,7 +549,7 @@
       "type": "object"
     },
     "InnerAsOuterRecoveryConfig": {
-      "description": "Configuration for automatic recovery of markers where the inner edge was\nincorrectly fitted as the outer ellipse.\n\nAfter all markers are finalized, each marker's outer radius is compared to\nthe median outer radius of its k nearest neighbors. A ratio well below 1.0\n(see `ratio_threshold`) indicates the outer fit locked onto the inner ring\nedge. When enabled, the detector re-attempts the outer fit for flagged\nmarkers using the neighbor median radius as the corrected expected radius.\n\nThe recovery re-fit uses a tight 4 px search window (to exclude the inner\nring) combined with relaxed quality gates (`min_theta_consistency`,\n`min_ring_depth`, `refine_halfwidth_px`) suited to the blurry/soft edges\nthat typically cause inner-as-outer confusion. A post-fit size gate\n(`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto\nthe inner ring even under the relaxed thresholds.",
+      "description": "Configuration for automatic recovery of markers where the inner edge was\nincorrectly fitted as the outer ellipse.\n\nAfter all markers are finalized, each marker's outer radius is compared to\nthe median outer radius of its k nearest neighbors. A ratio well below 1.0\n(see `ratio_threshold`) indicates the outer fit locked onto the inner ring\nedge. When enabled, the detector re-attempts the outer fit for flagged\nmarkers using the neighbor median radius as the corrected expected radius.\n\nThe recovery re-fit uses a tight 4 px search window (to exclude the inner\nring) combined with relaxed estimation gates (`min_theta_consistency`,\n`refine_halfwidth_px`) suited to the blurry/soft edges that typically\ncause inner-as-outer confusion; edge points pass the detector's own\ncontrast-relative depth gate (`edge_sample.min_ring_depth`). A post-fit size gate\n(`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto\nthe inner ring even under the relaxed thresholds.",
       "properties": {
         "enable": {
           "default": true,
@@ -570,11 +561,6 @@
           "description": "Number of nearest neighbors used to compute the median outer radius.\n\nDefault: `6` (matching the hex-lattice neighbor count). Self is always\nexcluded by passing k+1 to the neighbor function.",
           "minimum": 0,
           "type": "integer"
-        },
-        "min_ring_depth": {
-          "default": 0.02,
-          "description": "Minimum signed intensity depth at a candidate outer edge point during\nrecovery edge collection. Lower than production (0.05) to tolerate\nblur-smeared intensity gradients. Default: `0.02`.",
-          "type": "number"
         },
         "min_theta_consistency": {
           "default": 0.18,
@@ -1146,8 +1132,7 @@
           "min_arc_coverage": 0.35,
           "min_fit_confidence": 0.45,
           "reproj_gate_px": 3.0,
-          "require_perfect_decode": false,
-          "roi_radius_px": 30.0
+          "require_perfect_decode": false
         },
         "decode": {
           "code_band_ratio": 0.74404764,
@@ -1160,7 +1145,7 @@
         "dedup_radius": 6.0,
         "edge_sample": {
           "min_rays_with_ring": 16,
-          "min_ring_depth": 0.08,
+          "min_ring_depth": 0.03,
           "n_rays": 48,
           "r_max": 66.0,
           "r_min": 1.5,
@@ -1195,7 +1180,6 @@
         "inner_as_outer_recovery": {
           "enable": true,
           "k_neighbors": 6,
-          "min_ring_depth": 0.02,
           "min_theta_consistency": 0.18,
           "min_theta_coverage": 0.4,
           "ratio_threshold": 0.75,

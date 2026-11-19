@@ -1,6 +1,6 @@
 # MarkerScalePrior
 
-`MarkerScalePrior` tells the detector the expected range of marker outer diameters in working-frame pixels. This single prior drives the derivation of proposal search radii, edge sampling extent, ellipse validation bounds, completion ROI size, and projective-center shift gates.
+`MarkerScalePrior` tells the detector the expected range of marker outer diameters in working-frame pixels. This single prior drives the derivation of proposal search radii, edge sampling extent, ellipse validation bounds, and projective-center shift gates.
 
 ## Fields
 
@@ -79,12 +79,6 @@ Note: the number of angular rays for outer estimation is controlled by `EdgeSamp
 |---|---|
 | `min_semi_axis` | `max(0.3 * r_min, 2.0)` |
 | `max_semi_axis` | `max(2.5 * r_max, min_semi_axis)` |
-
-### Completion ROI
-
-| Derived field | Formula |
-|---|---|
-| `completion.roi_radius_px` | `clamp(0.75 * d_nom, 24.0, 80.0)` |
 
 ### Projective center shift gate
 

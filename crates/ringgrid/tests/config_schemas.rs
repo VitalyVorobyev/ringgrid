@@ -472,12 +472,6 @@ fn read_only_fields_are_overwritten_on_load() {
         ("EdgeSampleConfig", "edge_sample", "r_min", json!(123.0)),
         ("EdgeSampleConfig", "edge_sample", "r_max", json!(123.0)),
         (
-            "CompletionConfig",
-            "completion",
-            "roi_radius_px",
-            json!(123.0),
-        ),
-        (
             "OuterEstimationConfig",
             "outer_estimation",
             "search_halfwidth_px",

@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 
 import type { Feedback, Run, Tile, Verdict } from "../model/api";
 import { issueCount } from "../model/feedback";
+import { formatKept, keptCount, keptTitle } from "../model/threshold";
 
 export type TileFilter = "all" | "unreviewed" | "has_issues" | "flagged" | "differs";
 
@@ -37,10 +38,22 @@ export function passesFilter(filter: TileFilter, tile: string, feedback: Feedbac
   }
 }
 
-const counts = (c: [number, number] | null | undefined) => (c ? (c[1] !== c[0] ? `${c[0]} / ${c[1]} id` : `${c[0]}`) : "–");
-
-/** The list's columns: name, counts per run, and the review state as badges. */
-function tileColumns(feedback: Feedback, differing: ReadonlySet<string>, runA: Run | undefined, runB: Run | undefined): Column<Tile>[] {
+/** The list's columns: name, markers per run kept at the threshold, and the review state as badges. */
+function tileColumns(
+  feedback: Feedback,
+  differing: ReadonlySet<string>,
+  runA: Run | undefined,
+  runB: Run | undefined,
+  minConfidence: number,
+): Column<Tile>[] {
+  const counts = (run: Run | undefined, t: Tile) => {
+    const c = keptCount(run?.scores[t.name], minConfidence);
+    return (
+      <span className="whitespace-nowrap" title={keptTitle(c)}>
+        {formatKept(c)}
+      </span>
+    );
+  };
   return [
     {
       key: "name",
@@ -56,8 +69,8 @@ function tileColumns(feedback: Feedback, differing: ReadonlySet<string>, runA: R
         </span>
       ),
     },
-    { key: "a", header: "A", numeric: true, cell: (t) => counts(runA?.counts[t.name]) },
-    ...(runB ? [{ key: "b", header: "B", numeric: true, cell: (t: Tile) => counts(runB.counts[t.name]) }] : []),
+    { key: "a", header: "A", numeric: true, cell: (t) => counts(runA, t) },
+    ...(runB ? [{ key: "b", header: "B", numeric: true, cell: (t: Tile) => counts(runB, t) }] : []),
     {
       key: "state",
       header: <span className="sr-only">Review state</span>,
@@ -93,11 +106,25 @@ export interface TileListProps {
   differing: ReadonlySet<string>;
   runA: Run | undefined;
   runB: Run | undefined;
+  /** Counts are of the markers kept at this confidence threshold. */
+  minConfidence: number;
   filter: TileFilter;
   onFilterChange: (filter: TileFilter) => void;
 }
 
-export function TileList({ tiles, allTiles, current, onSelect, feedback, differing, runA, runB, filter, onFilterChange }: TileListProps) {
+export function TileList({
+  tiles,
+  allTiles,
+  current,
+  onSelect,
+  feedback,
+  differing,
+  runA,
+  runB,
+  minConfidence,
+  filter,
+  onFilterChange,
+}: TileListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scroller.current?.querySelector('tr[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
@@ -109,7 +136,7 @@ export function TileList({ tiles, allTiles, current, onSelect, feedback, differi
     if (v) verdicts[v] += 1;
   }
 
-  const columns = tileColumns(feedback, differing, runA, runB);
+  const columns = tileColumns(feedback, differing, runA, runB, minConfidence);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

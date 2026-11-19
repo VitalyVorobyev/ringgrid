@@ -9,14 +9,20 @@
  *   a pair whose id or position differs in a verdict colour (the app compared it against the
  *   declared tolerances), pairs that agree dimmed;
  * - confidence (one run): viridis, a magnitude, with its legend;
+ * - below the confidence threshold: hidden, or (`showCut`) in the neutral `structure` role,
+ *   dimmed and labelled "cut". Cut markers take no part in the comparison: the server compares
+ *   the runs cut at the same threshold;
  * - a reviewer's flag is a verdict and wins: defect for a wrong id or a false positive, warn for a
  *   wrong centre, normal for confirmed. Every class also has a label, so colour is never the
- *   only cue.
+ *   only cue. A flagged or selected marker is never hidden, by the threshold or by differences
+ *   only, so a threshold that cuts a confirmed marker or a false positive shows it.
  */
 
 import { colormapRgb } from "@vitavision/charts";
+import { overlayRole } from "@vitavision/stage2d";
 
 import type { Comparison, Detection, FlagKind, Marker, MarkerFlag, MatchClass, Pin } from "./api";
+import { passesThreshold } from "./threshold";
 
 export type Side = "A" | "B";
 
@@ -34,6 +40,10 @@ export interface OverlayOptions {
   ids: boolean;
   /** Label markers with their grid coordinate. */
   grid: boolean;
+  /** Markers below this confidence are cut (see `passesThreshold`); 0 keeps every marker. */
+  minConfidence: number;
+  /** Draw cut markers greyed out instead of hiding them. */
+  showCut: boolean;
 }
 
 export interface MarkerView {
@@ -42,8 +52,10 @@ export interface MarkerView {
   side: Side;
   run: string;
   marker: Marker;
-  /** Compare mode only. */
+  /** Compare mode only; null for a cut marker, which is not compared. */
   cls: PairClass | null;
+  /** Below the confidence threshold: drawn only with `showCut`, or when flagged or selected. */
+  cut: boolean;
   /** The paired marker of the other run, when there is one. */
   other: Marker | null;
   flag: MarkerFlag | undefined;
@@ -79,6 +91,9 @@ export const CLASS_COLOUR: Record<"id_differs" | "position_differs", string> = {
 };
 
 export const RUN_COLOUR: Record<Side, string> = { A: "var(--series-1)", B: "var(--series-2)" };
+
+/** A marker below the confidence threshold: the overlay grammar's neutral role. */
+export const CUT_COLOUR = overlayRole("structure");
 
 /** Steps of the confidence colour map: markers sharing a colour share a batched path. */
 const CONFIDENCE_STEPS = 16;
@@ -124,14 +139,18 @@ export function markerViews({ a, b, comparison, flags, selected, options }: Over
     for (const marker of entry.detection.markers) {
       const key = markerKey(side, marker.index);
       const flag = flags.find((f) => f.run === entry.run && f.marker.index === marker.index);
-      const pair = comparing ? pairOf[side].get(marker.index) : undefined;
-      const cls: PairClass | null = comparing ? (pair?.cls ?? "only") : null;
-      const other = pair ? (markersOf[otherSide].get(side === "A" ? pair.b : pair.a) ?? null) : null;
       const keep = flag !== undefined || key === selected;
+      const cut = !passesThreshold(marker.confidence, options.minConfidence);
+      if (cut && !options.showCut && !keep) continue;
+      const compared = comparing && !cut;
+      const pair = compared ? pairOf[side].get(marker.index) : undefined;
+      const cls: PairClass | null = compared ? (pair?.cls ?? "only") : null;
+      const other = pair ? (markersOf[otherSide].get(side === "A" ? pair.b : pair.a) ?? null) : null;
       if (comparing && options.differencesOnly && cls === "same" && !keep) continue;
 
       let colour: string | undefined;
       if (flag) colour = FLAG_COLOUR[flag.kind];
+      else if (cut) colour = CUT_COLOUR;
       else if (cls === "id_differs" || cls === "position_differs") colour = CLASS_COLOUR[cls];
       else if (comparing) colour = RUN_COLOUR[side];
       else if (options.confidence && marker.confidence !== null) colour = confidenceColour(marker.confidence);
@@ -147,6 +166,7 @@ export function markerViews({ a, b, comparison, flags, selected, options }: Over
       }
       if (options.grid && marker.grid_coord) parts.push(`(${marker.grid_coord[0]},${marker.grid_coord[1]})`);
       if (cls === "only") parts.push(`only ${side}`);
+      if (cut) parts.push("cut");
       if (flag) parts.push(FLAG_LABEL[flag.kind] + (flag.kind === "wrong_id" && flag.correct_id != null ? ` → ${flag.correct_id}` : ""));
 
       const outer = marker.ellipse_outer;
@@ -156,11 +176,12 @@ export function markerViews({ a, b, comparison, flags, selected, options }: Over
         run: entry.run,
         marker,
         cls,
+        cut,
         other,
         flag,
         colour,
         dashed: comparing && side === "B",
-        dimmed: cls === "same" && !keep,
+        dimmed: (cls === "same" || cut) && !keep,
         label: parts.length > 0 ? parts.join(" · ") : undefined,
         radius: outer ? Math.max(outer.a, outer.b) : entry.detection.radius_hint,
       });

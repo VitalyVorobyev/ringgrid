@@ -168,6 +168,8 @@ pub(super) fn refit_final_homography(result: &mut PipelineResult, config: &Detec
 ///   perspective and blur bias (precision harness, operating range: median
 ///   error 0.25–1.0 px against 0.12–0.21 px corrected); it is not reported.
 /// - Every reported marker has at least `min_confidence`.
+/// - No reported marker's outer ring is far smaller than its neighbours'
+///   (see [`meets_output_contract`]).
 /// - With photometric refinement, every reported marker passes geometric
 ///   verification on the refined centres (finalize deferred it; see
 ///   `common::phase_geometric_verify`). Candidates scored before the
@@ -183,7 +185,6 @@ pub(super) fn apply_output_contract(
     result: &mut PipelineResult,
     config: &DetectConfig,
 ) -> Vec<Option<usize>> {
-    let corrected_only = config.circle_refinement.uses_projective_center();
     let verified = deferred_verification(result, config);
     let before = result.markers.len();
     let mut n_kept = 0usize;
@@ -192,9 +193,7 @@ pub(super) fn apply_output_contract(
         .iter()
         .enumerate()
         .map(|(i, m)| {
-            let keep = (!corrected_only || m.center_source != CenterSource::OuterEllipse)
-                && m.confidence >= config.min_confidence
-                && verified.as_ref().is_none_or(|v| v[i]);
+            let keep = meets_output_contract(m, config) && verified.as_ref().is_none_or(|v| v[i]);
             keep.then(|| {
                 n_kept += 1;
                 n_kept - 1
@@ -210,7 +209,7 @@ pub(super) fn apply_output_contract(
     }
     tracing::info!(
         n_dropped = before - result.markers.len(),
-        "markers without a corrected centre or below min_confidence not reported"
+        "markers failing the output contract (uncorrected centre, below min_confidence, inner-as-outer or unverified) not reported"
     );
     if result
         .markers
@@ -224,6 +223,26 @@ pub(super) fn apply_output_contract(
         result.board_frame = None;
     }
     new_index
+}
+
+/// The output contract's per-marker terms ([`apply_output_contract`] also
+/// applies a deferred geometric verification):
+///
+/// - a corrected centre when the configuration asks for one;
+/// - at least `min_confidence`;
+/// - an outer ring not far smaller than its neighbours': below the
+///   inner-as-outer `ratio_threshold` of their median radius, the outer fit
+///   took an inner edge (recovery could not refit it), and the two conics then
+///   belong to different rings, so the centre is not trusted (rtv3d: both such
+///   rings reported on main were > 2 px off their lattice position).
+pub(super) fn meets_output_contract(m: &MarkerRecord, config: &DetectConfig) -> bool {
+    let ratio_threshold = config.advanced.inner_as_outer_recovery.ratio_threshold;
+    (!config.circle_refinement.uses_projective_center()
+        || m.center_source != CenterSource::OuterEllipse)
+        && m.confidence >= config.min_confidence
+        && m.fit
+            .neighbor_radius_ratio
+            .is_none_or(|r| r >= ratio_threshold)
 }
 
 /// Which markers pass the geometric verification finalize deferred for a

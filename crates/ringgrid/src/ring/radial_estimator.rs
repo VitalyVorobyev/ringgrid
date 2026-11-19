@@ -80,6 +80,25 @@ impl RadialScanResult {
         peaks
     }
 
+    /// Per-theta peak radii for `pol`, each ray's peak sought only among the
+    /// grid radii within `band` (inclusive). Empty when no grid radius lies
+    /// in the band.
+    pub(crate) fn per_theta_peaks_in(&self, pol: Polarity, band: [f32; 2]) -> Vec<f32> {
+        let r = &self.grid.r_samples;
+        let lo = r.partition_point(|&x| x < band[0]);
+        let hi = r.partition_point(|&x| x <= band[1]);
+        if lo >= hi {
+            return Vec::new();
+        }
+        let n_r = r.len();
+        (0..self.n_valid_theta)
+            .map(|ti| {
+                let curve = &self.curves_flat[ti * n_r + lo..ti * n_r + hi];
+                r[lo + radial_profile::peak_idx(curve, pol)]
+            })
+            .collect()
+    }
+
     /// Aggregate valid theta curves into one radial response profile.
     pub(crate) fn aggregate_response(&self, agg: &AngularAggregator) -> Vec<f32> {
         let n_r = self.grid.r_samples.len();

@@ -64,7 +64,11 @@ best one:
    board frame, its labeled centres within 2 px of the best candidate's
    homography by median); the union's homography is refit and verified again.
    Each candidate's tiers fit a different subset of the rings, so on large
-   oblique views the union reports rings no single candidate does.
+   oblique views the union reports rings no single candidate does. A cell
+   whose kept marker the output contract would drop (no corrected centre,
+   below `min_confidence`) takes another candidate's marker there when that
+   one would be reported: a defocused ring's inner fit can succeed in one
+   candidate and fail in another.
 5. Photometric refinement, when requested, runs once on the joined result.
 
 ## When To Prefer Each Method

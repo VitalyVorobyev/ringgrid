@@ -19,9 +19,9 @@ use super::common::{
     phase_geometric_verify, sync_marker_board_correspondence_with_logging,
 };
 use super::fallback::{finalize_decode_anchored_fallback, finalize_unlabeled_result};
-use super::{annotate_radius_ratios, apply_marker_fixup};
+use super::{annotate_radius_ratios, apply_marker_fixup, meets_output_contract};
 use crate::detector::completion::decode_contradicts_cell;
-use crate::detector::{CenterSource, DetectionSource, MarkerRecord};
+use crate::detector::{DetectionSource, MarkerRecord};
 use crate::homography::fit_homography_ransac;
 use crate::pipeline::anchor::CoordMap;
 use crate::pipeline::{
@@ -227,10 +227,12 @@ fn reanchor_plain(
 /// cells beyond it). Plain targets keep their pre-A/B behavior: one scope, no
 /// pool.
 ///
-/// A labeled ring whose projective centre correction failed (no inner
-/// ellipse, say) would be dropped by the output contract; its cell is offered
-/// to completion's refit like a missing one, under the same gates, and the
-/// ring is put back unchanged when the refit does not take the cell.
+/// A labeled ring the output contract would drop ([`meets_output_contract`]:
+/// its projective centre correction failed, its confidence is below
+/// `min_confidence`, or its outer ring is far smaller than its neighbours')
+/// has its cell offered to completion's refit like a missing one, under the
+/// same gates, and is put back unchanged when the refit does not take the
+/// cell.
 fn phase_grid_completion(
     gray: &GrayImage,
     h_current: &nalgebra::Matrix3<f64>,
@@ -243,8 +245,8 @@ fn phase_grid_completion(
     // Offered only once anchored: an unresolved plain labeling re-anchors on
     // the completed patch, which a reshuffled patch can cost (precision
     // harness, plain rect at 60°: anchored before, relative after).
-    let uncorrected = if anchored {
-        take_uncorrected_labeled(markers, config)
+    let unreportable = if anchored {
+        take_unreportable_labeled(markers, config)
     } else {
         Vec::new()
     };
@@ -269,30 +271,27 @@ fn phase_grid_completion(
         apply_projective_centers(&mut added[..n_refit], config);
     }
     let n_added = added.len();
-    restore_uncorrected(markers, uncorrected, &config.target);
+    restore_unreportable(markers, unreportable, &config.target);
     n_added
 }
 
-/// Remove and return the labeled markers without a corrected centre, when
-/// the configuration asks for one (see [`phase_grid_completion`]).
-fn take_uncorrected_labeled(
+/// Remove and return the labeled markers the output contract would drop (see
+/// [`phase_grid_completion`]).
+fn take_unreportable_labeled(
     markers: &mut Vec<MarkerRecord>,
     config: &DetectConfig,
 ) -> Vec<MarkerRecord> {
-    if !config.circle_refinement.uses_projective_center() {
-        return Vec::new();
-    }
-    let (uncorrected, kept): (Vec<_>, Vec<_>) = std::mem::take(markers)
+    let (unreportable, kept): (Vec<_>, Vec<_>) = std::mem::take(markers)
         .into_iter()
-        .partition(|m| m.grid_coord.is_some() && m.center_source == CenterSource::OuterEllipse);
+        .partition(|m| m.grid_coord.is_some() && !meets_output_contract(m, config));
     *markers = kept;
-    uncorrected
+    unreportable
 }
 
-/// Put back the uncorrected markers whose cell completion left free.
-fn restore_uncorrected(
+/// Put back the unreportable markers whose cell completion left free.
+fn restore_unreportable(
     markers: &mut Vec<MarkerRecord>,
-    uncorrected: Vec<MarkerRecord>,
+    unreportable: Vec<MarkerRecord>,
     target: &TargetLayout,
 ) {
     let present: HashSet<Coord> = markers
@@ -300,7 +299,7 @@ fn restore_uncorrected(
         .filter_map(|m| marker_cell_coord(m, target))
         .collect();
     markers.extend(
-        uncorrected
+        unreportable
             .into_iter()
             .filter(|m| marker_cell_coord(m, target).is_none_or(|c| !present.contains(&c))),
     );

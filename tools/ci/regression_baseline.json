@@ -119,26 +119,26 @@
     "script": ".venv/bin/python tools/run_rtv3d_eval.py",
     "output": "tools/out/rtv3d_eval/report.json",
     "requires": "data/rtv3d_0",
-    "description": "Real-world rtv3d dataset (private, local only; status and failure modes in docs/studies/rtv3d-status.md): 19 strip images, 2 on the eval's skip list (target_0, target_7), so 17 usable strips x 6 cameras = 102 tiles. The primary regression target is `adaptive` (published `ringgrid detect` without --marker-diameter = detect_adaptive, default config); `adaptive_photometric` adds --refine photometric. The single-pass ringgrid-dev strategies A (20-56 px), B (14-66 px, the default prior) and D (per-strip best prior) are kept for continuity. total_decoded floors are ~1.7% below the totals measured with the contrast-relative edge-depth gate (adaptive 7408, adaptive_photometric 8945, A 5508, B 4645, D 3341), the slack the A gate has always had (floor = round(0.983 x measured)); for the adaptive strategies tiles_zero_ids is capped at the measured 0 and tiles_lt10_ids at the measured 0 plus one tile.",
+    "description": "Real-world rtv3d dataset (private, local only; status and failure modes in docs/studies/rtv3d-status.md): 19 strip images, 2 on the eval's skip list (target_0, target_7), so 17 usable strips x 6 cameras = 102 tiles. The primary regression target is `adaptive` (published `ringgrid detect` without --marker-diameter = detect_adaptive, default config); `adaptive_photometric` adds --refine photometric. The single-pass ringgrid-dev strategies A (20-56 px), B (14-66 px, the default prior) and D (per-strip best prior) are kept for continuity. total_decoded floors are ~1.7% below the totals measured with the blur-aware inner-edge search and the unreportable-cell refit (adaptive 8376, adaptive_photometric 9033, A 5904, B 4992, D 3561), the slack the A gate has always had (floor = round(0.983 x measured)); for the adaptive strategies tiles_zero_ids is capped at the measured 0 and tiles_lt10_ids at the measured 0 plus one tile.",
     "strategies": {
       "adaptive": {
-        "min_total_decoded": 7282,
+        "min_total_decoded": 8234,
         "max_tiles_zero_ids": 0,
         "max_tiles_lt10_ids": 1
       },
       "adaptive_photometric": {
-        "min_total_decoded": 8793,
+        "min_total_decoded": 8879,
         "max_tiles_zero_ids": 0,
         "max_tiles_lt10_ids": 1
       },
       "A_old_default_20_56": {
-        "min_total_decoded": 5414
+        "min_total_decoded": 5804
       },
       "B_new_default_14_66": {
-        "min_total_decoded": 4566
+        "min_total_decoded": 4907
       },
       "D_per_strip_best": {
-        "min_total_decoded": 3284
+        "min_total_decoded": 3500
       }
     }
   }

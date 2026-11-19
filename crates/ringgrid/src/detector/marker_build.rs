@@ -540,10 +540,13 @@ pub(crate) fn marker_from_outer_fit(
         ..
     } = cand;
     let center = outer.center();
+    let sampler = DistortionAwareSampler::new(gray, mapper);
+    let edge_width_px = outer_edge_width_px(sampler, &outer);
 
     let inner = fit_inner_ellipse_from_outer_hint(
         gray,
         &outer,
+        edge_width_px,
         &config.advanced.marker_spec,
         mapper,
         &config.advanced.inner_fit,
@@ -560,9 +563,8 @@ pub(crate) fn marker_from_outer_fit(
         );
     }
 
-    let sampler = DistortionAwareSampler::new(gray, mapper);
     let mut fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
-    fit.outer_edge_width_px = outer_edge_width_px(sampler, &outer);
+    fit.outer_edge_width_px = edge_width_px;
     let decode = decode_metrics_from_result(decode_result.as_ref());
     let confidence_factors = ConfidenceFactors::measure(
         decode_result.as_ref(),

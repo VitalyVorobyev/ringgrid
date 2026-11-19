@@ -368,17 +368,26 @@ fn check_inner_fit_gates(
 /// Robustly fit inner ellipse points using outer ellipse only as search prior.
 ///
 /// The radial hint/polarity stage is delegated to `estimate_inner_scale_from_outer`
-/// so there is a single source of truth for inner-edge signal extraction.
+/// so there is a single source of truth for inner-edge signal extraction;
+/// `outer_edge_width_px` (the outer edge's blur ramp) lets it reach an inner
+/// edge that blur moved past the nominal window.
 pub(crate) fn fit_inner_ellipse_from_outer_hint(
     gray: &GrayImage,
     outer: &Ellipse,
+    outer_edge_width_px: Option<f32>,
     spec: &MarkerSpecConfig,
     mapper: Option<&dyn PixelMapper>,
     cfg: &InnerFitConfig,
     store_response: bool,
 ) -> InnerFitResult {
-    let estimate =
-        estimate_inner_scale_from_outer_with_mapper(gray, outer, spec, mapper, store_response);
+    let estimate = estimate_inner_scale_from_outer_with_mapper(
+        gray,
+        outer,
+        spec,
+        outer_edge_width_px,
+        mapper,
+        store_response,
+    );
 
     if estimate.status != InnerStatus::Ok {
         return failed_inner_fit(
@@ -519,6 +528,7 @@ mod tests {
         let res = fit_inner_ellipse_from_outer_hint(
             &img,
             &outer,
+            None,
             &spec,
             None,
             &InnerFitConfig::default(),

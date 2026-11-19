@@ -1,10 +1,11 @@
-# rtv3d: detection status (November 2026, contrast-relative edge gate)
+# rtv3d: detection status (November 2026, blur-aware inner edge)
 
 Status of ringgrid on the rtv3d captures, the project's most important real
-dataset. The strategy table, *Contrast-relative edge gate* and *Gate* were
-measured with the contrast-relative edge-depth gate (branch
-`fix/relative-edge-depth-gate`, on top of `aafce4f1`); every other number
-below was measured on main at `e167a14b` (PRs #95–#99 merged), as labelled,
+dataset. The strategy table, *Missing rings between detected neighbours* and
+*Gate* were measured with the blur-aware inner-edge search (branch
+`fix/blur-aware-inner-fit`, on top of `1e5ba23d`); *Contrast-relative edge
+gate* on `fix/relative-edge-depth-gate` (on top of `aafce4f1`); every other
+number below was measured on main at `e167a14b` (PRs #95–#99 merged), as labelled,
 with `tools/run_rtv3d_eval.py` and the one-off analyses listed under
 *Reproduce*. The data is private and lives outside the repository, in the
 gitignored `data/rtv3d_0`. This document names tiles by file name only and
@@ -40,11 +41,16 @@ labelled **hypothesis** have not been tested yet.
 
 | strategy | decoded IDs | IDs / tile (mean, median) | tiles with 0 IDs | tiles < 10 IDs | top / middle / bottom | runtime / tile (median, max) | total |
 |---|---|---|---|---|---|---|---|
-| **adaptive** (primary) | **7408** | 72.6, 87 | 0 | 0 | 1298 / 3725 / 2385 | 404 ms, 648 ms | 41.9 s |
-| adaptive + `--refine photometric` | **8945** | 87.7, 108 | 0 | 0 | 1889 / 4144 / 2912 | 2025 ms, 3065 ms | 210.2 s |
-| A, single pass [20, 56] px | 5508 | 54.0, 81.5 | 42 | 42 | 559 / 2802 / 2147 | 39 ms | 3.5 s |
-| B, single pass [14, 66] px (default prior) | 4645 | 45.5, 68 | 40 | 42 | 307 / 2319 / 2019 | 36 ms | 3.3 s |
-| D, single pass, per-strip prior | 3341 | 32.8, 0 | 58 | 60 | 287 / 1662 / 1392 | 27 ms | 3.1 s |
+| **adaptive** (primary) | **8376** | 82.1, 99.5 | 0 | 0 | 1589 / 4089 / 2698 | 406 ms, 681 ms | 41.7 s |
+| adaptive + `--refine photometric` | **9033** | 88.6, 107 | 0 | 0 | 1978 / 4156 / 2899 | 2018 ms, 2527 ms | 205.8 s |
+| A, single pass [20, 56] px | 5904 | 57.9, 85.5 | 42 | 42 | 660 / 3012 / 2232 | 40 ms | 3.7 s |
+| B, single pass [14, 66] px (default prior) | 4992 | 48.9, 73 | 40 | 42 | 373 / 2491 / 2128 | 37 ms | 3.3 s |
+| D, single pass, per-strip prior | 3561 | 34.9, 0 | 58 | 60 | 345 / 1756 / 1460 | 26 ms | 3.1 s |
+
+On `1e5ba23d` (before the blur-aware inner edge) the same columns read:
+adaptive 7408 (bands 1298 / 3725 / 2385), adaptive + photometric 8981
+(1927 / 4144 / 2910), A 5508, B 4645, D 3341; no tile with 0 or < 10 IDs
+in either adaptive strategy.
 
 On `e167a14b` / `aafce4f1` (before the contrast-relative edge gate, identical
 on this eval) the same columns read: adaptive 4985 (1 tile with 0 IDs, 2
@@ -67,6 +73,88 @@ under 10, bands 212 / 2619 / 2154, 371 ms median), adaptive + photometric
 - **Gate.** All five strategies are gated in
   `tools/ci/regression_baseline.json`. The adaptive strategy is the primary
   target (see *Gate* below).
+
+## Missing rings between detected neighbours (measured)
+
+The owner's complaint: a ring missing in a lattice line whose left and right
+neighbours are well identified. A *gap* below is a board cell with no
+reported ID whose two opposite lattice neighbours (along any of the three hex
+axes) are both reported. Each gap was classified twice, with one-off
+instrumentation (not committed): **(a)** by re-running completion's refit
+alone at the neighbours' midpoint (outer fit → completion gates → inner
+estimate → projective centre → confidence) and **(b)** by the reason the final
+output contract dropped the ring the pipeline did hold at that cell.
+
+| 102 tiles, adaptive | `1e5ba23d` | branch |
+|---|---|---|
+| gaps | 738 | **226** |
+| (a) refit alone fails: inner estimate `PeakAtSearchWindowEdge` | 180 (24 %) | 3 |
+| (a) inner estimate `ThetaInconsistent` | 73 (10 %) | 50 |
+| (a) outer fit fails / confidence < 0.03 | 30 / 23 | 25 / 14 |
+| (a) refit alone succeeds | 432 (59 %) | 134 |
+
+What the pipeline held at a gap cell on `1e5ba23d` (all 114 tiles, 762 gaps,
+classification (b)): a completion refit without an inner ellipse 473, a
+fit-decode ring below `min_confidence` 148, a fit-decode ring without an inner
+ellipse 75, a completion refit below `min_confidence` 45, nothing 21.
+
+- **Inner-edge window (fixed).** Blur merges each ring stroke's two edges and
+  pulls the inner edge's derivative peak towards the centre (the outer edge's
+  outwards). On the reported rings the measured inner/outer ratio falls with
+  the outer edge's relative width `w / R` (correlation −0.63; median 0.474 at
+  `w/R` < 0.08, 0.427 at 0.2–0.25) down to the nominal window's inner bound
+  0.408, which is where every `PeakAtSearchWindowEdge` failure sat (183 of
+  183). A search over a wider window found those edges at a median 0.377.
+  When the nominal search ends on that bound, the search now runs once more
+  with the bound moved in by `(1 + r_inner) σ / R` (σ from the measured ramp
+  width). Widening the window for *every* ring was tried first: it gained
+  more on the synthetic sweep but on rtv3d the hole of a defocused ring has a
+  dome-shaped profile whose slope then won the peak (17 rings in one tile
+  removed by the axis-ratio filter at ratios 0.24–0.34), net +65 IDs only.
+- **Fragile inner fits under adaptive (fixed).** The same cell's refit gets an
+  inner ellipse in one adaptive candidate and not in another (sub-pixel
+  differences in the outer fit), but the candidate join let whichever marker
+  held a cell first keep it. The join now replaces a held marker the output
+  contract would drop with another candidate's reportable one.
+- **Low-confidence holders (fixed).** Completion only refit cells held by a
+  ring without a corrected centre; a ring below `min_confidence` kept its cell
+  and was then dropped. Any ring the output contract would drop now has its
+  cell offered to the refit (and is put back when the refit fails).
+- **Remaining 226 gaps** (classification (b), branch): completion refit
+  without an inner ellipse 113, nothing held 43, refit below `min_confidence`
+  40, fit-decode ring below `min_confidence` 25, fit-decode ring without an
+  inner ellipse 14. The inner failures left are mostly `ThetaInconsistent`
+  (rays disagree on the defocused inner edge).
+- **`target_0*` (skipped strip, 6 tiles):** 174 → 195 IDs. Of the 37 in-frame
+  cells next to a detection still missing, 20 fail the outer estimate
+  (`OuterEstimateNoPolarityCandidates`), nearly all within one ring radius
+  (35–40 px) of the tile border; 12 refit alone. The completion seed is the
+  lattice prediction, not a proposal, so proposal re-centring cannot help
+  them (not implemented). Loosening the outer estimate's per-ray agreement
+  (0.75 px) to 0.2 R recovered 7 of the 37 and created 3 refits failing the
+  3 px reprojection gate — not pursued.
+
+All 102 tiles, `1e5ba23d` → branch (LOO: the 8-neighbour homography residual
+proxy; the display's pixel snapping floors it, so only gross values count):
+
+| | adaptive before | adaptive after | photometric before | photometric after |
+|---|---|---|---|---|
+| decoded IDs | 7408 | 8376 | 8981 | 9033 |
+| duplicate IDs in a tile / ring within 3 px with another ID | 0 / — | 0 / 0 | 0 / — | 0 / 0 |
+| same ID moved > 3 px | — | 3 | — | 0 |
+| LOO > 2 px, all / conf ≥ 0.1 / conf ≥ 0.2 | 124 / 16 / 2 | 128 / 15 / 1 | 12 / 11 / 10 | 8 / 8 / 5 |
+| IDs at conf ≥ 0.1 / ≥ 0.2 | 4175 / 2164 | 4282 / 2189 | 7981 / 5645 | 8033 / 5650 |
+
+- 1227 adaptive IDs are new and 259 lost (all 114 tiles: 7714 → 8706). The new
+  ones are low-confidence: 986 in [0.03, 0.1) (LOO > 2 px: 38), 215 in
+  [0.1, 0.2) (3), 25 in [0.2, 0.4) (0), 1 above.
+- **The two IDs that moved after #104** are back: `target_2_01` ID 93 (LOO
+  1.49 → 0.45 px) and `target_7_03` ID 88 (its outer fit had taken a ring
+  0.69 × its neighbours' radius; now 0.94 ×, confidence 0.035 → 0.277).
+  Rings whose outer radius stays below the inner-as-outer `ratio_threshold`
+  (0.75) of their neighbours' after recovery are no longer reported: on main
+  both such rings were > 2 px off (LOO); on the branch there are none, so the
+  rule changes no output there.
 
 ## Contrast-relative edge gate (measured)
 
@@ -319,15 +407,15 @@ Flags were matched to current markers by ID in the same tile (**measured**).
 
 `tools/ci/regression_baseline.json` (`rtv3d_benchmark`) sets each floor at
 `round(0.983 × measured)`, the same ~1.7 % slack as before, from the
-contrast-relative edge gate's run:
+blur-aware inner-edge run:
 
 | strategy | min_total_decoded | other thresholds |
 |---|---|---|
-| adaptive (primary) | 7282 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
-| adaptive_photometric | 8793 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
-| A_old_default_20_56 | 5414 | |
-| B_new_default_14_66 | 4566 | |
-| D_per_strip_best | 3284 | |
+| adaptive (primary) | 8234 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
+| adaptive_photometric | 8879 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
+| A_old_default_20_56 | 5804 | |
+| B_new_default_14_66 | 4907 | |
+| D_per_strip_best | 3500 | |
 
 ## Review runs
 

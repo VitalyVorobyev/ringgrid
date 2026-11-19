@@ -538,6 +538,7 @@ fn bench_inner_estimate(c: &mut Criterion) {
                 black_box(&outer),
                 black_box(&spec),
                 None,
+                None,
                 false,
             );
             black_box(est.r_inner_found)
@@ -550,6 +551,7 @@ fn bench_inner_estimate(c: &mut Criterion) {
                 black_box(&img),
                 black_box(&outer),
                 black_box(&spec),
+                None,
                 Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
                 false,
             );
@@ -572,6 +574,7 @@ fn bench_inner_fit(c: &mut Criterion) {
             let res = inner_fit::fit_inner_ellipse_from_outer_hint(
                 black_box(&img),
                 black_box(&outer),
+                None,
                 black_box(&spec),
                 None,
                 black_box(&cfg),
@@ -586,6 +589,7 @@ fn bench_inner_fit(c: &mut Criterion) {
             let res = inner_fit::fit_inner_ellipse_from_outer_hint(
                 black_box(&img),
                 black_box(&outer),
+                None,
                 black_box(&spec),
                 Some(black_box(&mapper) as &dyn pixelmap::PixelMapper),
                 black_box(&cfg),

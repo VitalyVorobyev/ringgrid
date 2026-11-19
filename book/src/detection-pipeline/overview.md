@@ -124,7 +124,9 @@ one or more scale tiers:
 4. Run grid labeling + anchoring + completion + final homography refit once.
 
 `detect_adaptive` runs several such tier candidates, keeps the best and joins
-in the anchored markers of the others at cells it lacks. See [Adaptive Scale
+in the anchored markers of the others at cells it lacks, or at cells where its
+own marker would not be reported (no corrected centre, below `min_confidence`)
+and the other candidate's would. See [Adaptive Scale
 Detection](../detection-modes/adaptive-scale.md).
 
 ## Seed Injection in Two-Pass Modes

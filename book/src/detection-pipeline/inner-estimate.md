@@ -10,6 +10,20 @@ The expected inner ring radius is defined by `MarkerSpecConfig.r_inner_expected`
 
 The search window extends ±`inner_search_halfwidth` (default 0.08) around this expected ratio, scaled by the fitted outer ellipse size.
 
+### Blurred rings
+
+Blur merges each ring stroke's two edges. The far edge's opposite-signed
+derivative pushes the near edge's peak away from the stroke, by up to the blur
+sigma: the inner edge's peak moves towards the centre and the outer edge's
+peak outwards, so a defocused ring's measured inner/outer ratio falls below
+`r_inner_expected` by up to `(1 + r_inner_expected) · σ / R`. When the nominal
+search's peak sits on the window's inner bound, the search runs once more with
+that bound moved in by this blur reach, `σ` taken from the outer edge's
+measured ramp width (`FitMetrics::outer_edge_width_px` = `σ·√(2π)`). The hole
+inside the inner edge holds no other edge, so only the inner bound moves.
+In the wider window, rays vote for the selected radius within the nominal
+window's width around it. Rings whose nominal search succeeds are unaffected.
+
 ## Edge Sampling
 
 Edge points for the inner ring are sampled along radial rays from the marker center, looking for intensity transitions within the inner search window. The gradient polarity (`inner_grad_polarity`) constrains which transitions are accepted — by default `LightToDark`, matching the synthetic marker convention where the inner ring boundary transitions from light (inside) to dark (ring band).

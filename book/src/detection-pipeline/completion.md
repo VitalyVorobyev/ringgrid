@@ -46,6 +46,15 @@ Plain targets run the same fit and gate machinery, keyed by lattice coordinate (
 - **Anchored** (origin resolved): every missing board cell is a candidate, exactly like the coded path over the full board.
 - **Unanchored** (relative frame): the labeled patch is **grown** iteratively. Each round attempts the cells inside the current patch bounding box expanded by one lattice ring; predictions improve as the patch fills, so cells the topological labeler dropped are recovered ring by ring, up to a bounded number of rounds.
 
+## Cells Held by Unreportable Rings
+
+On an anchored grid, a labeled ring the output contract would drop — its
+projective centre correction failed, its confidence is below `min_confidence`,
+or its outer ring is far smaller than its neighbours' (an inner edge fitted as
+the outer one) — does not hold its cell against completion: the cell is offered
+to the refit like a missing one, under the same gates, and the ring is put back
+unchanged when the refit does not take it.
+
 ## Projective Center for Completion Markers
 
 After completion, projective center correction is applied to the newly completed markers only. Previously corrected markers retain their corrections. Each marker is corrected exactly once.

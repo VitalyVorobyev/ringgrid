@@ -27,6 +27,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Defocused rings keep their inner edge.** Blur merges each ring stroke's
+  two edges, which pulls the inner edge's derivative peak towards the centre
+  (and the outer edge's outwards) by up to the blur sigma, so in defocused
+  rows the inner-edge search's peak sat on its fixed window's inner bound
+  (`PeakAtSearchWindowEdge`): no inner ellipse, no projective centre, ring
+  not reported. When the nominal search ends there, it now searches once
+  more with that bound moved in by `(1 + r_inner) σ / R`, `σ` from the outer
+  edge's measured ramp width; rays vote within the nominal window's width
+  around the selected radius. Rings whose nominal search succeeds are
+  unaffected.
+- **A cell held by an unreportable ring is not lost.** A labeled ring the
+  output contract would drop because its confidence is below
+  `min_confidence` (not only because it lacks a corrected centre) now has its
+  cell offered to completion's refit, and `detect_adaptive`'s candidate join
+  replaces such a ring with another candidate's reportable one at the same
+  cell. The output contract also no longer reports a ring whose outer radius
+  is below the inner-as-outer `ratio_threshold` of its neighbours' (its outer
+  fit took an inner edge).
+  rtv3d (102 tiles): adaptive 7408 → 8376 IDs, photometric 8981 → 9033;
+  "gap" cells (missing between two detected lattice neighbours) 738 → 226;
+  no duplicate or conflicting ID; centres > 2 px off the local lattice (LOO
+  proxy) 124 → 128 (at confidence ≥ 0.1: 16 → 15). Precision
+  audit: no new wrong ID, position or homography; the newly reported
+  markers are > 1 px off for 0.6 % in confidence [0.03, 0.1), 0.1 % in
+  [0.1, 0.2), none above.
 - **The outer-edge depth gate is contrast-relative.** An edge point needed an
   absolute intensity step of 8 % of full scale across ±2 px, which dark or
   low-contrast images (and blurred edges) fail while the same view at full

@@ -41,7 +41,7 @@ jobs:
       - name: Install mdbook
         uses: taiki-e/install-action@v2
         with:
-          tool: mdbook
+          tool: mdbook@0.5.4
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
@@ -59,30 +59,42 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --all-features --no-deps
 
+      # Assembled outside `target/`: rust-cache restores `target/`, and a
+      # leftover `target/site/book` made `cp -r book/book target/site/book`
+      # nest the guide at /book/book/ (and the demo at /demo/demo/): 404s.
       - name: Assemble site
         run: |
-          mkdir -p target/site/api
+          rm -rf _site
+          mkdir -p _site/api _site/book _site/demo
           # Landing page + performance dashboard (committed static source).
-          cp -r .github/pages/index.html .github/pages/img .github/pages/performance target/site/
+          cp -r .github/pages/index.html .github/pages/img .github/pages/performance _site/
           # User guide (mdBook) at /book.
-          cp -r book/book target/site/book
+          cp -r book/book/. _site/book/
           # API reference (rustdoc) at /api, with a redirect to the facade crate.
-          cp -r target/doc/. target/site/api/
-          cat > target/site/api/index.html <<'EOF'
+          cp -r target/doc/. _site/api/
+          cat > _site/api/index.html <<'EOF'
           <!doctype html><meta charset="utf-8">
           <meta http-equiv="refresh" content="0; url=ringgrid/index.html">
           <link rel="canonical" href="ringgrid/index.html">
           <a href="ringgrid/index.html">ringgrid API reference</a>
           EOF
           # Standalone WASM demo at /demo (mdBook bundled it from book/src/demo).
-          cp -r book/book/demo target/site/demo
+          cp -r book/book/demo/. _site/demo/
           # Disable Jekyll so rustdoc _-prefixed files and demo assets are served verbatim.
-          touch target/site/.nojekyll
+          touch _site/.nojekyll
+
+      # Every landing-page card must resolve: fail here, not as a 404 after deploy.
+      - name: Check site entry points
+        run: |
+          for f in index.html book/index.html demo/index.html demo/pkg/ringgrid_wasm_bg.wasm \
+                   api/index.html api/ringgrid/index.html performance/index.html; do
+            test -f "_site/$f" || { echo "::error::missing _site/$f"; exit 1; }
+          done
 
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v5
         with:
-          path: target/site
+          path: _site
 
   deploy:
     environment:

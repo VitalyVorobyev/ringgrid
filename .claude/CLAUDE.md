@@ -15,7 +15,6 @@ Cargo workspace (edition 2024, MSRV 1.91) with two crate members plus excluded b
 - `crates/ringgrid-wasm/` — WebAssembly bindings (excluded from workspace, built via wasm-pack)
 - `crates/ringgrid-c/` — C/C++ ABI (excluded from workspace, cbindgen header + C++ RAII wrapper, CMake package + vcpkg overlay port)
 - `tools/` — Python utilities for synthetic data generation, evaluation, scoring, and visualization
-- `py/` — Python scripts for rtv3d benchmarking and overlay visualization
 
 Key external dependency: `radsym` crate provides the proposal-stage center detection (fused RSD with Scharr gradient). Python package management uses `uv` (virtualenv at `.venv`).
 
@@ -381,11 +380,13 @@ cargo test
 The `/regression-gate` skill runs the full regression suite (invoke after significant changes):
 
 1. Build release + Python bindings
-2. Run 3 synthetic benchmarks + 1 real-world benchmark (rtv3d, local-only):
+2. Run 4 synthetic benchmarks + 1 real-world benchmark (rtv3d, local-only):
    - `bash tools/run_reference_benchmark.sh`
    - `bash tools/run_distortion_benchmark.sh`
    - `bash tools/run_blur2_benchmark.sh`
-   - `.venv/bin/python tools/run_rtv3d_eval.py` (skipped if `data/rtv3d` absent)
+   - `bash tools/run_target_matrix_benchmark.sh`
+   - `.venv/bin/python tools/run_rtv3d_eval.py` (skipped if `data/rtv3d_0` absent;
+     primary strategy: adaptive detection; status in `docs/studies/rtv3d-status.md`)
 3. Validate against `tools/ci/regression_baseline.json`
 4. Run `tools/ci/maintainability_guardrails.py`
 

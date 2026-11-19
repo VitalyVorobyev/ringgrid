@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symmetries under which its decoded code rotation is the one the board
   predicts at that ring; the chance model counts the measured agreement rate
   of misreads. Two agreeing decodes now anchor boards of 611 cells or more.
+- **rtv3d evaluation measures adaptive detection** (repository tooling, not
+  shipped). `tools/run_rtv3d_eval.py` runs `ringgrid detect` without
+  `--marker-diameter` (`detect_adaptive`, the primary gated strategy) and with
+  `--refine photometric`, next to the single-pass A/B/D strategies, and reports
+  IDs per tile, tiles with 0 / fewer than 10 IDs, IDs per tile-row band and
+  runtime. The review server takes `--primary NAME` (the run the page opens
+  as A) and allow-lists the repo's `ringgrid` build. Status, failure modes
+  and next steps: `docs/studies/rtv3d-status.md`.
 
 ### Removed
 

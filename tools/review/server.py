@@ -738,7 +738,15 @@ class App:
         self.out_dir = out_dir
         self.store = FeedbackStore(out_dir / "feedback.json", dataset.name, dataset.tiles)
         self.runs = RunManager(out_dir, dataset, binaries)
+        # The run the page opens as A; None leaves the choice to the page
+        # (first run by name).
+        self.primary_run: str | None = None
         self._cmp_cache: dict = {}
+
+    def set_primary(self, name: str) -> None:
+        if name not in self.runs.runs:
+            raise SystemExit(f"--primary {name}: no such run (known: {', '.join(self.runs.runs) or 'none'})")
+        self.primary_run = name
 
     def compare(self, tile: str, a: str, b: str, match_px: float, pos_px: float) -> dict | None:
         da, db = self.runs.runs[a].detection(tile), self.runs.runs[b].detection(tile)
@@ -773,6 +781,7 @@ class App:
         return {
             "dataset": {"name": self.dataset.name, "split": self.dataset.split, "tiles": list(self.dataset.tiles.values())},
             "runs": runs,
+            "primary_run": self.primary_run,
             "differing_tiles": differing,
             "binaries": [{"label": k, "path": str(v)} for k, v in self.runs.binaries.items()],
             "defaults": {"match_px": DEFAULT_MATCH_PX, "pos_px": DEFAULT_POS_TOL_PX},
@@ -1005,11 +1014,15 @@ def make_server(app: App, host: str = "127.0.0.1", port: int = 8765, app_dir: Pa
 
 
 def default_binaries() -> dict[str, Path]:
+    """The repo's own detector builds: ``ringgrid-dev`` (single pass unless
+    told otherwise) and the published ``ringgrid`` CLI (adaptive multi-scale
+    without ``--marker-diameter``; needs ``--target``)."""
     found = {}
     for profile in ("release", "debug"):
-        p = REPO_ROOT / "target" / profile / "ringgrid-dev"
-        if p.is_file() and os.access(p, os.X_OK):
-            found[f"repo-{profile}"] = p.resolve()
+        for binary, label in (("ringgrid-dev", f"repo-{profile}"), ("ringgrid", f"repo-{profile}-ringgrid")):
+            p = REPO_ROOT / "target" / profile / binary
+            if p.is_file() and os.access(p, os.X_OK):
+                found[label] = p.resolve()
     return found
 
 
@@ -1026,6 +1039,9 @@ def parse_args(argv: list[str]):
     ap.add_argument("--run", action="append", default=[], metavar="NAME=DIR", help="import a directory of detection JSONs")
     ap.add_argument(
         "--detect", action="append", default=[], metavar="NAME=BINARY", help="create a run with this detector binary; args after `--`"
+    )
+    ap.add_argument(
+        "--primary", default=None, metavar="NAME", help="run the page opens as A (default: the first --detect, else the first --run)"
     )
     ap.add_argument("--host", default="127.0.0.1", help="loopback address only")
     ap.add_argument("--port", type=int, default=8765)
@@ -1074,6 +1090,11 @@ def main(argv=None) -> int:
         app.runs.import_dir(name, Path(path))
     for name, p in detect_jobs:
         app.runs.start(name, p, tail)
+    primary = args.primary or next((name for name, _ in detect_jobs), None) or next(
+        (spec.partition("=")[0] for spec in args.run), None
+    )
+    if primary:
+        app.set_primary(primary)
 
     srv = make_server(app, args.host, args.port)
     url = f"http://127.0.0.1:{srv.server_address[1]}/"

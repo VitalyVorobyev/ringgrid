@@ -134,6 +134,8 @@ export interface Feedback {
 export interface ServerState {
   dataset: { name: string; split: number; tiles: Tile[] };
   runs: Run[];
+  /** The run to open as A (`--primary`), or null to take the first run. */
+  primary_run: string | null;
   differing_tiles: string[];
   binaries: { label: string; path: string }[];
   defaults: { match_px: number; pos_px: number };

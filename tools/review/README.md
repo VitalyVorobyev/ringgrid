@@ -22,10 +22,14 @@ so at startup. `bun run dev` serves the app with hot reload on 127.0.0.1:5174,
 proxying `/api` to a server on port 8766 (`REVIEW_API` to change it).
 
 ```bash
-# rtv3d strips (4320x540 -> 6 tiles of 720x540), one run from a built binary
+# rtv3d strips (4320x540 -> 6 tiles of 720x540): one adaptive run (the
+# published CLI without --marker-diameter = detect_adaptive, the configuration
+# run_rtv3d_eval.py gates as primary); the page opens it as A
 .venv/bin/python tools/review/server.py --data data/rtv3d_0 --split 6 --open \
-    --detect current=target/release/ringgrid-dev -- \
-    --marker-diameter-min 14 --marker-diameter-max 66
+    --detect adaptive=target/release/ringgrid -- --target tools/board/board_spec.json
+
+# reopen later: runs are cached, --primary picks the run shown as A
+.venv/bin/python tools/review/server.py --data data/rtv3d_0 --split 6 --open --primary adaptive
 
 # a plain image directory, plus an already-produced directory of detection JSONs
 python3 tools/review/server.py --data some/images --run release-0.15=path/to/jsons
@@ -36,7 +40,10 @@ python3 tools/review/summarize.py tools/out/review/rtv3d_0
 
 Another run can be added later from the page ("new run...", only binaries the
 server knows are offered) or by restarting with a second
-`--detect other=/path/to/other-binary -- <args>`. Runs are cached under
+`--detect other=/path/to/other-binary -- <args>` (all `--detect` runs of one
+start share the args after `--`). The page opens `--primary` as run A
+(default: the first `--detect`, else the first `--run`, else the first run by
+name). Runs are cached under
 `<out>/runs/<name>/` (detections + `manifest.json` with binary, version, git
 commit, args, timestamp) and reused on restart. `--run NAME=DIR` imports
 `<tile>.json` files in place (also `<tile>_*.json` when unambiguous).
@@ -65,8 +72,8 @@ and run the server with `.venv/bin/python`.
   `'self'` only. Only files under `app/dist` with a known type are served.
 - At startup `--out` must be git-ignored (or outside any repo), otherwise the
   server refuses to start (`--allow-unignored-out` overrides, with a warning).
-- Only detector binaries given with `--detect` or `target/{release,debug}/ringgrid-dev`
-  can be executed; request-supplied commands are never run, and `--image/--out`
+- Only detector binaries given with `--detect` or the repo's own
+  `target/{release,debug}/{ringgrid-dev,ringgrid}` can be executed; request-supplied commands are never run, and `--image/--out`
   cannot be overridden.
 
 ## Requirements

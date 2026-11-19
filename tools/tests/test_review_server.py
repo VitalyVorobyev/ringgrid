@@ -384,6 +384,17 @@ class Http(unittest.TestCase):
         self.assertEqual(self.req("/api/state", headers={"Host": "evil.example"})[0], 403)
         self.assertEqual(self.req("/api/feedback", {"tiles": {}}, headers={"Origin": "http://evil.example"})[0], 403)
 
+    def test_primary_run_in_state(self):
+        st = json.loads(self.req("/api/state")[1])
+        self.assertIsNone(st["primary_run"])
+        with self.assertRaises(SystemExit):
+            self.app.set_primary("no-such-run")
+        self.app.set_primary("imp")
+        try:
+            self.assertEqual(json.loads(self.req("/api/state")[1])["primary_run"], "imp")
+        finally:
+            self.app.primary_run = None
+
     def test_create_run_only_with_allowlisted_binary(self):
         self.assertEqual(self.req("/api/runs", {"name": "bad", "binary": "/bin/sh", "args": "-c id"})[0], 403)
         self.assertEqual(self.req("/api/runs", {"name": "bad", "binary": str(self.fake.resolve()), "args": "--out /tmp/x"})[0], 400)

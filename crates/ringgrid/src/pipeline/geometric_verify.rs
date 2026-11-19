@@ -1,15 +1,15 @@
 //! Final precision-first geometric verification gate.
 //!
 //! After the final homography, each decoded marker is checked against the
-//! target lattice — via its neighbor-midpoint prediction (locally affine, so
-//! distortion-robust) and its final-H reprojection residual — and removed when
+//! target lattice — via its neighbor-midpoint prediction (second differences,
+//! so distortion-robust) and its final-H reprojection residual — and removed when
 //! geometrically inconsistent. Only trusted board correspondences reach the
 //! output, which is what sensor calibration needs. See [`geometric_verify_filter`].
 
 use std::collections::{HashMap, HashSet};
 
 use nalgebra::Matrix3;
-use projective_grid::{Coord, expert::lattice::predict_grid_position};
+use projective_grid::{Coord, LatticeKind, expert::lattice::predict_grid_position};
 
 use super::stats::median_f64;
 use crate::detector::MarkerRecord;
@@ -51,6 +51,90 @@ pub(crate) fn build_grid_map(markers: &[MarkerRecord], target: &TargetLayout) ->
 /// Minimum residual samples before the adaptive MAD term is trusted; below this
 /// the threshold falls back to its floor alone.
 const MIN_SAMPLES: usize = 8;
+/// The field the local lattice-midpoint test takes second differences of:
+/// each labeled marker's deviation from its cell's projection through
+/// `final_h`, or its centre when there is no homography.
+///
+/// The midpoint of two neighbours is the image of the cell between them only
+/// under an affine map. Under perspective the gap grows with the square of
+/// the pitch in pixels — 2–3 px for 56 px rings at 30° tilt (precision
+/// harness), the residual of every correct marker there — and only the
+/// scatter of blur-biased centres had kept the threshold above it. The
+/// deviation field takes out the homography's own curvature and leaves what
+/// it cannot explain: lens distortion's (smooth), centre noise, and the
+/// ~1-pitch jump of a mis-celled marker.
+fn local_test_field(
+    markers: &[MarkerRecord],
+    final_h: Option<&Matrix3<f64>>,
+    target: &TargetLayout,
+) -> GridMap {
+    let Some(h) = final_h else {
+        return build_grid_map(markers, target);
+    };
+    markers
+        .iter()
+        .filter_map(|m| {
+            let coord = marker_cell_coord(m, target)?;
+            let [x, y] = m.board_xy_mm?;
+            let p = homography_project(h, x, y);
+            let (dx, dy) = (m.center[0] - p[0], m.center[1] - p[1]);
+            (dx.is_finite() && dy.is_finite()).then(|| {
+                (
+                    coord,
+                    projective_grid::nalgebra::Point2::new(dx as f32, dy as f32),
+                )
+            })
+        })
+        .collect()
+}
+
+/// The smaller image distance `h` maps a board step of `spacing_mm` along
+/// either board axis to, at `xy`: a cell pitch in pixels there.
+fn local_pitch_px(h: &Matrix3<f64>, xy: [f64; 2], spacing_mm: f64) -> f64 {
+    let o = homography_project(h, xy[0], xy[1]);
+    let px = homography_project(h, xy[0] + spacing_mm, xy[1]);
+    let py = homography_project(h, xy[0], xy[1] + spacing_mm);
+    (px[0] - o[0])
+        .hypot(px[1] - o[1])
+        .min((py[0] - o[0]).hypot(py[1] - o[1]))
+}
+
+/// Distance (px) between a cell's field value and the mean midpoint of its
+/// opposite neighbour pairs: half the field's second difference across it.
+fn midpoint_residual(grid: &GridMap, idx: Coord, kind: LatticeKind) -> Option<f64> {
+    let pred = predict_grid_position(grid, idx, kind)?.position;
+    let pos = grid[&idx];
+    Some(f64::from((pos.x - pred.x).hypot(pos.y - pred.y)))
+}
+
+/// The one-sided counterpart of [`midpoint_residual`] for a cell with no
+/// opposite neighbour pair: its field value against `2 f(c + d) − f(c + 2d)`
+/// averaged over the lattice directions `d` with both cells present, halved.
+/// Halving matches the midpoint residual in both what it measures (half the
+/// second difference: a smooth field's curvature) and its noise (`√6 σ / 2`
+/// vs `√1.5 σ`), so the two share a threshold; a marker a cell off still
+/// deviates by half a pitch, tens of times the threshold. Without it a
+/// mislabel at a corner of the visible patch faces only the global test,
+/// which lens distortion loosens to tens of pixels without a camera model.
+fn chain_residual(grid: &GridMap, idx: Coord, kind: LatticeKind) -> Option<f64> {
+    let (mut sx, mut sy, mut n) = (0.0f32, 0.0f32, 0usize);
+    for off in kind.neighbour_offsets() {
+        let near = Coord::new(idx.u + off.u, idx.v + off.v);
+        let far = Coord::new(idx.u + 2 * off.u, idx.v + 2 * off.v);
+        if let (Some(a), Some(b)) = (grid.get(&near), grid.get(&far)) {
+            sx += 2.0 * a.x - b.x;
+            sy += 2.0 * a.y - b.y;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    let pos = grid[&idx];
+    let n = n as f32;
+    Some(0.5 * f64::from((pos.x - sx / n).hypot(pos.y - sy / n)))
+}
+
 /// Floor (px) for the local lattice-midpoint residual threshold. An order of
 /// magnitude below the ~1-pitch residual of a mis-celled marker, several times
 /// the sub-pixel center-estimation noise of a true marker.
@@ -158,10 +242,11 @@ pub(super) fn annotate_h_reproj_err_px(
 /// markers the target lattice judges geometrically inconsistent via two
 /// complementary tests, rejecting on their union:
 ///
-/// 1. **Local lattice-midpoint** (H-free, distortion-robust primary): each marker's
-///    center vs the midpoint predicted by its lattice neighbors. Affine-exact, so it
-///    sees only second-difference curvature under smooth lens distortion while a
-///    wrong-cell marker sits ~1 pitch away.
+/// 1. **Local lattice-midpoint** (distortion-robust primary): each marker's
+///    deviation from `final_h` vs the midpoint of its lattice neighbors'
+///    deviations ([`local_test_field`]; the centres themselves without a
+///    homography). A second difference, so it sees only the curvature of smooth
+///    lens distortion while a wrong-cell marker sits ~1 pitch away.
 /// 2. **Global final-H reprojection** (gross-blunder backstop): each marker's
 ///    center vs its board position projected through `final_h`. Catches boundary
 ///    markers that lack a complete neighbor pair for the local test.
@@ -179,54 +264,12 @@ pub(super) fn geometric_verify_filter(
         .filter(|m| marker_cell_coord(m, target).is_some())
         .count();
 
-    // --- Local lattice-midpoint test (H-free) ---
-    let grid = build_grid_map(markers, target);
-    let lattice_kind = target.lattice_kind();
-    let local_by_coord: Vec<(Coord, f64)> = grid
-        .iter()
-        .filter_map(|(&idx, &pos)| {
-            let pred = predict_grid_position(&grid, idx, lattice_kind)?.position;
-            let dx = (pos.x - pred.x) as f64;
-            let dy = (pos.y - pred.y) as f64;
-            Some((idx, (dx * dx + dy * dy).sqrt()))
-        })
-        .collect();
-    let local_residuals: Vec<f64> = local_by_coord.iter().map(|(_, r)| *r).collect();
-    let t_local = adaptive_threshold(&local_residuals, FLOOR_LOCAL_PX, K_LOCAL);
-    let flagged_coords: HashSet<Coord> = local_by_coord
-        .iter()
-        .filter(|(_, r)| *r > t_local)
-        .map(|(c, _)| *c)
-        .collect();
-
-    // --- Global final-H residual test (reads the annotated diagnostic) ---
     // Annotation is the sole writer of h_reproj_err_px and runs even when the
     // gate is disabled; here the global backstop just consumes those residuals.
     annotate_h_reproj_err_px(markers, final_h);
-    let mut t_global: Option<f64> = None;
-    let mut flagged_global_coords: HashSet<Coord> = HashSet::new();
-    if final_h.is_some() {
-        let global_by_coord: Vec<(Coord, f64)> = markers
-            .iter()
-            .filter_map(|m| {
-                Some((
-                    marker_cell_coord(m, target)?,
-                    f64::from(m.fit.h_reproj_err_px?),
-                ))
-            })
-            .collect();
-        let global_residuals: Vec<f64> = global_by_coord.iter().map(|(_, r)| *r).collect();
-        let tg = adaptive_threshold(&global_residuals, FLOOR_GLOBAL_PX, K_GLOBAL);
-        flagged_global_coords = global_by_coord
-            .iter()
-            .filter(|(_, r)| *r > tg)
-            .map(|(c, _)| *c)
-            .collect();
-        t_global = Some(tg);
-    }
-    if let Some(h) = final_h {
-        flagged_global_coords.extend(shape_outliers(markers, h, target));
-    }
+    let (flagged_global_coords, t_global) = global_flags(markers, final_h, target);
+    let (flagged_coords, t_local) =
+        local_flags(markers, final_h, target, &flagged_global_coords, t_global);
 
     // --- Reject = union, single retain pass ---
     let n_before = markers.len();
@@ -267,6 +310,98 @@ pub(super) fn geometric_verify_filter(
         );
     }
     stats
+}
+
+/// The global final-H residual test (reading the annotated
+/// `h_reproj_err_px`) and the ellipse-shape test: the cells they flag and the
+/// residual threshold (`None` without a homography).
+fn global_flags(
+    markers: &[MarkerRecord],
+    final_h: Option<&Matrix3<f64>>,
+    target: &TargetLayout,
+) -> (HashSet<Coord>, Option<f64>) {
+    let mut t_global: Option<f64> = None;
+    let mut flagged_global_coords: HashSet<Coord> = HashSet::new();
+    if final_h.is_some() {
+        let global_by_coord: Vec<(Coord, f64)> = markers
+            .iter()
+            .filter_map(|m| {
+                Some((
+                    marker_cell_coord(m, target)?,
+                    f64::from(m.fit.h_reproj_err_px?),
+                ))
+            })
+            .collect();
+        let global_residuals: Vec<f64> = global_by_coord.iter().map(|(_, r)| *r).collect();
+        let tg = adaptive_threshold(&global_residuals, FLOOR_GLOBAL_PX, K_GLOBAL);
+        flagged_global_coords = global_by_coord
+            .iter()
+            .filter(|(_, r)| *r > tg)
+            .map(|(c, _)| *c)
+            .collect();
+        t_global = Some(tg);
+    }
+    if let Some(h) = final_h {
+        flagged_global_coords.extend(shape_outliers(markers, h, target));
+    }
+
+    (flagged_global_coords, t_global)
+}
+
+/// The local tests (second differences of [`local_test_field`]) on the
+/// markers the global tests keep, plus the markers no test can vouch for:
+/// the cells they flag and the local threshold.
+fn local_flags(
+    markers: &[MarkerRecord],
+    final_h: Option<&Matrix3<f64>>,
+    target: &TargetLayout,
+    flagged_global_coords: &HashSet<Coord>,
+    t_global: Option<f64>,
+) -> (HashSet<Coord>, f64) {
+    // --- Local lattice-midpoint test (second differences) ---
+    // A marker the global test rejects is no evidence for its neighbours'
+    // positions: a ring 10 px off would push each neighbour's prediction by
+    // half that.
+    let mut grid = local_test_field(markers, final_h, target);
+    grid.retain(|c, _| !flagged_global_coords.contains(c));
+    let lattice_kind = target.lattice_kind();
+    let local_by_coord: Vec<(Coord, f64)> = grid
+        .keys()
+        .filter_map(|&idx| Some((idx, midpoint_residual(&grid, idx, lattice_kind)?)))
+        .collect();
+    let local_residuals: Vec<f64> = local_by_coord.iter().map(|(_, r)| *r).collect();
+    let t_local = adaptive_threshold(&local_residuals, FLOOR_LOCAL_PX, K_LOCAL);
+    // A marker without an opposite neighbour pair (a corner of the visible
+    // patch) is tested one-sided, against the same threshold.
+    let boundary_by_coord: Vec<(Coord, f64)> = grid
+        .keys()
+        .filter(|&&idx| predict_grid_position(&grid, idx, lattice_kind).is_none())
+        .filter_map(|&idx| Some((idx, chain_residual(&grid, idx, lattice_kind)?)))
+        .collect();
+    let mut flagged_coords: HashSet<Coord> = local_by_coord
+        .iter()
+        .chain(&boundary_by_coord)
+        .filter(|(_, r)| *r > t_local)
+        .map(|(c, _)| *c)
+        .collect();
+    // A marker neither local test reaches (no labeled neighbours) is vouched
+    // for by the global test alone; where lens distortion has loosened that
+    // to half a pitch, it could not tell this cell from the next.
+    if let (Some(h), Some(tg)) = (final_h, t_global) {
+        let examined: HashSet<Coord> = local_by_coord
+            .iter()
+            .chain(&boundary_by_coord)
+            .map(|(c, _)| *c)
+            .collect();
+        let spacing_mm = f64::from(target.min_center_spacing_mm());
+        flagged_coords.extend(markers.iter().filter_map(|m| {
+            let c = marker_cell_coord(m, target)?;
+            let xy = m.board_xy_mm?;
+            (!examined.contains(&c) && tg >= 0.5 * local_pitch_px(h, xy, spacing_mm)).then_some(c)
+        }));
+    }
+
+    (flagged_coords, t_local)
 }
 
 /// Axis ratio (minor / major) of the ellipse `h` maps a small circle at board
@@ -455,6 +590,50 @@ mod tests {
     }
 
     #[test]
+    fn strong_perspective_lattice_survives_and_miscelled_marker_does_not() {
+        // A large pitch in pixels under a strong perspective: the neighbour
+        // midpoint misses the true cell image by more than the local floor, so
+        // a test on the centres themselves would flag correct markers.
+        let board = board();
+        let h = Matrix3::new(14.0, 0.0, 400.0, 0.0, 14.0, 400.0, 2.5e-3, 1.5e-3, 1.0);
+        let markers = clean_lattice(&board, &h);
+        let raw = build_grid_map(&markers, &board);
+        let worst_midpoint_gap = raw
+            .iter()
+            .filter_map(|(&c, p)| {
+                let pred = predict_grid_position(&raw, c, board.lattice_kind())?.position;
+                Some((p.x - pred.x).hypot(p.y - pred.y))
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            f64::from(worst_midpoint_gap) > 2.0 * FLOOR_LOCAL_PX,
+            "the scene must defeat an affine midpoint (gap {worst_midpoint_gap})"
+        );
+        let mut clean = markers.clone();
+        let stats = geometric_verify_filter(&mut clean, Some(&h), &board);
+        assert_eq!(stats.n_removed_total, 0, "true markers must survive");
+
+        // Label the interior marker with its neighbour's cell: ~1 pitch off.
+        let target = most_interior_id(&board, &h);
+        let tc = board.coord_of_id(target).unwrap();
+        let neighbour = board
+            .id_of(Coord::new(tc.u + 1, tc.v))
+            .expect("interior neighbour");
+        let mut miscelled: Vec<MarkerRecord> = markers
+            .into_iter()
+            .filter(|m| m.id != Some(neighbour))
+            .collect();
+        for m in miscelled.iter_mut().filter(|m| m.id == Some(target)) {
+            *m = marker_at(&board, neighbour, m.center);
+        }
+        geometric_verify_filter(&mut miscelled, Some(&h), &board);
+        assert!(
+            !miscelled.iter().any(|m| m.id == Some(neighbour)),
+            "a marker labeled one cell off must be removed"
+        );
+    }
+
+    #[test]
     fn displaced_interior_marker_is_removed_locally() {
         let board = board();
         let h = affine_h(5.0, 100.0, 100.0);
@@ -528,6 +707,96 @@ mod tests {
         assert_eq!(stats.n_removed_total, 1);
         assert!(!markers.iter().any(|m| m.id == Some(a)));
         assert!(markers.iter().any(|m| m.id == Some(b)));
+    }
+
+    /// A clean lattice through `h` with the six neighbours of the most
+    /// interior cell removed: that cell keeps no labeled neighbour.
+    fn lattice_with_isolated_cell(
+        board: &TargetLayout,
+        h: &Matrix3<f64>,
+    ) -> (Vec<MarkerRecord>, usize) {
+        let isolated = most_interior_id(board, h);
+        let c = board.coord_of_id(isolated).unwrap();
+        let neighbours: HashSet<usize> = board
+            .lattice_kind()
+            .neighbour_offsets()
+            .iter()
+            .filter_map(|o| board.id_of(Coord::new(c.u + o.u, c.v + o.v)))
+            .collect();
+        let markers = clean_lattice(board, h)
+            .into_iter()
+            .filter(|m| !m.id.is_some_and(|id| neighbours.contains(&id)))
+            .collect();
+        (markers, isolated)
+    }
+
+    #[test]
+    fn isolated_marker_needs_a_global_test_that_can_tell_cells_apart() {
+        let board = board();
+        let h = affine_h(5.0, 100.0, 100.0);
+        // Clean view: the global test (2 px) vouches for it.
+        let (mut markers, isolated) = lattice_with_isolated_cell(&board, &h);
+        geometric_verify_filter(&mut markers, Some(&h), &board);
+        assert!(markers.iter().any(|m| m.id == Some(isolated)));
+
+        // Strong uncorrected distortion loosens the global threshold past
+        // half a pitch: nothing can tell its cell from the next.
+        let (mut markers, isolated) = lattice_with_isolated_cell(&board, &h);
+        let c = centroid(&markers);
+        for m in markers.iter_mut() {
+            let (dx, dy) = (m.center[0] - c[0], m.center[1] - c[1]);
+            let rho = dx.hypot(dy);
+            let delta = 2.0e-6 * rho.powi(3);
+            if rho > 1e-9 {
+                m.center[0] += delta * dx / rho;
+                m.center[1] += delta * dy / rho;
+            }
+        }
+        let stats = geometric_verify_filter(&mut markers, Some(&h), &board);
+        assert!(
+            stats.t_global_px.is_some_and(|t| t > 20.0),
+            "the scene must loosen the global test: {:?}",
+            stats.t_global_px
+        );
+        assert!(!markers.iter().any(|m| m.id == Some(isolated)));
+    }
+
+    #[test]
+    fn chain_residual_measures_a_corner_like_a_midpoint() {
+        // The corner of a wedge (two lattice directions, two cells each) has
+        // no opposite pair; its one-sided residual is ~0 on a clean lattice
+        // and half a pitch when the ring beyond it holds its label.
+        let board = board();
+        let h = affine_h(5.0, 100.0, 100.0);
+        let corner = board.coord_of_id(most_interior_id(&board, &h)).unwrap();
+        let offsets = board.lattice_kind().neighbour_offsets();
+        let (d1, d2) = (offsets[0], offsets[1]);
+        let cell = |k1: i32, k2: i32| {
+            Coord::new(
+                corner.u + k1 * d1.u + k2 * d2.u,
+                corner.v + k1 * d1.v + k2 * d2.v,
+            )
+        };
+        let px = |coord: Coord| {
+            let xy = board.cell_xy_mm(coord).unwrap();
+            let p = project(&h, [xy[0] as f64, xy[1] as f64]);
+            projective_grid::nalgebra::Point2::new(p[0] as f32, p[1] as f32)
+        };
+        let mut grid: GridMap = [cell(1, 0), cell(2, 0), cell(0, 1), cell(0, 2), cell(0, 0)]
+            .into_iter()
+            .map(|c| (c, px(c)))
+            .collect();
+        let kind = board.lattice_kind();
+        assert!(predict_grid_position(&grid, corner, kind).is_none());
+        assert!(chain_residual(&grid, corner, kind).unwrap() < 1e-3);
+
+        grid.insert(corner, px(cell(-1, 0)));
+        let pitch = f64::from((px(cell(1, 0)) - px(corner)).norm());
+        let r = chain_residual(&grid, corner, kind).unwrap();
+        assert!(
+            (r - 0.5 * pitch).abs() < 0.2 * pitch,
+            "{r} vs pitch {pitch}"
+        );
     }
 
     #[test]

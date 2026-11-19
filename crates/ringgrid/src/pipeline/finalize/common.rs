@@ -12,12 +12,17 @@ use crate::target::TargetLayout;
 /// Run the geometric verification gate, or — when it is disabled — only annotate
 /// the reprojection diagnostic so opt-out callers can filter on it themselves.
 /// Returns the gate stats (empty when disabled).
+///
+/// With photometric refinement the gate is deferred to the output contract
+/// ([`super::apply_output_contract`]), which runs it on the refined centres:
+/// an edge-fitted centre of a blurred, eccentric ring is biased by 2–3 px,
+/// beyond the 2 px global floor, while its photometric centre is not.
 pub(super) fn phase_geometric_verify(
     markers: &mut Vec<MarkerRecord>,
     final_h: Option<&nalgebra::Matrix3<f64>>,
     config: &DetectConfig,
 ) -> GeometricVerifyStats {
-    if config.advanced.geometric_verify {
+    if config.advanced.geometric_verify && !config.circle_refinement.uses_photometric() {
         geometric_verify_filter(markers, final_h, &config.target)
     } else {
         annotate_h_reproj_err_px(markers, final_h);

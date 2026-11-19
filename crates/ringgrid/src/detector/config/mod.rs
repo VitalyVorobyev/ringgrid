@@ -115,13 +115,16 @@ pub struct AdvancedDetectConfig {
     pub use_global_filter: bool,
     /// Final precision-first geometric verification gate.
     ///
-    /// After the final homography, each decoded marker is checked against its
-    /// hex-neighbor midpoint prediction (locally affine, so distortion-robust)
-    /// and, as a gross-blunder backstop, against its final-H reprojection
-    /// residual. Both thresholds adapt to the observed inlier residual
-    /// distribution, so the gate stays recall-safe on clean and lens-distorted
-    /// boards alike. Markers the lattice judges geometrically inconsistent are
-    /// removed, so only trusted board correspondences reach the output.
+    /// After the final homography, each labeled marker is checked against its
+    /// final-H reprojection residual (a gross-blunder backstop) and, through
+    /// its deviation from that homography, against the midpoint of its
+    /// lattice neighbors' deviations (a second difference, so perspective
+    /// cancels and lens distortion only bends it). Both thresholds adapt to
+    /// the observed inlier residual distribution, so the gate stays
+    /// recall-safe on clean and lens-distorted boards alike. Markers the
+    /// lattice judges geometrically inconsistent are removed, so only trusted
+    /// board correspondences reach the output. With photometric refinement the
+    /// gate runs after the photometric stage, on the refined centres.
     ///
     /// Disable (`false`) to keep every decoded marker and apply your own
     /// filtering. Default: `true`.

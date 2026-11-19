@@ -345,6 +345,8 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         id,
         grid_coord,
         confidence,
+        // Folded into `confidence`; the split drops it.
+        confidence_factors: _,
         center,
         center_mapped,
         board_xy_mm,

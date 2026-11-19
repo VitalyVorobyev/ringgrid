@@ -16,10 +16,10 @@
 //!   confidence's sharpness term, an absolute edge width, dropped every ring
 //!   beyond a few px of blur, whatever its size.
 //!
-//! On main (0.16) the first scene does not anchor at all and the second
-//! reports 31 of 79 rings. The recall floor is not 1: rings within a few
-//! pixels of the image border, and a few whose pre-photometric centre fails
-//! geometric verification, are still lost (ADR-026, "Remaining losses").
+//! On 0.16 the first scene does not anchor at all and the second reports 31
+//! of 79 rings; now 108 of 110 and 79 of 79. The first scene's floor is not
+//! 1: two rings ~10–20 px from the image border are not fitted (ADR-028,
+//! "Remaining losses").
 //!
 //! Each runs a full adaptive detection on a 1280×960 image (seconds in
 //! release); an unoptimized build takes minutes, so plain `cargo test` skips
@@ -36,8 +36,6 @@ use support::blur_scene::{BlurForm, BoardRaster, Psf, Scene, SceneSpec, render};
 const IMAGE_SIZE: [u32; 2] = [1280, 960];
 /// Margin (px) by which an expected ring's outer ellipse lies inside the image.
 const MARGIN_PX: f64 = 2.0;
-/// Fraction of the expected rings that must be reported.
-const MIN_RECALL: f64 = 0.93;
 
 fn board() -> &'static BoardRaster {
     static BOARD: OnceLock<BoardRaster> = OnceLock::new();
@@ -104,9 +102,9 @@ fn expected_cells(scene: &Scene) -> Vec<[i32; 2]> {
 }
 
 /// Detect with the calibration wrapper's configuration and check: anchored,
-/// every board position true, at least [`MIN_RECALL`] of the expected rings
+/// every board position true, at least `min_recall` of the expected rings
 /// reported, centres tight.
-fn assert_complete(name: &str, view: &View) {
+fn assert_complete(name: &str, view: &View, min_recall: f64) {
     if !run_slow() {
         eprintln!("{name}: skipped in an unoptimized build (set RINGGRID_SLOW_TESTS=1)");
         return;
@@ -158,7 +156,7 @@ fn assert_complete(name: &str, view: &View) {
     assert!(expected.len() >= 40, "{name}: scene shows too few rings");
     let recall = 1.0 - missing.len() as f64 / expected.len() as f64;
     assert!(
-        recall >= MIN_RECALL,
+        recall >= min_recall,
         "{name}: {} of {} fully visible rings missing: {missing:?}",
         missing.len(),
         expected.len()
@@ -178,6 +176,8 @@ fn sharp_oblique() {
             look_mm: [9.0, 5.0],
             psf: Psf::Gaussian { sigma: 0.9 },
         },
+        // 108 of 110: two border rings are not fitted.
+        0.98,
     );
 }
 
@@ -199,5 +199,6 @@ fn focus_gradient() {
                 form: BlurForm::Scatter,
             },
         },
+        1.0,
     );
 }

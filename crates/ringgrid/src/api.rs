@@ -313,7 +313,10 @@ impl Detector {
     /// Detect markers with robust adaptive scale selection.
     ///
     /// Adaptive mode evaluates several scale candidates and returns the
-    /// highest-scoring result. Candidates include:
+    /// highest-scoring result, joined with the markers other candidates
+    /// labeled at cells it lacks in the same board placement (absolute board
+    /// frame, centres agreeing with its homography), then re-verified as a
+    /// whole. Candidates include:
     /// - probe-selected multi-scale tiers,
     /// - fixed two-tier / four-tier multi-scale presets,
     /// - curated single-pass scale priors.

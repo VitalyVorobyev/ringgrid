@@ -212,8 +212,11 @@ pub(crate) struct MarkerRecord {
     /// relative frame.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_coord: Option<[i32; 2]>,
-    /// Combined detection + decode confidence in [0, 1].
+    /// Combined detection + decode confidence in [0, 1]: [`marker_confidence`].
     pub confidence: f32,
+    /// What [`marker_confidence`] combines with the centre's own estimate.
+    #[serde(skip)]
+    pub confidence_factors: ConfidenceFactors,
     /// Marker center in raw image pixel coordinates.
     ///
     /// This field is always image-space, independent of mapper usage.
@@ -373,69 +376,131 @@ const COVERAGE_GAP_SCALE_RAD: f64 = std::f64::consts::FRAC_PI_4;
 const EDGE_WIDTH_SCALE_PX: f32 = 3.0;
 /// For a photometric centre, the half-sharpness edge width grows with the
 /// ring beyond a 16 px outer radius (in outer radii): the same 3 px at 16 px,
-/// 8.4 px at 45 px (see [`confidence_of_photometric_centre`]).
+/// 8.4 px at 45 px (see [`marker_confidence`]).
 const PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII: f32 = 3.0 / 16.0;
+/// Centre standard deviation (px) at which a photometric fit's support
+/// factor is one half (see [`marker_confidence`]).
+const PHOTOMETRIC_CENTER_SIGMA_SCALE_PX: f64 = 0.1;
 /// Distance to the image border (outer radii) below which the border factor
 /// falls linearly to zero.
 const BORDER_SCALE_RADII: f32 = 2.0;
 
+/// The factors of a marker's confidence its fits measured when it was built,
+/// kept on the record so that [`marker_confidence`] can replace the ones a
+/// later centre estimate supersedes.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct ConfidenceFactors {
+    /// Evidence × outer fit: how much the ring is a whole marker, whatever
+    /// estimates its centre.
+    fit: f32,
+    /// Rim coverage: with `inner_edge`, how well the edge fit pins the centre.
+    rim_coverage: f32,
+    /// Inner-edge agreement.
+    inner_edge: f32,
+    /// Distance to the image border.
+    border: f32,
+}
+
+impl ConfidenceFactors {
+    /// The factors of a freshly fitted marker (see [`marker_confidence`]).
+    pub(crate) fn measure(
+        decode_result: Option<&DecodeResult>,
+        edge: &EdgeSampleResult,
+        outer_ransac: Option<&conic::RansacResult>,
+        inner_fit: &InnerFitResult,
+        fit_metrics: &FitMetrics,
+        border_radii: f32,
+        inner_fit_config: &InnerFitConfig,
+    ) -> Self {
+        // A decode is an exact codeword match: full evidence.
+        let evidence = decode_result
+            .map(|_| 1.0)
+            .unwrap_or_else(|| fit_support_score(edge, outer_ransac));
+        let inlier = outer_ransac
+            .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0);
+        let rms = match fit_metrics.rms_residual_outer {
+            Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32 / 2.0),
+            _ => 1.0,
+        };
+        let border = (border_radii / BORDER_SCALE_RADII).min(1.0);
+        let gap = fit_metrics
+            .max_angular_gap_outer
+            .unwrap_or(std::f64::consts::TAU);
+        let coverage = (-gap / COVERAGE_GAP_SCALE_RAD).exp() as f32;
+        let agreement = fit_metrics.inner_theta_consistency.unwrap_or(0.0);
+        let inner = if inner_fit.ellipse_inner.is_some() {
+            agreement
+        } else {
+            agreement * inner_fit_config.miss_confidence_factor
+        };
+        Self {
+            fit: evidence * inlier * rms,
+            rim_coverage: coverage,
+            inner_edge: inner,
+            border,
+        }
+    }
+}
+
 /// Per-marker confidence in `[0, 1]`: how much the marker's centre can be
-/// trusted. A product of factors, each in `[0, 1]`:
+/// trusted. The product of its [`ConfidenceFactors`], each in `[0, 1]`:
 ///
 /// - **evidence** — the code distance of its decode (`1 − dist/6`), or, for
 ///   an undecoded ring, its outer-edge arc coverage × RANSAC inlier ratio;
 /// - **outer fit** — RANSAC inlier ratio × `1/(1 + rms/2)` (Sampson RMS, px);
-/// - **rim coverage** — `exp(−gap / (π/4))`, `gap` the largest angular gap
-///   between outer edge points (radians);
-/// - **inner edge** — the fraction of rays whose inner-edge peak agrees with
-///   the inner ring's radius, times `miss_confidence_factor` when no inner
-///   ellipse was fitted;
-/// - **sharpness** — `1/(1 + (w / 3 px)²)`, `w` the outer edge width
-///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable); measured
-///   against the ring's size once a photometric fit has replaced the centre
-///   ([`confidence_of_photometric_centre`]);
 /// - **border** — `min(1, d / 2)`, `d` the centre's distance to the image
-///   border in outer radii.
+///   border in outer radii;
+/// - **centre support** — for an edge-fitted centre (outer ellipse or
+///   projective centre), rim coverage `exp(−gap / (π/4))` (`gap` the largest
+///   angular gap between outer edge points, radians) × inner-edge agreement
+///   (the fraction of rays whose inner-edge peak agrees with the inner ring's
+///   radius, times `miss_confidence_factor` when no inner ellipse was
+///   fitted); for an accepted photometric centre, the fit's own precision
+///   `1/(1 + (σ / 0.1 px)²)`, `σ = √(tr Σ / 2)` from its centre covariance
+///   (which carries its residual level and correlation; convergence and
+///   residual are its acceptance gates);
+/// - **sharpness** — `1/(1 + (w / s)²)`, `w` the outer edge width
+///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable), `s = 3 px`
+///   for an edge-fitted centre and `max(3 px, 0.1875 r)` for a photometric
+///   one (`r` the outer ellipse's mean semi-axis).
 ///
 /// Rim coverage, inner-edge agreement, sharpness and border are the
-/// predictors of a wrong centre the precision harness measured (centre error
-/// beyond 1 px: ROC AUC 0.95 for this product vs 0.89 for the previous
-/// confidence); the evidence and outer-fit factors keep ranking duplicate
-/// fits and ID votes.
-pub(crate) fn compute_marker_confidence(
-    decode_result: Option<&DecodeResult>,
-    edge: &EdgeSampleResult,
-    outer_ransac: Option<&conic::RansacResult>,
-    inner_fit: &InnerFitResult,
-    fit_metrics: &FitMetrics,
-    border_radii: f32,
-    inner_fit_config: &InnerFitConfig,
-) -> f32 {
-    // A decode is an exact codeword match: full evidence.
-    let evidence = decode_result
-        .map(|_| 1.0)
-        .unwrap_or_else(|| fit_support_score(edge, outer_ransac));
-    let inlier = outer_ransac
-        .map(|r| r.num_inliers as f32 / edge.outer_points.len().max(1) as f32)
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0);
-    let rms = match fit_metrics.rms_residual_outer {
-        Some(rms) if rms > 0.0 && rms.is_finite() => 1.0 / (1.0 + rms as f32 / 2.0),
-        _ => 1.0,
+/// predictors of a wrong edge-fitted centre the precision harness measured
+/// (centre error beyond 1 px: ROC AUC 0.95 for this product vs 0.89 for the
+/// previous confidence); the evidence and outer-fit factors keep ranking
+/// duplicate fits and ID votes.
+///
+/// A photometric fit models the whole blurred pattern, so how much of the rim
+/// the edge sampler saw and whether the inner edge agreed say nothing more
+/// about its centre: over the harness in photometric mode no accepted
+/// photometric centre is off by more than 1 px, and its covariance ranks
+/// centre errors (ROC AUC 0.999 vs 0.90 with the edge factors). Likewise it
+/// fits the blur (the PSF width is a parameter), so what remains is blur
+/// relative to the ring it integrates over — while the absolute scale
+/// predicts the error of an edge-fitted centre under blur (AUC 0.90 → 0.84
+/// when edge-fitted centres are judged ring-relative).
+pub(crate) fn marker_confidence(marker: &MarkerRecord) -> f32 {
+    let f = marker.confidence_factors;
+    // The products keep the order of the factors' definition, so an
+    // edge-fitted centre's confidence is bit-identical to the single product.
+    let (supported, sharpness_scale) = match (
+        marker.center_source,
+        marker.center_cov,
+        marker.ellipse_outer,
+    ) {
+        (CenterSource::Photometric, Some(cov), Some(outer)) => {
+            let sigma = (0.5 * (cov[0][0] + cov[1][1])).max(0.0).sqrt();
+            let precision = 1.0 / (1.0 + (sigma / PHOTOMETRIC_CENTER_SIGMA_SCALE_PX).powi(2));
+            let scale = EDGE_WIDTH_SCALE_PX
+                .max(PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII * outer.mean_axis() as f32);
+            (f.fit * precision as f32, scale)
+        }
+        _ => (f.fit * f.rim_coverage * f.inner_edge, EDGE_WIDTH_SCALE_PX),
     };
-    let gap = fit_metrics
-        .max_angular_gap_outer
-        .unwrap_or(std::f64::consts::TAU);
-    let coverage = (-gap / COVERAGE_GAP_SCALE_RAD).exp() as f32;
-    let agreement = fit_metrics.inner_theta_consistency.unwrap_or(0.0);
-    let inner = if inner_fit.ellipse_inner.is_some() {
-        agreement
-    } else {
-        agreement * inner_fit_config.miss_confidence_factor
-    };
-    let sharpness = sharpness_factor(fit_metrics.outer_edge_width_px, EDGE_WIDTH_SCALE_PX);
-    let border = (border_radii / BORDER_SCALE_RADII).min(1.0);
-    (evidence * inlier * rms * coverage * inner * sharpness * border).clamp(0.0, 1.0)
+    let sharpness = sharpness_factor(marker.fit.outer_edge_width_px, sharpness_scale);
+    (supported * sharpness * f.border).clamp(0.0, 1.0)
 }
 
 /// `1/(1 + (w / scale)²)` for an outer edge width `w`; 0 when unmeasurable.
@@ -443,34 +508,9 @@ fn sharpness_factor(edge_width_px: Option<f32>, scale_px: f32) -> f32 {
     edge_width_px.map_or(0.0, |w| 1.0 / (1.0 + (w / scale_px).powi(2)))
 }
 
-/// The confidence of a marker whose centre the photometric fit just
-/// replaced: [`compute_marker_confidence`] with the sharpness factor measured
-/// against the ring's size, `s = max(3 px, 0.1875 r)` (`r` the outer
-/// ellipse's mean semi-axis), instead of the absolute 3 px.
-///
-/// The absolute scale predicts the error of an edge-fitted centre under blur
-/// (precision harness: ROC AUC for centre errors beyond 1 px drops from 0.90
-/// to 0.84 when edge-fitted centres are judged ring-relative). The
-/// photometric fit models the blur (its PSF width is a fit parameter), so
-/// what remains is blur relative to the ring the fit integrates over: over
-/// the harness in photometric mode, ring-relative sharpness reports 360 more
-/// centres, none off by more than 1 px. Rings up to 32 px across are
-/// unaffected.
-pub(crate) fn confidence_of_photometric_centre(marker: &MarkerRecord) -> f32 {
-    let w = marker.fit.outer_edge_width_px;
-    let absolute = sharpness_factor(w, EDGE_WIDTH_SCALE_PX);
-    let Some(outer) = marker.ellipse_outer.filter(|_| absolute > 0.0) else {
-        return marker.confidence;
-    };
-    let scale =
-        EDGE_WIDTH_SCALE_PX.max(PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII * outer.mean_axis() as f32);
-    let relative = sharpness_factor(w, scale);
-    (marker.confidence / absolute * relative).clamp(0.0, 1.0)
-}
-
 /// Turn an accepted outer-fit candidate into a marker: fit the inner ring from
 /// the outer hint, derive fit / decode metrics and the confidence, and
-/// assemble the record. Confidence is [`compute_marker_confidence`] for every
+/// assemble the record. Confidence is [`marker_confidence`] for every
 /// source (fit-decode, inner-as-outer recovery and completion).
 ///
 /// `cand.decode_result` is the decode attributed to the marker — callers
@@ -516,7 +556,7 @@ pub(crate) fn marker_from_outer_fit(
     let mut fit = fit_metrics_with_inner(&edge, &outer, outer_ransac.as_ref(), &inner);
     fit.outer_edge_width_px = outer_edge_width_px(sampler, &outer);
     let decode = decode_metrics_from_result(decode_result.as_ref());
-    let confidence = compute_marker_confidence(
+    let confidence_factors = ConfidenceFactors::measure(
         decode_result.as_ref(),
         &edge,
         outer_ransac.as_ref(),
@@ -526,9 +566,9 @@ pub(crate) fn marker_from_outer_fit(
         &config.advanced.inner_fit,
     );
 
-    MarkerRecord {
+    let mut marker = MarkerRecord {
         id: decode_result.as_ref().map(|d| d.id),
-        confidence,
+        confidence_factors,
         center,
         ellipse_outer: Some(outer),
         ellipse_inner: inner.ellipse_inner,
@@ -537,5 +577,62 @@ pub(crate) fn marker_from_outer_fit(
         fit,
         decode,
         ..MarkerRecord::default()
+    };
+    marker.confidence = marker_confidence(&marker);
+    marker
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A large ring whose edge fit barely pins its centre (a third of the rim
+    /// unseen, few inner-edge rays agreeing) and whose edge is 3 px wide.
+    fn weakly_supported_ring() -> MarkerRecord {
+        MarkerRecord {
+            confidence_factors: ConfidenceFactors {
+                fit: 1.0,
+                rim_coverage: 0.02,
+                inner_edge: 1.0,
+                border: 1.0,
+            },
+            ellipse_outer: Some(Ellipse {
+                cx: 100.0,
+                cy: 100.0,
+                a: 60.0,
+                b: 40.0,
+                angle: 0.0,
+            }),
+            fit: FitMetrics {
+                outer_edge_width_px: Some(3.0),
+                ..FitMetrics::default()
+            },
+            ..MarkerRecord::default()
+        }
+    }
+
+    #[test]
+    fn edge_fitted_centre_is_judged_by_its_edge_support() {
+        let mut m = weakly_supported_ring();
+        let edge_fitted = marker_confidence(&m);
+        assert!((edge_fitted - 0.02 * 0.5).abs() < 1e-6, "{edge_fitted}");
+        // A projective centre is edge-fitted too.
+        m.center_source = CenterSource::ProjectiveCenter;
+        assert_eq!(marker_confidence(&m), edge_fitted);
+    }
+
+    #[test]
+    fn photometric_centre_is_judged_by_its_own_precision() {
+        let mut m = weakly_supported_ring();
+        m.center_source = CenterSource::Photometric;
+        m.center_cov = Some([[1e-4, 0.0], [0.0, 1e-4]]); // σ = 0.01 px
+        let precise = marker_confidence(&m);
+        // Ring-relative sharpness: s = 0.1875 · 50 px = 9.4 px.
+        let expected = (1.0 / (1.0 + 0.01f32)) / (1.0 + (3.0f32 / 9.375).powi(2));
+        assert!((precise - expected).abs() < 1e-4, "{precise} vs {expected}");
+
+        m.center_cov = Some([[0.04, 0.0], [0.0, 0.04]]); // σ = 0.2 px
+        let imprecise = marker_confidence(&m);
+        assert!(imprecise < 0.25 * precise, "{imprecise} vs {precise}");
     }
 }

@@ -26,6 +26,8 @@ describe("keymap", () => {
     expect(commandFor(key("w"))).toBe("flagWrongId");
     expect(commandFor(key("Delete"))).toBe("clear");
     expect(commandFor(key("?"))).toBe("help");
+    expect(commandFor(key("["))).toBe("thresholdDown");
+    expect(commandFor(key("]"))).toBe("thresholdUp");
     expect(commandFor(key("q"))).toBeNull();
   });
 

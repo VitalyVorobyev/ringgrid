@@ -259,12 +259,28 @@ def _radius_hint(markers) -> float:
 # --------------------------------------------------------------------------
 
 
-def compare_markers(a: list[dict], b: list[dict], match_px=DEFAULT_MATCH_PX, pos_px=DEFAULT_POS_TOL_PX) -> dict:
+def passes_confidence(marker: dict, min_confidence: float) -> bool:
+    """Whether a normalised marker is kept by the page's confidence threshold:
+    its confidence is at least ``min_confidence``, or it has none (nothing to
+    cut on). The page applies the same rule (``passesThreshold`` in
+    app/src/model/threshold.ts)."""
+    c = marker.get("confidence")
+    return c is None or c >= min_confidence
+
+
+def compare_markers(
+    a: list[dict], b: list[dict], match_px=DEFAULT_MATCH_PX, pos_px=DEFAULT_POS_TOL_PX, min_confidence=0.0
+) -> dict:
     """Greedy nearest-pair matching of two normalised marker lists.
 
-    ``pairs`` carry ``cls`` in ``same | id_differs | position_differs``;
-    unmatched markers are listed in ``only_a`` / ``only_b`` (marker indices).
+    Markers below ``min_confidence`` are left out first, so the comparison is
+    the one of the two runs cut at that threshold. ``pairs`` carry ``cls`` in
+    ``same | id_differs | position_differs``; unmatched markers are listed in
+    ``only_a`` / ``only_b`` (marker indices).
     """
+    if min_confidence > 0:
+        a = [m for m in a if passes_confidence(m, min_confidence)]
+        b = [m for m in b if passes_confidence(m, min_confidence)]
     cand = []
     for i, ma in enumerate(a):
         for j, mb in enumerate(b):
@@ -748,15 +764,17 @@ class App:
             raise SystemExit(f"--primary {name}: no such run (known: {', '.join(self.runs.runs) or 'none'})")
         self.primary_run = name
 
-    def compare(self, tile: str, a: str, b: str, match_px: float, pos_px: float) -> dict | None:
+    def compare(
+        self, tile: str, a: str, b: str, match_px: float, pos_px: float, min_confidence: float = 0.0
+    ) -> dict | None:
         da, db = self.runs.runs[a].detection(tile), self.runs.runs[b].detection(tile)
         if da is None or db is None:
             return None
-        key = (tile, a, b, match_px, pos_px, id(da), id(db))
+        key = (tile, a, b, match_px, pos_px, min_confidence, id(da), id(db))
         if key not in self._cmp_cache:
             if len(self._cmp_cache) > 4000:
                 self._cmp_cache.clear()
-            self._cmp_cache[key] = compare_markers(da["markers"], db["markers"], match_px, pos_px)
+            self._cmp_cache[key] = compare_markers(da["markers"], db["markers"], match_px, pos_px, min_confidence)
         return self._cmp_cache[key]
 
     def state(self) -> dict:
@@ -764,11 +782,14 @@ class App:
         names = list(self.runs.runs)
         for name in names:
             run = self.runs.runs[name]
-            counts = {}
+            # Per tile, each marker's [confidence, decoded], so the page counts
+            # the markers kept at any confidence threshold without fetching
+            # every detection.
+            scores = {}
             for t in self.dataset.tiles:
                 det = run.detection(t)
-                counts[t] = None if det is None else [det["n_markers"], det["n_decoded"]]
-            runs.append({"name": name, "manifest": run.manifest, "status": run.status, "counts": counts})
+                scores[t] = None if det is None else [[m["confidence"], m["id"] is not None] for m in det["markers"]]
+            runs.append({"name": name, "manifest": run.manifest, "status": run.status, "scores": scores})
         differing = []
         for t in self.dataset.tiles:
             flag = False
@@ -904,11 +925,14 @@ def make_handler(app: App, port_holder: list, app_dir: Path | None = APP_DIST):
                     try:
                         match = float(query.get("match", [DEFAULT_MATCH_PX])[0])
                         pos = float(query.get("pos", [DEFAULT_POS_TOL_PX])[0])
+                        min_conf = float(query.get("min_conf", [0.0])[0])
                     except ValueError:
-                        return self._err(400, "match/pos must be numbers")
+                        return self._err(400, "match/pos/min_conf must be numbers")
                     if not (math.isfinite(match) and math.isfinite(pos) and 0 < match < 1e4 and 0 <= pos < 1e4):
                         return self._err(400, "match/pos out of range")
-                    cmp = app.compare(tile, a, b, match, pos)
+                    if not 0 <= min_conf <= 1:
+                        return self._err(400, "min_conf out of range")
+                    cmp = app.compare(tile, a, b, match, pos, min_conf)
                     return self._err(404, "missing detections") if cmp is None else self._json(cmp)
                 return self._err(404, "not found")
             except (BrokenPipeError, ConnectionResetError):

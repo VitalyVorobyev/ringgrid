@@ -15,6 +15,7 @@ import {
   Popover,
   Select,
   SkeletonRows,
+  Slider,
   StatusDot,
   Switch,
   ThemeToggle,
@@ -35,6 +36,16 @@ import { api, type Comparison, type Detection, type FlagKind, type PinType, type
 import { flagFor, newPin, pinUid, tileRecord } from "./model/feedback";
 import { commandFor, isTyping, type Command } from "./model/keymap";
 import { comparisonSummary, markerViews, pinKey } from "./model/overlay";
+import {
+  keptCount,
+  loadThreshold,
+  normaliseThreshold,
+  saveThreshold,
+  stepThreshold,
+  THRESHOLD_KEY_STEP,
+  THRESHOLD_STEP,
+  type KeptCount,
+} from "./model/threshold";
 import { useFeedback, type SaveState } from "./model/useFeedback";
 
 const nowIso = () => new Date().toISOString();
@@ -91,7 +102,19 @@ function Review({ initial }: { initial: ServerState }) {
   const [compare, setCompare] = useState(false);
   const [differencesOnly, setDifferencesOnly] = useState(false);
   const [tolerance, setTolerance] = useState(initial.defaults);
-  const [layers, setLayers] = useState<LayerVisibility>({ centres: true, ellipses: true, ids: true, grid: false, confidence: false });
+  // The confidence threshold is this viewer's view state: remembered in localStorage, never in
+  // the feedback.
+  const [minConfidence, setMinConfidenceState] = useState(() => loadThreshold());
+  const setMinConfidence = useCallback((value: number) => setMinConfidenceState(normaliseThreshold(value)), []);
+  useEffect(() => saveThreshold(minConfidence), [minConfidence]);
+  const [layers, setLayers] = useState<LayerVisibility>({
+    centres: true,
+    ellipses: true,
+    ids: true,
+    grid: false,
+    confidence: false,
+    cut: false,
+  });
   const [adjust, setAdjust] = useState({ gain: 1, gamma: 1 });
   const [pinMode, setPinMode] = useState<PinType | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -114,11 +137,11 @@ function Review({ initial }: { initial: ServerState }) {
   // Fetched results are kept with the request they answer, so a result for another tile or
   // run pair is never shown while the next one loads.
   const [fetched, setFetched] = useState<{ key: string; detections: Record<string, Detection | null> } | null>(null);
-  const [compared, setCompared] = useState<{ key: string; comparison: Comparison | null } | null>(null);
+  const [compared, setCompared] = useState<{ base: string; comparison: Comparison | null } | null>(null);
   const [reload, setReload] = useState(0);
   const runsKey = [...new Set([runA, runB].filter((r): r is string => r !== null))].join("\n");
   const detectionsKey = tile ? `${tile}\n${runsKey}\n${reload}` : null;
-  const comparisonKey =
+  const comparisonBase =
     tile && runA && runB && runA !== runB ? `${tile}\n${runA}\n${runB}\n${tolerance.match_px}\n${tolerance.pos_px}\n${reload}` : null;
   useEffect(() => {
     if (!tile || detectionsKey === null) return;
@@ -139,18 +162,21 @@ function Review({ initial }: { initial: ServerState }) {
     };
   }, [tile, runsKey, detectionsKey]);
   useEffect(() => {
-    if (!tile || !runA || !runB || comparisonKey === null) return;
+    if (!tile || !runA || !runB || comparisonBase === null) return;
     let live = true;
-    api.compare(tile, runA, runB, tolerance.match_px, tolerance.pos_px).then(
-      (c) => live && setCompared({ key: comparisonKey, comparison: c }),
-      () => live && setCompared({ key: comparisonKey, comparison: null }),
+    api.compare(tile, runA, runB, tolerance.match_px, tolerance.pos_px, minConfidence).then(
+      (c) => live && setCompared({ base: comparisonBase, comparison: c }),
+      () => live && setCompared({ base: comparisonBase, comparison: null }),
     );
     return () => {
       live = false;
     };
-  }, [tile, runA, runB, tolerance, comparisonKey]);
+  }, [tile, runA, runB, tolerance, minConfidence, comparisonBase]);
   const detections = fetched?.key === detectionsKey ? fetched.detections : {};
-  const comparison = compared?.key === comparisonKey ? compared.comparison : null;
+  // The comparison is cut at the threshold by the server. While the one at a new threshold
+  // loads (dragging the slider), the last one of the same tile, runs and tolerances stays, so
+  // the overlay does not fall back to run A alone; an answer for an older threshold is dropped.
+  const comparison = compared !== null && comparisonBase !== null && compared.base === comparisonBase ? compared.comparison : null;
 
   // -- polling while a run is being computed ------------------------------------------------
   const running = server.runs.some((r) => r.status.state === "running");
@@ -189,9 +215,17 @@ function Review({ initial }: { initial: ServerState }) {
         comparison: comparing ? comparison : null,
         flags: rec?.marker_flags ?? [],
         selected,
-        options: { compare: comparing, differencesOnly, confidence: layers.confidence, ids: layers.ids, grid: layers.grid },
+        options: {
+          compare: comparing,
+          differencesOnly,
+          confidence: layers.confidence,
+          ids: layers.ids,
+          grid: layers.grid,
+          minConfidence,
+          showCut: layers.cut,
+        },
       }),
-    [runA, runB, detA, detB, comparing, comparison, rec?.marker_flags, selected, differencesOnly, layers],
+    [runA, runB, detA, detB, comparing, comparison, rec?.marker_flags, selected, differencesOnly, layers, minConfidence],
   );
   const selectedView = markers.find((m) => m.key === selected) ?? null;
   const selectedPin = rec?.pins.find((p) => pinKey(p.uid) === selected) ?? null;
@@ -280,6 +314,8 @@ function Review({ initial }: { initial: ServerState }) {
     toggleIds: () => toggleLayer("ids"),
     toggleGrid: () => toggleLayer("grid"),
     toggleConfidence: () => toggleLayer("confidence"),
+    thresholdDown: () => setMinConfidence(stepThreshold(minConfidence, -THRESHOLD_KEY_STEP)),
+    thresholdUp: () => setMinConfidence(stepThreshold(minConfidence, THRESHOLD_KEY_STEP)),
     fit: () => stage.current?.fit(),
     actualSize: () => stage.current?.zoomTo(1),
     zoomIn: () => zoom(1),
@@ -349,6 +385,32 @@ function Review({ initial }: { initial: ServerState }) {
       </div>
       <Switch checked={comparing} onCheckedChange={toggleCompare} label="Compare (V)" />
       <Switch checked={differencesOnly} onCheckedChange={setDifferencesOnly} label="Differences only (D)" disabled={!comparing} />
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-fg-muted" title="Markers below it are hidden ([ and ] step by 0.05)">
+          Min confidence
+        </span>
+        <Slider
+          aria-label="Minimum confidence"
+          min={0}
+          max={1}
+          step={THRESHOLD_STEP}
+          value={minConfidence}
+          onValueChange={setMinConfidence}
+          className="w-52 flex-none"
+          readout={
+            <NumberInput
+              aria-label="Minimum confidence value"
+              min={0}
+              max={1}
+              step={THRESHOLD_STEP}
+              precision={2}
+              value={minConfidence}
+              onValueChange={setMinConfidence}
+              className="w-20"
+            />
+          }
+        />
+      </div>
       <Popover
         aria-label="Matching tolerances"
         trigger={
@@ -407,6 +469,13 @@ function Review({ initial }: { initial: ServerState }) {
 
   const legend = comparing ? (comparison ? `A solid · B dashed · ${comparisonSummary(comparison)}` : "no comparison for this tile") : null;
   const warnings = [...(detA?.warnings ?? []), ...(comparing ? (detB?.warnings ?? []) : [])];
+  const kept =
+    tile && minConfidence > 0
+      ? keptReadout(minConfidence, [
+          ["A", keptCount(runByName(runA)?.scores[tile], minConfidence)],
+          ...(comparing ? [["B", keptCount(runByName(runB)?.scores[tile], minConfidence)] as const] : []),
+        ])
+      : null;
 
   const main = currentTile ? (
     <div className="flex h-full min-h-0 flex-col">
@@ -491,6 +560,7 @@ function Review({ initial }: { initial: ServerState }) {
               differing={differing}
               runA={runByName(runA)}
               runB={comparing ? runByName(runB) : undefined}
+              minConfidence={minConfidence}
               filter={filter}
               onFilterChange={setFilter}
             />
@@ -508,6 +578,7 @@ function Review({ initial }: { initial: ServerState }) {
             start={[{ value: saveReadout(save) }]}
             end={[
               { label: "tile", value: tile ?? "–" },
+              ...(kept ? [{ value: kept }] : []),
               ...(legend ? [{ value: legend }] : []),
               ...(running ? [{ value: "computing a run…" }] : []),
             ]}
@@ -527,6 +598,12 @@ function Review({ initial }: { initial: ServerState }) {
       />
     </>
   );
+}
+
+/** What the threshold keeps of the current tile, per shown run: "≥ 0.30: A 56 of 63 · B 50 of 60 shown". */
+function keptReadout(threshold: number, runs: readonly (readonly [string, KeptCount | null])[]): string | null {
+  const parts = runs.flatMap(([side, c]) => (c ? [`${runs.length > 1 ? `${side} ` : ""}${c.kept} of ${c.total}`] : []));
+  return parts.length > 0 ? `≥ ${threshold.toFixed(2)}: ${parts.join(" · ")} shown` : null;
 }
 
 /** Focus a field the next render brings (the correct id after a wrong-id flag, a new pin's field). */

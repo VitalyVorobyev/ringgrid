@@ -143,6 +143,21 @@ class Compare(unittest.TestCase):
         self.assertTrue(srv.differs(c["counts"]))
         self.assertFalse(srv.differs(srv.compare_markers(a, a)["counts"]))
 
+    def test_min_confidence_cuts_both_runs_before_matching(self):
+        def mk(i, x, conf):
+            return {"index": i, "id": i, "center": [x, 0], "confidence": conf}
+
+        # A0 is cut, so B0 has no partner; B1 is cut, so A1 has none; A2/B2 have no
+        # confidence and are kept; at the threshold exactly is kept.
+        a = [mk(0, 0, 0.2), mk(1, 50, 0.5), mk(2, 100, None)]
+        b = [mk(0, 0, 0.5), mk(1, 50, 0.3), mk(2, 100, None)]
+        self.assertEqual(len(srv.compare_markers(a, b)["pairs"]), 3)
+        c = srv.compare_markers(a, b, min_confidence=0.5)
+        self.assertEqual([(p["a"], p["b"]) for p in c["pairs"]], [(2, 2)])
+        self.assertEqual((c["only_a"], c["only_b"]), ([1], [0]))
+        self.assertTrue(srv.passes_confidence({"confidence": 0.5}, 0.5))
+        self.assertFalse(srv.passes_confidence({"confidence": 0.49}, 0.5))
+
 
 class Feedback(unittest.TestCase):
     def setUp(self):
@@ -413,6 +428,16 @@ class Http(unittest.TestCase):
         code, body, _ = self.req("/api/compare/strip_a_00?a=fakerun&b=imp")
         self.assertEqual(code, 200)
         self.assertIn("counts", json.loads(body))
+        # The page counts kept markers from each marker's [confidence, decoded].
+        runs = {r["name"]: r for r in json.loads(self.req("/api/state")[1])["runs"]}
+        self.assertEqual(runs["fakerun"]["scores"]["strip_b_01"], [[0.5, True], [None, True]])
+        self.assertIsNone(runs["imp"]["scores"]["strip_b_01"])
+        code, body, _ = self.req("/api/compare/strip_a_00?a=fakerun&b=fakerun&min_conf=0.6")
+        self.assertEqual(code, 200)
+        # The 0.5 marker is cut from both sides; the unscored one is kept and pairs with itself.
+        self.assertEqual(json.loads(body)["counts"]["same"], 1)
+        self.assertEqual(self.req("/api/compare/strip_a_00?a=fakerun&b=imp&min_conf=1.5")[0], 400)
+        self.assertEqual(self.req("/api/compare/strip_a_00?a=fakerun&b=imp&min_conf=x")[0], 400)
         self.assertEqual(self.req("/api/runs", {"name": "fakerun", "binary": str(self.fake.resolve()), "args": "--other"})[0], 409)
 
 

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Comparison, Detection, Marker, MarkerFlag } from "./api";
-import { CLASS_COLOUR, confidenceColour, FLAG_COLOUR, markerViews, pinLabel, RUN_COLOUR, type OverlayOptions } from "./overlay";
+import { CLASS_COLOUR, confidenceColour, CUT_COLOUR, FLAG_COLOUR, markerViews, pinLabel, RUN_COLOUR, type OverlayOptions } from "./overlay";
 
 function marker(index: number, id: number | null, x: number, extra: Partial<Marker> = {}): Marker {
   return {
@@ -48,7 +48,15 @@ const CMP: Comparison = {
   only_b: [3],
   counts: { same: 1, id_differs: 1, position_differs: 1, only_a: 1, only_b: 1 },
 };
-const OPTS: OverlayOptions = { compare: true, differencesOnly: false, confidence: false, ids: true, grid: false };
+const OPTS: OverlayOptions = {
+  compare: true,
+  differencesOnly: false,
+  confidence: false,
+  ids: true,
+  grid: false,
+  minConfidence: 0,
+  showCut: false,
+};
 const input = (o: Partial<OverlayOptions> = {}, flags: MarkerFlag[] = [], selected: string | null = null) => ({
   a: { run: "a", detection: A },
   b: { run: "b", detection: B },
@@ -110,6 +118,72 @@ describe("markerViews", () => {
   it("falls back to one run when the comparison or run B is missing", () => {
     expect(markerViews({ ...input(), comparison: null }).every((v) => v.side === "A" && v.cls === null)).toBe(true);
     expect(markerViews({ ...input(), b: null })).toHaveLength(4);
+  });
+});
+
+describe("markerViews at a confidence threshold", () => {
+  // Confidences 0.2, 0.4 (exactly at the threshold below), 0.9, and none.
+  const conf = (confidence: number | null) => ({ confidence });
+  const A2 = detection("a", [
+    marker(0, 1, 10, conf(0.2)),
+    marker(1, 2, 30, conf(0.4)),
+    marker(2, 3, 50, conf(0.9)),
+    marker(3, 4, 70, conf(null)),
+  ]);
+  const B2 = detection("b", [marker(0, 1, 10, conf(0.9)), marker(1, 2, 30, conf(0.1)), marker(2, 3, 50, conf(0.9))]);
+  // What the server answers for the two runs cut at 0.4: A1-A2 and B2 compared, B1 cut.
+  const CMP2: Comparison = {
+    pairs: [{ a: 2, b: 2, dist: 0, cls: "same" }],
+    only_a: [1, 3],
+    only_b: [0],
+    counts: { same: 1, id_differs: 0, position_differs: 0, only_a: 2, only_b: 1 },
+  };
+  const at = (o: Partial<OverlayOptions>, flags: MarkerFlag[] = [], selected: string | null = null) =>
+    markerViews({
+      a: { run: "a", detection: A2 },
+      b: { run: "b", detection: B2 },
+      comparison: CMP2,
+      flags,
+      selected,
+      options: { ...OPTS, compare: false, minConfidence: 0.4, ...o },
+    });
+
+  it("keeps every marker at 0, and hides those below the threshold (at it and unscored are kept)", () => {
+    expect(at({ minConfidence: 0 }).map((v) => v.key)).toEqual(["A:0", "A:1", "A:2", "A:3"]);
+    const views = at({});
+    expect(views.map((v) => v.key)).toEqual(["A:1", "A:2", "A:3"]);
+    expect(views.every((v) => !v.cut && !v.dimmed)).toBe(true);
+  });
+
+  it("greys cut markers out with showCut: neutral colour, dimmed, labelled", () => {
+    const cut = at({ showCut: true }).find((v) => v.key === "A:0");
+    expect(cut).toMatchObject({ cut: true, colour: CUT_COLOUR, dimmed: true, label: "1 · cut" });
+    // The confidence colouring is for the kept markers only.
+    expect(at({ showCut: true, confidence: true }).find((v) => v.key === "A:0")?.colour).toBe(CUT_COLOUR);
+  });
+
+  it("never hides a flagged or selected marker, so the reviewer sees what the cut removes", () => {
+    const flag: MarkerFlag = { run: "a", kind: "false_positive", marker: { index: 0, id: 1, center: [10, 10] } };
+    const flagged = at({}, [flag]).find((v) => v.key === "A:0");
+    expect(flagged).toMatchObject({ cut: true, colour: FLAG_COLOUR.false_positive, dimmed: false, label: "1 · cut · false positive" });
+    expect(at({}, [], "A:0").find((v) => v.key === "A:0")).toMatchObject({ cut: true, dimmed: false });
+  });
+
+  it("leaves cut markers out of the comparison in compare mode, for both runs", () => {
+    const views = at({ compare: true });
+    expect(views.map((v) => v.key)).toEqual(["A:1", "A:2", "A:3", "B:0", "B:2"]);
+    const by = Object.fromEntries(views.map((v) => [v.key, v]));
+    expect(by["A:2"]).toMatchObject({ cls: "same", dimmed: true });
+    expect(by["B:0"]).toMatchObject({ cls: "only", label: "1 · only B" });
+    // Greyed out, a cut marker is not "only A": it is not compared at all.
+    const shown = at({ compare: true, showCut: true });
+    expect(shown.find((v) => v.key === "A:0")).toMatchObject({ cls: null, cut: true, colour: CUT_COLOUR, label: "1 · cut" });
+    expect(shown.find((v) => v.key === "B:1")).toMatchObject({ cls: null, cut: true, dashed: true });
+  });
+
+  it("applies differences only on top of the threshold", () => {
+    expect(at({ compare: true, differencesOnly: true }).map((v) => v.key)).toEqual(["A:1", "A:3", "B:0"]);
+    expect(at({ compare: true, differencesOnly: true, showCut: true }).map((v) => v.key)).toEqual(["A:0", "A:1", "A:3", "B:0", "B:1"]);
   });
 });
 

@@ -70,12 +70,15 @@ export interface RunStatus {
   errors: string[];
 }
 
+/** One marker as the tile list counts it: its confidence and whether it is decoded. */
+export type MarkerScore = [confidence: number | null, decoded: boolean];
+
 export interface Run {
   name: string;
   manifest: Record<string, unknown>;
   status: RunStatus;
-  /** Per tile: `[markers, decoded]`, or null when the run has no output for it. */
-  counts: Record<string, [number, number] | null>;
+  /** Per tile: every marker's score, or null when the run has no output for it. */
+  scores: Record<string, MarkerScore[] | null>;
 }
 
 export interface MarkerFlag {
@@ -203,8 +206,9 @@ export const api = {
   generateScreenTarget: (template: string, screen: ScreenTargetOptions) =>
     request<ScreenTargetExport>("/api/screen-target", { template, screen }),
   detection: (run: string, tile: string) => request<Detection>(`/api/run/${enc(run)}/tile/${enc(tile)}`),
-  compare: (tile: string, a: string, b: string, matchPx: number, posPx: number) =>
-    request<Comparison>(`/api/compare/${enc(tile)}?a=${enc(a)}&b=${enc(b)}&match=${matchPx}&pos=${posPx}`),
+  /** The two runs' markers compared, after both are cut at `minConfidence`. */
+  compare: (tile: string, a: string, b: string, matchPx: number, posPx: number, minConfidence: number) =>
+    request<Comparison>(`/api/compare/${enc(tile)}?a=${enc(a)}&b=${enc(b)}&match=${matchPx}&pos=${posPx}&min_conf=${minConfidence}`),
   saveFeedback: (patch: { tiles?: Record<string, TileRecord>; general_remarks?: GeneralRemark[] }) =>
     request<{ ok: true; updated_at: string }>("/api/feedback", patch),
   createRun: (name: string, binary: string, args: string) => request<{ ok: true; run: string }>("/api/runs", { name, binary, args }),

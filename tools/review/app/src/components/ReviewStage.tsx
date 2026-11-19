@@ -38,6 +38,8 @@ export interface LayerVisibility {
   ids: boolean;
   grid: boolean;
   confidence: boolean;
+  /** Markers below the confidence threshold, greyed out instead of hidden. */
+  cut: boolean;
 }
 
 export const LAYER_NAMES: Record<keyof LayerVisibility, { label: string; shortcut?: string }> = {
@@ -46,6 +48,7 @@ export const LAYER_NAMES: Record<keyof LayerVisibility, { label: string; shortcu
   ids: { label: "Ids", shortcut: "I" },
   grid: { label: "Grid coordinates", shortcut: "G" },
   confidence: { label: "Colour by confidence", shortcut: "P" },
+  cut: { label: "Markers below the threshold" },
 };
 
 /** A pin for a missed marker: a diamond, 6 px to each point. */

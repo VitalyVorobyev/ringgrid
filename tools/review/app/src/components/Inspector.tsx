@@ -101,7 +101,7 @@ export function SelectionPanel(p: SelectionPanelProps) {
   const rows: [string, string][] = [
     ["run", `${v.run} (${v.side})`],
     ["id", m.id === null ? "–" : String(m.id)],
-    ["confidence", m.confidence === null ? "–" : fmt(m.confidence, 3)],
+    ["confidence", m.confidence === null ? "–" : `${fmt(m.confidence, 3)}${v.cut ? " (below the threshold)" : ""}`],
     ["centre", `${fmt(m.center[0])}, ${fmt(m.center[1])}`],
     ["grid", m.grid_coord ? `(${m.grid_coord.join(", ")})` : "–"],
     ["board mm", m.board_xy_mm ? m.board_xy_mm.map((x) => fmt(x)).join(", ") : "–"],

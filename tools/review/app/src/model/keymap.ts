@@ -19,6 +19,8 @@ export type Command =
   | "toggleIds"
   | "toggleGrid"
   | "toggleConfidence"
+  | "thresholdDown"
+  | "thresholdUp"
   | "fit"
   | "actualSize"
   | "zoomIn"
@@ -84,6 +86,8 @@ export const KEYMAP: readonly { title: string; bindings: readonly Binding[] }[] 
       { keys: ["i"], shown: ["I"], description: "Ids", command: "toggleIds" },
       { keys: ["g"], shown: ["G"], description: "Grid coordinates", command: "toggleGrid" },
       { keys: ["p"], shown: ["P"], description: "Colour by confidence", command: "toggleConfidence" },
+      { keys: ["]"], shown: ["]", "["], description: "Confidence threshold up, down by 0.05", command: "thresholdUp" },
+      { keys: ["["], shown: [], description: "", command: "thresholdDown" },
       { keys: ["0"], shown: ["0"], description: "Fit to window", command: "fit" },
       { keys: ["."], shown: ["."], description: "Actual size (100%)", command: "actualSize" },
       { keys: ["+", "="], shown: ["+", "−"], description: "Zoom in, out (or the wheel; drag to pan)", command: "zoomIn" },

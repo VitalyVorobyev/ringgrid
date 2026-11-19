@@ -51,6 +51,21 @@ commit, args, timestamp) and reused on restart. `--run NAME=DIR` imports
 Output (`--out`, default `tools/out/review/<dataset>/`): `feedback.json`
 (`ringgrid.review.v1`, written atomically), `runs/`, `tiles/` (cropped PNG cache).
 
+## Confidence threshold
+
+**Min confidence** in the header (a slider and a field, 0–1 in steps of 0.01, `[`/`]`
+step by 0.05) hides markers whose confidence is below it, for both runs. It shows
+what cutting the detections there would remove. At 0 (the default) every marker is
+shown. A marker without a confidence is never cut. The tile list counts the kept
+markers ("56 of 63"), and the status bar shows the current tile's counts. In compare
+mode the server matches the two runs after cutting both at the threshold, so a
+marker whose partner was cut shows as "only A/B". Flagged and selected markers stay
+visible, labelled "cut", so a threshold that removes a confirmed marker or a false
+positive shows it. The stage's layers menu has **Markers below the threshold**, which
+draws the cut markers greyed out instead of hiding them. The threshold is remembered
+per browser (`localStorage`) and is never written to the feedback. The "differs
+between runs" filter and badge still use all markers.
+
 ## Generate a screen target
 
 Open **Generate screen target** in the React app and choose a coded hex or
@@ -97,7 +112,7 @@ image coordinates of the tile). Top level: `general_remarks[]`.
 Press `?` in the page (the list is generated from the same table that binds the
 keys, `app/src/model/keymap.ts`). Main ones: `j`/`k` tiles, `1/2/3` verdict,
 `w c f o` flag selected marker, `u` clear, `m` missed pin (or shift-click), `n`
-note pin, `v` compare, `d` differences only, `x` swap A/B, `/` remark, `0` fit,
+note pin, `v` compare, `d` differences only, `x` swap A/B, `[`/`]` confidence threshold, `/` remark, `0` fit,
 `.` 1:1, `+`/`-` zoom. Gain and gamma are in the stage toolbar; gamma above 1
 lifts the shadows.
 

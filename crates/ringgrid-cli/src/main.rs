@@ -451,12 +451,6 @@ struct CliDetectArgs {
     #[arg(long)]
     complete_min_conf: Option<f32>,
 
-    /// Completion ROI radius in pixels for edge sampling.
-    ///
-    /// Default is derived from nominal diameter of the selected marker scale prior.
-    #[arg(long)]
-    complete_roi_radius: Option<f64>,
-
     /// Require a perfect decode (dist=0, margin≥active profile minimum distance)
     /// for completion markers.
     ///
@@ -834,7 +828,6 @@ struct DetectOverrides {
     disable_completion: bool,
     completion_reproj_gate_px: Option<f32>,
     completion_min_fit_confidence: Option<f32>,
-    completion_roi_radius_px: Option<f32>,
     completion_require_perfect_decode: bool,
     camera: Option<ringgrid::CameraModel>,
     circle_refinement: Option<ringgrid::CircleRefinementMethod>,
@@ -892,7 +885,6 @@ impl CliDetectArgs {
             disable_completion: self.no_complete,
             completion_reproj_gate_px: self.complete_reproj_gate.map(|v| v as f32),
             completion_min_fit_confidence: self.complete_min_conf,
-            completion_roi_radius_px: self.complete_roi_radius.map(|v| v as f32),
             completion_require_perfect_decode: self.complete_require_perfect_decode,
             camera: self.camera.to_core()?,
             circle_refinement: self.refine,
@@ -968,9 +960,6 @@ fn build_detect_config(
     }
     if let Some(v) = overrides.completion_min_fit_confidence {
         adv.completion.min_fit_confidence = v;
-    }
-    if let Some(roi) = overrides.completion_roi_radius_px {
-        adv.completion.roi_radius_px = roi;
     }
     if overrides.completion_require_perfect_decode {
         adv.completion.require_perfect_decode = true;

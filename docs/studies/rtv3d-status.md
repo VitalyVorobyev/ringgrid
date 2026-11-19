@@ -1,8 +1,11 @@
-# rtv3d: detection status (November 2026, main at e167a14b)
+# rtv3d: detection status (November 2026, contrast-relative edge gate)
 
 Status of ringgrid on the rtv3d captures, the project's most important real
-dataset. Every number below was measured on main at `e167a14b` (PRs #95–#99
-merged) with `tools/run_rtv3d_eval.py` and the one-off analyses listed under
+dataset. The strategy table, *Contrast-relative edge gate* and *Gate* were
+measured with the contrast-relative edge-depth gate (branch
+`fix/relative-edge-depth-gate`, on top of `aafce4f1`); every other number
+below was measured on main at `e167a14b` (PRs #95–#99 merged), as labelled,
+with `tools/run_rtv3d_eval.py` and the one-off analyses listed under
 *Reproduce*. The data is private and lives outside the repository, in the
 gitignored `data/rtv3d_0`. This document names tiles by file name only and
 reports aggregates. Numbers labelled **measured** come from a run. Numbers
@@ -37,11 +40,16 @@ labelled **hypothesis** have not been tested yet.
 
 | strategy | decoded IDs | IDs / tile (mean, median) | tiles with 0 IDs | tiles < 10 IDs | top / middle / bottom | runtime / tile (median, max) | total |
 |---|---|---|---|---|---|---|---|
-| **adaptive** (primary) | **4985** | 48.9, 56 | 1 | 2 | 212 / 2619 / 2154 | 371 ms, 557 ms | 37.8 s |
-| adaptive + `--refine photometric` | **5874** | 57.6, 63 | 1 | 2 | 296 / 2944 / 2634 | 1296 ms, 2136 ms | 135.6 s |
-| A, single pass [20, 56] px | 3987 | 39.1, 54 | 42 | 42 | 22 / 1927 / 2038 | 31 ms | 2.8 s |
-| B, single pass [14, 66] px (default prior) | 3745 | 36.7, 51 | 41 | 42 | 27 / 1786 / 1932 | 30 ms | 2.8 s |
-| D, single pass, per-strip prior | 2651 | 26.0, 0 | 59 | 60 | 27 / 1301 / 1323 | 24 ms | 2.7 s |
+| **adaptive** (primary) | **7408** | 72.6, 87 | 0 | 0 | 1298 / 3725 / 2385 | 404 ms, 648 ms | 41.9 s |
+| adaptive + `--refine photometric` | **8945** | 87.7, 108 | 0 | 0 | 1889 / 4144 / 2912 | 2025 ms, 3065 ms | 210.2 s |
+| A, single pass [20, 56] px | 5508 | 54.0, 81.5 | 42 | 42 | 559 / 2802 / 2147 | 39 ms | 3.5 s |
+| B, single pass [14, 66] px (default prior) | 4645 | 45.5, 68 | 40 | 42 | 307 / 2319 / 2019 | 36 ms | 3.3 s |
+| D, single pass, per-strip prior | 3341 | 32.8, 0 | 58 | 60 | 287 / 1662 / 1392 | 27 ms | 3.1 s |
+
+On `e167a14b` / `aafce4f1` (before the contrast-relative edge gate, identical
+on this eval) the same columns read: adaptive 4985 (1 tile with 0 IDs, 2
+under 10, bands 212 / 2619 / 2154, 371 ms median), adaptive + photometric
+5874 (1, 2, 296 / 2944 / 2634, 1296 ms), A 3987, B 3745, D 2651.
 
 - **adaptive** runs the published CLI, `ringgrid detect --target …`, without
   `--marker-diameter`. That is `Detector::detect_adaptive` with the default
@@ -50,17 +58,82 @@ labelled **hypothesis** have not been tested yet.
   detection and the JSON write. Strategies run one after another on one macOS
   machine.
 - **Photometric runtime is acceptable for offline calibration.** It is
-  3.5× the projective adaptive run and 1.3 s per tile, or 2.3 min for the whole
-  dataset. It is not fast enough for interactive use.
-- **Single-pass strategies lose seven whole strips.** A, B and D find no IDs on
-  strips 1, 6, 8, 9, 10, 11 and 12, because the marker size there is outside
-  their scale prior. Adaptive finds 98–168 IDs on each of those strips.
+  5× the projective adaptive run and 2.0 s per tile (it refines 52 % more
+  markers than before the gate change), or 3.5 min for the whole dataset. It
+  is not fast enough for interactive use.
+- **Single-pass strategies lose seven whole strips.** A, B and D find (almost)
+  no IDs on strips 1, 6, 8, 9, 10, 11 and 12, because the marker size there is
+  outside their scale prior. Adaptive finds IDs on every tile.
 - **Gate.** All five strategies are gated in
   `tools/ci/regression_baseline.json`. The adaptive strategy is the primary
   target (see *Gate* below).
-- **Determinism.** The review run `adaptive-e167a14b`, made separately through
-  the review server, reproduces the eval exactly: 4985 IDs, with the same
-  per-band counts.
+
+## Contrast-relative edge gate (measured)
+
+Two changes, one PR (`fix/relative-edge-depth-gate`):
+
+- **Edge-depth gate.** An outer edge point needed an absolute step of 0.08 of
+  full scale (20 grey levels) between 2 px inside and 2 px outside it. The
+  median edge step on dark rtv3d tiles is about 12 grey levels, and doubling
+  every tile's brightness alone had lifted adaptive from 5110 to 6541 IDs on
+  all 114 tiles. Now the point must sit on the edge's full monotone rise
+  along its ray (ink plateau to paper plateau, however wide blur makes it;
+  the point's own level in the middle 60 % of the rise), and the rise must
+  be at least 0.4 of the ray's swing from the marker centre to half a
+  radius past the edge, above an absolute noise floor of 0.03. Two earlier
+  drafts failed: a ±2 px step against a ±4 px swing admitted weak code-band /
+  inner-ring edges (6 IDs moved 3–6.6 px onto a smaller ring, LOO > 2 px
+  51 → 171), and a ±2 px step against the whole ray's swing rejected
+  defocused edges (a large plain plate blurred to σ = 6 px lost half its
+  rings, `plain_large_ring_recall::focus_gradient` 79 → 39).
+- **Completion reach.** The refit's edge search was capped at
+  `completion.roi_radius_px` (0.75 × the default prior's nominal diameter =
+  30 px), so `detect_adaptive`, which completes with the caller's config,
+  could not refit rings of radius > 30 px (the `target_0` rings are 66–76 px
+  across). The reach is now 1.4 × the cell's expected radius (neighbour
+  median), the per-ray expected-radius gate's own bound.
+
+All 114 tiles (the skipped strips included), `aafce4f1` → branch:
+
+| | adaptive before | adaptive after | photometric before | photometric after |
+|---|---|---|---|---|
+| decoded IDs | 5110 | 7714 | 6022 | 9327 |
+| duplicate IDs in a tile | 0 | 0 | 0 | 0 |
+| ring within 3 px reported with another ID | — | 0 | — | 0 |
+| same ID moved > 3 px | — | 2 | — | 0 |
+| tiles with 0 / < 10 IDs | 3 / 8 | 0 / 0 | 3 / 7 | 0 / 0 |
+| `target_0` tiles `_00`…`_05` | 17, 20, 12, 16, 0, 6 | 30, 34, 26, 26, 30, 28 | 20, 26, 16, 21, 0, 7 | 33, 40, 32, 32, 35, 34 |
+| `target_7` tiles `_00`…`_05` | 14, 18, 8, 8, 0, 6 | 24, 28, 18, 11, 24, 27 | 14, 20, 10, 8, 0, 6 | 24, 35, 32, 22, 33, 30 |
+| darkest third of tiles (median grey 25–51) | 1432 | 2429 | 1597 | 2981 |
+| middle / brightest third | 1830 / 1848 | 2731 / 2554 | 2129 / 2296 | 3264 / 3082 |
+| LOO centre residual: median, p95 (px) | 0.345, 1.112 | 0.391, 1.381 | 0.193, 0.646 | 0.213, 0.690 |
+| LOO > 2 px | 51 | 151 | 19 | 13 |
+
+- **The new adaptive IDs arrive at low confidence.** 2908 are new and 304
+  lost (net +2604). Of the new ones 2164 are in [0.03, 0.1), 633 in
+  [0.1, 0.2), 109 in [0.2, 0.4), 2 above; 117 of the 128 new IDs with LOO
+  > 2 px are in [0.03, 0.1). The lost ones were weak too: 215 of 304 in
+  [0.03, 0.1). Cut by confidence, the branch is better than main at equal or
+  larger counts:
+
+  | adaptive, LOO | conf ≥ 0.03 | conf ≥ 0.1 | conf ≥ 0.2 | conf ≥ 0.4 |
+  |---|---|---|---|---|
+  | before: n, > 1 px, > 2 px | 5077, 338, 51 | 3620, 125, 28 | 2295, 48, 16 | 298, 2, 1 |
+  | after: n, > 1 px, > 2 px | 7714, 855, 151 | 4328, 175, 22 | 2260, 45, 4 | 251, 0, 0 |
+
+- The two moved IDs (`target_2_01` ID 93, LOO 0.34 → 1.49 px, confidence
+  0.048; `target_7_03` ID 88, LOO 3.5 px, confidence 0.035) are now worse;
+  both sit just above the default `min_confidence` 0.03.
+- The precision audit (synthetic, ground truth; `precision_full_sweep`) has
+  0 wrong IDs, board positions or homographies before and after outside the
+  unsupported two-board scenes; centres > 1 px off 336 → 290; in the quality
+  dump the newly admitted markers are > 1 px off for 1.4 % in [0.03, 0.1),
+  0.1 % in [0.1, 0.2), 0 % above (all markers: 312 → 178 > 1 px).
+- **Remaining absolute floor (measured on a synthetic view).** The decoder's
+  `min_decode_contrast` (0.03 of full scale across the 16 sector means) is
+  still absolute: at σ = 2 px blur and 22 grey levels of contrast a view
+  decodes nothing (182 → 0 IDs); with the floor at 0 it decodes 181. rtv3d
+  tiles do decode, so it did not bind there.
 
 ### What changed recently
 
@@ -245,15 +318,16 @@ Flags were matched to current markers by ID in the same tile (**measured**).
 ## Gate
 
 `tools/ci/regression_baseline.json` (`rtv3d_benchmark`) sets each floor at
-`round(0.983 × measured)`, the same ~1.7 % slack as before:
+`round(0.983 × measured)`, the same ~1.7 % slack as before, from the
+contrast-relative edge gate's run:
 
 | strategy | min_total_decoded | other thresholds |
 |---|---|---|
-| adaptive (primary) | 4900 | `max_tiles_zero_ids` 1, `max_tiles_lt10_ids` 3 |
-| adaptive_photometric | 5774 | `max_tiles_zero_ids` 1, `max_tiles_lt10_ids` 3 |
-| A_old_default_20_56 | 3919 | |
-| B_new_default_14_66 | 3681 | |
-| D_per_strip_best | 2606 | |
+| adaptive (primary) | 7282 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
+| adaptive_photometric | 8793 | `max_tiles_zero_ids` 0, `max_tiles_lt10_ids` 1 |
+| A_old_default_20_56 | 5414 | |
+| B_new_default_14_66 | 4566 | |
+| D_per_strip_best | 3284 | |
 
 ## Review runs
 

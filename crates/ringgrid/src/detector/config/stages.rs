@@ -28,10 +28,6 @@ impl Default for SeedProposalConfig {
 pub struct CompletionConfig {
     /// Enable completion (runs only when a valid homography is available).
     pub enable: bool,
-    /// Radial sampling extent (pixels) around the prior center used for edge sampling.
-    /// Derived from `marker_scale` and the target layout; a value supplied in JSON is overwritten when the config is loaded.
-    #[cfg_attr(feature = "schemars", schemars(extend("readOnly" = true, "x-unit" = "px")))]
-    pub roi_radius_px: f32,
     /// Maximum allowed distance (pixels) between the fitted center and the homography-projected board center.
     #[cfg_attr(feature = "schemars", schemars(extend("x-unit" = "px")))]
     pub reproj_gate_px: f32,
@@ -83,7 +79,6 @@ impl Default for CompletionConfig {
     fn default() -> Self {
         Self {
             enable: true,
-            roi_radius_px: 24.0,
             reproj_gate_px: 3.0,
             min_fit_confidence: 0.45,
             min_arc_coverage: 0.35,
@@ -310,9 +305,10 @@ impl Default for IdCorrectionConfig {
 /// markers using the neighbor median radius as the corrected expected radius.
 ///
 /// The recovery re-fit uses a tight 4 px search window (to exclude the inner
-/// ring) combined with relaxed quality gates (`min_theta_consistency`,
-/// `min_ring_depth`, `refine_halfwidth_px`) suited to the blurry/soft edges
-/// that typically cause inner-as-outer confusion. A post-fit size gate
+/// ring) combined with relaxed estimation gates (`min_theta_consistency`,
+/// `refine_halfwidth_px`) suited to the blurry/soft edges that typically
+/// cause inner-as-outer confusion; edge points pass the detector's own
+/// contrast-relative depth gate (`edge_sample.min_ring_depth`). A post-fit size gate
 /// (`size_gate_tolerance`) prevents the relaxed estimator from re-locking onto
 /// the inner ring even under the relaxed thresholds.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -344,10 +340,6 @@ pub struct InnerAsOuterRecoveryConfig {
     /// Minimum fraction of angular rays with valid (in-bounds) samples during
     /// the recovery re-estimation. Default: `0.40`.
     pub min_theta_coverage: f32,
-    /// Minimum signed intensity depth at a candidate outer edge point during
-    /// recovery edge collection. Lower than production (0.05) to tolerate
-    /// blur-smeared intensity gradients. Default: `0.02`.
-    pub min_ring_depth: f32,
     /// Per-ray radius refinement half-width (pixels) during recovery. Wider
     /// than production (1.0 px) to catch the flat-topped derivative peaks that
     /// occur under blur. Default: `2.5`.
@@ -368,7 +360,6 @@ impl Default for InnerAsOuterRecoveryConfig {
             k_neighbors: 6,
             min_theta_consistency: 0.18,
             min_theta_coverage: 0.40,
-            min_ring_depth: 0.02,
             refine_halfwidth_px: 2.5,
             size_gate_tolerance: 0.25,
         }

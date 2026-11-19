@@ -409,7 +409,6 @@ impl Default for DetectConfig {
 fn apply_marker_scale_prior(config: &mut DetectConfig) {
     config.marker_scale = config.marker_scale.normalized();
     let [d_min, d_max] = config.marker_scale.diameter_range_px();
-    let d_nom = config.marker_scale.nominal_diameter_px();
     let outer_radius_min_px = d_min * 0.5;
     let outer_radius_max_px = d_max * 0.5;
     let adv = &mut config.advanced;
@@ -425,9 +424,6 @@ fn apply_marker_scale_prior(config: &mut DetectConfig) {
     // Ellipse validation bounds
     adv.min_semi_axis = (outer_radius_min_px as f64 * 0.3).max(2.0);
     adv.max_semi_axis = (outer_radius_max_px as f64 * 2.5).max(adv.min_semi_axis);
-
-    // Completion ROI
-    adv.completion.roi_radius_px = ((d_nom as f64 * 0.75).clamp(24.0, 80.0)) as f32;
 
     // `projective_center.max_correction_shift_px` is deliberately NOT derived
     // here: `None` means "auto" and the nominal-diameter fallback is applied at

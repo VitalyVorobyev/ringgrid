@@ -27,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The outer-edge depth gate is contrast-relative.** An edge point needed an
+  absolute intensity step of 8 % of full scale across ±2 px, which dark or
+  low-contrast images (and blurred edges) fail while the same view at full
+  gain passes. The point must now sit on the edge's full ink-to-paper rise
+  along the ray (however wide blur makes it), and that rise must be 0.4 of
+  the ray's own swing, above an absolute noise floor
+  `edge_sample.min_ring_depth` (default 0.08 → 0.03). Inner-as-outer
+  recovery uses the same gate; its relaxed
+  `inner_as_outer_recovery.min_ring_depth` override is removed.
+- **Completion reaches rings of any size.** The refit's edge search was capped
+  by `completion.roi_radius_px`, derived from the scale prior (30 px for the
+  default prior), so `detect_adaptive` could not complete rings larger than
+  that. It is now sized from each cell's expected radius (neighbour median),
+  and `completion.roi_radius_px` (and the dev CLI's `--complete-roi-radius`)
+  is removed.
+  rtv3d (102 tiles): adaptive 4985 → 7408 IDs, photometric 5874 → 8945,
+  tiles under 10 IDs 2 → 0, no duplicate or conflicting ID; the new
+  adaptive IDs arrive at low confidence (74 % below 0.1). Precision audit:
+  0 wrong IDs before and after, centres > 1 px off 336 → 290.
 - **Decoding reads the code band at its true sub-sector phase and accepts only
   exact matches of the target's own codewords.** The 16 sectors were sampled
   on a fixed grid; cyclic matching absorbs whole sectors only, so at a

@@ -9,10 +9,11 @@ Completion is **coordinate-keyed** and lattice-generic: it targets undetected ta
 For each target cell that was **not** detected in the initial pipeline:
 
 1. **Project**: use the homography to map the cell's board (or frame) position to image coordinates
-2. **Boundary check**: skip if the projected position is too close to the image edge (within `image_margin_px`)
-3. **Local fit**: run edge sampling and RANSAC ellipse fitting within a limited ROI (`roi_radius_px`) around the projected center
-4. **Decode**: attempt code decoding at the fitted position (coded targets)
-5. **Gate**: accept the detection only if it passes conservative quality gates
+2. **Expected size**: take the median outer radius of the nearest fitted rings as the cell's expected radius; the refit's edge search reaches 1.4× that radius (the per-ray expected-radius gate), whatever the scale prior
+3. **Boundary check**: skip if that reach plus `image_margin_px` crosses the image edge
+4. **Local fit**: run edge sampling and RANSAC ellipse fitting around the projected center
+5. **Decode**: attempt code decoding at the fitted position (coded targets)
+6. **Gate**: accept the detection only if it passes conservative quality gates
 
 ## Conservative Gates
 
@@ -23,7 +24,6 @@ Completion uses stricter acceptance criteria than the initial detection to avoid
 | `reproj_gate_px` | 3.0 px | Max distance between fitted center and H-projected position |
 | `min_fit_confidence` | 0.45 | Minimum fit quality score |
 | `min_arc_coverage` | 0.35 | Minimum fraction of rays with valid edge detections |
-| `roi_radius_px` | 24.0 px (derived from scale prior) | Edge sampling extent |
 | `image_margin_px` | 10.0 px | Skip attempts near image boundary |
 | `max_attempts` | `None` (unlimited) | Optional cap on completion attempts |
 

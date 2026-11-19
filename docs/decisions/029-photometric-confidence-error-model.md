@@ -145,6 +145,15 @@ heavily blurred) at the default floor, the linear one 0.24 %.
   are heavily blurred, fitted blur ≈ 4.5 px, σ ≈ 0.11 px from the covariance
   alone). Only reported markers can be removed by the change, so no ID
   becomes wrong. Regression gate: 77 / 77 checks pass.
+- On top of #104 (contrast-relative edge gate, size-aware completion), which
+  admits more weak top-band rings: rtv3d `adaptive_photometric` 8,945 →
+  8,981 decoded IDs (+41 / −5; 38 of the 41 in the top band, confidence
+  median 0.038, all within 0.11 marker diameters of where the base run's
+  homography puts their board position — a ring one cell off would be about
+  1.5 diameters away). Those were photometric centres the old sharpness
+  factor zeroed or pushed below 0.03. Photometric precision sweep identical
+  to the base, group by group (0 wrong positions; 2 wrong IDs, both on
+  scenes with a second board in view).
 
 ## Evidence
 

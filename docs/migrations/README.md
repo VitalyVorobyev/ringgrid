@@ -12,7 +12,7 @@ changes are documented here per release.
   research-only items removed; confidence, `min_confidence` and fail-closed output.
 - [0.16 → 0.17](0.16-to-0.17.md) — exact decoding against the target's codewords:
   decode gates, `codebook_profile` and the distance fields of `DecodeMetrics` removed;
-  more markers on oblique views, ring-relative sharpness for photometric confidence,
+  more markers on oblique views, photometric confidence from the predicted centre error,
   shape-checked grid labels.
 
 Legacy v4 and v5 `board_spec.json` / `target_spec.json` files auto-migrated to

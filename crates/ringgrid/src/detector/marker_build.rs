@@ -257,6 +257,12 @@ pub(crate) struct MarkerRecord {
     /// Covariance of `center` (px²), when the estimator provides one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_cov: Option<[[f64; 2]; 2]>,
+    /// Magnitude (px) of a systematic bias of `center` that `center_cov` does
+    /// not cover, when the estimator predicts one: for a photometric centre,
+    /// the blur-gradient bias (see
+    /// `photometric_refine::attach_blur_gradient_bias`).
+    #[serde(skip)]
+    pub center_bias_px: Option<f64>,
     /// Photometric fit summary, when the photometric stage ran on this marker.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photometric: Option<PhotometricMetrics>,
@@ -374,13 +380,16 @@ pub(crate) fn fit_support_score(
 const COVERAGE_GAP_SCALE_RAD: f64 = std::f64::consts::FRAC_PI_4;
 /// Outer edge width (px) at which the sharpness factor is one half.
 const EDGE_WIDTH_SCALE_PX: f32 = 3.0;
-/// For a photometric centre, the half-sharpness edge width grows with the
-/// ring beyond a 16 px outer radius (in outer radii): the same 3 px at 16 px,
-/// 8.4 px at 45 px (see [`marker_confidence`]).
-const PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII: f32 = 3.0 / 16.0;
-/// Centre standard deviation (px) at which a photometric fit's support
-/// factor is one half (see [`marker_confidence`]).
-const PHOTOMETRIC_CENTER_SIGMA_SCALE_PX: f64 = 0.1;
+/// Predicted centre error (px, per axis) at which a photometric centre's
+/// precision factor `1/(1 + σ/s)` is one half (see [`marker_confidence`]).
+/// The factor spans the errors photometric centres have (synthetic
+/// confidence study, `tests/blur_gradient.rs`: median 0.013 px, 90th
+/// percentile 0.027 px) and, falling only as `1/σ`, reaches the default
+/// `min_confidence` (0.03) at a 1 px predicted error — where the edge-fitted
+/// confidence drops centres too (ADR-024). A `1/(1 + (σ/s)²)` factor ranks
+/// errors the same at this scale but drops 5 % of the rtv3d photometric
+/// centres (σ ≈ 0.1–0.2 px) at the default floor (ADR-029).
+const PHOTOMETRIC_CENTER_SIGMA_SCALE_PX: f64 = 0.03;
 /// Distance to the image border (outer radii) below which the border factor
 /// falls linearly to zero.
 const BORDER_SCALE_RADII: f32 = 2.0;
@@ -457,14 +466,12 @@ impl ConfidenceFactors {
 ///   angular gap between outer edge points, radians) × inner-edge agreement
 ///   (the fraction of rays whose inner-edge peak agrees with the inner ring's
 ///   radius, times `miss_confidence_factor` when no inner ellipse was
-///   fitted); for an accepted photometric centre, the fit's own precision
-///   `1/(1 + (σ / 0.1 px)²)`, `σ = √(tr Σ / 2)` from its centre covariance
-///   (which carries its residual level and correlation; convergence and
-///   residual are its acceptance gates);
-/// - **sharpness** — `1/(1 + (w / s)²)`, `w` the outer edge width
-///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable), `s = 3 px`
-///   for an edge-fitted centre and `max(3 px, 0.1875 r)` for a photometric
-///   one (`r` the outer ellipse's mean semi-axis).
+///   fitted), × **sharpness** `1/(1 + (w / 3 px)²)`, `w` the outer edge width
+///   ([`FitMetrics::outer_edge_width_px`]; 0 when unmeasurable); for an
+///   accepted photometric centre, its **precision** `1/(1 + σ / 0.03 px)`
+///   from its predicted error `σ = √((tr Σ + b²) / 2)`: `Σ` its centre
+///   covariance (noise, residual correlation), `b` the blur-gradient bias it
+///   does not correct ([`MarkerRecord::center_bias_px`]).
 ///
 /// Rim coverage, inner-edge agreement, sharpness and border are the
 /// predictors of a wrong edge-fitted centre the precision harness measured
@@ -472,35 +479,36 @@ impl ConfidenceFactors {
 /// previous confidence); the evidence and outer-fit factors keep ranking
 /// duplicate fits and ID votes.
 ///
-/// A photometric fit models the whole blurred pattern, so how much of the rim
-/// the edge sampler saw and whether the inner edge agreed say nothing more
-/// about its centre: over the harness in photometric mode no accepted
-/// photometric centre is off by more than 1 px, and its covariance ranks
-/// centre errors (ROC AUC 0.999 vs 0.90 with the edge factors). Likewise it
-/// fits the blur (the PSF width is a parameter), so what remains is blur
-/// relative to the ring it integrates over — while the absolute scale
-/// predicts the error of an edge-fitted centre under blur (AUC 0.90 → 0.84
-/// when edge-fitted centres are judged ring-relative).
+/// A photometric fit models the whole blurred pattern — PSF width included —
+/// so the edge sampler's rim coverage, inner-edge agreement and edge width
+/// say nothing more about its centre than its own error model, which is
+/// calibrated against the true error (synthetic confidence study, held-out
+/// settings: RMS error / σ = 1.01–1.08 at every blur level, against 1.07–1.45
+/// for the covariance alone) and ranks it (centre error beyond 0.05 px: ROC
+/// AUC 0.92 for this confidence vs 0.82 for the edge-width-based one of
+/// ADR-028), see ADR-029.
 pub(crate) fn marker_confidence(marker: &MarkerRecord) -> f32 {
     let f = marker.confidence_factors;
-    // The products keep the order of the factors' definition, so an
-    // edge-fitted centre's confidence is bit-identical to the single product.
-    let (supported, sharpness_scale) = match (
-        marker.center_source,
-        marker.center_cov,
-        marker.ellipse_outer,
-    ) {
-        (CenterSource::Photometric, Some(cov), Some(outer)) => {
-            let sigma = (0.5 * (cov[0][0] + cov[1][1])).max(0.0).sqrt();
-            let precision = 1.0 / (1.0 + (sigma / PHOTOMETRIC_CENTER_SIGMA_SCALE_PX).powi(2));
-            let scale = EDGE_WIDTH_SCALE_PX
-                .max(PHOTOMETRIC_EDGE_WIDTH_SCALE_RADII * outer.mean_axis() as f32);
-            (f.fit * precision as f32, scale)
+    let supported = match (marker.center_source, marker.center_cov) {
+        (CenterSource::Photometric, Some(cov)) => {
+            let bias = marker.center_bias_px.unwrap_or(0.0);
+            let sigma = (0.5 * (cov[0][0] + cov[1][1] + bias * bias))
+                .max(0.0)
+                .sqrt();
+            let precision = 1.0 / (1.0 + sigma / PHOTOMETRIC_CENTER_SIGMA_SCALE_PX);
+            f.fit * precision as f32
         }
-        _ => (f.fit * f.rim_coverage * f.inner_edge, EDGE_WIDTH_SCALE_PX),
+        // The products keep the order of the factors' definition, so an
+        // edge-fitted centre's confidence is bit-identical to the single
+        // product.
+        _ => {
+            f.fit
+                * f.rim_coverage
+                * f.inner_edge
+                * sharpness_factor(marker.fit.outer_edge_width_px, EDGE_WIDTH_SCALE_PX)
+        }
     };
-    let sharpness = sharpness_factor(marker.fit.outer_edge_width_px, sharpness_scale);
-    (supported * sharpness * f.border).clamp(0.0, 1.0)
+    (supported * f.border).clamp(0.0, 1.0)
 }
 
 /// `1/(1 + (w / scale)²)` for an outer edge width `w`; 0 when unmeasurable.
@@ -627,12 +635,32 @@ mod tests {
         m.center_source = CenterSource::Photometric;
         m.center_cov = Some([[1e-4, 0.0], [0.0, 1e-4]]); // σ = 0.01 px
         let precise = marker_confidence(&m);
-        // Ring-relative sharpness: s = 0.1875 · 50 px = 9.4 px.
-        let expected = (1.0 / (1.0 + 0.01f32)) / (1.0 + (3.0f32 / 9.375).powi(2));
-        assert!((precise - expected).abs() < 1e-4, "{precise} vs {expected}");
+        // Neither rim coverage nor edge width: 1 / (1 + 0.01 / 0.03).
+        assert!((precise - 0.75).abs() < 1e-6, "{precise}");
+        // An unmeasured edge width does not matter either.
+        m.fit.outer_edge_width_px = None;
+        assert_eq!(marker_confidence(&m), precise);
 
-        m.center_cov = Some([[0.04, 0.0], [0.0, 0.04]]); // σ = 0.2 px
+        m.center_cov = Some([[0.0036, 0.0], [0.0, 0.0036]]); // σ = 0.06 px
         let imprecise = marker_confidence(&m);
-        assert!(imprecise < 0.25 * precise, "{imprecise} vs {precise}");
+        assert!((imprecise - 1.0 / 3.0).abs() < 1e-6, "{imprecise}");
+        // A predicted error of 1 px meets the default `min_confidence`.
+        m.center_cov = Some([[1.0, 0.0], [0.0, 1.0]]);
+        assert!((marker_confidence(&m) - 0.03).abs() < 1e-3);
+    }
+
+    #[test]
+    fn photometric_bias_adds_to_the_covariance() {
+        let mut m = weakly_supported_ring();
+        m.center_source = CenterSource::Photometric;
+        m.center_cov = Some([[1e-4, 0.0], [0.0, 1e-4]]);
+        // A bias of magnitude b spreads b²/2 per axis: σ² = 1e-4 + 0.0008 / 2 = 5e-4.
+        m.center_bias_px = Some(0.0008f64.sqrt());
+        let expected = 1.0 / (1.0 + 5e-4f64.sqrt() / 0.03);
+        assert!(
+            (f64::from(marker_confidence(&m)) - expected).abs() < 1e-6,
+            "{} vs {expected}",
+            marker_confidence(&m)
+        );
     }
 }

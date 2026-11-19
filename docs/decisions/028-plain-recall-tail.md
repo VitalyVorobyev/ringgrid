@@ -5,6 +5,8 @@
 - **Author role:** algorithm-engineer
 - **Amends:** ADR-024 (geometric verification, confidence, output contract),
   ADR-026 (remaining losses)
+- **Amended by:** ADR-029 (decision 4: the photometric confidence now uses
+  the centre's predicted error, without the sharpness factor)
 
 ## Context
 

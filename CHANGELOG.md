@@ -60,6 +60,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symmetries under which its decoded code rotation is the one the board
   predicts at that ring; the chance model counts the measured agreement rate
   of misreads. Two agreeing decodes now anchor boards of 611 cells or more.
+- **A photometric centre's `confidence` follows its predicted centre error
+  (ADR-029).** Its centre support is `1/(1 + σ/0.03 px)`, `σ` from the fit's
+  covariance plus the blur-gradient bias it does not correct
+  (`1.24 · σ_blur · |∇σ_blur|`, the gradient from the neighbouring fits'
+  blur); edge sharpness no longer enters it. The old 0.1 px scale left the
+  covariance factor at 0.93–0.99 for nearly every fit, so the confidence
+  ranked edge width and ring size instead. Synthetic study (held-out
+  scenes): rank correlation with the true error −0.39 → −0.56, ROC AUC for
+  errors beyond 0.05 px 0.82 → 0.92; a confidence cut now keeps blurred
+  centres that are as precise as sharp ones. The rtv3d symptom that
+  prompted it — the top band with the worst leave-one-out residuals and the
+  highest confidence — was mostly the displayed board's geometry, which
+  grows with ring size in pixels. `tests/precision_audit.rs` takes
+  `RINGGRID_PRECISION_REFINE` to run the sweep with another refinement.
 - **rtv3d evaluation measures adaptive detection** (repository tooling, not
   shipped). `tools/run_rtv3d_eval.py` runs `ringgrid detect` without
   `--marker-diameter` (`detect_adaptive`, the primary gated strategy) and with

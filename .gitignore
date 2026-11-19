@@ -24,3 +24,6 @@ docs/rectring.pdf
 
 # CodeGraph local index (per-machine)
 .codegraph/
+
+# GitHub Pages site assembled by publish-docs.yml
+/_site/

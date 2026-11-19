@@ -56,7 +56,7 @@ If the `data/rtv3d_0` directory exists (the eval's default `--data-dir`), also r
 .venv/bin/python tools/run_rtv3d_eval.py
 ```
 
-If `data/rtv3d_0` does not exist, skip this step and report `RTv3D benchmark: SKIPPED (no data)`. This dataset is private and not available in CI: never commit or copy anything derived from it (tiles, detections, overlays) outside the gitignored `data/` and `tools/out/`. It has 17 usable strips (2 on the eval's skip list) = 102 tiles; strategies A, B and D are gated (`total_decoded`), C (8-220 px single pass) detects nothing by design of the proposal stage.
+If `data/rtv3d_0` does not exist, skip this step and report `RTv3D benchmark: SKIPPED (no data)`. This dataset is private and not available in CI: never commit or copy anything derived from it (tiles, detections, overlays) outside the gitignored `data/` and `tools/out/`. It has 17 usable strips (2 on the eval's skip list) = 102 tiles. The primary strategy is `adaptive` (published `ringgrid detect` without `--marker-diameter`, i.e. `detect_adaptive`, against `tools/board/board_spec.json`); `adaptive_photometric` adds `--refine photometric`; the single-pass `ringgrid-dev` strategies A, B and D are kept for continuity. All five are gated on `total_decoded`, the adaptive ones also on `tiles_zero_ids` / `tiles_lt10_ids`. The run takes ~5 min (strategies run sequentially so the per-tile runtimes it reports are comparable). Current numbers, band breakdown and failure modes: `docs/studies/rtv3d-status.md`.
 
 ## Step 3 — Check benchmark results against baselines
 
@@ -89,7 +89,9 @@ What the gated metrics mean:
   The no-dots modes gate both `coord_accuracy` and
   `coord_accuracy_up_to_mirror` at 1.0: a drop in the first only means the
   relative frame came out mirrored, a drop in both means wrong labels.
-- **rtv3d** (`report.json`, per strategy): `total_decoded`.
+- **rtv3d** (`report.json`, per strategy): `total_decoded` (decoded IDs over
+  the 102 tiles); adaptive strategies also `tiles_zero_ids` and
+  `tiles_lt10_ids` (tiles with no / fewer than 10 decoded IDs, as maxima).
 
 Collect all failures into a report table.
 
@@ -136,7 +138,7 @@ REGRESSION GATE: ALL PASSED
   Distortion benchmark: OK (3 modes)
   Blur3 benchmark: OK
   Target matrix benchmark: OK (6 modes)
-  RTv3D benchmark: OK (2 strategies)  — or SKIPPED (no data)
+  RTv3D benchmark: OK (5 strategies, primary: adaptive)  — or SKIPPED (no data)
   Maintainability: OK
 ```
 

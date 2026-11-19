@@ -39,6 +39,13 @@ import { useFeedback, type SaveState } from "./model/useFeedback";
 
 const nowIso = () => new Date().toISOString();
 
+/** Run shown as A on load: the server's primary run, else the first one. */
+function initialRunA(state: ServerState): string | null {
+  const primary = state.primary_run;
+  if (primary !== null && state.runs.some((r) => r.name === primary)) return primary;
+  return state.runs[0]?.name ?? null;
+}
+
 export function App() {
   const [state, setState] = useState<ServerState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,8 +86,8 @@ function Review({ initial }: { initial: ServerState }) {
     const want = decodeURIComponent(window.location.hash.slice(1));
     return (tiles.find((t) => t.name === want) ?? tiles.find((t) => !initial.feedback.tiles[t.name]?.verdict) ?? tiles[0])?.name ?? null;
   });
-  const [runA, setRunA] = useState<string | null>(initial.runs[0]?.name ?? null);
-  const [runB, setRunB] = useState<string | null>(initial.runs[1]?.name ?? null);
+  const [runA, setRunA] = useState<string | null>(() => initialRunA(initial));
+  const [runB, setRunB] = useState<string | null>(() => initial.runs.find((r) => r.name !== initialRunA(initial))?.name ?? null);
   const [compare, setCompare] = useState(false);
   const [differencesOnly, setDifferencesOnly] = useState(false);
   const [tolerance, setTolerance] = useState(initial.defaults);

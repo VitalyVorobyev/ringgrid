@@ -9,7 +9,7 @@
 # `[workspace.package]` / `[workspace.dependencies]` in the root Cargo.toml.
 [package]
 name = "ringgrid-wasm"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VitalyVorobyev/ringgrid"
@@ -22,7 +22,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ringgrid = { path = "../ringgrid", version = "0.16", default-features = false }
+ringgrid = { path = "../ringgrid", version = "0.17", default-features = false }
 # Only the pixel types are needed here; the codec set is chosen once in the
 # workspace root and reaches this crate through `ringgrid`.
 image = { version = "0.25", default-features = false }

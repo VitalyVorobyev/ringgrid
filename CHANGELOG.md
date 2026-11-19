@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-19
+
+Detection finds far more markers on dark, low-contrast and blurred images and
+on large rings: the outer-edge gate is contrast-relative, completion reaches
+rings of any size, and the inner-edge search follows blur (rtv3d adaptive
+4985 → 8376 IDs with no duplicate or conflicting ID; no new wrong ID in the
+precision audit). Decoding samples the code band at its true
+sub-sector phase and accepts only exact matches of the target's own codewords
+(ADR-027); a photometric centre's `confidence` follows its predicted centre
+error (ADR-029); on large plain plates seen obliquely `detect_adaptive`
+reports 99 % of the fully visible rings (was 62 %); and
+screen targets render a target fitted to a display. Breaking: decode,
+completion, recovery and ID-correction config fields are removed or
+redefined, and `DecodeMetrics` reports only the exact match; see
+[`docs/migrations/0.16-to-0.17.md`](docs/migrations/0.16-to-0.17.md).
+
 ### Added
 
 - **Screen targets.** `TargetLayout::render_fitted_screen_target`
@@ -119,7 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `IdCorrectionConfig::confirm_by_consistency` and its pass (it promoted
   non-exact decodes, which no longer exist); `seed_min_decode_confidence` is
   renamed `seed_min_confidence` (it gates IDs without their own decode by
-  marker confidence). See
+  marker confidence).
+- `CompletionConfig::roi_radius_px` and the dev CLI's `--complete-roi-radius`
+  (completion's reach follows each cell's expected ring radius), and
+  `InnerAsOuterRecoveryConfig::min_ring_depth` (recovery uses the detector's
+  edge gate). See
   [`docs/migrations/0.16-to-0.17.md`](docs/migrations/0.16-to-0.17.md).
 
 ### Fixed

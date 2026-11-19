@@ -12,8 +12,9 @@ changes are documented here per release.
   research-only items removed; confidence, `min_confidence` and fail-closed output.
 - [0.16 → 0.17](0.16-to-0.17.md) — exact decoding against the target's codewords:
   decode gates, `codebook_profile` and the distance fields of `DecodeMetrics` removed;
-  more markers on oblique views, photometric confidence from the predicted centre error,
-  shape-checked grid labels.
+  `completion.roi_radius_px` and `inner_as_outer_recovery.min_ring_depth` removed,
+  `edge_sample.min_ring_depth` re-defined; more markers on dark, blurred and oblique
+  views, photometric confidence from the predicted centre error, shape-checked grid labels.
 
 Legacy v4 and v5 `board_spec.json` / `target_spec.json` files auto-migrated to
 the v6 schema through 0.15. From 0.16 only `ringgrid.target.v6` loads; convert

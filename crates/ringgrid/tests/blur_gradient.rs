@@ -1098,3 +1098,265 @@ fn blur_gradient_ink_centroid() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Q6: photometric confidence against the true centre error
+// ---------------------------------------------------------------------------
+
+/// Blur field of a confidence-study scene: `sigma(y) = s_min + |g| d(y)`,
+/// `d` the distance (px) from the sharp image edge (top for `g > 0`, bottom
+/// for `g < 0`), scatter form — one half of a tilted-sensor focus band.
+fn focus_field(s_min: f64, g: f64, height: f64) -> Psf {
+    if g == 0.0 {
+        return Psf::Gaussian { sigma: s_min };
+    }
+    Psf::VaryingGaussian {
+        sigma0: s_min,
+        gradient: g,
+        y0: if g > 0.0 { 0.0 } else { height - 1.0 },
+        sigma_range: [s_min, s_min + g.abs() * height],
+        form: BlurForm::Scatter,
+    }
+}
+
+/// Ranks (0-based, ties averaged).
+fn ranks(v: &[f64]) -> Vec<f64> {
+    let mut order: Vec<usize> = (0..v.len()).collect();
+    order.sort_by(|&a, &b| v[a].total_cmp(&v[b]));
+    let mut r = vec![0.0; v.len()];
+    let mut i = 0;
+    while i < order.len() {
+        let mut j = i;
+        while j + 1 < order.len() && v[order[j + 1]] == v[order[i]] {
+            j += 1;
+        }
+        for &k in &order[i..=j] {
+            r[k] = 0.5 * (i + j) as f64;
+        }
+        i = j + 1;
+    }
+    r
+}
+
+/// Spearman rank correlation.
+fn spearman(x: &[f64], y: &[f64]) -> f64 {
+    let (rx, ry) = (ranks(x), ranks(y));
+    let n = x.len() as f64;
+    let (mx, my) = (rx.iter().sum::<f64>() / n, ry.iter().sum::<f64>() / n);
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (a, b) in rx.iter().zip(&ry) {
+        sxy += (a - mx) * (b - my);
+        sxx += (a - mx) * (a - mx);
+        syy += (b - my) * (b - my);
+    }
+    sxy / (sxx * syy).sqrt()
+}
+
+/// ROC AUC of `score` (higher = more suspect) for the `bad` class.
+fn roc_auc(score: &[f64], bad: &[bool]) -> f64 {
+    let r = ranks(score);
+    let nb = bad.iter().filter(|&&b| b).count() as f64;
+    let ng = bad.len() as f64 - nb;
+    let sum: f64 = r
+        .iter()
+        .zip(bad)
+        .filter(|(_, b)| **b)
+        .map(|(r, _)| r + 1.0)
+        .sum();
+    (sum - nb * (nb + 1.0) / 2.0) / (nb * ng)
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+}
+
+/// Q6: photometric confidence against the true centre error, over target
+/// kind × marker radius × blur field (uniform, or a focus gradient: blur
+/// σ 0.6 px at one image edge growing by 0.004 or 0.008 px per row) × tilt ×
+/// contrast × seed. Prints the rank correlation of confidence and error,
+/// the ROC AUC for centres beyond 0.05 / 0.1 px, and per band of true blur
+/// the median error and confidence and the fraction beyond 0.05 px a
+/// confidence cut keeps. `GRADIENT_CONF_CSV` writes one row per accepted
+/// photometric centre (error, confidence, covariance, fit diagnostics);
+/// `GRADIENT_RADII`, `GRADIENT_KINDS`, `GRADIENT_SEEDS` (default 2) restrict
+/// or extend the grid.
+#[test]
+#[ignore = "study; run in release with --ignored --nocapture"]
+fn blur_gradient_confidence() {
+    use ringgrid::diagnostics::PhotometricStatus;
+    use std::fmt::Write as _;
+
+    let n_seeds = env_or("GRADIENT_SEEDS", 2u64);
+    let radii = env_list("GRADIENT_RADII", &[10.0, 17.0, 28.0]);
+    // (s_min, g): uniform blur, then focus gradients both ways.
+    let fields = [
+        (0.8, 0.0),
+        (1.6, 0.0),
+        (2.5, 0.0),
+        (3.5, 0.0),
+        (0.6, 0.004),
+        (0.6, 0.008),
+        (0.6, -0.004),
+        (0.6, -0.008),
+    ];
+    let size = [720u32, 540];
+    let mut cells = Vec::new();
+    for kind in selected_kinds() {
+        for &radius in &radii {
+            for &(s_min, g) in &fields {
+                for tilt in [0.0, 25.0] {
+                    for contrast in [35.0, 70.0] {
+                        for seed in 0..n_seeds {
+                            cells.push((kind, radius, s_min, g, tilt, contrast, seed));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut rasters: BTreeMap<(usize, u64), BoardRaster> = BTreeMap::new();
+    for &(kind, radius, ..) in &cells {
+        let k = KINDS.iter().position(|x| *x == kind).unwrap();
+        rasters.entry((k, radius.to_bits())).or_insert_with(|| {
+            let target = kind.target();
+            let dpi = raster_dpi(&target, radius);
+            BoardRaster::with_dpi(target, dpi)
+        });
+    }
+    // Per scene: CSV rows and (true local blur, error, confidence) per marker.
+    type SceneRows = (String, Vec<[f64; 3]>);
+    let results: Mutex<Vec<Option<SceneRows>>> = Mutex::new(vec![None; cells.len()]);
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..env_or("GRADIENT_THREADS", 10usize).max(1) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&(kind, radius, s_min, g, tilt, contrast, seed)) = cells.get(i) else {
+                        break;
+                    };
+                    let k = KINDS.iter().position(|x| *x == kind).unwrap();
+                    let board = &rasters[&(k, radius.to_bits())];
+                    let target = &board.target;
+                    let mut spec = SceneSpec::for_target(target, radius, s_min, tilt, contrast, 1);
+                    spec.image_size = size;
+                    spec.roll_deg += 23.0 * seed as f64;
+                    spec.tilt_axis_deg += 50.0 * seed as f64;
+                    spec.psf = focus_field(s_min, g, f64::from(size[1]));
+                    let rad = radiance(board, &spec);
+                    let truth = Truth::new(target, &rad.h, spec.px_per_mm);
+                    let scene = expose(&rad, &spec, 900 + i as u64);
+                    let mut config = DetectConfig::from_target_and_marker_diameter(
+                        target.clone(),
+                        (2.0 * radius) as f32,
+                    );
+                    config.circle_refinement = CircleRefinementMethod::Photometric;
+                    config.min_confidence = 0.0;
+                    let (res, diag) = Detector::with_config(config)
+                        .detect_with_diagnostics(&scene.image)
+                        .expect("detect");
+                    let mut out = String::new();
+                    let mut stats = Vec::new();
+                    for (m, d) in res.detected_markers.iter().zip(&diag.markers) {
+                        let Some(p) = d.photometric.as_ref() else {
+                            continue;
+                        };
+                        let (Some(xy), Some(cov), Some(e)) =
+                            (m.board_xy_mm, m.center_cov, m.ellipse_outer)
+                        else {
+                            continue;
+                        };
+                        if p.status != PhotometricStatus::Accepted {
+                            continue;
+                        }
+                        let Some(c) = truth.cell_of(xy, m.center, &rad.h) else {
+                            continue;
+                        };
+                        let t = truth.centers[c];
+                        let local_sigma = varying_sigma(&spec.psf, t[1]).unwrap_or(s_min);
+                        let err = (m.center[0] - t[0]).hypot(m.center[1] - t[1]);
+                        stats.push([local_sigma, err, f64::from(m.confidence)]);
+                        let nan = f64::NAN;
+                        writeln!(
+                            out,
+                            "{},{radius},{s_min},{g},{tilt},{contrast},{seed},{local_sigma},\
+                             {},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                            kind.name(),
+                            m.center[0] - t[0],
+                            m.center[1] - t[1],
+                            m.confidence,
+                            cov[0][0],
+                            cov[0][1],
+                            cov[1][1],
+                            p.blur_sigma_px.unwrap_or(nan),
+                            p.residual_sigma.unwrap_or(nan),
+                            p.contrast.unwrap_or(nan),
+                            p.n_pixels,
+                            e.mean_axis(),
+                            d.fit.outer_edge_width_px.map_or(nan, f64::from),
+                            t[0],
+                            t[1],
+                            u8::from(m.id.is_some()),
+                        )
+                        .unwrap();
+                    }
+                    results.lock().unwrap()[i] = Some((out, stats));
+                }
+            });
+        }
+    });
+    let mut csv = String::from(
+        "kind,radius,s_min,g,tilt,contrast,seed,local_sigma,err_x,err_y,conf,cxx,cxy,cyy,\
+         blur_fit,residual_sigma,contrast_fit,n_pixels,outer_r,edge_width,true_x,true_y,decoded\n",
+    );
+    let mut all: Vec<[f64; 3]> = Vec::new();
+    for r in results.into_inner().unwrap() {
+        let (rows, stats) = r.expect("cell ran");
+        csv.push_str(&rows);
+        all.extend(stats);
+    }
+    if let Ok(path) = std::env::var("GRADIENT_CONF_CSV") {
+        std::fs::write(&path, csv).expect("write csv");
+    }
+    let err: Vec<f64> = all.iter().map(|r| r[1]).collect();
+    let conf: Vec<f64> = all.iter().map(|r| r[2]).collect();
+    let suspect: Vec<f64> = conf.iter().map(|c| -c).collect();
+    let auc = |t: f64| roc_auc(&suspect, &err.iter().map(|e| *e > t).collect::<Vec<_>>());
+    println!(
+        "{} accepted photometric centres: rank correlation (confidence, error) {:+.3}; \
+         ROC AUC for error > 0.05 px {:.3}, > 0.1 px {:.3}",
+        all.len(),
+        spearman(&conf, &err),
+        auc(0.05),
+        auc(0.1)
+    );
+    let bands = [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, 9.0)];
+    println!(
+        "{:>9} {:>6} {:>8} {:>9} | kept, fraction > 0.05 px at confidence >= 0.2 / 0.4 / 0.6",
+        "true blur", "n", "err med", "conf med"
+    );
+    for (lo, hi) in bands {
+        let band: Vec<&[f64; 3]> = all.iter().filter(|r| r[0] >= lo && r[0] < hi).collect();
+        let cut = |c: f64| {
+            let kept: Vec<f64> = band.iter().filter(|r| r[2] >= c).map(|r| r[1]).collect();
+            let bad = kept.iter().filter(|e| **e > 0.05).count();
+            format!(
+                "{:5} {:.3}",
+                kept.len(),
+                bad as f64 / kept.len().max(1) as f64
+            )
+        };
+        println!(
+            "{:>4.0}-{:<4.0} {:>6} {:>8.4} {:>9.2} | {} | {} | {}",
+            lo,
+            hi,
+            band.len(),
+            median(band.iter().map(|r| r[1]).collect()),
+            median(band.iter().map(|r| r[2]).collect()),
+            cut(0.2),
+            cut(0.4),
+            cut(0.6)
+        );
+    }
+}

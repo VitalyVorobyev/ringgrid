@@ -132,10 +132,16 @@ a marker that could not be placed on the board at all reports
   from the centers now in the result (refined and unrefined markers alike),
   with the same final-homography step finalize ends with: the refit is kept
   when it reprojects the centers better than the homography finalize fitted.
-- An accepted fit sets the marker's `confidence` from its own precision (the
-  centre covariance) in place of the edge fit's rim coverage and inner-edge
-  agreement, and measures sharpness against the ring's size (see
-  [`DetectedMarker::confidence`](../output-types/detected-marker.md)).
+- An accepted fit sets the marker's `confidence` from its predicted centre
+  error in place of the edge fit's rim coverage, inner-edge agreement and
+  edge sharpness: the centre covariance plus the bias a blur gradient across
+  the marker leaves (`1.24 · σ_blur · |∇σ_blur|`, the gradient taken from the
+  fitted blur of the neighbouring markers), at 0.03 px per axis for one half
+  (see [`DetectedMarker::confidence`](../output-types/detected-marker.md)). On
+  synthetic scenes with uniform and varying blur this predicted error matches
+  the true one at every blur level (RMS error / σ = 1.01–1.08), so a
+  confidence cut keeps markers of similar precision across a defocused image
+  rather than every sharp one and no blurred one.
 - Geometric verification runs after this stage, on the refined centers,
   against the homography that best fits the photometric centers; finalize
   skips it for this configuration (see

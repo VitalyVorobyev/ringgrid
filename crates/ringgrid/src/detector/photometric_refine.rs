@@ -80,6 +80,17 @@ const MAX_RESIDUAL_RATIO: f64 = 3.0;
 const DISC_REACH_SIGMAS: f64 = 6.0;
 /// Ink discs are looked for no further than this many lattice spacings away.
 const MAX_DISC_SPACINGS: f64 = 3.0;
+/// Bias of a photometric centre per unit of blur × blur gradient: under a
+/// blur sigma `σ` (px) changing by `g` px per px across the marker, the fit
+/// (an isotropic PSF of one width) lands about `1.24 g σ` px towards the
+/// sharper side (`tests/blur_gradient.rs`, `blur_gradient_bias_matrix`,
+/// scatter form: the physical one of depth-dependent defocus). Not refitted:
+/// with it the predicted error is calibrated at every blur level of the
+/// synthetic confidence study (ADR-029).
+const BLUR_GRADIENT_BIAS_PER_SIGMA: f64 = 1.24;
+/// Accepted fits nearest a marker (besides its own) its local blur gradient
+/// is fitted over.
+const BLUR_GRADIENT_NEIGHBOURS: usize = 8;
 
 fn mat3_mul(a: &Mat3, b: &Mat3) -> Mat3 {
     let mut out = [[0.0; 3]; 3];
@@ -549,6 +560,66 @@ fn judge(
     }
 }
 
+/// Attach to every accepted photometric centre the blur-gradient bias its
+/// fit does not model ([`MarkerRecord::center_bias_px`]):
+/// `1.24 |∇σ| σ`, `σ` its fitted blur and `∇σ` the image gradient of the
+/// least-squares plane through the fitted blur of it and its
+/// [`BLUR_GRADIENT_NEIGHBOURS`] nearest accepted neighbours. `None` (no
+/// bias known) when the plane is undetermined.
+///
+/// `accepted` holds `(marker index, fitted blur sigma)`; the markers' centres
+/// are the accepted (image-pixel) ones.
+fn attach_blur_gradient_bias(markers: &mut [MarkerRecord], accepted: &[(usize, f64)]) {
+    let points: Vec<([f64; 2], f64)> = accepted
+        .iter()
+        .map(|&(i, sigma)| (markers[i].center, sigma))
+        .collect();
+    let dist2 = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2);
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    for (&(i, sigma), &(c, _)) in accepted.iter().zip(&points) {
+        order.sort_by(|&a, &b| dist2(points[a].0, c).total_cmp(&dist2(points[b].0, c)));
+        let near = order
+            .iter()
+            .take(BLUR_GRADIENT_NEIGHBOURS + 1)
+            .map(|&j| (points[j].0, points[j].1));
+        markers[i].center_bias_px =
+            plane_gradient(near).map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g * sigma);
+    }
+}
+
+/// Gradient magnitude of the least-squares plane `v = a + g · p` through
+/// `(p, v)` samples; `None` for fewer than four samples or positions too
+/// close to a line to determine it.
+fn plane_gradient(samples: impl Iterator<Item = ([f64; 2], f64)>) -> Option<f64> {
+    let samples: Vec<([f64; 2], f64)> = samples.collect();
+    if samples.len() < 4 {
+        return None;
+    }
+    let n = samples.len() as f64;
+    let [mx, my, mv] = samples
+        .iter()
+        .fold([0.0; 3], |m, (p, v)| [m[0] + p[0], m[1] + p[1], m[2] + v])
+        .map(|sum| sum / n);
+    let (mut sxx, mut sxy, mut syy, mut sxv, mut syv) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (p, v) in &samples {
+        let (x, y, v) = (p[0] - mx, p[1] - my, v - mv);
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+        sxv += x * v;
+        syv += y * v;
+    }
+    let det = sxx * syy - sxy * sxy;
+    // Both principal spreads must be a fair fraction of the total (also
+    // rejects NaN positions).
+    if det.is_nan() || det <= 1e-3 * (sxx + syy).powi(2) {
+        return None;
+    }
+    let gx = (syy * sxv - sxy * syv) / det;
+    let gy = (sxx * syv - sxy * sxv) / det;
+    Some(gx.hypot(gy))
+}
+
 /// Record [`PhotometricStatus::NoBoardPosition`] on every marker the stage
 /// did not reach, so a requested refinement never leaves a marker silent.
 pub(crate) fn mark_unrefined(markers: &mut [MarkerRecord]) {
@@ -634,7 +705,8 @@ fn refine(
     let final_radii = estimated.unwrap_or(nominal);
     let (fits, typical_residual) = stage.fit_centres(markers, final_radii);
 
-    let mut n_accepted = 0usize;
+    // (marker index, fitted blur sigma) of every accepted fit.
+    let mut accepted: Vec<(usize, f64)> = Vec::new();
     let mut iterations = 0usize;
     for (t, fit) in stage.tasks.iter().zip(fits) {
         let m = &mut markers[t.index];
@@ -663,23 +735,77 @@ fn refine(
                     m.center = fit.center;
                     m.center_cov = Some(fit.center_cov);
                     m.center_source = CenterSource::Photometric;
-                    m.confidence = marker_confidence(m);
                     if let Some(mapper) = mapper {
                         m.center_mapped = mapper.image_to_working_pixel(fit.center);
                     }
-                    n_accepted += 1;
+                    accepted.push((t.index, fit.blur_sigma_px));
                 }
                 metrics
             }
         };
         m.photometric = Some(metrics);
     }
+    attach_blur_gradient_bias(markers, &accepted);
+    for &(i, _) in &accepted {
+        markers[i].confidence = marker_confidence(&markers[i]);
+    }
     tracing::debug!(
         n_markers = stage.tasks.len(),
-        n_accepted,
+        n_accepted = accepted.len(),
         iterations,
         typical_residual,
         "photometric centre refinement summary"
     );
     estimated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A hex patch of fitted blur sigmas on the plane `1.5 + 0.01 x − 0.02 y`.
+    fn blur_plane_markers() -> (Vec<MarkerRecord>, Vec<(usize, f64)>) {
+        let mut markers = Vec::new();
+        let mut accepted = Vec::new();
+        for row in -3i32..=3 {
+            for col in -3i32..=3 {
+                let x = 40.0 * f64::from(col) + 20.0 * f64::from(row.rem_euclid(2));
+                let y = 35.0 * f64::from(row);
+                accepted.push((markers.len(), 1.5 + 0.01 * x - 0.02 * y));
+                markers.push(MarkerRecord {
+                    center: [300.0 + x, 200.0 + y],
+                    ..MarkerRecord::default()
+                });
+            }
+        }
+        (markers, accepted)
+    }
+
+    #[test]
+    fn blur_gradient_bias_follows_the_bias_law() {
+        let (mut markers, accepted) = blur_plane_markers();
+        attach_blur_gradient_bias(&mut markers, &accepted);
+        let g = 0.01f64.hypot(0.02);
+        for &(i, sigma) in &accepted {
+            let b = markers[i].center_bias_px.expect("bias");
+            assert!((b - 1.24 * g * sigma).abs() < 1e-9, "{b}");
+        }
+    }
+
+    #[test]
+    fn blur_gradient_needs_a_two_dimensional_neighbourhood() {
+        // Three fits, then four on one line: no plane.
+        let line =
+            |n: usize| (0..n).map(|k| ([10.0 * k as f64, 5.0 * k as f64], 1.0 + 0.1 * k as f64));
+        assert_eq!(plane_gradient(line(3)), None);
+        assert_eq!(plane_gradient(line(4)), None);
+        let square = [
+            ([0.0, 0.0], 1.0),
+            ([1.0, 0.0], 1.5),
+            ([0.0, 1.0], 1.0),
+            ([1.0, 1.0], 1.5),
+        ];
+        let g = plane_gradient(square.into_iter()).expect("plane");
+        assert!((g - 0.5).abs() < 1e-12, "{g}");
+    }
 }

@@ -14,6 +14,8 @@
 //!   build's CLI over it writing `<scene>/det_<run>.json`, then
 //!   `score_precision_runs` with `RINGGRID_PRECISION_RUNS=old,new` prints the
 //!   tables side by side.
+//! - `RINGGRID_PRECISION_REFINE` (`photometric`, `projective-center`, `none`)
+//!   runs every scene with that centre refinement instead of the default.
 
 #[path = "support/precision.rs"]
 mod precision;
@@ -24,7 +26,7 @@ use std::path::PathBuf;
 
 use image::GrayImage;
 use precision::{Boards, Case, Score, Truth, catalogue, render_case, score, summary};
-use ringgrid::{Detector, MarkerScalePrior};
+use ringgrid::{CircleRefinementMethod, DetectConfig, Detector, MarkerScalePrior};
 use serde_json::Value;
 
 fn detect_json(case: &Case, image: &GrayImage) -> Value {
@@ -399,12 +401,24 @@ fn precision_inspect() {
 }
 
 /// Detector of a case with its scale prior.
+/// The detector a scene runs with: the case's scale prior, and the centre
+/// refinement `RINGGRID_PRECISION_REFINE` names (`photometric`,
+/// `projective-center`, `none`; the configuration default when unset).
 fn case_detector(case: &Case) -> Detector {
     let [lo, hi] = case.diameter_range();
-    Detector::with_marker_scale(
+    let mut config = DetectConfig::from_target_and_scale_prior(
         case.board.layout(),
         MarkerScalePrior::new(lo as f32, hi as f32),
-    )
+    );
+    if let Ok(name) = std::env::var("RINGGRID_PRECISION_REFINE") {
+        config.circle_refinement = match name.as_str() {
+            "photometric" => CircleRefinementMethod::Photometric,
+            "projective-center" => CircleRefinementMethod::ProjectiveCenter,
+            "none" => CircleRefinementMethod::None,
+            other => panic!("RINGGRID_PRECISION_REFINE: unknown refinement {other}"),
+        };
+    }
+    Detector::with_config(config)
 }
 
 /// The present true cell a reported centre matches (within half a spacing).

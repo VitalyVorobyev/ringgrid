@@ -61,7 +61,11 @@ pub struct DetectedMarker {
     /// One formula for every [`DetectionSource`]: the decode score (normalised
     /// Hamming distance, or arc coverage × RANSAC inlier ratio when no ID was
     /// decoded) multiplied by outer angular coverage, RANSAC inlier ratio,
-    /// inner-fit quality and an RMS-residual penalty.
+    /// inner-fit quality and an RMS-residual penalty. For a
+    /// [`CenterSource::Photometric`] centre, the edge-fit factors (coverage,
+    /// inner fit, edge sharpness) are replaced by its predicted centre error:
+    /// [`center_cov`](Self::center_cov) plus the blur-gradient bias the fit
+    /// does not correct.
     pub confidence: f32,
     /// Marker center in raw image pixel coordinates.
     ///
@@ -359,6 +363,8 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         source,
         center_source,
         center_cov,
+        // Folded into `confidence` (photometric centres); the split drops it.
+        center_bias_px: _,
         photometric,
     } = record;
 

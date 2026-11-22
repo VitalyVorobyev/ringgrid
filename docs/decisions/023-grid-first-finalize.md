@@ -2,6 +2,7 @@
 
 - **Status:** accepted; anchor acceptance, contradicted decodes and the
   fallback floor amended by ADR-024
+- **Amended by:** ADR-026 (labels checked against ring shapes), ADR-027 (rotation-checked anchor votes; decoding against the target's own codewords, rejected below, adopted)
 - **Date:** 2026-11-15
 - **Author role:** algorithm-engineer
 - **Supersedes:** the coded back half of ADR-017 (plain targets already ran

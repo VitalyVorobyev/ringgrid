@@ -136,7 +136,8 @@ grey-level noise. Center RMS / p95 over decoded markers, px:
 Decoded counts are identical for every method; the stage only moves centers.
 
 Real images ([ADR-022](docs/decisions/022-photometric-center-refinement.md),
-2026-11-17 amendment): a precision plain plate, 58 × 58 rings on a 2 mm rect
+2026-11-17 amendment;
+[measurements](docs/studies/photometric-center.md#measurements-amendment-2026-11-17)): a precision plain plate, 58 × 58 rings on a 2 mm rect
 lattice, 2 cameras × 28 views at 2048 × 1536, rings 80–120 px across, fitted
 blur σ 0.8–6 px. All 6356 reported markers got a photometric center, and the
 smooth-fit residual over every accepted marker (6210) is 0.0163 px. The

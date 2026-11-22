@@ -1,6 +1,6 @@
 # ADR-017: Plain / Rect Target Detection & the Compositional Target Model
 
-- **Status:** accepted; origin enumeration amended by ADR-025
+- **Status:** accepted; coded back half superseded by ADR-023, fiducial storage by ADR-021, origin enumeration by ADR-025
 - **Date:** 2026-07-04
 - **Author role:** pipeline-architect
 - **Supersedes:** none

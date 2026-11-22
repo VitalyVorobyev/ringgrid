@@ -1,6 +1,6 @@
 # DEC-004: Pipeline Stage Ordering
 
-**Status:** Active
+**Status:** Partially superseded — finalize (stages 7–10) by [ADR-023](023-grid-first-finalize.md)
 **Date:** 2025
 
 ## Decision

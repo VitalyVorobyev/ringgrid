@@ -1,6 +1,6 @@
 # DEC-006: Codebook Invariants
 
-**Status:** Active
+**Status:** Active; decoding contract superseded by [ADR-027](027-phase-aligned-exact-decode.md)
 **Date:** 2025
 
 ## Decision

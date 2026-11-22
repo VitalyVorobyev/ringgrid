@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-22
+
+The photometric centre now reports the blur it measured: each marker carries
+its edge width, PSF anisotropy and their covariance, usable as a focus
+observation (differences between markers of one image). Detection results are
+otherwise unchanged. Breaking: one diagnostics field moved (below).
+
 ### Added
 
 - **`DetectedMarker::blur`** (`BlurEstimate`, re-exported at the crate root;

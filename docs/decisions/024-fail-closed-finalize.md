@@ -1,6 +1,7 @@
 # ADR-024: Fail-Closed Finalize
 
 - **Status:** accepted
+- **Amended by:** ADR-026 (confidence, output contract), ADR-027 (anchor chance model), ADR-028 (geometric verification, photometric confidence)
 - **Date:** 2026-11-15
 - **Author role:** algorithm-engineer
 - **Amends:** ADR-023 (anchor acceptance, contradicted decodes, fallback

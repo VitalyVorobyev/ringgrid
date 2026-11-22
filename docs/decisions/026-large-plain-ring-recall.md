@@ -1,6 +1,7 @@
 # ADR-026: Recall of Large Plain Rings on Oblique Views
 
 - **Status:** accepted
+- **Amended by:** ADR-028 (remaining losses), ADR-029 (decision 3: no sharpness factor in a photometric centre's confidence)
 - **Date:** 2026-11-18
 - **Author role:** algorithm-engineer
 - **Amends:** ADR-023 (grid labeling), ADR-024 (confidence, output contract)

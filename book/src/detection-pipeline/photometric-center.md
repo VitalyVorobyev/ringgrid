@@ -270,7 +270,9 @@ consistency measure, not an error against ground truth.
 estimated — the reason the method is opt-in rather than the default.
 
 The per-kind tables, Monte-Carlo covariance checks and the model-misfit study
-are in
+are in the
+[photometric centre study](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/studies/photometric-center.md)
+behind
 [ADR-022](https://github.com/VitalyVorobyev/ringgrid/blob/main/docs/decisions/022-photometric-center-refinement.md).
 
 ## Configuration

@@ -111,6 +111,34 @@ residual. The reason is reported in `MarkerDiagnostics::photometric.status`;
 a marker that could not be placed on the board at all reports
 `no_board_position`. With the method selected, every marker has a status.
 
+## Fitted blur
+
+`MarkerDiagnostics::photometric.blur_sigma_px` is the σ of the fitted
+Gaussian PSF in image pixels, a fit summary in the diagnostics tier. It is the
+Gaussian edge width **including the pixel's area integration**: for a Gaussian
+PSF of σ_psf it estimates `√(σ_psf² + 1/12)`. Under a non-Gaussian PSF it is
+the width of the Gaussian edge that best matches the image, not the PSF's
+second moment. Measured on synthetic scenes with σ = 2 grey-level noise
+(`photometric_target_matrix`, `blur_covariance_sweep`,
+`photometric_blur_exposure`):
+
+| Condition | Fitted σ against `√(σ_psf² + 1/12)` |
+|---|---|
+| Gaussian PSF 0.8 / 1.5 / 3 px, outer radius 17–33 px | −0.2 … +0.4 % (median over cells) |
+| Gaussian PSF 0.8 / 1.5 px, outer radius 8 px | −0.1 / −1.3 % (cells −4.6 … +4 %) |
+| Gaussian PSF 3 px, outer radius 8 px (σ ≈ 0.4 × radius) | +18 % (cells up to +41 %) |
+| Gaussian PSF 0.4 / 0.5 / 0.6 / 0.7 / 0.8 px, outer radius 18 px | −25 / −13 / −4.5 / −1.5 / −0.4 % |
+| Thin plain ring (1 mm on 5.6 mm), blur 1.5, radii estimated | −2 … −3 % |
+| Contrast 20–160 grey levels, exposure up to a partly saturated paper | within ±0.003 px |
+| 60 % of the patch masked as saturated (coded) | −1.2 % |
+| Anisotropic Gaussian, axis ratio 1.8 | +1.4 … +2.2 % (against the mean second moment) |
+| Gaussian core σ 1.5 + 15 % halo of σ 6 | 1.55–1.58 px: the core (second moment 2.72) |
+| Uniform defocus disc of radius 3 px | 1.80–1.85 px (second moment 1.5) |
+
+Below about 0.6 px the edge is narrower than the pixel and σ is
+underestimated; above about 0.2 × the outer radius (in pixels) the ring's own
+features blur together and σ is overestimated.
+
 ## Scope
 
 - Every marker with a board position: a decoded id on a coded target, a

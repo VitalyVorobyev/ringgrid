@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `study` feature: `PhotometricResidualMarker::blur_covariance` and
+  `blur_covariance_white`, the covariance of the fitted PSF
+  `(blur_sigma_px, aniso[0], aniso[1])` from the centre's
+  correlation-aware sandwich (and its white-residual counterpart).
+
+### Documentation
+
+- The book's *Photometric Center Refinement* page documents what
+  `PhotometricMetrics::blur_sigma_px` measures (the Gaussian edge width
+  including pixel integration) and its measured accuracy against the true
+  PSF, under non-Gaussian PSFs, exposure and contrast.
+
 ## [0.17.0] - 2026-11-19
 
 Detection finds far more markers on dark, low-contrast and blurred images and

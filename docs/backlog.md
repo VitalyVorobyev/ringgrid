@@ -33,7 +33,7 @@ camera the per-marker blur is also a calibration observation (the plane of
 sharp focus, the tilt direction, the depth of field), so its value and its
 uncertainty are wanted next to the centre.
 
-- `ALGO-017` · P1 · todo — **Blur as a stable photometric output.**
+- `ALGO-017` · P1 · in-progress — **Blur as a stable photometric output.**
   Today the fitted σ reaches callers only through the diagnostics tier
   (`PhotometricMetrics::blur_sigma_px`), which is the wrong contract for an
   observation. Report one value on `DetectedMarker`, next to `center_cov`:
@@ -51,6 +51,17 @@ uncertainty are wanted next to the centre.
   against the true width, under PSF misfit, and against exposure and
   contrast (Cledat, Rufener & Cucci, Pattern Recognition 2021). Only what
   passes ships. Bindings and the book move with it.
+  *Status 2026-11-22:* the fit computes σ, `[a, b]` and their sandwich
+  covariance internally (`study` feature exposes it); σ's accuracy is in the
+  book (*Fitted blur*). Per-marker honesty passes (fitter 0.91–1.07, matrix
+  median 0.98), but var(σ) misses the image-wide print-radii error: thin
+  plain rings at blur ≈ ring width report 0.30–0.75 of the scatter. A
+  linear radii term (`G Σ_r Gᵀ`, `Σ_r` from the consensus spread) failed
+  the gate (0.36–0.51 at contrast 40, where the consensus falls back to the
+  nominal radii in 12–18 of 24 exposures; 1.16–1.47 at contrast 80), so
+  nothing is public yet. Cross terms agree on the scene matrix
+  (|Δρ| ≤ 0.11); on single patches at blur ≤ 0.8 reported ρ(σ, a),
+  ρ(σ, b) are up to 0.18 weaker than empirical (n = 120, SE ≈ 0.09).
 - `ALGO-018` · P2 · todo — **Fixed-gradient second photometric pass.**
   ADR-029 already computes each marker's neighbour σ-plane
   (`attach_blur_gradient_bias`). Refit only the markers whose predicted bias

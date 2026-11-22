@@ -11,17 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`DetectedMarker::blur`** (`BlurEstimate`, re-exported at the crate root;
+  Python `ringgrid.BlurEstimate`): the blur the photometric fit measured at
+  each photometric centre — `sigma_px`, the Gaussian edge width including
+  pixel integration (≈ `√(σ_psf² + 1/12)`), the PSF `anisotropy` `[a, b]`,
+  and `cov`, the 3×3 covariance of `(σ, a, b)` from the correlation-aware
+  sandwich of `center_cov`. `cov` is honest for differences between markers
+  of one image; with print radii estimated per image (the default) every
+  marker of an image shares one further σ offset it does not contain
+  (≈ 0.001 px coded, 0.008–0.05 px plain). `None` when σ exceeds a quarter
+  of the marker's outer radius in pixels. Measured accuracy and limits: the
+  book's *Photometric Center Refinement → Blur*.
 - `study` feature: `PhotometricResidualMarker::blur_covariance` and
-  `blur_covariance_white`, the covariance of the fitted PSF
-  `(blur_sigma_px, aniso[0], aniso[1])` from the centre's
-  correlation-aware sandwich (and its white-residual counterpart).
+  `blur_covariance_white`.
 
-### Documentation
+### Changed
 
-- The book's *Photometric Center Refinement* page documents what
-  `PhotometricMetrics::blur_sigma_px` measures (the Gaussian edge width
-  including pixel integration) and its measured accuracy against the true
-  PSF, under non-Gaussian PSFs, exposure and contrast.
+- **Breaking (diagnostics tier):** `PhotometricMetrics::blur_sigma_px` is
+  removed (Python `PhotometricMetrics.blur_sigma_px` too); read
+  `DetectedMarker::blur.sigma_px`. Detection results are unchanged.
 
 ## [0.17.0] - 2026-11-19
 

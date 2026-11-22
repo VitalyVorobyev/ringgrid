@@ -23,7 +23,8 @@ use crate::pipeline::BoardFrame;
 use crate::pixelmap::PixelMapper;
 use crate::ring::MAD_TO_SIGMA;
 use crate::ring::photometric_center::{
-    InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem, PrintRadii, fit_marker,
+    BlurEstimate, InkDisc, Mat3, PhotometricFailure, PhotometricFit, PhotometricProblem,
+    PrintRadii, fit_marker,
 };
 use crate::target::{MarkerCoding, TargetLayout};
 
@@ -69,6 +70,12 @@ const MAX_RADII_MARKERS: usize = 16;
 const MAX_RADIUS_STD_REL: f64 = 0.02;
 /// Plausible fitted PSF sigma range (pixels).
 const SIGMA_RANGE_PX: (f64, f64) = (0.2, 15.0);
+/// Largest fitted PSF sigma, as a fraction of the marker's outer radius in
+/// pixels, at which the blur is reported. Above it the ring's own features
+/// blur together and σ is overestimated: on the photometric target matrix
+/// (24 noise seeds, Gaussian PSF) σ ≈ 0.19 R is within ±0.5 % of the true
+/// width, σ ≈ 0.375 R (outer radius 8 px, blur 3) +18 … +41 %.
+const MAX_BLUR_OUTER_RADIUS_RATIO: f64 = 0.25;
 /// Minimum fitted contrast in units of the residual noise.
 const MIN_CONTRAST_SNR: f64 = 3.0;
 /// A fit whose residual standard deviation exceeds this multiple of the
@@ -515,7 +522,6 @@ fn failure_status(f: PhotometricFailure) -> PhotometricStatus {
 fn status_only(status: PhotometricStatus) -> PhotometricMetrics {
     PhotometricMetrics {
         status,
-        blur_sigma_px: None,
         contrast: None,
         residual_sigma: None,
         n_pixels: 0,
@@ -551,7 +557,6 @@ fn judge(
     };
     PhotometricMetrics {
         status,
-        blur_sigma_px: Some(fit.blur.sigma_px),
         contrast: Some(fit.contrast),
         residual_sigma: Some(fit.residual_sigma),
         n_pixels: fit.n_pixels,
@@ -740,6 +745,7 @@ fn refine(
                 if metrics.status == PhotometricStatus::Accepted {
                     m.center = fit.center;
                     m.center_cov = Some(fit.center_cov);
+                    m.blur = reported_blur(fit.blur, nominal[3] * t.px_per_mm);
                     m.center_source = CenterSource::Photometric;
                     if let Some(mapper) = mapper {
                         m.center_mapped = mapper.image_to_working_pixel(fit.center);
@@ -765,9 +771,30 @@ fn refine(
     estimated
 }
 
+/// The blur of an accepted fit as reported, or `None` outside the width it
+/// is measured in ([`MAX_BLUR_OUTER_RADIUS_RATIO`]).
+fn reported_blur(blur: BlurEstimate, outer_radius_px: f64) -> Option<BlurEstimate> {
+    (blur.sigma_px <= MAX_BLUR_OUTER_RADIUS_RATIO * outer_radius_px).then_some(blur)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blur_is_reported_up_to_a_quarter_of_the_outer_radius() {
+        let blur = |sigma_px| BlurEstimate {
+            sigma_px,
+            anisotropy: [0.1, -0.05],
+            cov: [[1e-4, 0.0, 0.0], [0.0, 1e-3, 0.0], [0.0, 0.0, 1e-3]],
+        };
+        // Outer radius 17 px: up to 4.25 px.
+        assert_eq!(reported_blur(blur(1.5), 17.0), Some(blur(1.5)));
+        assert_eq!(reported_blur(blur(4.25), 17.0), Some(blur(4.25)));
+        assert_eq!(reported_blur(blur(4.3), 17.0), None);
+        // Outer radius 8 px at blur 3 (σ ≈ 0.375 R): not reported.
+        assert_eq!(reported_blur(blur(3.0), 8.0), None);
+    }
 
     /// A hex patch of fitted blur sigmas on the plane `1.5 + 0.01 x − 0.02 y`.
     fn blur_plane_markers() -> (Vec<MarkerRecord>, Vec<(usize, f64)>) {

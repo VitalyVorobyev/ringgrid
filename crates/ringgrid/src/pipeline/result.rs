@@ -4,6 +4,7 @@ use crate::detector::{
 };
 use crate::marker::DecodeMetrics;
 use crate::proposal::Proposal;
+use crate::ring::photometric_center::BlurEstimate;
 use std::cmp::Ordering;
 
 /// Coordinate frame used by serialized detection outputs.
@@ -97,6 +98,18 @@ pub struct DetectedMarker {
     /// bias common to the whole patch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center_cov: Option<[[f64; 2]; 2]>,
+    /// The blur the photometric fit measured at this marker: Gaussian edge
+    /// width `sigma_px` (including pixel integration), PSF anisotropy and
+    /// their covariance, honest for differences between markers of one
+    /// image (see [`BlurEstimate`] for the contract and measured accuracy).
+    ///
+    /// `None` unless the photometric fit produced
+    /// [`center`](Self::center) ([`CenterSource::Photometric`]), and `None`
+    /// when the fitted width exceeds a quarter of the marker's outer radius
+    /// in pixels, where the ring's own features blur together and σ is
+    /// overestimated (+18 … +41 % at 0.375 of the radius).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blur: Option<BlurEstimate>,
 }
 
 /// Detailed per-marker algorithm internals.
@@ -365,6 +378,7 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         center_cov,
         // Folded into `confidence` (photometric centres); the split drops it.
         center_bias_px: _,
+        blur,
         photometric,
     } = record;
 
@@ -379,6 +393,7 @@ fn split_marker_record(record: MarkerRecord) -> (DetectedMarker, MarkerDiagnosti
         ellipse_inner,
         center_source,
         center_cov,
+        blur,
     };
     let diagnostics = MarkerDiagnostics {
         fit,

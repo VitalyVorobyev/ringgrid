@@ -6,6 +6,7 @@ use crate::marker::decode::DecodeResult;
 use crate::pixelmap::PixelMapper;
 use crate::ring::edge_quality::{border_distance_radii, outer_edge_width_px};
 use crate::ring::edge_sample::{DistortionAwareSampler, EdgeSampleResult};
+use crate::ring::photometric_center::BlurEstimate;
 
 use super::config::{DetectConfig, InnerFitConfig};
 use super::inner_fit::{
@@ -90,9 +91,6 @@ pub enum PhotometricStatus {
 pub struct PhotometricMetrics {
     /// Whether the fit produced the centre, or why not.
     pub status: PhotometricStatus,
-    /// Fitted Gaussian PSF standard deviation (pixels).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blur_sigma_px: Option<f64>,
     /// Fitted paper-minus-ink contrast at the marker centre (grey levels).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contrast: Option<f64>,
@@ -263,6 +261,9 @@ pub(crate) struct MarkerRecord {
     /// `photometric_refine::attach_blur_gradient_bias`).
     #[serde(skip)]
     pub center_bias_px: Option<f64>,
+    /// The blur the photometric fit measured, when it produced the centre.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blur: Option<BlurEstimate>,
     /// Photometric fit summary, when the photometric stage ran on this marker.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photometric: Option<PhotometricMetrics>,

@@ -165,6 +165,9 @@ pub(crate) struct PhotometricFit {
     pub residual_acf: ResidualAcf,
     /// The fitted PSF and its uncertainty.
     pub blur: BlurEstimate,
+    /// [`BlurEstimate::cov`] assuming white residuals (diagnostic).
+    #[cfg_attr(not(any(test, feature = "study")), allow(dead_code))]
+    pub blur_cov_white: [[f64; 3]; 3],
     /// Paper minus ink at the marker centre, grey levels.
     pub contrast: f64,
     /// Robust residual standard deviation, grey levels.
@@ -185,23 +188,52 @@ pub(crate) struct PhotometricFit {
     pub params: Params,
 }
 
-/// The fitted Gaussian PSF, covariance `sigma^2 [[1 + a, b], [b, 1 - a]]`
-/// (see [`Blur`]), with the covariance of `(sigma, a, b)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct BlurEstimate {
-    /// PSF sigma, px.
+/// The blur of one marker as the photometric fit measured it: a Gaussian
+/// point spread function of covariance `sigma_px² [[1 + a, b], [b, 1 − a]]`
+/// in image pixels, `[a, b]` = [`anisotropy`](Self::anisotropy).
+///
+/// **`sigma_px`** is the Gaussian edge width *including the pixel's area
+/// integration*: for a Gaussian PSF of σ_psf it estimates
+/// `√(σ_psf² + 1/12)`. Under a non-Gaussian PSF it is the width of the
+/// Gaussian edge that best matches the image, not the PSF's second moment
+/// (the core of a PSF with a wide halo; ≈ 0.6 R for a uniform defocus disc of
+/// radius R). Measured on synthetic scenes against `√(σ_psf² + 1/12)`:
+///
+/// | Condition | Bias |
+/// |---|---|
+/// | Gaussian PSF, σ 0.7–3 px, outer radius ≥ 17 px, correct print radii | within ±0.5 % |
+/// | σ_psf 0.5 / 0.6 / 0.7 px | −13 / −4.5 / −1.5 % |
+/// | thin or small plain rings, print radii estimated from the image | −2 … −6 % |
+/// | pixel-snapped binary display target | +1 … +3.5 % (grey-level display up to +7 %) |
+///
+/// The ordering of `sigma_px` across markers and its differences are
+/// reliable wherever it is reported; its absolute scale carries a
+/// target-dependent factor of a few percent.
+///
+/// **`cov`** is the covariance of `(sigma_px, a, b)` given the image's print
+/// radii: a sandwich estimate from the fit's residuals that accounts for
+/// their spatial correlation, like
+/// [`DetectedMarker::center_cov`](crate::DetectedMarker::center_cov). It is
+/// honest for *differences between markers of one image* (reported over
+/// Monte-Carlo scatter: no cell understated, median 1.005). When print radii
+/// are estimated per image (the default,
+/// [`PhotometricConfig::estimate_print_radii`](crate::PhotometricConfig::estimate_print_radii)),
+/// all markers of an image additionally share one σ offset that `cov` does
+/// not contain: ≈ 0.001 px on coded targets, 0.008–0.05 px on plain rings
+/// (largest on thin strokes and at low contrast). A consumer fitting blur
+/// across images should carry one offset per image, or compare within an
+/// image. `cov` does not cover the PSF-model bias above.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct BlurEstimate {
+    /// Gaussian edge width in image pixels, including pixel integration.
     pub sigma_px: f64,
-    /// PSF anisotropy `[a, b]`; zero when the fit is isotropic.
-    pub aniso: [f64; 2],
-    /// Covariance of `(sigma px, a, b)`: the same sandwich as the centre's
-    /// (honest under spatially correlated residuals), with `sigma` from log
-    /// sigma by the delta method. The `a`, `b` rows are zero when the fit is
-    /// isotropic. Where the sandwich fails (or its blur block is not positive
-    /// definite) this is the prior-regularized inverse Fisher information,
-    /// as for the centre.
+    /// PSF anisotropy `[a, b]`: the PSF covariance is
+    /// `sigma_px² [[1 + a, b], [b, 1 − a]]`, with `|[a, b]| ≤ 0.9`.
+    pub anisotropy: [f64; 2],
+    /// Covariance of `(sigma_px, a, b)`, row-major, given the image's print
+    /// radii (see the type documentation).
     pub cov: [[f64; 3]; 3],
-    /// The same covariance assuming white residuals.
-    pub cov_white: [[f64; 3]; 3],
 }
 
 /// Why a fit was not produced.
@@ -1878,10 +1910,10 @@ pub(crate) fn fit_marker(
         residual_acf,
         blur: BlurEstimate {
             sigma_px: sigma,
-            aniso: sol.prm.aniso,
+            anisotropy: sol.prm.aniso,
             cov: blur_cov,
-            cov_white: blur_cov_white,
         },
+        blur_cov_white,
         contrast: sol.prm.lin[CONTRAST],
         residual_sigma: s2.sqrt(),
         n_pixels: fitting.pixels.len(),
@@ -2346,9 +2378,9 @@ mod monte_carlo {
             tr_white += fit.center_cov_white[0][0] + fit.center_cov_white[1][1];
             tr_corr += fit.center_cov[0][0] + fit.center_cov[1][1];
             let b = &fit.blur;
-            blurs.push([b.sigma_px, b.aniso[0], b.aniso[1]]);
+            blurs.push([b.sigma_px, b.anisotropy[0], b.anisotropy[1]]);
             for k in 0..3 {
-                var_white[k] += b.cov_white[k][k];
+                var_white[k] += fit.blur_cov_white[k][k];
                 var_corr[k] += b.cov[k][k];
                 for l in 0..3 {
                     cov_sum[k][l] += b.cov[k][l];

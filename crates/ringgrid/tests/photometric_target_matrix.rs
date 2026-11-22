@@ -1381,8 +1381,13 @@ fn photometric_blur_exposure() {
             let (mut sigmas, mut masked, mut contrast, mut n_fit) = (Vec::new(), 0.0, 0.0, 0usize);
             for seed in 0..n_seeds {
                 let scene = expose(rad, spec, 1000 + seed);
-                let (_, diag) = det.detect_with_diagnostics(&scene.image).expect("detect");
-                for p in diag.markers.iter().filter_map(|d| d.photometric.as_ref()) {
+                let (res, diag) = det.detect_with_diagnostics(&scene.image).expect("detect");
+                for (m, p) in res
+                    .detected_markers
+                    .iter()
+                    .zip(&diag.markers)
+                    .filter_map(|(m, d)| Some((m, d.photometric.as_ref()?)))
+                {
                     if p.status == PhotometricStatus::NoBoardPosition {
                         continue;
                     }
@@ -1390,7 +1395,7 @@ fn photometric_blur_exposure() {
                     if p.status != PhotometricStatus::Accepted {
                         continue;
                     }
-                    sigmas.push(p.blur_sigma_px.expect("accepted fit has sigma"));
+                    sigmas.push(m.blur.expect("accepted fit has a blur").sigma_px);
                     masked += p.masked_fraction;
                     contrast += p.contrast.unwrap_or(f64::NAN);
                 }

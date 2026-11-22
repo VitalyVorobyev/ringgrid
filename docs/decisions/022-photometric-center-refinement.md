@@ -194,10 +194,30 @@ Alternatives rejected:
   of it. It costs about 14 % per fit and, without a gradient, up to 1.4–1.8×
   the centre error on plain rect markers whose blur is a fifth of their
   radius. On real captures of a tilted-focus camera, calibrating six cameras
-  with the term on and off left the calibrated residual unchanged (pooled
-  0.137 px RMS both ways), so the measured benefit does not cover the cost.
+  with the term on and off left the calibrated residual unchanged, so the
+  measured benefit does not cover the cost. (Earlier revisions quoted
+  "pooled 0.137 px RMS both ways". No recorded on/off solve backs that
+  figure: it equals the pooled training RMS of the calibration library's
+  default tilted-sensor route on those cameras, a solve without the term.
+  The measurement below replaces it.)
   The intensity centroid of a blurred marker does not move under a blur
   gradient, so this is an estimator bias, not an optical shift.
+
+  *Why the residual did not move.* calibration-rs measured where the bias
+  goes, on six tilted-focus cameras (4921 observations in 110 views; each
+  camera solved from the raw centres, from centres corrected by the law
+  `b = −1.24·σ·∇σ`, and from a sign-flipped control): 92 % of the bias
+  energy is taken up by the camera intrinsics and the per-view poses, and
+  the pooled mean residual moves by 0.003 px (0.109 → 0.106). Under a
+  defocus model `σ² = σ0² + κ²(1/z − π·x)²` the bias is, to first order, a
+  lateral translation of each view plus a rescaling of `fy`, and a
+  calibration estimates both. The measured signature is `fy/fx` moving by
+  +3.1 … +4.6e-4 (0.8–1.9 σ, the same sign on all six cameras) and the
+  tilt by at most 0.44 σ; a synthetic test in calibration-rs reproduces
+  the `fy/fx` shift within 2 % of the first-order prediction. So removing
+  the bias cannot lower a calibrated residual. It changes the aspect
+  ratio, which matters where the aspect ratio or the blur itself is the
+  measurement.
 
 ## Consequences
 

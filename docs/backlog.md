@@ -27,7 +27,72 @@ _None currently assigned._
 
 ## Backlog
 
-_None currently assigned._
+Context for the blur items below: calibration-rs `docs/notes/scheimpflug-literature.md`
+(literature review 2026-11-21) and ADR-022 / ADR-029 here. On a tilted-focus
+camera the per-marker blur is also a calibration observation (the plane of
+sharp focus, the tilt direction, the depth of field), so its value and its
+uncertainty are wanted next to the centre.
+
+- `ALGO-017` · P1 · todo — **Blur as a stable photometric output.**
+  Today the fitted σ reaches callers only through the diagnostics tier
+  (`PhotometricMetrics::blur_sigma_px`), which is the wrong contract for an
+  observation. Report one value on `DetectedMarker`, next to `center_cov`:
+  σ, the PSF anisotropy `[a, b]` and the covariance of `(σ, a, b)`; the
+  diagnostics field goes (one source of truth). The covariance extends the
+  sandwich estimator of `center_cov` (ADR-022, *Covariance under correlated
+  residuals*) to those rows, but its justification does not carry over
+  unchanged: the centre takes its noise statistics from the
+  point-antisymmetric residual because symmetric misfit cannot move a
+  centre, while σ, a and b are exactly what symmetric misfit moves; σ is
+  fitted as log σ, and `[a, b]` carry a prior that dominates at small blur.
+  So honesty is measured first, on the photometric target matrix
+  (reported over Monte-Carlo scatter within 0.8–1.25 on Gaussian-PSF
+  cells), together with what an observation also needs: the bias of σ
+  against the true width, under PSF misfit, and against exposure and
+  contrast (Cledat, Rufener & Cucci, Pattern Recognition 2021). Only what
+  passes ships. Bindings and the book move with it.
+- `ALGO-018` · P2 · todo — **Fixed-gradient second photometric pass.**
+  ADR-029 already computes each marker's neighbour σ-plane
+  (`attach_blur_gradient_bias`). Refit only the markers whose predicted bias
+  `b = 1.24·σ·|∇σ|` exceeds a threshold, with that gradient *fixed* in the
+  PSF model (the scatter form of the archived gradient term,
+  `archive/blur-gradient-term`), so the bias is removed without the two free
+  parameters and their 1.4–1.8× scatter cost on plain rect markers. Opt-in.
+  Gate: `blur_gradient_bias_matrix` bias down by ≥ 80 % with centre scatter
+  within 10 % of the one-σ fit, **and** a residual bias at most half of
+  what the free alternative leaves: subtracting the first-order law
+  `1.24·σ·∇σ` from the one-σ centre, with no refit, which a caller can do
+  from the reported σ alone once ALGO-017 lands. If the refit does not beat
+  that, it is a dominated alternative: close this item and ALGO-019, and
+  document the caller-side correction instead. Note: calibration-rs measured where this
+  bias goes on six tilted-focus cameras (its `docs/notes/ringgrid-bias.md`):
+  92 % is absorbed by the camera and the poses, the residual moves by
+  0.003 px, and `fy/fx` moves by +3.1 … +4.6e-4 (0.8–1.9 σ). Its value is
+  for aspect-sensitive work and blur observations, not the residual. Keep
+  the PSF centred by construction: a PSF whose centroid is free trades
+  against the centre (a global translational ambiguity, Shi, "Generic
+  Camera Calibration using Blurry Images", arXiv 2603.05159, which anchors
+  it to a camera calibrated from sharp images). The same holds for any
+  later non-Gaussian PSF model.
+- `ALGO-019` · P3 · todo — **A blur prior per marker.** Accept an optional
+  predicted σ (and ∇σ) per board position, from a calibrated focus model,
+  as a prior in the photometric fit: the detect → calibrate → predict →
+  refit loop, and stability for small, strongly blurred rings. Widens the
+  public config; only after ALGO-018 shows the fixed-gradient fit pays.
+- `ALGO-020` · P3 · todo — **Moment-centre study estimator.** The ink
+  centroid with the analytic projective correction (Song et al., CVPR 2024)
+  is immune to a blur gradient under scatter blur
+  (`blur_gradient_ink_centroid`). As a `study`-feature estimator it
+  separates the gradient bias from other errors on real captures.
+  Caveats: neighbour spill, background shading, radial distortion only.
+  In the same study, the centre half of the exposure-bias check (Cledat,
+  Rufener & Cucci, Pattern Recognition 2021: saturation with the PSF moves
+  the edges of concentric-circle targets with exposure; the σ half belongs
+  to ALGO-017). Here it should mostly change the stroke width, which the
+  per-image printed-radii fit absorbs, and a symmetric width change does
+  not move the centre. Test: whether the fitted radii and centres follow
+  exposure or contrast across images, on the `blur_scene` renderer's
+  radiance/exposure split and on a real exposure series.
 
 ## API / Interface Tracking
 

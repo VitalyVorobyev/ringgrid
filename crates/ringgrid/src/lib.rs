@@ -98,6 +98,7 @@ pub use proposal::{find_ellipse_centers, find_ellipse_centers_with_heatmap};
 // Result types — slim, stable primary output of `Detector::detect`.
 pub use detector::CenterSource;
 pub use pipeline::{BoardFrame, DetectedMarker, DetectionFrame, DetectionResult};
+pub use ring::photometric_center::BlurEstimate;
 
 /// Opt-in diagnostics channel returned by
 /// [`Detector::detect_with_diagnostics`]: per-marker fit and decode metrics,

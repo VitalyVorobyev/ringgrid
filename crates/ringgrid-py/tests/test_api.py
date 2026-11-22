@@ -1163,9 +1163,19 @@ def test_detect_with_photometric_refinement_reports_center_source() -> None:
                 assert cov[0][0] > 0.0 and cov[1][1] > 0.0
                 assert diag.photometric is not None
                 assert diag.photometric.status == "accepted"
+                if marker.blur is not None:
+                    assert marker.blur.sigma_px > 0.0
+                    assert len(marker.blur.anisotropy) == 2
+                    assert len(marker.blur.cov) == 3 and all(len(r) == 3 for r in marker.blur.cov)
+                    assert marker.blur.cov[0][0] > 0.0
+            else:
+                assert marker.blur is None
         restored = ringgrid.DetectionResult.from_dict(result.to_dict())
         assert [m.center_source for m in restored.detected_markers] == [
             m.center_source for m in result.detected_markers
+        ]
+        assert [m.blur for m in restored.detected_markers] == [
+            m.blur for m in result.detected_markers
         ]
 
 
@@ -1175,6 +1185,8 @@ def test_photometric_diagnostics_parse_and_tolerate_absent_fields() -> None:
     base = ringgrid.DetectedMarker.from_dict({"confidence": 0.9, "center": [1.0, 2.0]})
     assert base.center_source == "outer_ellipse"
     assert base.center_cov is None
+    assert base.blur is None
+    assert "blur" not in base.to_dict()
 
     marker = ringgrid.DetectedMarker.from_dict(
         {
@@ -1182,15 +1194,22 @@ def test_photometric_diagnostics_parse_and_tolerate_absent_fields() -> None:
             "center": [1.0, 2.0],
             "center_source": "photometric",
             "center_cov": [[0.01, 0.0], [0.0, 0.02]],
+            "blur": {
+                "sigma_px": 1.4,
+                "anisotropy": [0.1, -0.05],
+                "cov": [[1e-4, 0.0, 0.0], [0.0, 1e-3, 0.0], [0.0, 0.0, 1e-3]],
+            },
         }
     )
     assert marker.center_cov == [[0.01, 0.0], [0.0, 0.02]]
+    assert marker.blur is not None and marker.blur.sigma_px == pytest.approx(1.4)
+    assert marker.blur.anisotropy == [0.1, -0.05]
+    assert ringgrid.DetectedMarker.from_dict(marker.to_dict()) == marker
     assert marker.to_dict()["center_source"] == "photometric"
 
     metrics = ringgrid.PhotometricMetrics.from_dict(
         {
             "status": "accepted",
-            "blur_sigma_px": 1.4,
             "contrast": 120.0,
             "residual_sigma": 2.5,
             "n_pixels": 900,
@@ -1199,12 +1218,12 @@ def test_photometric_diagnostics_parse_and_tolerate_absent_fields() -> None:
         }
     )
     assert metrics.status == "accepted"
-    assert metrics.blur_sigma_px == pytest.approx(1.4)
+    assert metrics.contrast == pytest.approx(120.0)
     assert ringgrid.PhotometricMetrics.from_dict(metrics.to_dict()) == metrics
     rejected = ringgrid.PhotometricMetrics.from_dict({"status": "no_board_position"})
-    assert rejected.blur_sigma_px is None
+    assert rejected.contrast is None
     assert rejected.center_shift_px is None
-    assert "blur_sigma_px" not in rejected.to_dict()
+    assert "contrast" not in rejected.to_dict()
 
     assert ringgrid.MarkerDiagnostics.from_dict({"fit": fit}).photometric is None
     diag = ringgrid.MarkerDiagnostics.from_dict(

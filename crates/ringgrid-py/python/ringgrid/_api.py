@@ -1012,6 +1012,57 @@ class FitMetrics:
 
 
 @dataclass(slots=True)
+class BlurEstimate:
+    """Blur of one marker as the photometric fit measured it.
+
+    A Gaussian point spread function of covariance
+    ``sigma_px**2 * [[1 + a, b], [b, 1 - a]]`` in image pixels, with
+    ``[a, b] = anisotropy`` (``|[a, b]| <= 0.9``).
+
+    ``sigma_px`` is the Gaussian edge width including the pixel's area
+    integration: for a Gaussian PSF of ``sigma_psf`` it estimates
+    ``sqrt(sigma_psf**2 + 1/12)``. Under a non-Gaussian PSF it is the width of
+    the best-matching Gaussian edge, not the PSF's second moment (the core of
+    a PSF with a wide halo; about 0.6 R for a defocus disc of radius R).
+    Measured bias against ``sqrt(sigma_psf**2 + 1/12)``: within +-0.5 % for a
+    Gaussian PSF of 0.7-3 px, outer radius >= 17 px and correct print radii;
+    -13 / -4.5 / -1.5 % at sigma_psf 0.5 / 0.6 / 0.7 px; -2 to -6 % on thin or
+    small plain rings with print radii estimated from the image; +1 to +3.5 %
+    on a pixel-snapped binary display (up to +7 % grey-level). Ordering and
+    differences across markers are reliable; the absolute scale carries a
+    target-dependent factor of a few percent.
+
+    ``cov`` is the 3x3 covariance of ``(sigma_px, a, b)`` given the image's
+    print radii. It is honest for differences between markers of one image.
+    With print radii estimated per image (the default), all markers of an
+    image additionally share one sigma offset that ``cov`` does not contain:
+    about 0.001 px on coded targets, 0.008-0.05 px on plain rings (largest on
+    thin strokes and at low contrast). When fitting blur across images, carry
+    one offset per image, or compare within an image.
+    """
+
+    sigma_px: float
+    anisotropy: list[float]
+    cov: list[list[float]]
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "BlurEstimate":
+        data = _require_mapping(data, name="data")
+        return cls(
+            sigma_px=float(data["sigma_px"]),
+            anisotropy=[float(data["anisotropy"][0]), float(data["anisotropy"][1])],
+            cov=[[float(v) for v in row] for row in data["cov"]],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sigma_px": float(self.sigma_px),
+            "anisotropy": [float(v) for v in self.anisotropy],
+            "cov": [[float(v) for v in row] for row in self.cov],
+        }
+
+
+@dataclass(slots=True)
 class DetectedMarker:
     """Single detected marker: refined geometry plus the decoded ID.
 
@@ -1034,6 +1085,10 @@ class DetectedMarker:
     center_source: str = "outer_ellipse"
     #: 2x2 covariance of ``center`` (px^2); set for photometric centers only.
     center_cov: list[list[float]] | None = None
+    #: Blur measured by the photometric fit (see :class:`BlurEstimate`); set
+    #: for photometric centers whose fitted width is at most a quarter of the
+    #: marker's outer radius in pixels.
+    blur: BlurEstimate | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DetectedMarker":
@@ -1055,6 +1110,7 @@ class DetectedMarker:
             else Ellipse.from_dict(data["ellipse_inner"]),
             center_source=str(data.get("center_source", "outer_ellipse")),
             center_cov=_optional_cov2(data.get("center_cov")),
+            blur=None if data.get("blur") is None else BlurEstimate.from_dict(data["blur"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1064,6 +1120,7 @@ class DetectedMarker:
             "center_source": str(self.center_source),
         }
         _set_optional(out, "center_cov", self.center_cov)
+        _set_optional(out, "blur", None if self.blur is None else self.blur.to_dict())
         _set_optional(out, "id", self.id)
         _set_optional(out, "grid_coord", self.grid_coord)
         _set_optional(out, "center_mapped", self.center_mapped)
@@ -1087,7 +1144,6 @@ class PhotometricMetrics:
     status: str
     n_pixels: int = 0
     masked_fraction: float = 0.0
-    blur_sigma_px: float | None = None
     contrast: float | None = None
     residual_sigma: float | None = None
     center_shift_px: float | None = None
@@ -1099,7 +1155,6 @@ class PhotometricMetrics:
             status=str(data["status"]),
             n_pixels=int(data.get("n_pixels", 0)),
             masked_fraction=float(data.get("masked_fraction", 0.0)),
-            blur_sigma_px=_optional_float(data.get("blur_sigma_px")),
             contrast=_optional_float(data.get("contrast")),
             residual_sigma=_optional_float(data.get("residual_sigma")),
             center_shift_px=_optional_float(data.get("center_shift_px")),
@@ -1111,7 +1166,6 @@ class PhotometricMetrics:
             "n_pixels": int(self.n_pixels),
             "masked_fraction": float(self.masked_fraction),
         }
-        _set_optional(out, "blur_sigma_px", self.blur_sigma_px)
         _set_optional(out, "contrast", self.contrast)
         _set_optional(out, "residual_sigma", self.residual_sigma)
         _set_optional(out, "center_shift_px", self.center_shift_px)

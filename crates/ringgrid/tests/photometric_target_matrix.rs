@@ -15,7 +15,10 @@
 //! - reported σ over the error against the truth (which also contains bias,
 //!   which no covariance covers), and the bias itself;
 //! - the result homography's RMS error at the true cell centres for both
-//!   methods (first exposure; absolute board frame only).
+//!   methods (first exposure; absolute board frame only);
+//! - with the `study` feature, the fitted PSF `(sigma, a, b)`: Monte-Carlo
+//!   honesty of its covariance (as for the centre) and the bias of the mean
+//!   fitted `sigma`, `a`, `b` against the rendered PSF's second moments.
 //!
 //! The default run checks a representative subset (one cell per target kind,
 //! one seed). The full matrix and the model-misfit study are `#[ignore]`d:
@@ -27,7 +30,10 @@
 //! `MATRIX_SEEDS` (default 6) sets the Monte-Carlo seeds per cell,
 //! `MATRIX_KINDS` (comma-separated names) and `MATRIX_SCALES` (outer radii in
 //! px) restrict the matrix, `MATRIX_DPI` overrides the board raster density,
-//! `MATRIX_THREADS` sets the parallelism.
+//! `MATRIX_THREADS` sets the parallelism, `MATRIX_FIXED_RADII` turns off the
+//! per-image print-radii estimate (the fits use the nominal radii, exact
+//! here; the estimate's image-wide error is common to all markers of an
+//! exposure and is not in a marker's covariance).
 
 mod support;
 
@@ -80,22 +86,28 @@ impl Kind {
     }
 
     fn target(self) -> TargetLayout {
+        self.target_with_inner(None)
+    }
+
+    /// The target, with a plain marker's inner radius replaced by `inner`
+    /// (mm) when given.
+    fn target_with_inner(self, inner: Option<f32>) -> TargetLayout {
+        let plain = |pitch, outer, default_inner, dots| match self {
+            Kind::PlainHexDots | Kind::PlainHexNoDots => {
+                TargetLayout::plain_hex(pitch, 13, 12, outer, inner.unwrap_or(default_inner), dots)
+            }
+            _ => {
+                TargetLayout::plain_rect(pitch, 12, 12, outer, inner.unwrap_or(default_inner), dots)
+            }
+        };
         let t = match self {
             Kind::CodedHex => TargetLayout::coded_hex(8.0, 15, 14, 4.9565, 2.966, 0.839),
             Kind::CodedRect => TargetLayout::coded_rect(14.0, 12, 12, 5.6, 3.2, 1.0),
-            Kind::PlainHexDots => TargetLayout::plain_hex(8.0, 13, 12, 4.8, 2.4, OriginDots::Auto),
-            Kind::PlainHexNoDots => {
-                TargetLayout::plain_hex(8.0, 13, 12, 4.8, 2.4, OriginDots::None)
-            }
-            Kind::PlainRectDots => {
-                TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::Auto)
-            }
-            Kind::PlainRectNoDots => {
-                TargetLayout::plain_rect(14.0, 12, 12, 5.6, 2.8, OriginDots::None)
-            }
-            Kind::PlainRectThin => {
-                TargetLayout::plain_rect(14.0, 12, 12, 5.6, 4.6, OriginDots::Auto)
-            }
+            Kind::PlainHexDots => plain(8.0, 4.8, 2.4, OriginDots::Auto),
+            Kind::PlainHexNoDots => plain(8.0, 4.8, 2.4, OriginDots::None),
+            Kind::PlainRectDots => plain(14.0, 5.6, 2.8, OriginDots::Auto),
+            Kind::PlainRectNoDots => plain(14.0, 5.6, 2.8, OriginDots::None),
+            Kind::PlainRectThin => plain(14.0, 5.6, 4.6, OriginDots::Auto),
         };
         t.expect("valid matrix target")
     }
@@ -165,8 +177,42 @@ struct MarkerSamples {
     centers: Vec<[f64; 2]>,
     /// `(trace of the reported covariance, covariance inflation)` per seed.
     traces: Vec<(f64, Option<f64>)>,
+    /// The fitted PSF per seed (`study` feature only).
+    blurs: Vec<BlurSample>,
     truth: [f64; 2],
 }
+
+/// One marker's fitted PSF `(sigma, a, b)` with its reported covariance
+/// (correlated-residual and white-residual).
+#[derive(Debug, Clone, Copy)]
+struct BlurSample {
+    /// Exposure (noise seed) of the sample.
+    seed: u64,
+    value: [f64; 3],
+    cov: [[f64; 3]; 3],
+    cov_white: [[f64; 3]; 3],
+}
+
+/// Pooled PSF statistics of a cell.
+#[derive(Debug, Clone, Copy)]
+struct BlurSummary {
+    /// Reported sd over Monte-Carlo scatter of `sigma`, `a`, `b`:
+    /// `(correlated, white)` covariance.
+    ratio: [(f64, f64); 3],
+    /// Mean fitted `sigma`, `a`, `b` over all samples.
+    mean: [f64; 3],
+    /// Pooled Monte-Carlo sd of `sigma`, `a`, `b`.
+    sd: [f64; 3],
+    /// Fraction of samples whose covariance fell back to the white
+    /// posterior (reported covariance equal to the white one).
+    fallback: f64,
+    /// Correlations of `(sigma, a)`, `(sigma, b)`, `(a, b)`: pooled reported
+    /// and pooled empirical (within-marker deviations).
+    corr: [(f64, f64); 3],
+}
+
+/// The `(sigma, a)`, `(sigma, b)`, `(a, b)` pairs.
+const PAIRS: [(usize, usize); 3] = [(0, 1), (0, 2), (1, 2)];
 
 #[derive(Debug, Default, Clone)]
 struct CellResult {
@@ -192,12 +238,45 @@ struct CellResult {
     error_ratio: Option<(f64, f64)>,
     /// RMS over markers of the seed-mean error (bias), px.
     bias_rms: Option<f64>,
+    /// The fitted PSF (`study` feature only).
+    blur: Option<BlurSummary>,
     /// Mean covariance inflation over photometric centres (NaN without the
     /// `study` feature).
     inflation: f64,
     /// Mean fit residual standard deviation over photometric centres.
     residual: f64,
     statuses: BTreeMap<String, usize>,
+    /// Print radii the photometric stage estimated, per exposure (`None`
+    /// where it kept the nominal radii).
+    radii_by_seed: Vec<Option<[f64; 4]>>,
+    /// Per-exposure structure of the fitted-sigma error (`study` feature).
+    exposure: Option<ExposureStats>,
+    /// Pooled inner radius (mm) the fits used (`MATRIX_POOLED_RADII`), and
+    /// the number of exposures it was pooled from.
+    pooled_r0: Option<(f64, usize)>,
+}
+
+/// How the fitted-sigma error splits between a per-exposure common mode and
+/// the markers of one exposure, and what drives the common mode.
+#[derive(Debug, Clone)]
+struct ExposureStats {
+    n_exposures: usize,
+    /// Exposures whose print radii were estimated (not nominal).
+    n_estimated: usize,
+    /// Share of the per-marker sigma variance across exposures that is the
+    /// exposure's common mode.
+    between_share: f64,
+    /// Reported sd over the within-exposure scatter (the common mode
+    /// removed), for `sigma`, `a`, `b`.
+    within_ratio: [f64; 3],
+    /// Per free radius: sd over exposures of the consensus error `dr`
+    /// (mm, 0 where nominal), correlation of the common mode with `dr`, and
+    /// the slope `d sigma / d r` (px/mm).
+    radii: Vec<(f64, f64, f64)>,
+    /// R² of the common mode on all free radii jointly.
+    r2: f64,
+    /// Mean sigma error against the PSF plus pixel box (px).
+    mean_error: f64,
 }
 
 fn rms(v: &[f64]) -> f64 {
@@ -281,6 +360,9 @@ fn detector(
         (2.0 * outer_radius_px) as f32,
     );
     config.circle_refinement = method;
+    if std::env::var("MATRIX_FIXED_RADII").is_ok() {
+        config.advanced.photometric.estimate_print_radii = false;
+    }
     Detector::with_config(config)
 }
 
@@ -298,9 +380,10 @@ fn spec_for(cell: &Cell, target: &TargetLayout, size: [u32; 2]) -> SceneSpec {
     spec
 }
 
-/// Per fitted marker (by index), the covariance inflation: reported centre σ
-/// over the white-residual σ. Study output, empty without the feature.
-type Inflations = HashMap<usize, Option<f64>>;
+/// Per fitted marker (by index), the covariance inflation (reported centre σ
+/// over the white-residual σ) and the fitted PSF. Study output, empty without
+/// the feature.
+type Inflations = HashMap<usize, (Option<f64>, BlurSample)>;
 
 /// Photometric detection with the markers' covariance inflations.
 #[cfg(feature = "study")]
@@ -313,7 +396,15 @@ fn detect_photometric(
         .expect("detect");
     let inflations = residuals
         .iter()
-        .map(|r| (r.marker_index, r.covariance_inflation))
+        .map(|r| {
+            let blur = BlurSample {
+                seed: 0,
+                value: [r.blur_sigma_px, r.aniso[0], r.aniso[1]],
+                cov: r.blur_covariance,
+                cov_white: r.blur_covariance_white,
+            };
+            (r.marker_index, (r.covariance_inflation, blur))
+        })
         .collect();
     (res, diag, inflations)
 }
@@ -377,11 +468,26 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     let spec = spec_for(cell, target, size);
     let rad: Radiance = radiance(board, &spec);
     let truth = Truth::new(target, &rad.h, size, spec.px_per_mm);
-    let photometric = detector(
-        target,
-        cell.outer_radius_px,
-        CircleRefinementMethod::Photometric,
-    );
+    let mut pooled_r0 = None;
+    let photometric = match pooled_inner_radius(target, cell, &rad, &spec, n_seeds) {
+        // Radii fixed to the value pooled over the cell's exposures.
+        Some((r0, n)) => {
+            pooled_r0 = Some((r0, n));
+            let pooled = cell.kind.target_with_inner(Some(r0 as f32));
+            let mut config = DetectConfig::from_target_and_marker_diameter(
+                pooled,
+                (2.0 * cell.outer_radius_px) as f32,
+            );
+            config.circle_refinement = CircleRefinementMethod::Photometric;
+            config.advanced.photometric.estimate_print_radii = false;
+            Detector::with_config(config)
+        }
+        None => detector(
+            target,
+            cell.outer_radius_px,
+            CircleRefinementMethod::Photometric,
+        ),
+    };
     let projective = detector(
         target,
         cell.outer_radius_px,
@@ -389,6 +495,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     );
     let mut out = CellResult {
         n_visible: truth.visible,
+        pooled_r0,
         ..CellResult::default()
     };
     let mut samples: BTreeMap<usize, MarkerSamples> = BTreeMap::new();
@@ -404,6 +511,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             out.h_rms_photometric = homography_rms(&res, target, &truth, size);
         }
         out.n_detected += res.detected_markers.len() as f64;
+        out.radii_by_seed.push(diag.photometric_print_radii_mm);
         for (index, (m, d)) in res.detected_markers.iter().zip(&diag.markers).enumerate() {
             let status = d
                 .photometric
@@ -428,7 +536,8 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             let (Some(cov), Some(p)) = (m.center_cov, d.photometric.as_ref()) else {
                 continue;
             };
-            let inflation = inflations_of.get(&index).copied().flatten();
+            let study = inflations_of.get(&index).copied();
+            let inflation = study.and_then(|s| s.0);
             let t = truth.centers[idx];
             errors.push((m.center[0] - t[0]).hypot(m.center[1] - t[1]));
             inflations.push(inflation);
@@ -438,6 +547,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             s.truth = t;
             s.centers.push(m.center);
             s.traces.push((cov[0][0] + cov[1][1], inflation));
+            s.blurs.extend(study.map(|s| BlurSample { seed, ..s.1 }));
         }
     }
     out.n_detected /= n_seeds as f64;
@@ -452,7 +562,235 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     };
     out.residual /= inflations.len().max(1) as f64;
     summarize_monte_carlo(&samples, n_seeds, &mut out);
+    out.exposure = exposure_stats(
+        &samples,
+        &out.radii_by_seed,
+        true_print_radii(target),
+        if target.is_coded() { 3 } else { 1 },
+        psf_moments(spec.psf, true)[0],
+        n_seeds,
+    );
     out
+}
+
+/// With `MATRIX_POOLED_RADII` set, on a plain target: the median over the
+/// cell's exposures of the per-image inner-radius estimate (where one was
+/// made) and the number of exposures it came from.
+fn pooled_inner_radius(
+    target: &TargetLayout,
+    cell: &Cell,
+    rad: &Radiance,
+    spec: &SceneSpec,
+    n_seeds: u64,
+) -> Option<(f64, usize)> {
+    if std::env::var("MATRIX_POOLED_RADII").is_err() || target.is_coded() {
+        return None;
+    }
+    let det = detector(
+        target,
+        cell.outer_radius_px,
+        CircleRefinementMethod::Photometric,
+    );
+    let mut r0: Vec<f64> = (0..n_seeds)
+        .filter_map(|seed| {
+            let scene = expose(rad, spec, 1000 + seed);
+            let (_, diag) = det.detect_with_diagnostics(&scene.image).expect("detect");
+            diag.photometric_print_radii_mm.map(|r| r[0])
+        })
+        .collect();
+    if r0.is_empty() {
+        return None;
+    }
+    r0.sort_by(|a, b| a.total_cmp(b));
+    Some((r0[r0.len() / 2], r0.len()))
+}
+
+/// The printed radii of the rendered target (board mm), as the photometric
+/// model orders them: hole edge, inner ring outer edge, outer ring inner
+/// edge, outer edge.
+fn true_print_radii(target: &TargetLayout) -> [f64; 4] {
+    let ring = target.ring();
+    let (inner, outer) = (
+        f64::from(ring.inner_radius_mm),
+        f64::from(ring.outer_radius_mm),
+    );
+    let h = f64::from(target.outer_draw_radius_mm()) - outer;
+    if target.is_coded() {
+        [inner - h, inner + h, outer - h, outer + h]
+    } else {
+        [inner, outer, outer, outer]
+    }
+}
+
+/// Per-exposure structure of the fitted-sigma error over the markers fitted
+/// in (almost) every exposure; `None` without blur samples.
+fn exposure_stats(
+    samples: &BTreeMap<usize, MarkerSamples>,
+    radii_by_seed: &[Option<[f64; 4]>],
+    true_radii: [f64; 4],
+    n_free: usize,
+    true_sigma: f64,
+    n_seeds: u64,
+) -> Option<ExposureStats> {
+    let markers: Vec<&MarkerSamples> = samples
+        .values()
+        .filter(|s| s.blurs.len() >= 2 && (s.blurs.len() as u64) + 1 >= n_seeds)
+        .collect();
+    if markers.len() < 3 {
+        return None;
+    }
+    let n_exp = n_seeds as usize;
+    // Per marker and component: mean over its exposures.
+    let means: Vec<[f64; 3]> = markers
+        .iter()
+        .map(|s| {
+            let n = s.blurs.len() as f64;
+            std::array::from_fn(|k| s.blurs.iter().map(|b| b.value[k]).sum::<f64>() / n)
+        })
+        .collect();
+    // Exposure common mode: mean deviation of the markers present.
+    let mut common = vec![[0.0f64; 3]; n_exp];
+    let mut count = vec![0usize; n_exp];
+    for (s, m) in markers.iter().zip(&means) {
+        for b in &s.blurs {
+            let e = b.seed as usize;
+            count[e] += 1;
+            for k in 0..3 {
+                common[e][k] += b.value[k] - m[k];
+            }
+        }
+    }
+    for (c, &n) in common.iter_mut().zip(&count) {
+        for v in c.iter_mut() {
+            *v /= n.max(1) as f64;
+        }
+    }
+    let used: Vec<usize> = (0..n_exp).filter(|&e| count[e] >= 3).collect();
+    let mean_of =
+        |f: &dyn Fn(usize) -> f64| used.iter().map(|&e| f(e)).sum::<f64>() / used.len() as f64;
+    let var_of = |f: &dyn Fn(usize) -> f64| {
+        let m = mean_of(f);
+        used.iter().map(|&e| (f(e) - m).powi(2)).sum::<f64>() / (used.len() as f64 - 1.0)
+    };
+    // Total per-marker variance, within-exposure variance and reported.
+    let (mut total, mut within, mut reported) = ([0.0; 3], [0.0; 3], [0.0; 3]);
+    for (s, m) in markers.iter().zip(&means) {
+        let n = s.blurs.len() as f64;
+        for k in 0..3 {
+            total[k] += s
+                .blurs
+                .iter()
+                .map(|b| (b.value[k] - m[k]).powi(2))
+                .sum::<f64>()
+                / (n - 1.0);
+            let w: f64 = s
+                .blurs
+                .iter()
+                .map(|b| {
+                    let e = b.seed as usize;
+                    let mk = count[e] as f64;
+                    // Removing the common mode also removes 1/M of the marker's own
+                    // deviation: correct for it.
+                    (b.value[k] - m[k] - common[e][k]).powi(2) * mk / (mk - 1.0)
+                })
+                .sum();
+            within[k] += w / (n - 1.0);
+            reported[k] += s.blurs.iter().map(|b| b.cov[k][k]).sum::<f64>() / n;
+        }
+    }
+    let between = var_of(&|e| common[e][0]);
+    let total_sigma = total[0] / markers.len() as f64;
+    let dr = |e: usize, k: usize| {
+        radii_by_seed
+            .get(e)
+            .copied()
+            .flatten()
+            .map_or(0.0, |r| r[k] - true_radii[k])
+    };
+    let corr = |f: &dyn Fn(usize) -> f64, g: &dyn Fn(usize) -> f64| {
+        let (mf, mg) = (mean_of(f), mean_of(g));
+        let c = used.iter().map(|&e| (f(e) - mf) * (g(e) - mg)).sum::<f64>()
+            / (used.len() as f64 - 1.0);
+        c / (var_of(f) * var_of(g)).sqrt()
+    };
+    let y = |e: usize| common[e][0];
+    let radii: Vec<(f64, f64, f64)> = (0..n_free)
+        .map(|k| {
+            let x = |e: usize| dr(e, k);
+            let vx = var_of(&x);
+            let c = corr(&y, &x);
+            let slope = c * (var_of(&y) / vx).sqrt();
+            (vx.sqrt(), c, slope)
+        })
+        .collect();
+    let r2 = joint_r2(&used, &y, &|e, k| dr(e, k), n_free);
+    let mean_error = markers
+        .iter()
+        .flat_map(|s| s.blurs.iter().map(|b| b.value[0] - true_sigma))
+        .sum::<f64>()
+        / markers.iter().map(|s| s.blurs.len()).sum::<usize>() as f64;
+    Some(ExposureStats {
+        n_exposures: used.len(),
+        n_estimated: radii_by_seed.iter().filter(|r| r.is_some()).count(),
+        between_share: between / total_sigma,
+        within_ratio: std::array::from_fn(|k| (reported[k] / within[k]).sqrt()),
+        radii,
+        r2,
+        mean_error,
+    })
+}
+
+/// R² of the least-squares fit of `y(e)` on `x(e, 0..n)` with an intercept,
+/// over the exposures `used` (NaN when singular).
+fn joint_r2(
+    used: &[usize],
+    y: &dyn Fn(usize) -> f64,
+    x: &dyn Fn(usize, usize) -> f64,
+    n: usize,
+) -> f64 {
+    let m = n + 1;
+    let row = |e: usize| -> Vec<f64> {
+        std::iter::once(1.0)
+            .chain((0..n).map(|k| x(e, k)))
+            .collect()
+    };
+    let mut a = vec![vec![0.0f64; m + 1]; m];
+    for &e in used {
+        let r = row(e);
+        for i in 0..m {
+            for j in 0..m {
+                a[i][j] += r[i] * r[j];
+            }
+            a[i][m] += r[i] * y(e);
+        }
+    }
+    // Gaussian elimination with partial pivoting.
+    for c in 0..m {
+        let p = (c..m)
+            .max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))
+            .unwrap();
+        a.swap(c, p);
+        if a[c][c].abs() < 1e-18 {
+            return f64::NAN;
+        }
+        for i in 0..m {
+            if i != c {
+                let f = a[i][c] / a[c][c];
+                for j in c..=m {
+                    a[i][j] -= f * a[c][j];
+                }
+            }
+        }
+    }
+    let beta: Vec<f64> = (0..m).map(|i| a[i][m] / a[i][i]).collect();
+    let ym = used.iter().map(|&e| y(e)).sum::<f64>() / used.len() as f64;
+    let (mut ss_res, mut ss_tot) = (0.0, 0.0);
+    for &e in used {
+        let pred: f64 = row(e).iter().zip(&beta).map(|(r, b)| r * b).sum();
+        ss_res += (y(e) - pred).powi(2);
+        ss_tot += (y(e) - ym).powi(2);
+    }
+    1.0 - ss_res / ss_tot
 }
 
 /// Pooled covariance honesty from the per-marker samples.
@@ -499,6 +837,98 @@ fn summarize_monte_carlo(
         (rep_w / n_m as f64 / mean_err2).sqrt(),
     ));
     out.bias_rms = Some((bias2 / n_m as f64).sqrt());
+    out.blur = summarize_blur(samples, n_seeds);
+}
+
+/// Pooled PSF honesty and mean, over markers fitted in (almost) every seed.
+fn summarize_blur(samples: &BTreeMap<usize, MarkerSamples>, n_seeds: u64) -> Option<BlurSummary> {
+    let (mut emp, mut rep_c, mut rep_w, mut sum, mut n_s, mut n_m) =
+        ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], 0usize, 0usize);
+    let mut n_fallback = 0usize;
+    let (mut emp_kl, mut rep_kl) = ([[0.0; 3]; 3], [[0.0; 3]; 3]);
+    for s in samples.values() {
+        let n = s.blurs.len();
+        if n < 2 || (n as u64) + 1 < n_seeds {
+            continue;
+        }
+        for k in 0..3 {
+            let m = s.blurs.iter().map(|b| b.value[k]).sum::<f64>() / n as f64;
+            emp[k] += s
+                .blurs
+                .iter()
+                .map(|b| (b.value[k] - m).powi(2))
+                .sum::<f64>()
+                / (n - 1) as f64;
+            rep_c[k] += s.blurs.iter().map(|b| b.cov[k][k]).sum::<f64>() / n as f64;
+            rep_w[k] += s.blurs.iter().map(|b| b.cov_white[k][k]).sum::<f64>() / n as f64;
+            sum[k] += s.blurs.iter().map(|b| b.value[k]).sum::<f64>();
+        }
+        let m: [f64; 3] =
+            std::array::from_fn(|k| s.blurs.iter().map(|b| b.value[k]).sum::<f64>() / n as f64);
+        for k in 0..3 {
+            for l in 0..3 {
+                emp_kl[k][l] += s
+                    .blurs
+                    .iter()
+                    .map(|b| (b.value[k] - m[k]) * (b.value[l] - m[l]))
+                    .sum::<f64>()
+                    / (n - 1) as f64;
+                rep_kl[k][l] += s.blurs.iter().map(|b| b.cov[k][l]).sum::<f64>() / n as f64;
+            }
+        }
+        n_s += n;
+        n_fallback += s.blurs.iter().filter(|b| b.cov == b.cov_white).count();
+        n_m += 1;
+    }
+    (n_m >= 3).then(|| BlurSummary {
+        ratio: std::array::from_fn(|k| ((rep_c[k] / emp[k]).sqrt(), (rep_w[k] / emp[k]).sqrt())),
+        mean: sum.map(|v| v / n_s as f64),
+        sd: emp.map(|v| (v / n_m as f64).sqrt()),
+        fallback: n_fallback as f64 / n_s as f64,
+        corr: PAIRS.map(|(k, l)| {
+            let rho = |c: &[[f64; 3]; 3]| c[k][l] / (c[k][k] * c[l][l]).sqrt();
+            (rho(&rep_kl), rho(&emp_kl))
+        }),
+    })
+}
+
+/// Second moments of the rendered PSF as `(sigma, a, b)` of the model's
+/// parametrization (covariance `sigma^2 [[1 + a, b], [b, 1 - a]]`), with
+/// `pixel_box` adding the variance 1/12 per axis of the area sampling.
+fn psf_moments(psf: Psf, pixel_box: bool) -> [f64; 3] {
+    let iso = |v: f64| [[v, 0.0], [0.0, v]];
+    let mut c = match psf {
+        Psf::Gaussian { sigma } => iso(sigma * sigma),
+        Psf::Anisotropic {
+            sigma_major,
+            sigma_minor,
+            angle_deg,
+        } => {
+            let (s, co) = angle_deg.to_radians().sin_cos();
+            let (ma, mi) = (sigma_major * sigma_major, sigma_minor * sigma_minor);
+            [
+                [ma * co * co + mi * s * s, (ma - mi) * co * s],
+                [(ma - mi) * co * s, ma * s * s + mi * co * co],
+            ]
+        }
+        Psf::Halo {
+            sigma,
+            halo_sigma,
+            halo_weight,
+        } => iso((1.0 - halo_weight) * sigma * sigma + halo_weight * halo_sigma * halo_sigma),
+        Psf::Disc { radius } => iso(0.25 * radius * radius),
+        Psf::VaryingGaussian { .. } => unreachable!("not in the matrix"),
+    };
+    if pixel_box {
+        c[0][0] += 1.0 / 12.0;
+        c[1][1] += 1.0 / 12.0;
+    }
+    let tr = c[0][0] + c[1][1];
+    [
+        (0.5 * tr).sqrt(),
+        (c[0][0] - c[1][1]) / tr,
+        2.0 * c[0][1] / tr,
+    ]
 }
 
 fn opt4(v: Option<f64>) -> String {
@@ -541,6 +971,90 @@ fn print_row(cell: &Cell, r: &CellResult) {
         opt4(r.h_rms_projective),
         opt4(r.h_rms_photometric),
     );
+    if let Some(b) = r.blur {
+        let mut spec = SceneSpec::for_target(
+            &cell.kind.target(),
+            cell.outer_radius_px,
+            cell.blur,
+            0.0,
+            0.0,
+            0,
+        );
+        cell.effect.apply(&mut spec, cell.blur);
+        let psf = psf_moments(spec.psf, false);
+        let eff = psf_moments(spec.psf, true);
+        println!(
+            "    blur: sigma {:.4} (psf {:.4} bias {:+.4} {:+.1}%, +pixel {:.4} bias {:+.4} {:+.1}%) sd {:.4} ratio {:.3}/{:.3} | a {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | b {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | fallback {:.3} | rho {:+.2}/{:+.2} {:+.2}/{:+.2} {:+.2}/{:+.2}",
+            b.mean[0],
+            psf[0],
+            b.mean[0] - psf[0],
+            100.0 * (b.mean[0] / psf[0] - 1.0),
+            eff[0],
+            b.mean[0] - eff[0],
+            100.0 * (b.mean[0] / eff[0] - 1.0),
+            b.sd[0],
+            b.ratio[0].0,
+            b.ratio[0].1,
+            b.mean[1],
+            eff[1],
+            b.sd[1],
+            b.ratio[1].0,
+            b.ratio[1].1,
+            b.mean[2],
+            eff[2],
+            b.sd[2],
+            b.ratio[2].0,
+            b.ratio[2].1,
+            b.fallback,
+            b.corr[0].0,
+            b.corr[0].1,
+            b.corr[1].0,
+            b.corr[1].1,
+            b.corr[2].0,
+            b.corr[2].1,
+        );
+    }
+    let estimated: Vec<[f64; 4]> = r.radii_by_seed.iter().flatten().copied().collect();
+    if !estimated.is_empty() {
+        let n = estimated.len() as f64;
+        let stats: Vec<String> = (0..3)
+            .map(|k| {
+                let m = estimated.iter().map(|x| x[k]).sum::<f64>() / n;
+                let sd = (estimated.iter().map(|x| (x[k] - m).powi(2)).sum::<f64>()
+                    / (n - 1.0).max(1.0))
+                .sqrt();
+                format!("r{k} {m:.4} sd {sd:.4}")
+            })
+            .collect();
+        println!(
+            "    print radii estimated in {} exposures: {}",
+            estimated.len(),
+            stats.join(", ")
+        );
+    }
+    if let Some((r0, n)) = r.pooled_r0 {
+        println!("    pooled r0 {r0:.4} mm from {n} exposures");
+    }
+    if let Some(e) = &r.exposure {
+        let radii: Vec<String> = e
+            .radii
+            .iter()
+            .enumerate()
+            .map(|(k, (sd, c, g))| format!("r{k} sd {sd:.4} corr {c:+.2} slope {g:+.3}"))
+            .collect();
+        println!(
+            "    exposure: n {} estimated {} | between share {:.2} | within ratio {:.3} {:.3} {:.3} | mean err {:+.4} | {} | R2 {:.2}",
+            e.n_exposures,
+            e.n_estimated,
+            e.between_share,
+            e.within_ratio[0],
+            e.within_ratio[1],
+            e.within_ratio[2],
+            e.mean_error,
+            radii.join(", "),
+            e.r2,
+        );
+    }
     if r.n_silent > 0 || std::env::var("MATRIX_STATUSES").is_ok() {
         println!("    statuses {:?}", r.statuses);
     }
@@ -846,4 +1360,86 @@ fn photometric_misfit_matrix() {
         }
     }
     run_cells(&cells, n_seeds, [720, 540]);
+}
+
+/// Fitted PSF sigma against exposure and contrast at a fixed true PSF
+/// (Gaussian, blur 1.5, outer radius 17 px, tilt 20°): one radiance scaled by
+/// an exposure gain (up to partial saturation of the paper), and scenes
+/// rendered with different paper-minus-ink contrasts. Prints the mean and
+/// spread of the accepted fits' sigma.
+#[test]
+#[ignore = "study; run in release with --ignored --nocapture"]
+fn photometric_blur_exposure() {
+    let n_seeds = env_or("MATRIX_SEEDS", 4u64);
+    let size = [720, 540];
+    let blur = 1.5;
+    for kind in selected_kinds() {
+        let target = kind.target();
+        let board = BoardRaster::with_dpi(target.clone(), raster_dpi(&target, 17.0));
+        let det = detector(&target, 17.0, CircleRefinementMethod::Photometric);
+        let row = |label: String, rad: &Radiance, spec: &SceneSpec| {
+            let (mut sigmas, mut masked, mut contrast, mut n_fit) = (Vec::new(), 0.0, 0.0, 0usize);
+            for seed in 0..n_seeds {
+                let scene = expose(rad, spec, 1000 + seed);
+                let (res, diag) = det.detect_with_diagnostics(&scene.image).expect("detect");
+                for (m, p) in res
+                    .detected_markers
+                    .iter()
+                    .zip(&diag.markers)
+                    .filter_map(|(m, d)| Some((m, d.photometric.as_ref()?)))
+                {
+                    if p.status == PhotometricStatus::NoBoardPosition {
+                        continue;
+                    }
+                    n_fit += 1;
+                    if p.status != PhotometricStatus::Accepted {
+                        continue;
+                    }
+                    sigmas.push(m.blur.expect("accepted fit has a blur").sigma_px);
+                    masked += p.masked_fraction;
+                    contrast += p.contrast.unwrap_or(f64::NAN);
+                }
+            }
+            let n = sigmas.len().max(1) as f64;
+            let mean = sigmas.iter().sum::<f64>() / n;
+            let sd = (sigmas.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n).sqrt();
+            println!(
+                "{:<18} {label:<22} accepted {:>4}/{:<4} sigma {mean:.4} (sd {sd:.4}, {:+.4} vs psf+pixel {:.4}) fitted contrast {:6.1} masked {:.3}",
+                kind.name(),
+                sigmas.len(),
+                n_fit,
+                mean - psf_moments(spec.psf, true)[0],
+                psf_moments(spec.psf, true)[0],
+                contrast / n,
+                masked / n,
+            );
+        };
+        // Exposure: one radiance (paper 150, ink 70 at the image centre,
+        // ±15 % illumination) scaled by a gain.
+        let spec = SceneSpec::for_target(&target, 17.0, blur, 20.0, 80.0, 1);
+        let spec = SceneSpec {
+            image_size: size,
+            ..spec
+        };
+        let rad = radiance(&board, &spec);
+        for gain in [0.25, 0.5, 1.0, 1.5, 1.7, 2.0] {
+            let scaled = Radiance {
+                buf: rad.buf.iter().map(|v| gain * v).collect(),
+                h: rad.h,
+            };
+            row(format!("gain {gain}"), &scaled, &spec);
+        }
+        // Contrast at a fixed ink level (paper = 70 + contrast).
+        for contrast in [20.0, 40.0, 160.0] {
+            let spec = SceneSpec {
+                image_size: size,
+                ..SceneSpec::for_target(&target, 17.0, blur, 20.0, contrast, 1)
+            };
+            row(
+                format!("contrast {contrast}"),
+                &radiance(&board, &spec),
+                &spec,
+            );
+        }
+    }
 }

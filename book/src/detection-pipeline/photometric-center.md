@@ -74,7 +74,8 @@ is used for all final fits. The estimate is reported in
 | Refined center | `DetectedMarker::center` |
 | Which estimator produced the center | `DetectedMarker::center_source` (`outer_ellipse`, `projective_center`, `photometric`) |
 | 2×2 center covariance (px²) | `DetectedMarker::center_cov` (photometric centers only) |
-| Fitted blur, contrast, residual, center shift, status | `MarkerDiagnostics::photometric` |
+| Blur: Gaussian edge width, PSF anisotropy and their covariance | `DetectedMarker::blur` (photometric centers only, see [Blur](#blur)) |
+| Fitted contrast, residual, center shift, status | `MarkerDiagnostics::photometric` |
 | Homography and RANSAC statistics, refit from the refined centers | `DetectionResult::homography`, `DetectionDiagnostics::ransac` |
 
 ## Covariance
@@ -110,6 +111,69 @@ or contrast, or leaves a residual more than three times the image's typical fit
 residual. The reason is reported in `MarkerDiagnostics::photometric.status`;
 a marker that could not be placed on the board at all reports
 `no_board_position`. With the method selected, every marker has a status.
+
+## Blur
+
+`DetectedMarker::blur` (`BlurEstimate`) is the marker's blur as the fit
+measured it: a Gaussian PSF of covariance `σ² [[1 + a, b], [b, 1 − a]]` in
+image pixels — `sigma_px` = σ, `anisotropy` = `[a, b]` (`|[a, b]| ≤ 0.9`) —
+and `cov`, the 3×3 covariance of `(σ, a, b)`.
+
+It is `None` unless the photometric fit produced the centre, and `None` when
+σ exceeds 0.25 × the marker's outer radius in pixels.
+
+**What σ measures.** The Gaussian edge width including the pixel's area
+integration: for a Gaussian PSF of σ_psf, `√(σ_psf² + 1/12)`. Under a
+non-Gaussian PSF it is the width of the best-matching Gaussian edge, not the
+PSF's second moment. Measured on synthetic scenes (σ = 2 grey-level noise;
+`photometric_target_matrix`, `blur_covariance_sweep`,
+`photometric_blur_exposure`, `displayed_target`), fitted σ against
+`√(σ_psf² + 1/12)`:
+
+| Condition | Bias |
+|---|---|
+| Gaussian PSF 0.8 / 1.5 / 3 px, outer radius 17–33 px, correct print radii | −0.2 … +0.4 % (median over cells) |
+| Gaussian PSF 0.8 / 1.5 px, outer radius 8 px | −0.1 / −1.3 % (cells −4.6 … +4 %) |
+| Gaussian PSF 3 px, outer radius 8 px (σ ≈ 0.4 × radius; not reported) | +18 % (cells up to +41 %) |
+| Gaussian PSF 0.4 / 0.5 / 0.6 / 0.7 / 0.8 px, outer radius 18 px | −25 / −13 / −4.5 / −1.5 / −0.4 % |
+| Thin or small plain rings, print radii estimated per image | −2 … −6 % |
+| Pixel-snapped binary display, pitch 0.4 / 0.8 camera px | +0.9 … +1.0 / +1.6 … +3.5 % |
+| Grey-level display (area coverage), pitch 0.4 / 0.8 camera px | +1.1 … +1.8 / +1.9 … +7.0 % |
+| Contrast 20–160 grey levels, exposure up to a partly saturated paper | within ±0.003 px |
+| 60 % of the patch masked as saturated (coded) | −1.2 % |
+| Anisotropic Gaussian, axis ratio 1.8 | +1.4 … +2.2 % (against the mean second moment) |
+| Gaussian core σ 1.5 + 15 % halo of σ 6 | 1.55–1.58 px: the core (second moment 2.72) |
+| Uniform defocus disc of radius 3 px | 1.80–1.85 px (second moment 1.5) |
+
+The ordering of σ across markers and its differences are reliable wherever
+it is reported; its absolute scale carries a target-dependent factor of a few
+percent.
+
+**What the covariance covers.** `cov` is the same correlation-aware sandwich
+as `center_cov`, restricted to `(σ, a, b)`, given the image's print radii.
+Reported standard deviation over Monte-Carlo scatter of each marker's σ
+across noise seeds, with the scatter taken relative to the other markers of
+the same image:
+
+| Set | Cells | Understated (< 0.8) | Overstated (> 1.25) | Median |
+|---|---|---|---|---|
+| Target matrix, σ ≤ 0.25 × outer radius | 294 | 0 | 7 (blur 3, contrast 80; the centre over-states there too) | 1.005 |
+
+With print radii estimated per image (`estimate_print_radii`, the default),
+all markers of an image additionally share one σ offset that `cov` does not
+contain, from the error of the image's radius estimate:
+
+| Target | Shared σ offset (sd over images) |
+|---|---|
+| Coded | ≈ 0.001 px |
+| Plain rings | 0.008–0.05 px (largest on thin strokes and at low contrast) |
+
+A consumer fitting blur across images should carry one offset per image, or
+compare within an image. With the print radii fixed for all images the
+covariance is honest across images too: with the true radii no cell of the
+matrix is understated; with radii pooled over images (median of the per-image
+estimates) the cells that otherwise understate report 0.96–1.15. `cov` does
+not cover the PSF-model bias in the first table.
 
 ## Scope
 

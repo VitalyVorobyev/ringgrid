@@ -5,6 +5,7 @@ native Rust detector.
 """
 
 from ._api import (
+    BlurEstimate,
     CameraIntrinsics,
     CameraModel,
     CircleRefinementMethod,
@@ -107,6 +108,7 @@ __all__ = [
     "propose_with_heatmap",
     "DetectionResult",
     "DetectedMarker",
+    "BlurEstimate",
     "DetectionDiagnostics",
     "MarkerDiagnostics",
     "FitMetrics",

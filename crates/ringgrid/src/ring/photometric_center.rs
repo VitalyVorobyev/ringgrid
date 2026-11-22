@@ -30,9 +30,10 @@
 //!
 //! The parameters are fitted by Levenberg–Marquardt on the pixel residuals with
 //! Huber weights; saturated pixels (and their immediate neighbours) are
-//! masked. The centre covariance is a sandwich estimate that stays honest when
-//! the residuals are spatially correlated (see [`correlated_center_covariance`]);
-//! it reduces to the `p` block of the inverse Fisher information
+//! masked. The covariance of the centre and of the PSF (`sigma` and its
+//! anisotropy) is a sandwich estimate that stays honest when the residuals
+//! are spatially correlated (see [`sandwich_covariance`]); it reduces to
+//! the corresponding block of the inverse Fisher information
 //! `(J^T W J / s^2 + prior)^-1` when they are white.
 
 use image::GrayImage;
@@ -162,7 +163,11 @@ pub(crate) struct PhotometricFit {
     pub center_cov_white: [[f64; 2]; 2],
     /// Residual autocorrelation (diagnostic).
     pub residual_acf: ResidualAcf,
-    pub blur_sigma_px: f64,
+    /// The fitted PSF and its uncertainty.
+    pub blur: BlurEstimate,
+    /// [`BlurEstimate::cov`] assuming white residuals (diagnostic).
+    #[cfg(any(test, feature = "study"))]
+    pub blur_cov_white: [[f64; 3]; 3],
     /// Paper minus ink at the marker centre, grey levels.
     pub contrast: f64,
     /// Robust residual standard deviation, grey levels.
@@ -181,6 +186,54 @@ pub(crate) struct PhotometricFit {
     /// the model ([`residual_samples`]).
     #[cfg(feature = "study")]
     pub params: Params,
+}
+
+/// The blur of one marker as the photometric fit measured it: a Gaussian
+/// point spread function of covariance `sigma_px² [[1 + a, b], [b, 1 − a]]`
+/// in image pixels, `[a, b]` = [`anisotropy`](Self::anisotropy).
+///
+/// **`sigma_px`** is the Gaussian edge width *including the pixel's area
+/// integration*: for a Gaussian PSF of σ_psf it estimates
+/// `√(σ_psf² + 1/12)`. Under a non-Gaussian PSF it is the width of the
+/// Gaussian edge that best matches the image, not the PSF's second moment
+/// (the core of a PSF with a wide halo; ≈ 0.6 R for a uniform defocus disc of
+/// radius R). Measured on synthetic scenes against `√(σ_psf² + 1/12)`:
+///
+/// | Condition | Bias |
+/// |---|---|
+/// | Gaussian PSF, σ 0.7–3 px, outer radius ≥ 17 px, correct print radii | within ±0.5 % |
+/// | σ_psf 0.5 / 0.6 / 0.7 px | −13 / −4.5 / −1.5 % |
+/// | thin or small plain rings, print radii estimated from the image | −2 … −6 % |
+/// | pixel-snapped binary display target | +1 … +3.5 % (grey-level display up to +7 %) |
+///
+/// The ordering of `sigma_px` across markers and its differences are
+/// reliable wherever it is reported; its absolute scale carries a
+/// target-dependent factor of a few percent.
+///
+/// **`cov`** is the covariance of `(sigma_px, a, b)` given the image's print
+/// radii: a sandwich estimate from the fit's residuals that accounts for
+/// their spatial correlation, like
+/// [`DetectedMarker::center_cov`](crate::DetectedMarker::center_cov). It is
+/// honest for *differences between markers of one image* (reported over
+/// Monte-Carlo scatter: no cell understated, median 1.005). When print radii
+/// are estimated per image (the default,
+/// [`PhotometricConfig::estimate_print_radii`](crate::PhotometricConfig::estimate_print_radii)),
+/// all markers of an image additionally share one σ offset that `cov` does
+/// not contain: ≈ 0.001 px on coded targets, 0.008–0.05 px on plain rings
+/// (largest on thin strokes and at low contrast). A consumer fitting blur
+/// across images should carry one offset per image, or compare within an
+/// image. `cov` does not cover the PSF-model bias above.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct BlurEstimate {
+    /// Gaussian edge width in image pixels, including pixel integration.
+    pub sigma_px: f64,
+    /// PSF anisotropy `[a, b]`: the PSF covariance is
+    /// `sigma_px² [[1 + a, b], [b, 1 − a]]`, with `|[a, b]| ≤ 0.9`.
+    pub anisotropy: [f64; 2],
+    /// Covariance of `(sigma_px, a, b)`, row-major, given the image's print
+    /// radii (see the type documentation).
+    pub cov: [[f64; 3]; 3],
 }
 
 /// Why a fit was not produced.
@@ -914,6 +967,17 @@ impl Layout {
     fn radii_base(&self) -> usize {
         self.lin_base() + self.lin.len()
     }
+    /// The parameters whose sampling covariance is reported (see
+    /// [`sandwich_covariance`]): the centre, log sigma, and the anisotropy
+    /// when fitted. Returns the indices and their count.
+    fn reported(&self) -> ([usize; N_REPORTED], usize) {
+        let s = self.sigma_index();
+        if self.aniso {
+            ([0, 1, s, s + 1, s + 2], N_REPORTED)
+        } else {
+            ([0, 1, s, 0, 0], 3)
+        }
+    }
     fn n(&self) -> usize {
         self.radii_base() + self.n_radii
     }
@@ -962,6 +1026,10 @@ impl Layout {
 /// Maximum parameter count (geometry with anisotropy, photometry, three free
 /// radii).
 const N_MAX: usize = N_GEOM + N_ANISO + N_LIN + 3;
+
+/// Largest number of reported parameters: centre (2), log sigma, anisotropy
+/// (2).
+const N_REPORTED: usize = 5;
 
 /// Residual and Jacobian row (`d model / d params`, active entries first) of
 /// one pixel.
@@ -1298,15 +1366,17 @@ impl Fitting<'_> {
     }
 }
 
-/// Weighted residuals and centre-influence vectors of the patch on a dense
-/// grid over its bounding box (zero outside the patch).
+/// Weighted residuals and influence vectors of the patch on a dense grid over
+/// its bounding box (zero outside the patch).
 struct ResidualGrid {
     width: usize,
     height: usize,
     /// `sqrt(w) r`, the standardized-weight residual.
     e: Vec<f64>,
-    /// `sqrt(w) B J`, the pixel's influence on the centre (2 components).
-    z: Vec<[f64; 2]>,
+    /// `sqrt(w) B J`, the pixel's influence on the reported parameters
+    /// ([`Layout::reported`]), `n_reported` per pixel.
+    z: Vec<f64>,
+    n_reported: usize,
     /// `L^T sqrt(w) J` with `L L^T = A^-1`, `n` per pixel: the hat matrix of
     /// the fit is `H_ij = q_i . q_j`.
     q: Vec<f64>,
@@ -1324,6 +1394,8 @@ impl ResidualGrid {
     /// Build the grid for the solution; `a_inv` is `(J^T W J + s^2 P)^-1`.
     fn new(fitting: &Fitting<'_>, sol: &Solution, a_inv: &DMatrix<f64>) -> Option<Self> {
         let n = fitting.layout.n();
+        let (reported, n_reported) = fitting.layout.reported();
+        let reported = &reported[..n_reported];
         let l = a_inv.clone().cholesky()?.l();
         let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
         for px in &fitting.pixels {
@@ -1342,7 +1414,8 @@ impl ResidualGrid {
             width,
             height,
             e: vec![0.0; width * height],
-            z: vec![[0.0; 2]; width * height],
+            z: vec![0.0; width * height * n_reported],
+            n_reported,
             q: vec![0.0; width * height * n],
             n,
             inside: vec![false; width * height],
@@ -1356,15 +1429,14 @@ impl ResidualGrid {
             let r = pixel_row(&fitting.model, px, &sol.prm, &fitting.layout, &mut row)?;
             let sw = huber_weight(r, k_huber).sqrt();
             let idx = (px.x[1] as i64 - y0) as usize * width + (px.x[0] as i64 - x0) as usize;
-            let mut z = [0.0; 2];
-            for (k, zk) in z.iter_mut().enumerate() {
+            let z = &mut grid.z[idx * n_reported..(idx + 1) * n_reported];
+            for (zk, &k) in z.iter_mut().zip(reported) {
                 *zk = sw * (0..n).map(|j| a_inv[(k, j)] * row[j]).sum::<f64>();
             }
             for k in 0..n {
                 grid.q[idx * n + k] = sw * (k..n).map(|j| l[(j, k)] * row[j]).sum::<f64>();
             }
             grid.e[idx] = sw * r;
-            grid.z[idx] = z;
             grid.inside[idx] = true;
         }
         // Reflection through the grid point nearest the fitted centre.
@@ -1458,7 +1530,7 @@ impl std::ops::AddAssign for LagStats {
 
 impl ResidualGrid {
     /// Residual-noise statistics at lag `d` (antisymmetric part, see
-    /// [`correlated_center_covariance`]).
+    /// [`sandwich_covariance`]).
     fn noise_lag_stats(&self, d: [i64; 2]) -> LagStats {
         let n = self.n;
         let (e, q) = (&self.e_odd, &self.q_odd);
@@ -1469,23 +1541,30 @@ impl ResidualGrid {
         })
     }
 
-    /// `sum_x z_x z_{x+d}^T` (row-major 2×2).
-    fn influence(&self, d: [i64; 2]) -> [f64; 4] {
+    /// `sum_x z_x z_{x+d}^T`.
+    fn influence(&self, d: [i64; 2]) -> Block {
+        let k = self.n_reported;
         self.lag_sum(d, |i, j| {
-            let (a, b) = (self.z[i], self.z[j]);
-            Quad([a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]])
+            let (a, b) = (&self.z[i * k..(i + 1) * k], &self.z[j * k..(j + 1) * k]);
+            let mut out = Block::default();
+            for (r, ar) in a.iter().enumerate() {
+                for (c, bc) in b.iter().enumerate() {
+                    out.0[r][c] = ar * bc;
+                }
+            }
+            out
         })
-        .0
     }
 }
 
-/// Four accumulated products (a 2×2 block, row-major).
+/// Accumulated products over the reported parameters (entries beyond their
+/// count stay zero).
 #[derive(Default, Clone, Copy)]
-struct Quad([f64; 4]);
+struct Block([[f64; N_REPORTED]; N_REPORTED]);
 
-impl std::ops::AddAssign for Quad {
+impl std::ops::AddAssign for Block {
     fn add_assign(&mut self, o: Self) {
-        for (a, b) in self.0.iter_mut().zip(o.0) {
+        for (a, b) in self.0.as_flattened_mut().iter_mut().zip(o.0.as_flattened()) {
             *a += b;
         }
     }
@@ -1605,11 +1684,13 @@ fn fit_noise_acf(stats: &[([i64; 2], LagStats)]) -> Option<NoiseAcf> {
     best.map(|b| b.0)
 }
 
-/// Centre covariance under spatially correlated residuals, and the residual
-/// autocorrelation diagnostic.
+/// Covariance of the reported parameters (the centre, log sigma and the PSF
+/// anisotropy, [`Layout::reported`]) under spatially correlated residuals,
+/// and the residual autocorrelation diagnostic. `None` when the centre block
+/// is not positive definite.
 ///
 /// The estimate is the sampling covariance of the regularized estimator, the
-/// sandwich `A^-1 J^T W^½ C W^½ J A^-1` restricted to the centre, with
+/// sandwich `A^-1 J^T W^½ C W^½ J A^-1` restricted to those parameters, with
 /// `A = J^T W J + s^2 P` and `C` the autocovariance of the weighted residual
 /// noise over pixel lags: a white part plus a Gaussian-correlated part
 /// ([`NoiseAcf`], positive semidefinite by construction, so the result is a
@@ -1628,12 +1709,12 @@ fn fit_noise_acf(stats: &[([i64; 2], LagStats)]) -> Option<NoiseAcf> {
 /// does not have, applied to a centrally symmetric marker) cannot move the
 /// centre and is not mistaken for noise, while stationary noise splits evenly
 /// between the symmetric and antisymmetric parts.
-fn correlated_center_covariance(
+fn sandwich_covariance(
     fitting: &Fitting<'_>,
     sol: &Solution,
     cov: &DMatrix<f64>,
     s2: f64,
-) -> Option<CenterCovariance> {
+) -> Option<SandwichCovariance> {
     let a_inv = cov / s2;
     let grid = ResidualGrid::new(fitting, sol, &a_inv)?;
     // Half plane of lags (d and -d are symmetric), lag 0 first.
@@ -1654,49 +1735,95 @@ fn correlated_center_covariance(
         .collect();
     let acf = fit_noise_acf(&stats)?;
     let window = acf.window().min((grid.width.min(grid.height) / 3) as i64);
-    let mut m = [0.0f64; 4];
+    let n_reported = grid.n_reported;
+    // Symmetrized: lag -d contributes the transpose.
+    let add_symmetric = |m: &mut Block, k: f64, zz: &Block| {
+        for r in 0..n_reported {
+            m.0[r][r] += k * zz.0[r][r];
+            for c in r + 1..n_reported {
+                let off = 0.5 * k * (zz.0[r][c] + zz.0[c][r]);
+                m.0[r][c] += off;
+                m.0[c][r] += off;
+            }
+        }
+    };
+    let mut m = Block::default();
     for d in half_plane(window) {
         let mult = if d == [0, 0] { 1.0 } else { 2.0 };
         let k = mult * acf.at(d);
         if k == 0.0 {
             continue;
         }
-        let zz = grid.influence(d);
-        // Symmetrized: lag -d contributes the transpose.
-        m[0] += k * zz[0];
-        m[3] += k * zz[3];
-        let off = 0.5 * k * (zz[1] + zz[2]);
-        m[1] += off;
-        m[2] += off;
+        add_symmetric(&mut m, k, &grid.influence(d));
     }
-    let center = [[m[0], m[1]], [m[2], m[3]]];
-    let det = center[0][0] * center[1][1] - center[0][1] * center[1][0];
-    if !(center[0][0] > 0.0 && det > 0.0 && det.is_finite()) {
+    let c = &m.0;
+    let det = c[0][0] * c[1][1] - c[0][1] * c[1][0];
+    if !(c[0][0] > 0.0 && det > 0.0 && det.is_finite()) {
         return None;
     }
-    let z0 = grid.influence([0, 0]);
-    let off = 0.5 * s2 * (z0[1] + z0[2]);
-    let white = [[s2 * z0[0], off], [off, s2 * z0[3]]];
+    let mut white = Block::default();
+    add_symmetric(&mut white, s2, &grid.influence([0, 0]));
     let mut diag = ResidualAcf::default();
     for k in 0..RESIDUAL_ACF_LAGS {
         let lag = k as i64 + 1;
         diag.x[k] = grid.correlation([lag, 0]);
         diag.y[k] = grid.correlation([0, lag]);
     }
-    Some(CenterCovariance {
-        center,
+    Some(SandwichCovariance {
+        cov: m,
         white,
         acf: diag,
     })
 }
 
-/// The centre covariance and its diagnostics.
-struct CenterCovariance {
+/// The covariance of the reported parameters and its diagnostics.
+struct SandwichCovariance {
     /// Under the fitted residual noise correlation.
-    center: [[f64; 2]; 2],
+    cov: Block,
     /// The same sandwich with white residuals of variance `s^2`.
-    white: [[f64; 2]; 2],
+    white: Block,
     acf: ResidualAcf,
+}
+
+impl Block {
+    /// The reported parameters' block of a full parameter covariance.
+    fn of(cov: &DMatrix<f64>, layout: &Layout) -> Self {
+        let (rows, n) = layout.reported();
+        let mut out = Self::default();
+        for r in 0..n {
+            for c in 0..n {
+                out.0[r][c] = cov[(rows[r], rows[c])];
+            }
+        }
+        out
+    }
+
+    fn center(&self) -> [[f64; 2]; 2] {
+        [[self.0[0][0], self.0[0][1]], [self.0[1][0], self.0[1][1]]]
+    }
+
+    /// Covariance of `(sigma, a, b)` from the `(log sigma, a, b)` block at
+    /// `sigma` (delta method: `d sigma = sigma d log sigma`); the `a`, `b`
+    /// entries are zero when the anisotropy is not reported.
+    fn blur(&self, sigma: f64) -> [[f64; 3]; 3] {
+        let scale = [sigma, 1.0, 1.0];
+        let mut out = [[0.0; 3]; 3];
+        for r in 0..3 {
+            for c in 0..3 {
+                out[r][c] = scale[r] * scale[c] * self.0[2 + r][2 + c];
+            }
+        }
+        out
+    }
+}
+
+/// Whether a symmetric 3×3 matrix is positive definite on its leading
+/// `n` rows (the rest are zero).
+fn positive_definite(m: &[[f64; 3]; 3], n: usize) -> bool {
+    m.as_flattened().iter().all(|v| v.is_finite())
+        && nalgebra::DMatrix::from_fn(n, n, |r, c| m[r][c])
+            .cholesky()
+            .is_some()
 }
 
 impl PhotometricFit {
@@ -1749,15 +1876,24 @@ pub(crate) fn fit_marker(
     let start = fitting.initial_params(&seed)?;
     let sol = fitting.solve(start, problem.max_iterations)?;
     let (cov, s2) = fitting.covariance(&sol.acc)?;
-    let (center_cov, center_cov_white, residual_acf) =
-        match correlated_center_covariance(&fitting, &sol, &cov, s2) {
-            Some(c) => (c.center, c.white, c.acf),
-            None => {
-                // The prior-regularized inverse Fisher information.
-                let c = [[cov[(0, 0)], cov[(0, 1)]], [cov[(1, 0)], cov[(1, 1)]]];
-                (c, c, ResidualAcf::default())
-            }
-        };
+    let sigma = sol.prm.log_sigma.exp();
+    // Fallback: the prior-regularized inverse Fisher information.
+    let posterior = Block::of(&cov, &fitting.layout);
+    let sandwich = sandwich_covariance(&fitting, &sol, &cov, s2);
+    let (center_cov, center_cov_white, residual_acf) = match &sandwich {
+        Some(c) => (c.cov.center(), c.white.center(), c.acf),
+        None => (
+            posterior.center(),
+            posterior.center(),
+            ResidualAcf::default(),
+        ),
+    };
+    let n_blur = fitting.layout.reported().1 - 2;
+    // The blur block (correlated, white): the sandwich's, else the posterior.
+    let blur_blocks = match &sandwich {
+        Some(c) if positive_definite(&c.cov.blur(sigma), n_blur) => (&c.cov, &c.white),
+        _ => (&posterior, &posterior),
+    };
     let radii_std = (fitting.layout.n_radii > 0).then(|| {
         let b = fitting.layout.radii_base();
         let mut std = [0.0; 3];
@@ -1771,7 +1907,13 @@ pub(crate) fn fit_marker(
         center_cov,
         center_cov_white,
         residual_acf,
-        blur_sigma_px: sol.prm.log_sigma.exp(),
+        blur: BlurEstimate {
+            sigma_px: sigma,
+            anisotropy: sol.prm.aniso,
+            cov: blur_blocks.0.blur(sigma),
+        },
+        #[cfg(any(test, feature = "study"))]
+        blur_cov_white: blur_blocks.1.blur(sigma),
         contrast: sol.prm.lin[CONTRAST],
         residual_sigma: s2.sqrt(),
         n_pixels: fitting.pixels.len(),
@@ -2049,10 +2191,10 @@ pub(super) mod tests {
                 let err = (fit.center[0] - truth[0]).hypot(fit.center[1] - truth[1]);
                 eprintln!(
                     "blur {blur} tilt {tilt} code {code:?}: err {err:.4} px, sigma {:.3}, iters {}, conv {}",
-                    fit.blur_sigma_px, fit.iterations, fit.converged
+                    fit.blur.sigma_px, fit.iterations, fit.converged
                 );
                 assert!(err < 0.5, "blur {blur}: centre error {err} px");
-                assert!((fit.blur_sigma_px - blur.max(0.3)).abs() < 0.25 * blur + 0.15);
+                assert!((fit.blur.sigma_px - blur.max(0.3)).abs() < 0.25 * blur + 0.15);
             }
         }
     }
@@ -2136,7 +2278,13 @@ mod monte_carlo {
 
     /// Radiance plus Gaussian noise of standard deviation `noise` whose
     /// spatial correlation is a Gaussian of `corr_px` (0 = white), quantized.
-    fn noisy(radiance: &[f64], size: u32, noise: f64, corr_px: f64, seed: u64) -> GrayImage {
+    pub(super) fn noisy(
+        radiance: &[f64],
+        size: u32,
+        noise: f64,
+        corr_px: f64,
+        seed: u64,
+    ) -> GrayImage {
         if corr_px <= 0.0 {
             return quantize(radiance, size, noise, seed);
         }
@@ -2179,16 +2327,45 @@ mod monte_carlo {
         img
     }
 
-    /// Reported over empirical centre standard deviation of repeated fits,
-    /// for the white-residual and the correlated-residual covariance.
-    fn sigma_ratios(blur: f64, tilt: f64, code: Option<u16>, corr_px: f64) -> (f64, f64) {
+    /// Reported over empirical standard deviation of repeated fits, for the
+    /// white-residual and the correlated-residual covariance.
+    #[derive(Debug, Clone, Copy)]
+    struct Ratios {
+        white: f64,
+        corr: f64,
+    }
+
+    /// Monte-Carlo honesty of one fit configuration.
+    struct MonteCarlo {
+        /// Centre (pooled over both axes).
+        center: Ratios,
+        /// `sigma`, `a`, `b` of the PSF.
+        blur: [Ratios; 3],
+        /// Mean fitted sigma and anisotropy over the seeds, and their
+        /// empirical standard deviations.
+        blur_mean: [f64; 3],
+        blur_sd: [f64; 3],
+        /// Correlations of `(sigma, a)`, `(sigma, b)`, `(a, b)`: from the mean
+        /// reported covariance, and empirical over the seeds.
+        corr_reported: [f64; 3],
+        corr_empirical: [f64; 3],
+    }
+
+    /// The `(sigma, a)`, `(sigma, b)`, `(a, b)` pairs.
+    const PAIRS: [(usize, usize); 3] = [(0, 1), (0, 2), (1, 2)];
+
+    /// Repeated fits of one noise-free radiance under independent noise.
+    fn monte_carlo(blur: f64, tilt: f64, code: Option<u16>, corr_px: f64) -> MonteCarlo {
         let nbs = neighbors();
         let truth = [40.3, 39.6];
         let map = true_map(tilt, truth);
         let rad = radiance(&map, 80, blur, code);
         let n = 120;
         let mut centers = Vec::with_capacity(n);
+        let mut blurs: Vec<[f64; 3]> = Vec::with_capacity(n);
         let (mut tr_white, mut tr_corr) = (0.0, 0.0);
+        let (mut var_white, mut var_corr) = ([0.0; 3], [0.0; 3]);
+        let mut cov_sum = [[0.0; 3]; 3];
         for seed in 0..n as u64 {
             let gray = noisy(&rad, 80, 2.0, corr_px, 1000 + seed);
             let mut pb = problem(&gray, perturbed(&map), [40.8, 39.2], &nbs);
@@ -2200,30 +2377,84 @@ mod monte_carlo {
             centers.push(fit.center);
             tr_white += fit.center_cov_white[0][0] + fit.center_cov_white[1][1];
             tr_corr += fit.center_cov[0][0] + fit.center_cov[1][1];
+            let b = &fit.blur;
+            blurs.push([b.sigma_px, b.anisotropy[0], b.anisotropy[1]]);
+            for k in 0..3 {
+                var_white[k] += fit.blur_cov_white[k][k];
+                var_corr[k] += b.cov[k][k];
+                for l in 0..3 {
+                    cov_sum[k][l] += b.cov[k][l];
+                }
+            }
         }
-        let m = [
-            centers.iter().map(|c| c[0]).sum::<f64>() / n as f64,
-            centers.iter().map(|c| c[1]).sum::<f64>() / n as f64,
-        ];
-        let emp_tr = centers
-            .iter()
-            .map(|c| (c[0] - m[0]).powi(2) + (c[1] - m[1]).powi(2))
-            .sum::<f64>()
-            / (n - 1) as f64;
+        let mean = |f: &dyn Fn(usize) -> f64| (0..n).map(f).sum::<f64>() / n as f64;
+        let var = |f: &dyn Fn(usize) -> f64| {
+            let m = mean(f);
+            (0..n).map(|i| (f(i) - m).powi(2)).sum::<f64>() / (n - 1) as f64
+        };
+        let m = [mean(&|i| centers[i][0]), mean(&|i| centers[i][1])];
+        let emp_tr = var(&|i| centers[i][0]) + var(&|i| centers[i][1]);
         let bias = (m[0] - truth[0]).hypot(m[1] - truth[1]);
-        let ratio = |tr: f64| (tr / n as f64 / emp_tr).sqrt();
+        let ratio = |reported: f64, empirical: f64| (reported / n as f64 / empirical).sqrt();
+        let center = Ratios {
+            white: ratio(tr_white, emp_tr),
+            corr: ratio(tr_corr, emp_tr),
+        };
+        let blur_mean: [f64; 3] = std::array::from_fn(|k| mean(&|i| blurs[i][k]));
+        let blur_var: [f64; 3] = std::array::from_fn(|k| var(&|i| blurs[i][k]));
+        let blur_ratios: [Ratios; 3] = std::array::from_fn(|k| Ratios {
+            white: ratio(var_white[k], blur_var[k]),
+            corr: ratio(var_corr[k], blur_var[k]),
+        });
+        // The renderer integrates over the pixel (a box, variance 1/12 per
+        // axis) before the Gaussian blur.
+        let effective = (blur * blur + 1.0 / 12.0).sqrt();
         eprintln!(
-            "blur {blur} tilt {tilt} code {:?} noise corr {corr_px}: bias {bias:.4} px, empirical rms {:.4} px, reported/empirical white {:.3} correlated {:.3}",
+            "blur {blur} tilt {tilt} code {:?} noise corr {corr_px}: centre bias {bias:.4} px, empirical rms {:.4} px, reported/empirical white {:.3} correlated {:.3}",
             code.is_some(),
             emp_tr.sqrt(),
-            ratio(tr_white),
-            ratio(tr_corr)
+            center.white,
+            center.corr
         );
-        (ratio(tr_white), ratio(tr_corr))
+        eprintln!(
+            "    sigma mean {:.4} (effective {effective:.4}, bias {:+.4}) sd {:.4} ratio white {:.3} corr {:.3} | a mean {:+.4} sd {:.4} ratio {:.3} {:.3} | b mean {:+.4} sd {:.4} ratio {:.3} {:.3}",
+            blur_mean[0],
+            blur_mean[0] - effective,
+            blur_var[0].sqrt(),
+            blur_ratios[0].white,
+            blur_ratios[0].corr,
+            blur_mean[1],
+            blur_var[1].sqrt(),
+            blur_ratios[1].white,
+            blur_ratios[1].corr,
+            blur_mean[2],
+            blur_var[2].sqrt(),
+            blur_ratios[2].white,
+            blur_ratios[2].corr,
+        );
+        let corr_reported =
+            PAIRS.map(|(k, l)| cov_sum[k][l] / (cov_sum[k][k] * cov_sum[l][l]).sqrt());
+        let corr_empirical = PAIRS.map(|(k, l)| {
+            let (mk, ml) = (blur_mean[k], blur_mean[l]);
+            let c = (0..n)
+                .map(|i| (blurs[i][k] - mk) * (blurs[i][l] - ml))
+                .sum::<f64>()
+                / (n - 1) as f64;
+            c / (blur_var[k] * blur_var[l]).sqrt()
+        });
+        MonteCarlo {
+            center,
+            blur: blur_ratios,
+            blur_mean,
+            blur_sd: blur_var.map(f64::sqrt),
+            corr_reported,
+            corr_empirical,
+        }
     }
 
     /// With white noise (σ = 2 grey levels, 40 levels of contrast) both
-    /// covariances match the scatter of repeated fits.
+    /// covariances match the scatter of repeated fits, for the centre and for
+    /// the PSF `(sigma, a, b)`.
     #[test]
     fn reported_covariance_matches_monte_carlo_scatter() {
         for (blur, tilt, code) in [
@@ -2231,30 +2462,108 @@ mod monte_carlo {
             (3.0, 30.0, Some(CODEWORD)),
             (1.5, 20.0, None),
         ] {
-            let (white, corr) = sigma_ratios(blur, tilt, code, 0.0);
-            for ratio in [white, corr] {
-                assert!(
-                    (0.8..=1.25).contains(&ratio),
-                    "blur {blur}: sigma ratio {ratio}"
-                );
+            let mc = monte_carlo(blur, tilt, code, 0.0);
+            for (name, r) in [("centre", mc.center)]
+                .into_iter()
+                .chain(["sigma", "a", "b"].into_iter().zip(mc.blur))
+            {
+                for ratio in [r.white, r.corr] {
+                    assert!(
+                        (0.8..=1.25).contains(&ratio),
+                        "blur {blur}: {name} sd ratio {ratio}"
+                    );
+                }
             }
         }
     }
 
     /// Spatially correlated noise: the white-residual covariance is
-    /// overconfident; the correlated-residual one is not.
+    /// overconfident; the correlated-residual one is not (centre and PSF).
     #[test]
     fn correlated_noise_covariance_matches_monte_carlo_scatter() {
         for (blur, tilt, code) in [(1.5, 20.0, Some(CODEWORD)), (1.5, 20.0, None)] {
-            let (white, corr) = sigma_ratios(blur, tilt, code, 1.0);
-            assert!(
-                white < 0.8,
-                "white covariance should be overconfident: {white}"
-            );
-            assert!(
-                (0.8..=1.25).contains(&corr),
-                "blur {blur}: sigma ratio {corr}"
-            );
+            let mc = monte_carlo(blur, tilt, code, 1.0);
+            for (name, r) in [("centre", mc.center)]
+                .into_iter()
+                .chain(["sigma", "a", "b"].into_iter().zip(mc.blur))
+            {
+                assert!(
+                    r.white < 0.8,
+                    "{name}: white covariance should be overconfident: {}",
+                    r.white
+                );
+                assert!(
+                    (0.8..=1.25).contains(&r.corr),
+                    "blur {blur}: {name} sd ratio {}",
+                    r.corr
+                );
+            }
+        }
+    }
+
+    /// Honesty of the blur covariance `(sigma, a, b)` across blur, marker
+    /// kind and noise correlation (study; prints the table).
+    #[test]
+    #[ignore = "study: blur covariance honesty sweep"]
+    fn blur_covariance_sweep() {
+        let cases: Vec<(f64, f64, Option<u16>, f64)> = [0.0, 1.0]
+            .into_iter()
+            .flat_map(|corr| {
+                [Some(CODEWORD), None].into_iter().flat_map(move |code| {
+                    [
+                        (0.4, 10.0),
+                        (0.5, 10.0),
+                        (0.6, 10.0),
+                        (0.7, 10.0),
+                        (0.8, 10.0),
+                        (1.5, 20.0),
+                        (3.0, 30.0),
+                    ]
+                    .into_iter()
+                    .map(move |(blur, tilt)| (blur, tilt, code, corr))
+                })
+            })
+            .collect();
+        let rows: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = cases
+                .iter()
+                .map(|&(blur, tilt, code, corr)| {
+                    scope.spawn(move || {
+                        let mc = monte_carlo(blur, tilt, code, corr);
+                        format!(
+                            "| {} | {blur} | {tilt} | {corr} | {:.3}/{:.3} | {:.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} | {:+.2}/{:+.2} {:+.2}/{:+.2} {:+.2}/{:+.2} |",
+                            if code.is_some() { "coded" } else { "plain" },
+                            mc.center.white,
+                            mc.center.corr,
+                            mc.blur_mean[0],
+                            mc.blur_sd[0],
+                            mc.blur[0].white,
+                            mc.blur[0].corr,
+                            mc.blur_mean[1],
+                            mc.blur_sd[1],
+                            mc.blur[1].white,
+                            mc.blur[1].corr,
+                            mc.blur_mean[2],
+                            mc.blur_sd[2],
+                            mc.blur[2].white,
+                            mc.blur[2].corr,
+                            mc.corr_reported[0],
+                            mc.corr_empirical[0],
+                            mc.corr_reported[1],
+                            mc.corr_empirical[1],
+                            mc.corr_reported[2],
+                            mc.corr_empirical[2],
+                        )
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        println!(
+            "| kind | blur | tilt | noise corr | centre w/c | sigma | sigma w/c | a | a w/c | b | b w/c | rho reported/empirical: sigma-a sigma-b a-b |"
+        );
+        for r in rows {
+            println!("{r}");
         }
     }
 }
@@ -2269,9 +2578,10 @@ mod timing {
     fn fit_time_per_marker() {
         let nbs = neighbors();
         let truth = [40.3, 39.6];
-        for blur in [1.0, 3.0] {
+        for (blur, corr_px) in [(1.0, 0.0), (3.0, 0.0), (1.5, 1.0)] {
             let map = true_map(20.0, truth);
-            let gray = quantize(&radiance(&map, 80, blur, Some(CODEWORD)), 80, 2.0, 7);
+            let rad = radiance(&map, 80, blur, Some(CODEWORD));
+            let gray = super::monte_carlo::noisy(&rad, 80, 2.0, corr_px, 7);
             for (fit_radii, aniso) in [(false, false), (false, true), (true, true)] {
                 let mut pb = problem(&gray, perturbed(&map), [40.8, 39.2], &nbs);
                 pb.fit_radii = fit_radii;
@@ -2283,7 +2593,7 @@ mod timing {
                     it += fit_marker(&pb).unwrap().iterations;
                 }
                 eprintln!(
-                    "blur {blur} fit_radii {fit_radii} anisotropic {aniso}: {:.3} ms per fit, {:.1} iterations",
+                    "blur {blur} noise corr {corr_px} fit_radii {fit_radii} anisotropic {aniso}: {:.3} ms per fit, {:.1} iterations",
                     t0.elapsed().as_secs_f64() * 1e3 / n as f64,
                     it as f64 / n as f64
                 );

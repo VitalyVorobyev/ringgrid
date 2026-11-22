@@ -33,24 +33,6 @@ camera the per-marker blur is also a calibration observation (the plane of
 sharp focus, the tilt direction, the depth of field), so its value and its
 uncertainty are wanted next to the centre.
 
-- `ALGO-017` · P1 · todo — **Blur as a stable photometric output.**
-  Today the fitted σ reaches callers only through the diagnostics tier
-  (`PhotometricMetrics::blur_sigma_px`), which is the wrong contract for an
-  observation. Report one value on `DetectedMarker`, next to `center_cov`:
-  σ, the PSF anisotropy `[a, b]` and the covariance of `(σ, a, b)`; the
-  diagnostics field goes (one source of truth). The covariance extends the
-  sandwich estimator of `center_cov` (ADR-022, *Covariance under correlated
-  residuals*) to those rows, but its justification does not carry over
-  unchanged: the centre takes its noise statistics from the
-  point-antisymmetric residual because symmetric misfit cannot move a
-  centre, while σ, a and b are exactly what symmetric misfit moves; σ is
-  fitted as log σ, and `[a, b]` carry a prior that dominates at small blur.
-  So honesty is measured first, on the photometric target matrix
-  (reported over Monte-Carlo scatter within 0.8–1.25 on Gaussian-PSF
-  cells), together with what an observation also needs: the bias of σ
-  against the true width, under PSF misfit, and against exposure and
-  contrast (Cledat, Rufener & Cucci, Pattern Recognition 2021). Only what
-  passes ships. Bindings and the book move with it.
 - `ALGO-018` · P2 · todo — **Fixed-gradient second photometric pass.**
   ADR-029 already computes each marker's neighbour σ-plane
   (`attach_blur_gradient_bias`). Refit only the markers whose predicted bias
@@ -94,6 +76,18 @@ uncertainty are wanted next to the centre.
   exposure or contrast across images, on the `blur_scene` renderer's
   radiance/exposure split and on a real exposure series.
 
+- `ALGO-021` · P2 · todo — **Print radii are a property of the target, not
+  of an image.** (a) The per-image consensus radius is biased low when the
+  blur is comparable to the ring width (thin ring: 4.48–4.55 vs 4.60 mm;
+  plain hex at 8 px outer radius: 2.27–2.33 vs 2.40 mm) and fails outright
+  at low contrast (consensus in 6–12 of 24 exposures), which shifts
+  `DetectedMarker::blur` σ by −2…−6 % and adds the per-image σ offset its
+  covariance does not contain. (b) Fixing the radii across images (known or
+  pooled) makes var(σ) honest across images (reported over scatter
+  0.96–1.15). Decide where known or pooled print radii enter (target spec
+  vs a detector input; coded markers have three); fix the consensus bias
+  first.
+
 ## API / Interface Tracking
 
 - Rust API backlog direction: add file-oriented JSON/SVG/PNG target-generation API in `ringgrid` crate using direct board geometry args.
@@ -118,3 +112,4 @@ uncertainty are wanted next to the centre.
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| ALGO-017 | 2026-11-22 | algo/api | Blur as a stable photometric output | `DetectedMarker::blur`: σ (Gaussian edge width incl. pixel integration), anisotropy and their 3×3 covariance, honest for differences between markers of one image (per-image print-radii offset not included); reported for photometric centres with σ ≤ 0.25 × outer radius; replaces `PhotometricMetrics::blur_sigma_px`. |

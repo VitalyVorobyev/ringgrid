@@ -2,16 +2,8 @@
 //! model fails (`study` feature).
 
 use super::{
-    Params, PhotometricFit, PhotometricProblem, build_model, collect_patch, photometry,
-    sector_index,
+    PhotometricFit, PhotometricProblem, build_model, collect_patch, photometry, sector_index,
 };
-
-impl Params {
-    /// The PSF anisotropy `[a, b]`.
-    pub(crate) fn aniso(&self) -> [f64; 2] {
-        self.aniso
-    }
-}
 
 /// One patch pixel of a fit, with its residual and its position in marker
 /// coordinates. Diagnostic data for studying where the intensity model fails

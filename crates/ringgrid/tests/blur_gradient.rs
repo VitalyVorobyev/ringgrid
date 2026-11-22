@@ -1289,7 +1289,7 @@ fn blur_gradient_confidence() {
                             cov[0][0],
                             cov[0][1],
                             cov[1][1],
-                            p.blur_sigma_px.unwrap_or(nan),
+                            m.blur.map_or(nan, |b| b.sigma_px),
                             p.residual_sigma.unwrap_or(nan),
                             p.contrast.unwrap_or(nan),
                             p.n_pixels,

@@ -15,7 +15,10 @@
 //! - reported σ over the error against the truth (which also contains bias,
 //!   which no covariance covers), and the bias itself;
 //! - the result homography's RMS error at the true cell centres for both
-//!   methods (first exposure; absolute board frame only).
+//!   methods (first exposure; absolute board frame only);
+//! - with the `study` feature, the fitted PSF `(sigma, a, b)`: Monte-Carlo
+//!   honesty of its covariance (as for the centre) and the bias of the mean
+//!   fitted `sigma`, `a`, `b` against the rendered PSF's second moments.
 //!
 //! The default run checks a representative subset (one cell per target kind,
 //! one seed). The full matrix and the model-misfit study are `#[ignore]`d:
@@ -27,7 +30,10 @@
 //! `MATRIX_SEEDS` (default 6) sets the Monte-Carlo seeds per cell,
 //! `MATRIX_KINDS` (comma-separated names) and `MATRIX_SCALES` (outer radii in
 //! px) restrict the matrix, `MATRIX_DPI` overrides the board raster density,
-//! `MATRIX_THREADS` sets the parallelism.
+//! `MATRIX_THREADS` sets the parallelism, `MATRIX_FIXED_RADII` turns off the
+//! per-image print-radii estimate (the fits use the nominal radii, exact
+//! here; the estimate's image-wide error is common to all markers of an
+//! exposure and is not in a marker's covariance).
 
 mod support;
 
@@ -165,7 +171,33 @@ struct MarkerSamples {
     centers: Vec<[f64; 2]>,
     /// `(trace of the reported covariance, covariance inflation)` per seed.
     traces: Vec<(f64, Option<f64>)>,
+    /// The fitted PSF per seed (`study` feature only).
+    blurs: Vec<BlurSample>,
     truth: [f64; 2],
+}
+
+/// One marker's fitted PSF `(sigma, a, b)` with its reported covariance
+/// (correlated-residual and white-residual).
+#[derive(Debug, Clone, Copy)]
+struct BlurSample {
+    value: [f64; 3],
+    cov: [[f64; 3]; 3],
+    cov_white: [[f64; 3]; 3],
+}
+
+/// Pooled PSF statistics of a cell.
+#[derive(Debug, Clone, Copy)]
+struct BlurSummary {
+    /// Reported sd over Monte-Carlo scatter of `sigma`, `a`, `b`:
+    /// `(correlated, white)` covariance.
+    ratio: [(f64, f64); 3],
+    /// Mean fitted `sigma`, `a`, `b` over all samples.
+    mean: [f64; 3],
+    /// Pooled Monte-Carlo sd of `sigma`, `a`, `b`.
+    sd: [f64; 3],
+    /// Fraction of samples whose covariance fell back to the white
+    /// posterior (reported covariance equal to the white one).
+    fallback: f64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -192,6 +224,8 @@ struct CellResult {
     error_ratio: Option<(f64, f64)>,
     /// RMS over markers of the seed-mean error (bias), px.
     bias_rms: Option<f64>,
+    /// The fitted PSF (`study` feature only).
+    blur: Option<BlurSummary>,
     /// Mean covariance inflation over photometric centres (NaN without the
     /// `study` feature).
     inflation: f64,
@@ -281,6 +315,9 @@ fn detector(
         (2.0 * outer_radius_px) as f32,
     );
     config.circle_refinement = method;
+    if std::env::var("MATRIX_FIXED_RADII").is_ok() {
+        config.advanced.photometric.estimate_print_radii = false;
+    }
     Detector::with_config(config)
 }
 
@@ -298,9 +335,10 @@ fn spec_for(cell: &Cell, target: &TargetLayout, size: [u32; 2]) -> SceneSpec {
     spec
 }
 
-/// Per fitted marker (by index), the covariance inflation: reported centre σ
-/// over the white-residual σ. Study output, empty without the feature.
-type Inflations = HashMap<usize, Option<f64>>;
+/// Per fitted marker (by index), the covariance inflation (reported centre σ
+/// over the white-residual σ) and the fitted PSF. Study output, empty without
+/// the feature.
+type Inflations = HashMap<usize, (Option<f64>, BlurSample)>;
 
 /// Photometric detection with the markers' covariance inflations.
 #[cfg(feature = "study")]
@@ -313,7 +351,14 @@ fn detect_photometric(
         .expect("detect");
     let inflations = residuals
         .iter()
-        .map(|r| (r.marker_index, r.covariance_inflation))
+        .map(|r| {
+            let blur = BlurSample {
+                value: [r.blur_sigma_px, r.aniso[0], r.aniso[1]],
+                cov: r.blur_covariance,
+                cov_white: r.blur_covariance_white,
+            };
+            (r.marker_index, (r.covariance_inflation, blur))
+        })
         .collect();
     (res, diag, inflations)
 }
@@ -428,7 +473,8 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             let (Some(cov), Some(p)) = (m.center_cov, d.photometric.as_ref()) else {
                 continue;
             };
-            let inflation = inflations_of.get(&index).copied().flatten();
+            let study = inflations_of.get(&index).copied();
+            let inflation = study.and_then(|s| s.0);
             let t = truth.centers[idx];
             errors.push((m.center[0] - t[0]).hypot(m.center[1] - t[1]));
             inflations.push(inflation);
@@ -438,6 +484,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             s.truth = t;
             s.centers.push(m.center);
             s.traces.push((cov[0][0] + cov[1][1], inflation));
+            s.blurs.extend(study.map(|s| s.1));
         }
     }
     out.n_detected /= n_seeds as f64;
@@ -499,6 +546,80 @@ fn summarize_monte_carlo(
         (rep_w / n_m as f64 / mean_err2).sqrt(),
     ));
     out.bias_rms = Some((bias2 / n_m as f64).sqrt());
+    out.blur = summarize_blur(samples, n_seeds);
+}
+
+/// Pooled PSF honesty and mean, over markers fitted in (almost) every seed.
+fn summarize_blur(samples: &BTreeMap<usize, MarkerSamples>, n_seeds: u64) -> Option<BlurSummary> {
+    let (mut emp, mut rep_c, mut rep_w, mut sum, mut n_s, mut n_m) =
+        ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], 0usize, 0usize);
+    let mut n_fallback = 0usize;
+    for s in samples.values() {
+        let n = s.blurs.len();
+        if n < 2 || (n as u64) + 1 < n_seeds {
+            continue;
+        }
+        for k in 0..3 {
+            let m = s.blurs.iter().map(|b| b.value[k]).sum::<f64>() / n as f64;
+            emp[k] += s
+                .blurs
+                .iter()
+                .map(|b| (b.value[k] - m).powi(2))
+                .sum::<f64>()
+                / (n - 1) as f64;
+            rep_c[k] += s.blurs.iter().map(|b| b.cov[k][k]).sum::<f64>() / n as f64;
+            rep_w[k] += s.blurs.iter().map(|b| b.cov_white[k][k]).sum::<f64>() / n as f64;
+            sum[k] += s.blurs.iter().map(|b| b.value[k]).sum::<f64>();
+        }
+        n_s += n;
+        n_fallback += s.blurs.iter().filter(|b| b.cov == b.cov_white).count();
+        n_m += 1;
+    }
+    (n_m >= 3).then(|| BlurSummary {
+        ratio: std::array::from_fn(|k| ((rep_c[k] / emp[k]).sqrt(), (rep_w[k] / emp[k]).sqrt())),
+        mean: sum.map(|v| v / n_s as f64),
+        sd: emp.map(|v| (v / n_m as f64).sqrt()),
+        fallback: n_fallback as f64 / n_s as f64,
+    })
+}
+
+/// Second moments of the rendered PSF as `(sigma, a, b)` of the model's
+/// parametrization (covariance `sigma^2 [[1 + a, b], [b, 1 - a]]`), with
+/// `pixel_box` adding the variance 1/12 per axis of the area sampling.
+fn psf_moments(psf: Psf, pixel_box: bool) -> [f64; 3] {
+    let iso = |v: f64| [[v, 0.0], [0.0, v]];
+    let mut c = match psf {
+        Psf::Gaussian { sigma } => iso(sigma * sigma),
+        Psf::Anisotropic {
+            sigma_major,
+            sigma_minor,
+            angle_deg,
+        } => {
+            let (s, co) = angle_deg.to_radians().sin_cos();
+            let (ma, mi) = (sigma_major * sigma_major, sigma_minor * sigma_minor);
+            [
+                [ma * co * co + mi * s * s, (ma - mi) * co * s],
+                [(ma - mi) * co * s, ma * s * s + mi * co * co],
+            ]
+        }
+        Psf::Halo {
+            sigma,
+            halo_sigma,
+            halo_weight,
+        } => iso((1.0 - halo_weight) * sigma * sigma + halo_weight * halo_sigma * halo_sigma),
+        Psf::Disc { radius } => iso(0.25 * radius * radius),
+        Psf::VaryingGaussian { .. } => unreachable!("not in the matrix"),
+    };
+    if pixel_box {
+        c[0][0] += 1.0 / 12.0;
+        c[1][1] += 1.0 / 12.0;
+    }
+    let tr = c[0][0] + c[1][1];
+    [
+        (0.5 * tr).sqrt(),
+        (c[0][0] - c[1][1]) / tr,
+        2.0 * c[0][1] / tr,
+    ]
 }
 
 fn opt4(v: Option<f64>) -> String {
@@ -541,6 +662,43 @@ fn print_row(cell: &Cell, r: &CellResult) {
         opt4(r.h_rms_projective),
         opt4(r.h_rms_photometric),
     );
+    if let Some(b) = r.blur {
+        let mut spec = SceneSpec::for_target(
+            &cell.kind.target(),
+            cell.outer_radius_px,
+            cell.blur,
+            0.0,
+            0.0,
+            0,
+        );
+        cell.effect.apply(&mut spec, cell.blur);
+        let psf = psf_moments(spec.psf, false);
+        let eff = psf_moments(spec.psf, true);
+        println!(
+            "    blur: sigma {:.4} (psf {:.4} bias {:+.4} {:+.1}%, +pixel {:.4} bias {:+.4} {:+.1}%) sd {:.4} ratio {:.3}/{:.3} | a {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | b {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | fallback {:.3}",
+            b.mean[0],
+            psf[0],
+            b.mean[0] - psf[0],
+            100.0 * (b.mean[0] / psf[0] - 1.0),
+            eff[0],
+            b.mean[0] - eff[0],
+            100.0 * (b.mean[0] / eff[0] - 1.0),
+            b.sd[0],
+            b.ratio[0].0,
+            b.ratio[0].1,
+            b.mean[1],
+            eff[1],
+            b.sd[1],
+            b.ratio[1].0,
+            b.ratio[1].1,
+            b.mean[2],
+            eff[2],
+            b.sd[2],
+            b.ratio[2].0,
+            b.ratio[2].1,
+            b.fallback,
+        );
+    }
     if r.n_silent > 0 || std::env::var("MATRIX_STATUSES").is_ok() {
         println!("    statuses {:?}", r.statuses);
     }
@@ -846,4 +1004,81 @@ fn photometric_misfit_matrix() {
         }
     }
     run_cells(&cells, n_seeds, [720, 540]);
+}
+
+/// Fitted PSF sigma against exposure and contrast at a fixed true PSF
+/// (Gaussian, blur 1.5, outer radius 17 px, tilt 20°): one radiance scaled by
+/// an exposure gain (up to partial saturation of the paper), and scenes
+/// rendered with different paper-minus-ink contrasts. Prints the mean and
+/// spread of the accepted fits' sigma.
+#[test]
+#[ignore = "study; run in release with --ignored --nocapture"]
+fn photometric_blur_exposure() {
+    let n_seeds = env_or("MATRIX_SEEDS", 4u64);
+    let size = [720, 540];
+    let blur = 1.5;
+    for kind in selected_kinds() {
+        let target = kind.target();
+        let board = BoardRaster::with_dpi(target.clone(), raster_dpi(&target, 17.0));
+        let det = detector(&target, 17.0, CircleRefinementMethod::Photometric);
+        let row = |label: String, rad: &Radiance, spec: &SceneSpec| {
+            let (mut sigmas, mut masked, mut contrast, mut n_fit) = (Vec::new(), 0.0, 0.0, 0usize);
+            for seed in 0..n_seeds {
+                let scene = expose(rad, spec, 1000 + seed);
+                let (_, diag) = det.detect_with_diagnostics(&scene.image).expect("detect");
+                for p in diag.markers.iter().filter_map(|d| d.photometric.as_ref()) {
+                    if p.status == PhotometricStatus::NoBoardPosition {
+                        continue;
+                    }
+                    n_fit += 1;
+                    if p.status != PhotometricStatus::Accepted {
+                        continue;
+                    }
+                    sigmas.push(p.blur_sigma_px.expect("accepted fit has sigma"));
+                    masked += p.masked_fraction;
+                    contrast += p.contrast.unwrap_or(f64::NAN);
+                }
+            }
+            let n = sigmas.len().max(1) as f64;
+            let mean = sigmas.iter().sum::<f64>() / n;
+            let sd = (sigmas.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n).sqrt();
+            println!(
+                "{:<18} {label:<22} accepted {:>4}/{:<4} sigma {mean:.4} (sd {sd:.4}, {:+.4} vs psf+pixel {:.4}) fitted contrast {:6.1} masked {:.3}",
+                kind.name(),
+                sigmas.len(),
+                n_fit,
+                mean - psf_moments(spec.psf, true)[0],
+                psf_moments(spec.psf, true)[0],
+                contrast / n,
+                masked / n,
+            );
+        };
+        // Exposure: one radiance (paper 150, ink 70 at the image centre,
+        // ±15 % illumination) scaled by a gain.
+        let spec = SceneSpec::for_target(&target, 17.0, blur, 20.0, 80.0, 1);
+        let spec = SceneSpec {
+            image_size: size,
+            ..spec
+        };
+        let rad = radiance(&board, &spec);
+        for gain in [0.25, 0.5, 1.0, 1.5, 1.7, 2.0] {
+            let scaled = Radiance {
+                buf: rad.buf.iter().map(|v| gain * v).collect(),
+                h: rad.h,
+            };
+            row(format!("gain {gain}"), &scaled, &spec);
+        }
+        // Contrast at a fixed ink level (paper = 70 + contrast).
+        for contrast in [20.0, 40.0, 160.0] {
+            let spec = SceneSpec {
+                image_size: size,
+                ..SceneSpec::for_target(&target, 17.0, blur, 20.0, contrast, 1)
+            };
+            row(
+                format!("contrast {contrast}"),
+                &radiance(&board, &spec),
+                &spec,
+            );
+        }
+    }
 }

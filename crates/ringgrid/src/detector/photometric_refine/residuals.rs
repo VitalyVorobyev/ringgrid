@@ -37,6 +37,11 @@ pub struct PhotometricResidualMarker {
     pub blur_sigma_px: f64,
     /// Fitted PSF anisotropy `[a, b]`.
     pub aniso: [f64; 2],
+    /// Covariance of `(blur_sigma_px, aniso[0], aniso[1])`, from the same
+    /// residual-correlation-aware sandwich as the centre covariance.
+    pub blur_covariance: [[f64; 3]; 3],
+    /// The same covariance assuming spatially white residuals.
+    pub blur_covariance_white: [[f64; 3]; 3],
     /// Outer print radius used (board mm); the unit of the samples' `radius`.
     pub outer_radius_mm: f64,
     /// Robust residual standard deviation of the fit (grey levels).
@@ -74,8 +79,10 @@ pub(super) fn record_residuals(
     sink.push(PhotometricResidualMarker {
         marker_index: task.index,
         center: fit.center,
-        blur_sigma_px: fit.blur_sigma_px,
-        aniso: fit.params.aniso(),
+        blur_sigma_px: fit.blur.sigma_px,
+        aniso: fit.blur.aniso,
+        blur_covariance: fit.blur.cov,
+        blur_covariance_white: fit.blur.cov_white,
         outer_radius_mm: fit.radii[3],
         residual_sigma: fit.residual_sigma,
         covariance_inflation: fit.covariance_inflation(),

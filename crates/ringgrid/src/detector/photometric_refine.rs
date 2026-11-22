@@ -539,7 +539,7 @@ fn judge(
         PhotometricStatus::NotConverged
     } else if !(shift.is_finite() && shift <= max_shift_px) {
         PhotometricStatus::ShiftTooLarge
-    } else if !(SIGMA_RANGE_PX.0..=SIGMA_RANGE_PX.1).contains(&fit.blur_sigma_px)
+    } else if !(SIGMA_RANGE_PX.0..=SIGMA_RANGE_PX.1).contains(&fit.blur.sigma_px)
         || fit.contrast < MIN_CONTRAST_SNR * fit.residual_sigma
         || !cov_ok
     {
@@ -551,7 +551,7 @@ fn judge(
     };
     PhotometricMetrics {
         status,
-        blur_sigma_px: Some(fit.blur_sigma_px),
+        blur_sigma_px: Some(fit.blur.sigma_px),
         contrast: Some(fit.contrast),
         residual_sigma: Some(fit.residual_sigma),
         n_pixels: fit.n_pixels,
@@ -744,7 +744,7 @@ fn refine(
                     if let Some(mapper) = mapper {
                         m.center_mapped = mapper.image_to_working_pixel(fit.center);
                     }
-                    accepted.push((t.index, fit.blur_sigma_px));
+                    accepted.push((t.index, fit.blur.sigma_px));
                 }
                 metrics
             }

@@ -26,7 +26,11 @@
 //! - `sigma`: reported centre σ (`sqrt(trace(center_cov))`, RMS), px;
 //!   `scat/s`: pose-wise noise scatter over seeds divided by `sigma`;
 //!   `err/s`: `phot` over `sigma`;
-//! - `ac1`: median lag-1 residual autocorrelation (mean of x and y).
+//! - `ac1`: median lag-1 residual autocorrelation (mean of x and y);
+//! - `blur:` line: the fitted PSF sigma against the rendered blur plus the
+//!   pixel box (`√(blur² + 1/12)`): mean error, the spread across markers of
+//!   each marker's mean error (noise removed), the reported sd, and the
+//!   reported sd over the pose-wise scatter over seeds.
 //!
 //! ```text
 //! cargo test --release -p ringgrid --features study --test displayed_target -- --ignored --nocapture
@@ -98,6 +102,8 @@ struct Rec {
     /// `trace(center_cov)`, px².
     trace: f64,
     ac1: Option<f64>,
+    /// Fitted PSF sigma and its reported variance (px, px²).
+    blur: Option<(f64, f64)>,
 }
 
 #[derive(Default)]
@@ -194,6 +200,10 @@ fn run_job(
         let (res, _, residuals) = photometric
             .detect_with_photometric_residuals(&scene.image)
             .expect("detect");
+        let blurs: HashMap<usize, (f64, f64)> = residuals
+            .iter()
+            .map(|r| (r.marker_index, (r.blur_sigma_px, r.blur_covariance[0][0])))
+            .collect();
         // Lag-1 residual autocorrelation per fitted marker.
         let ac1: HashMap<usize, f64> = residuals
             .iter()
@@ -222,6 +232,7 @@ fn run_job(
                 e_board: to_board(&rad.h, xy, e),
                 trace: cov[0][0] + cov[1][1],
                 ac1,
+                blur: blurs.get(&index).copied(),
             });
         }
     }
@@ -349,6 +360,48 @@ fn aggregate(
     }
 }
 
+/// Fitted-sigma statistics of a cell against the true `sigma`: mean error,
+/// spread across markers of the per-marker mean error (noise removed),
+/// reported sd, and reported sd over the pose-wise scatter over seeds.
+fn blur_row(jobs: &[Job], true_sigma: f64, min_samples: usize) -> Option<[f64; 4]> {
+    let recs: Vec<(usize, usize, f64, f64)> = jobs
+        .iter()
+        .flat_map(|j| j.recs.iter())
+        .filter_map(|r| r.blur.map(|(s, v)| (r.marker, r.pose, s - true_sigma, v)))
+        .collect();
+    if recs.is_empty() {
+        return None;
+    }
+    let mean_err = recs.iter().map(|r| r.2).sum::<f64>() / recs.len() as f64;
+    let reported = (recs.iter().map(|r| r.3).sum::<f64>() / recs.len() as f64).sqrt();
+    let mut by_marker: BTreeMap<usize, Vec<f64>> = BTreeMap::new();
+    let mut by_pose: BTreeMap<(usize, usize), Vec<f64>> = BTreeMap::new();
+    for r in &recs {
+        by_marker.entry(r.0).or_default().push(r.2);
+        by_pose.entry((r.0, r.1)).or_default().push(r.2);
+    }
+    let var = |v: &[f64]| {
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0)
+    };
+    let noise: Vec<f64> = by_pose
+        .values()
+        .filter(|v| v.len() >= 3)
+        .map(|v| var(v))
+        .collect();
+    let noise_var = noise.iter().sum::<f64>() / noise.len().max(1) as f64;
+    let marker_means: Vec<(f64, usize)> = by_marker
+        .values()
+        .filter(|v| v.len() >= min_samples)
+        .map(|v| (v.iter().sum::<f64>() / v.len() as f64, v.len()))
+        .collect();
+    let mm: Vec<f64> = marker_means.iter().map(|m| m.0).collect();
+    let n_mean = marker_means.iter().map(|m| m.1 as f64).sum::<f64>() / marker_means.len() as f64;
+    // Spread of the per-marker means, minus what noise alone gives them.
+    let spread = (var(&mm) - noise_var / n_mean).max(0.0).sqrt();
+    Some([mean_err, spread, reported, reported / noise_var.sqrt()])
+}
+
 fn env_list(key: &str, default: &[f64]) -> Vec<f64> {
     std::env::var(key)
         .ok()
@@ -473,6 +526,18 @@ fn displayed_target_centre_error() {
                     row.err_ratio,
                     row.ac1,
                 );
+                let true_sigma = (blur * blur + 1.0 / 12.0).sqrt();
+                if let Some([err, spread, reported, ratio]) = blur_row(
+                    cell_jobs,
+                    true_sigma,
+                    (n_seeds as usize * POSES.len()).saturating_sub(2).max(2),
+                ) {
+                    println!(
+                        "    blur: true {true_sigma:.4} mean err {err:+.4} ({:+.1}%) marker spread {spread:.4} reported sd {reported:.4} spread/reported {:.2} reported/scatter {ratio:.2}",
+                        100.0 * err / true_sigma,
+                        spread / reported,
+                    );
+                }
             }
         }
     }

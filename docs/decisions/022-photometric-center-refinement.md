@@ -202,6 +202,13 @@ Alternatives rejected:
   The measurement below replaces it.)
   The intensity centroid of a blurred marker does not move under a blur
   gradient, so this is an estimator bias, not an optical shift.
+  A fixed-gradient second pass (the neighbour σ-plane gradient held fixed
+  in the PSF, no free parameters) was also measured and rejected
+  (ALGO-018): on 133 scatter-form cells of `blur_gradient_bias_matrix` it
+  left 0.46 of the one-σ bias against 0.50 for subtracting the law
+  `1.24·σ·∇σ` without a refit (0.16 against 0.29 with the true gradient),
+  at 2.1–2.3× the photometric time per refitted marker and up to 2.6× the
+  centre scatter in the worst cell.
 
   *Why the residual did not move.* calibration-rs measured where the bias
   goes, on six tilted-focus cameras (4921 observations in 110 views; each

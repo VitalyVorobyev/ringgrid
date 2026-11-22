@@ -1,7 +1,7 @@
 //! Per-marker fit residuals and covariance diagnostics, for studying where
 //! the intensity model fails (`study` feature).
 
-use super::{FitMode, PhotometricFit, PrintRadii, Stage, Task};
+use super::{BLUR_GRADIENT_BIAS_PER_SIGMA, FitMode, PhotometricFit, PrintRadii, Stage, Task};
 use crate::ring::photometric_center::{PhotometricResidualSample, residual_samples};
 
 /// Where the stage sends each fitted marker's residuals, when anywhere.
@@ -54,6 +54,12 @@ pub struct PhotometricResidualMarker {
     pub covariance_inflation: Option<f64>,
     /// Spatial autocorrelation of the fit residuals.
     pub residual_autocorrelation: ResidualAutocorrelation,
+    /// Predicted blur-gradient bias of an accepted centre (px, image frame):
+    /// `-1.24 σ ∇σ`, towards the sharper side, `∇σ` the neighbour-plane blur
+    /// gradient (its magnitude enters the confidence). Subtracting it from
+    /// `center` is the first-order law correction. `None` for a fit that was
+    /// not accepted or whose neighbourhood does not determine the plane.
+    pub blur_gradient_bias: Option<[f64; 2]>,
     /// The patch pixels in row-major order.
     pub samples: Vec<PhotometricResidualSample>,
 }
@@ -90,6 +96,22 @@ pub(super) fn record_residuals(
             x: fit.residual_acf.x,
             y: fit.residual_acf.y,
         },
+        blur_gradient_bias: None,
         samples,
     });
+}
+
+/// Record the blur-gradient bias vector `-1.24 σ ∇σ` of every accepted fit
+/// (`accepted` and `gradients` aligned, as in the stage).
+pub(super) fn record_blur_gradient_bias(
+    sink: &mut [PhotometricResidualMarker],
+    accepted: &[(usize, f64)],
+    gradients: &[Option<[f64; 2]>],
+) {
+    for (&(i, sigma), g) in accepted.iter().zip(gradients) {
+        if let (Some(r), Some(g)) = (sink.iter_mut().find(|r| r.marker_index == i), g) {
+            let k = -BLUR_GRADIENT_BIAS_PER_SIGMA * sigma;
+            r.blur_gradient_bias = Some([k * g[0], k * g[1]]);
+        }
+    }
 }

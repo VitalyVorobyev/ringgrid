@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-11-18
 - **Author role:** algorithm-engineer
-- **Amends:** ADR-006 (codebook invariants: decoding matches the target's own
+- **Amends:** the codebook invariants (decoding matches the target's own
   codewords), ADR-023/024 (anchor vote)
 
 ## Context

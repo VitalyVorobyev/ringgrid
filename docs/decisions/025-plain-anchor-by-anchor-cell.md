@@ -3,12 +3,12 @@
 - **Status:** accepted
 - **Date:** 2026-11-17
 - **Author role:** algorithm-engineer
-- **Amends:** ADR-017 (origin enumeration and its cap)
+- **Amends:** the original origin enumeration and its cap
 
 ## Context
 
 A plain board is anchored to its absolute frame by the origin-dot triad
-around cell `(0, 0)` (ADR-021). ADR-017's resolver enumerated every placement
+around cell `(0, 0)` (ADR-021). The original resolver enumerated every placement
 of the labeled patch on the board — each lattice symmetry × each translation
 that keeps the patch on the board — fitted a homography per placement and
 scored the projected dots, giving up beyond `MAX_CANDIDATES = 512`.

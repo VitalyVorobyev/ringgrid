@@ -5,7 +5,7 @@
 - **Amended by:** ADR-026 (labels checked against ring shapes), ADR-027 (rotation-checked anchor votes; decoding against the target's own codewords, rejected below, adopted)
 - **Date:** 2026-11-15
 - **Author role:** algorithm-engineer
-- **Supersedes:** the coded back half of ADR-017 (plain targets already ran
+- **Supersedes:** the earlier coded back half (plain targets already ran
   this path); keeps ID correction only as a fallback
 
 ## Context

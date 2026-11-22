@@ -3,11 +3,11 @@
 - **Status:** accepted
 - **Date:** 2026-07-23
 - **Author role:** pipeline-architect
-- **Supersedes:** none (refines ADR-017's fiducial model)
+- **Supersedes:** none (refines the original fiducial model)
 
 ## Context
 
-ADR-017 introduced `OriginFiducials { dot_radius_mm, dots_mm }`, where `dots_mm`
+The first plain-target design introduced `OriginFiducials { dot_radius_mm, dots_mm }`, where `dots_mm`
 lists dot centers in absolute board millimeters. Absolute coordinates make the
 fiducials **independent state that can disagree with the geometry they belong
 to**:
@@ -51,9 +51,9 @@ asymmetric L of three lattice gaps anchored at cell `(0, 0)`:
 `TargetLayout` caches the derived positions alongside its cell cache, so the
 detector's per-candidate projection cost is unchanged.
 
-**3. Schema v6.** `fiducials` carries `dot_radius_mm` only. v5 files load, but
-their stored `dots_mm` are **compared against** the derived positions; a
-mismatch is `LegacyDotsMismatch`, not a silent override.
+**3. Schema v6.** `fiducials` carries `dot_radius_mm` only. (v5 files, which
+stored `dots_mm`, loaded with a comparison against the derived positions until
+0.15; since 0.16 only v6 loads.)
 
 ## Consequences
 
@@ -77,7 +77,7 @@ field (`OriginDotsOutsideBoard`; rect needs ≥3 columns, ≥4 rows).
 rect ground truth must be regenerated. Rect targets generated with
 `fiducials = "auto"` by 0.10.x fail to load rather than detecting against dots
 that are not where the board has them — the same precision-first contract the
-origin resolver already applies (`ADR-017`: a wrong millimeter position is worse
+origin resolver already applies (a wrong millimeter position is worse
 than none). See [migration notes](../migrations/0.10-to-0.11.md).
 
 **One rule, one place.** `origin_dot_positions_mm` is the single source of

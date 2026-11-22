@@ -313,6 +313,20 @@ class FitMetrics:
     def from_dict(cls, data: Mapping[str, Any]) -> FitMetrics: ...
     def to_dict(self) -> dict[str, Any]: ...
 
+class BlurEstimate:
+    sigma_px: float
+    anisotropy: list[float]
+    cov: list[list[float]]
+    def __init__(
+        self,
+        sigma_px: float,
+        anisotropy: list[float],
+        cov: list[list[float]],
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BlurEstimate: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
 class DetectedMarker:
     id: int | None
     grid_coord: list[int] | None
@@ -324,6 +338,7 @@ class DetectedMarker:
     ellipse_inner: Ellipse | None
     center_source: str
     center_cov: list[list[float]] | None
+    blur: BlurEstimate | None
     def __init__(
         self,
         confidence: float,
@@ -336,6 +351,7 @@ class DetectedMarker:
         ellipse_inner: Ellipse | None = ...,
         center_source: str = ...,
         center_cov: list[list[float]] | None = ...,
+        blur: BlurEstimate | None = ...,
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DetectedMarker: ...
@@ -345,7 +361,6 @@ class PhotometricMetrics:
     status: str
     n_pixels: int
     masked_fraction: float
-    blur_sigma_px: float | None
     contrast: float | None
     residual_sigma: float | None
     center_shift_px: float | None
@@ -354,7 +369,6 @@ class PhotometricMetrics:
         status: str,
         n_pixels: int = ...,
         masked_fraction: float = ...,
-        blur_sigma_px: float | None = ...,
         contrast: float | None = ...,
         residual_sigma: float | None = ...,
         center_shift_px: float | None = ...,

@@ -34,7 +34,7 @@ Status as checked against the code and the later ADRs on 2026-11-22.
 | [017](017-plain-rect-target-detection.md) | Plain / rect targets, compositional model | partially superseded by ADR-021, ADR-023, ADR-025 | `TargetLayout` = lattice × ring × coding × fiducials; an origin-anchored plain view reports `BoardFrame::Absolute`, an unanchored one `RelativeCanonical` without board mm. |
 | [018](018-c-cpp-vcpkg-api.md) | C / C++ / vcpkg API | accepted | Flat C ABI in `ringgrid-c` (JSON at the boundary, status codes), cbindgen header, header-only C++ wrapper, CMake package, vcpkg port. |
 | [019](019-inner-as-outer-recovery-gating.md) | Inner-as-outer recovery gating | accepted | Rings whose outer fit took the inner edge are re-fitted with gates relaxed only on the recovery path, plus a post-fit size gate. |
-| [020](020-agent-workflow-adopted.md) | Agent workflow | accepted (in doubt) | Algorithm, pipeline and performance roles, each running its own validation gates before handoff. |
+| [020](020-agent-workflow-adopted.md) | Agent workflow | obsolete | The `.ai/` role files it introduced were removed in 2026-03; only the role names survive in ADR headers. |
 | [021](021-derived-origin-fiducials.md) | Derived origin fiducials | accepted | Rect lattice coordinates are centred; origin-dot positions are derived from the lattice (an L of three gaps at cell `(0, 0)`); only the dot radius is stored. |
 | [022](022-photometric-center-refinement.md) | Photometric centre refinement | accepted | Opt-in `Photometric` refinement fits a model of the blurred printed pattern to every marker with a board position, with a covariance that holds under correlated noise. |
 | [023](023-grid-first-finalize.md) | Grid-first finalize | accepted; amended by ADR-024, ADR-026, ADR-027 | One back half for every target: label every fitted ring, anchor, identify by cell, join and complete, final H, verify; ID correction only in the fallback. |
@@ -67,8 +67,6 @@ that records the change:
   `ringgrid.target.v6` loads. `finalize/plain.rs` no longer exists.
 - **019** adds a recovery-only `min_ring_depth`; it was removed in 0.17, and
   recovery uses the detector's contrast-relative depth gate.
-- **020** creates the `.ai/` role files; they were removed in 2026-03, though
-  the role names are still used in ADR headers.
 
 ### Length
 

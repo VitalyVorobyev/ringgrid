@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-11-14 (amended 2026-11-14: every target kind, correlated
   residual covariance, anisotropic PSF; amended 2026-11-17: plain markers keep
-  the homography's rotation)
+  the homography's rotation; amended 2026-11-22: blur as a reported
+  measurement)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 - **Related:** ADR-028 and ADR-029 (the confidence of a photometric centre)
@@ -61,6 +62,16 @@ that flat valley and dragged the centre. A plain marker's `C` is fitted in
 the three-dimensional complement of the rotation generator (`CBasis`); coded
 markers keep all four directions, bit-identical
 ([study](../studies/photometric-center.md#plain-markers-keep-the-homographys-rotation)).
+
+**Blur is a reported measurement.** Each photometric centre reports the blur
+the fit measured (`DetectedMarker::blur`: σ as the Gaussian edge width
+including pixel integration, the PSF anisotropy, and their 3×3 covariance
+from the same sandwich), for use as a focus observation. The covariance is
+stated for differences between markers of one image: with print radii
+estimated per image, all markers of an image share one further σ offset it
+does not contain. Not reported when σ exceeds a quarter of the outer radius
+(measured accuracy and limits: the book's *Photometric Center Refinement →
+Blur*). It replaces the diagnostics field `PhotometricMetrics::blur_sigma_px`.
 
 ### Alternatives rejected
 

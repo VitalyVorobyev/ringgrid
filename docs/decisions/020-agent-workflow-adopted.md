@@ -1,6 +1,6 @@
 # ADR-020: Adopt 3-Role Agent Development Workflow
 
-- **Status:** accepted
+- **Status:** obsolete (the `.ai/` role files were removed in 2026-03)
 - **Date:** 2026-02-15
 - **Author role:** pipeline-architect
 - **Supersedes:** none

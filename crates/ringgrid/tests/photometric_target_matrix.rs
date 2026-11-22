@@ -198,7 +198,13 @@ struct BlurSummary {
     /// Fraction of samples whose covariance fell back to the white
     /// posterior (reported covariance equal to the white one).
     fallback: f64,
+    /// Correlations of `(sigma, a)`, `(sigma, b)`, `(a, b)`: pooled reported
+    /// and pooled empirical (within-marker deviations).
+    corr: [(f64, f64); 3],
 }
+
+/// The `(sigma, a)`, `(sigma, b)`, `(a, b)` pairs.
+const PAIRS: [(usize, usize); 3] = [(0, 1), (0, 2), (1, 2)];
 
 #[derive(Debug, Default, Clone)]
 struct CellResult {
@@ -232,6 +238,9 @@ struct CellResult {
     /// Mean fit residual standard deviation over photometric centres.
     residual: f64,
     statuses: BTreeMap<String, usize>,
+    /// Print radii the photometric stage estimated, per exposure that
+    /// estimated them.
+    print_radii: Vec<[f64; 4]>,
 }
 
 fn rms(v: &[f64]) -> f64 {
@@ -449,6 +458,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             out.h_rms_photometric = homography_rms(&res, target, &truth, size);
         }
         out.n_detected += res.detected_markers.len() as f64;
+        out.print_radii.extend(diag.photometric_print_radii_mm);
         for (index, (m, d)) in res.detected_markers.iter().zip(&diag.markers).enumerate() {
             let status = d
                 .photometric
@@ -554,6 +564,7 @@ fn summarize_blur(samples: &BTreeMap<usize, MarkerSamples>, n_seeds: u64) -> Opt
     let (mut emp, mut rep_c, mut rep_w, mut sum, mut n_s, mut n_m) =
         ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], 0usize, 0usize);
     let mut n_fallback = 0usize;
+    let (mut emp_kl, mut rep_kl) = ([[0.0; 3]; 3], [[0.0; 3]; 3]);
     for s in samples.values() {
         let n = s.blurs.len();
         if n < 2 || (n as u64) + 1 < n_seeds {
@@ -571,6 +582,19 @@ fn summarize_blur(samples: &BTreeMap<usize, MarkerSamples>, n_seeds: u64) -> Opt
             rep_w[k] += s.blurs.iter().map(|b| b.cov_white[k][k]).sum::<f64>() / n as f64;
             sum[k] += s.blurs.iter().map(|b| b.value[k]).sum::<f64>();
         }
+        let m: [f64; 3] =
+            std::array::from_fn(|k| s.blurs.iter().map(|b| b.value[k]).sum::<f64>() / n as f64);
+        for k in 0..3 {
+            for l in 0..3 {
+                emp_kl[k][l] += s
+                    .blurs
+                    .iter()
+                    .map(|b| (b.value[k] - m[k]) * (b.value[l] - m[l]))
+                    .sum::<f64>()
+                    / (n - 1) as f64;
+                rep_kl[k][l] += s.blurs.iter().map(|b| b.cov[k][l]).sum::<f64>() / n as f64;
+            }
+        }
         n_s += n;
         n_fallback += s.blurs.iter().filter(|b| b.cov == b.cov_white).count();
         n_m += 1;
@@ -580,6 +604,10 @@ fn summarize_blur(samples: &BTreeMap<usize, MarkerSamples>, n_seeds: u64) -> Opt
         mean: sum.map(|v| v / n_s as f64),
         sd: emp.map(|v| (v / n_m as f64).sqrt()),
         fallback: n_fallback as f64 / n_s as f64,
+        corr: PAIRS.map(|(k, l)| {
+            let rho = |c: &[[f64; 3]; 3]| c[k][l] / (c[k][k] * c[l][l]).sqrt();
+            (rho(&rep_kl), rho(&emp_kl))
+        }),
     })
 }
 
@@ -675,7 +703,7 @@ fn print_row(cell: &Cell, r: &CellResult) {
         let psf = psf_moments(spec.psf, false);
         let eff = psf_moments(spec.psf, true);
         println!(
-            "    blur: sigma {:.4} (psf {:.4} bias {:+.4} {:+.1}%, +pixel {:.4} bias {:+.4} {:+.1}%) sd {:.4} ratio {:.3}/{:.3} | a {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | b {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | fallback {:.3}",
+            "    blur: sigma {:.4} (psf {:.4} bias {:+.4} {:+.1}%, +pixel {:.4} bias {:+.4} {:+.1}%) sd {:.4} ratio {:.3}/{:.3} | a {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | b {:+.4} (true {:+.4}) sd {:.4} ratio {:.3}/{:.3} | fallback {:.3} | rho {:+.2}/{:+.2} {:+.2}/{:+.2} {:+.2}/{:+.2}",
             b.mean[0],
             psf[0],
             b.mean[0] - psf[0],
@@ -697,6 +725,33 @@ fn print_row(cell: &Cell, r: &CellResult) {
             b.ratio[2].0,
             b.ratio[2].1,
             b.fallback,
+            b.corr[0].0,
+            b.corr[0].1,
+            b.corr[1].0,
+            b.corr[1].1,
+            b.corr[2].0,
+            b.corr[2].1,
+        );
+    }
+    if !r.print_radii.is_empty() {
+        let n = r.print_radii.len() as f64;
+        let stats: Vec<String> = (0..3)
+            .map(|k| {
+                let m = r.print_radii.iter().map(|x| x[k]).sum::<f64>() / n;
+                let sd = (r
+                    .print_radii
+                    .iter()
+                    .map(|x| (x[k] - m).powi(2))
+                    .sum::<f64>()
+                    / (n - 1.0).max(1.0))
+                .sqrt();
+                format!("r{k} {m:.4} sd {sd:.4}")
+            })
+            .collect();
+        println!(
+            "    print radii estimated in {} exposures: {}",
+            r.print_radii.len(),
+            stats.join(", ")
         );
     }
     if r.n_silent > 0 || std::env::var("MATRIX_STATUSES").is_ok() {

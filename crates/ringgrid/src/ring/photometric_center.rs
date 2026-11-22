@@ -2313,7 +2313,14 @@ mod monte_carlo {
         /// empirical standard deviations.
         blur_mean: [f64; 3],
         blur_sd: [f64; 3],
+        /// Correlations of `(sigma, a)`, `(sigma, b)`, `(a, b)`: from the mean
+        /// reported covariance, and empirical over the seeds.
+        corr_reported: [f64; 3],
+        corr_empirical: [f64; 3],
     }
+
+    /// The `(sigma, a)`, `(sigma, b)`, `(a, b)` pairs.
+    const PAIRS: [(usize, usize); 3] = [(0, 1), (0, 2), (1, 2)];
 
     /// Repeated fits of one noise-free radiance under independent noise.
     fn monte_carlo(blur: f64, tilt: f64, code: Option<u16>, corr_px: f64) -> MonteCarlo {
@@ -2326,6 +2333,7 @@ mod monte_carlo {
         let mut blurs: Vec<[f64; 3]> = Vec::with_capacity(n);
         let (mut tr_white, mut tr_corr) = (0.0, 0.0);
         let (mut var_white, mut var_corr) = ([0.0; 3], [0.0; 3]);
+        let mut cov_sum = [[0.0; 3]; 3];
         for seed in 0..n as u64 {
             let gray = noisy(&rad, 80, 2.0, corr_px, 1000 + seed);
             let mut pb = problem(&gray, perturbed(&map), [40.8, 39.2], &nbs);
@@ -2342,6 +2350,9 @@ mod monte_carlo {
             for k in 0..3 {
                 var_white[k] += b.cov_white[k][k];
                 var_corr[k] += b.cov[k][k];
+                for l in 0..3 {
+                    cov_sum[k][l] += b.cov[k][l];
+                }
             }
         }
         let mean = |f: &dyn Fn(usize) -> f64| (0..n).map(f).sum::<f64>() / n as f64;
@@ -2389,11 +2400,23 @@ mod monte_carlo {
             blur_ratios[2].white,
             blur_ratios[2].corr,
         );
+        let corr_reported =
+            PAIRS.map(|(k, l)| cov_sum[k][l] / (cov_sum[k][k] * cov_sum[l][l]).sqrt());
+        let corr_empirical = PAIRS.map(|(k, l)| {
+            let (mk, ml) = (blur_mean[k], blur_mean[l]);
+            let c = (0..n)
+                .map(|i| (blurs[i][k] - mk) * (blurs[i][l] - ml))
+                .sum::<f64>()
+                / (n - 1) as f64;
+            c / (blur_var[k] * blur_var[l]).sqrt()
+        });
         MonteCarlo {
             center,
             blur: blur_ratios,
             blur_mean,
             blur_sd: blur_var.map(f64::sqrt),
+            corr_reported,
+            corr_empirical,
         }
     }
 
@@ -2455,9 +2478,17 @@ mod monte_carlo {
             .into_iter()
             .flat_map(|corr| {
                 [Some(CODEWORD), None].into_iter().flat_map(move |code| {
-                    [(0.4, 10.0), (0.8, 10.0), (1.5, 20.0), (3.0, 30.0)]
-                        .into_iter()
-                        .map(move |(blur, tilt)| (blur, tilt, code, corr))
+                    [
+                        (0.4, 10.0),
+                        (0.5, 10.0),
+                        (0.6, 10.0),
+                        (0.7, 10.0),
+                        (0.8, 10.0),
+                        (1.5, 20.0),
+                        (3.0, 30.0),
+                    ]
+                    .into_iter()
+                    .map(move |(blur, tilt)| (blur, tilt, code, corr))
                 })
             })
             .collect();
@@ -2468,7 +2499,7 @@ mod monte_carlo {
                     scope.spawn(move || {
                         let mc = monte_carlo(blur, tilt, code, corr);
                         format!(
-                            "| {} | {blur} | {tilt} | {corr} | {:.3}/{:.3} | {:.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} |",
+                            "| {} | {blur} | {tilt} | {corr} | {:.3}/{:.3} | {:.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} | {:+.4} ± {:.4} | {:.3}/{:.3} | {:+.2}/{:+.2} {:+.2}/{:+.2} {:+.2}/{:+.2} |",
                             if code.is_some() { "coded" } else { "plain" },
                             mc.center.white,
                             mc.center.corr,
@@ -2484,6 +2515,12 @@ mod monte_carlo {
                             mc.blur_sd[2],
                             mc.blur[2].white,
                             mc.blur[2].corr,
+                            mc.corr_reported[0],
+                            mc.corr_empirical[0],
+                            mc.corr_reported[1],
+                            mc.corr_empirical[1],
+                            mc.corr_reported[2],
+                            mc.corr_empirical[2],
                         )
                     })
                 })
@@ -2491,7 +2528,7 @@ mod monte_carlo {
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
         println!(
-            "| kind | blur | tilt | noise corr | centre w/c | sigma | sigma w/c | a | a w/c | b | b w/c |"
+            "| kind | blur | tilt | noise corr | centre w/c | sigma | sigma w/c | a | a w/c | b | b w/c | rho reported/empirical: sigma-a sigma-b a-b |"
         );
         for r in rows {
             println!("{r}");

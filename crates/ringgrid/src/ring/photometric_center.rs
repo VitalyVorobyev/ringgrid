@@ -166,7 +166,7 @@ pub(crate) struct PhotometricFit {
     /// The fitted PSF and its uncertainty.
     pub blur: BlurEstimate,
     /// [`BlurEstimate::cov`] assuming white residuals (diagnostic).
-    #[cfg_attr(not(any(test, feature = "study")), allow(dead_code))]
+    #[cfg(any(test, feature = "study"))]
     pub blur_cov_white: [[f64; 3]; 3],
     /// Paper minus ink at the marker centre, grey levels.
     pub contrast: f64,
@@ -1889,11 +1889,10 @@ pub(crate) fn fit_marker(
         ),
     };
     let n_blur = fitting.layout.reported().1 - 2;
-    let (blur_cov, blur_cov_white) = match &sandwich {
-        Some(c) if positive_definite(&c.cov.blur(sigma), n_blur) => {
-            (c.cov.blur(sigma), c.white.blur(sigma))
-        }
-        _ => (posterior.blur(sigma), posterior.blur(sigma)),
+    // The blur block (correlated, white): the sandwich's, else the posterior.
+    let blur_blocks = match &sandwich {
+        Some(c) if positive_definite(&c.cov.blur(sigma), n_blur) => (&c.cov, &c.white),
+        _ => (&posterior, &posterior),
     };
     let radii_std = (fitting.layout.n_radii > 0).then(|| {
         let b = fitting.layout.radii_base();
@@ -1911,9 +1910,10 @@ pub(crate) fn fit_marker(
         blur: BlurEstimate {
             sigma_px: sigma,
             anisotropy: sol.prm.aniso,
-            cov: blur_cov,
+            cov: blur_blocks.0.blur(sigma),
         },
-        blur_cov_white,
+        #[cfg(any(test, feature = "study"))]
+        blur_cov_white: blur_blocks.1.blur(sigma),
         contrast: sol.prm.lin[CONTRAST],
         residual_sigma: s2.sqrt(),
         n_pixels: fitting.pixels.len(),

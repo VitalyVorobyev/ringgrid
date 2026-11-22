@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   book's *Photometric Center Refinement → Blur*.
 - `study` feature: `PhotometricResidualMarker::blur_covariance` and
   `blur_covariance_white`.
+- `study` feature: `PhotometricResidualMarker::blur_gradient_bias`, the
+  predicted blur-gradient bias `−1.24 σ ∇σ` of an accepted centre (∇σ from
+  the neighbouring markers' fitted blur); `blur_gradient_bias_matrix`
+  reports the centre corrected by it (ALGO-018, closed).
 
 ### Changed
 

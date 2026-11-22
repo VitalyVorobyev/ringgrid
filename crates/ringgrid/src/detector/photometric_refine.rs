@@ -565,43 +565,59 @@ fn judge(
     }
 }
 
-/// Attach to every accepted photometric centre the blur-gradient bias its
-/// fit does not model ([`MarkerRecord::center_bias_px`]):
-/// `1.24 |∇σ| σ`, `σ` its fitted blur and `∇σ` the image gradient of the
+/// The local blur gradient `∇σ` (px per px, image frame) at every accepted
+/// photometric centre, aligned with `accepted`: the gradient of the
 /// least-squares plane through the fitted blur of it and its
-/// [`BLUR_GRADIENT_NEIGHBOURS`] nearest accepted neighbours (ties by index). `None` (no
-/// bias known) when the plane is undetermined.
+/// [`BLUR_GRADIENT_NEIGHBOURS`] nearest accepted neighbours (ties by index);
+/// `None` when the plane is undetermined.
 ///
 /// `accepted` holds `(marker index, fitted blur sigma)`; the markers' centres
 /// are the accepted (image-pixel) ones.
-fn attach_blur_gradient_bias(markers: &mut [MarkerRecord], accepted: &[(usize, f64)]) {
+fn blur_gradients(markers: &[MarkerRecord], accepted: &[(usize, f64)]) -> Vec<Option<[f64; 2]>> {
     let points: Vec<([f64; 2], f64)> = accepted
         .iter()
         .map(|&(i, sigma)| (markers[i].center, sigma))
         .collect();
     let dist2 = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2);
     let mut order: Vec<usize> = (0..points.len()).collect();
-    for (&(i, sigma), &(c, _)) in accepted.iter().zip(&points) {
-        // The K + 1 nearest (the marker itself included), by distance then
-        // index: a partial selection, O(n) per marker, then the few sorted.
-        let nearer = |&a: &usize, &b: &usize| {
-            dist2(points[a].0, c)
-                .total_cmp(&dist2(points[b].0, c))
-                .then(a.cmp(&b))
-        };
-        let k = BLUR_GRADIENT_NEIGHBOURS.min(order.len() - 1);
-        order.select_nth_unstable_by(k, nearer);
-        order[..=k].sort_unstable_by(nearer);
-        let near = order[..=k].iter().map(|&j| (points[j].0, points[j].1));
+    points
+        .iter()
+        .map(|&(c, _)| {
+            // The K + 1 nearest (the marker itself included), by distance then
+            // index: a partial selection, O(n) per marker, then the few sorted.
+            let nearer = |&a: &usize, &b: &usize| {
+                dist2(points[a].0, c)
+                    .total_cmp(&dist2(points[b].0, c))
+                    .then(a.cmp(&b))
+            };
+            let k = BLUR_GRADIENT_NEIGHBOURS.min(order.len() - 1);
+            order.select_nth_unstable_by(k, nearer);
+            order[..=k].sort_unstable_by(nearer);
+            plane_gradient(order[..=k].iter().map(|&j| points[j]))
+        })
+        .collect()
+}
+
+/// Attach to every accepted photometric centre the blur-gradient bias its
+/// fit does not model ([`MarkerRecord::center_bias_px`]): `1.24 |∇σ| σ`,
+/// `σ` its fitted blur and `∇σ` its local blur gradient ([`blur_gradients`],
+/// aligned with `accepted`). `None` (no bias known) when the gradient is
+/// undetermined.
+fn attach_blur_gradient_bias(
+    markers: &mut [MarkerRecord],
+    accepted: &[(usize, f64)],
+    gradients: &[Option<[f64; 2]>],
+) {
+    for (&(i, sigma), g) in accepted.iter().zip(gradients) {
         markers[i].center_bias_px =
-            plane_gradient(near).map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g * sigma);
+            g.map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g[0].hypot(g[1]) * sigma);
     }
 }
 
-/// Gradient magnitude of the least-squares plane `v = a + g · p` through
-/// `(p, v)` samples; `None` for fewer than four samples or positions too
-/// close to a line to determine it.
-fn plane_gradient(samples: impl Iterator<Item = ([f64; 2], f64)>) -> Option<f64> {
+/// Gradient `g` of the least-squares plane `v = a + g · p` through `(p, v)`
+/// samples; `None` for fewer than four samples or positions too close to a
+/// line to determine it.
+fn plane_gradient(samples: impl Iterator<Item = ([f64; 2], f64)>) -> Option<[f64; 2]> {
     let samples: Vec<([f64; 2], f64)> = samples.collect();
     if samples.len() < 4 {
         return None;
@@ -628,7 +644,7 @@ fn plane_gradient(samples: impl Iterator<Item = ([f64; 2], f64)>) -> Option<f64>
     }
     let gx = (syy * sxv - sxy * syv) / det;
     let gy = (sxx * syv - sxy * sxv) / det;
-    Some(gx.hypot(gy))
+    Some([gx, gy])
 }
 
 /// Record [`PhotometricStatus::NoBoardPosition`] on every marker the stage
@@ -757,7 +773,12 @@ fn refine(
         };
         m.photometric = Some(metrics);
     }
-    attach_blur_gradient_bias(markers, &accepted);
+    let gradients = blur_gradients(markers, &accepted);
+    attach_blur_gradient_bias(markers, &accepted, &gradients);
+    #[cfg(feature = "study")]
+    if let Some(sink) = residuals {
+        residuals::record_blur_gradient_bias(sink, &accepted, &gradients);
+    }
     for &(i, _) in &accepted {
         markers[i].confidence = marker_confidence(&markers[i]);
     }
@@ -817,11 +838,17 @@ mod tests {
     #[test]
     fn blur_gradient_bias_follows_the_bias_law() {
         let (mut markers, accepted) = blur_plane_markers();
-        attach_blur_gradient_bias(&mut markers, &accepted);
+        let gradients = blur_gradients(&markers, &accepted);
+        attach_blur_gradient_bias(&mut markers, &accepted, &gradients);
         let g = 0.01f64.hypot(0.02);
         for &(i, sigma) in &accepted {
             let b = markers[i].center_bias_px.expect("bias");
             assert!((b - 1.24 * g * sigma).abs() < 1e-9, "{b}");
+            let v = gradients[i].expect("gradient");
+            assert!(
+                (v[0] - 0.01).abs() < 1e-12 && (v[1] + 0.02).abs() < 1e-12,
+                "{v:?}"
+            );
         }
     }
 
@@ -839,7 +866,7 @@ mod tests {
             ([1.0, 1.0], 1.5),
         ];
         let g = plane_gradient(square.into_iter()).expect("plane");
-        assert!((g - 0.5).abs() < 1e-12, "{g}");
+        assert!((g[0] - 0.5).abs() < 1e-12 && g[1].abs() < 1e-12, "{g:?}");
     }
 
     /// Accepted fits of a `side × side` plate (58 × 58: the IPGS plate),
@@ -865,7 +892,8 @@ mod tests {
     #[test]
     fn blur_gradient_bias_matches_a_full_sort() {
         let (mut markers, accepted) = plate_markers(12);
-        attach_blur_gradient_bias(&mut markers, &accepted);
+        let gradients = blur_gradients(&markers, &accepted);
+        attach_blur_gradient_bias(&mut markers, &accepted, &gradients);
         for &(i, sigma) in &accepted {
             let c = markers[i].center;
             let mut all: Vec<(f64, usize)> = accepted
@@ -880,7 +908,8 @@ mod tests {
                 let s = accepted.iter().find(|a| a.0 == j).unwrap().1;
                 (markers[j].center, s)
             });
-            let expected = plane_gradient(near).map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g * sigma);
+            let expected = plane_gradient(near)
+                .map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g[0].hypot(g[1]) * sigma);
             assert_eq!(markers[i].center_bias_px, expected, "marker {i}");
         }
     }
@@ -890,7 +919,8 @@ mod tests {
     fn blur_gradient_bias_time_on_a_plate() {
         let (mut markers, accepted) = plate_markers(58);
         let t = std::time::Instant::now();
-        attach_blur_gradient_bias(&mut markers, &accepted);
+        let gradients = blur_gradients(&markers, &accepted);
+        attach_blur_gradient_bias(&mut markers, &accepted, &gradients);
         println!(
             "{} accepted fits: {:.1} ms",
             accepted.len(),

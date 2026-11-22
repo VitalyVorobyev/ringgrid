@@ -22,7 +22,10 @@
 //! ```
 //!
 //! - `blur_gradient_bias_matrix`: the centre bias per method, target kind,
-//!   marker radius, sigma0, gradient, tilt and form, and a fitted law.
+//!   marker radius, sigma0, gradient, tilt and form, and a fitted law; with
+//!   the `study` feature also the photometric centre corrected by that law
+//!   (`+1.24 σ ∇σ`, the stage's neighbour-plane gradient): its residual bias
+//!   and centre scatter per cell and pooled per kind (ALGO-018, closed).
 //!   `GRADIENT_SEEDS` (default 3); `GRADIENT_KINDS` (names), `GRADIENT_RADII`,
 //!   `GRADIENT_SIGMAS`, `GRADIENT_TILTS`, `GRADIENT_GS` (comma-separated
 //!   lists) restrict it; `GRADIENT_THREADS`; `GRADIENT_CSV=<path>` writes the
@@ -368,34 +371,34 @@ fn detector(
 }
 
 // ---------------------------------------------------------------------------
-// Q1: centre bias matrix
+// Q1: centre bias matrix, and the law correction of the bias
 // ---------------------------------------------------------------------------
 
+/// A centre estimate under test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Method {
+enum Variant {
     Projective,
+    /// (a) the photometric fit with a PSF of one width.
     Photometric,
+    /// (b) (a) minus its predicted blur-gradient bias `-1.24 σ ∇σ` (the
+    /// stage's neighbour-plane gradient; `study` feature). Falls back to (a)
+    /// where the stage has no gradient, as a caller would; the fallbacks are
+    /// counted.
+    Law,
 }
 
-const METHODS: [Method; 2] = [Method::Projective, Method::Photometric];
+const N_VARIANTS: usize = 3;
+const VARIANTS: [Variant; N_VARIANTS] = [Variant::Projective, Variant::Photometric, Variant::Law];
+const PROJECTIVE: usize = 0;
+const PHOTOMETRIC: usize = 1;
+const LAW: usize = 2;
 
-impl Method {
+impl Variant {
     fn name(self) -> &'static str {
         match self {
-            Method::Projective => "projective",
-            Method::Photometric => "photometric",
-        }
-    }
-    fn refinement(self) -> CircleRefinementMethod {
-        match self {
-            Method::Projective => CircleRefinementMethod::ProjectiveCenter,
-            Method::Photometric => CircleRefinementMethod::Photometric,
-        }
-    }
-    fn source(self) -> CenterSource {
-        match self {
-            Method::Projective => CenterSource::ProjectiveCenter,
-            Method::Photometric => CenterSource::Photometric,
+            Variant::Projective => "projective",
+            Variant::Photometric => "photometric",
+            Variant::Law => "law",
         }
     }
 }
@@ -408,7 +411,8 @@ struct Group {
     tilt: f64,
 }
 
-/// Bias of one method in one cell, px; `[x, y]` = across, along the gradient.
+/// Bias of one variant in one cell, px; `[x, y]` = across, along the
+/// gradient.
 #[derive(Debug, Clone, Copy)]
 struct Bias {
     n_markers: usize,
@@ -426,41 +430,120 @@ struct Row {
     g: f64,
     /// Scored cells; 0 when the band holds no full marker.
     n_scored: usize,
-    /// Scored cells each method placed at `g = 0` (first seed).
-    n_zero: [usize; 2],
-    bias: [Option<Bias>; 2],
+    /// Scored cells each variant placed at `g = 0` (first seed).
+    n_zero: [usize; N_VARIANTS],
+    bias: [Option<Bias>; N_VARIANTS],
+    /// Centre scatter (px per axis): the seed-to-seed standard deviation of a
+    /// marker's centre, pooled over the scored markers and both renders.
+    scatter: [Option<f64>; N_VARIANTS],
+    /// Centres of (b) that fell back to (a), both renders, all seeds.
+    fallbacks: usize,
 }
 
-/// Per-seed centre errors of the markers a method placed itself.
+/// One group's rows and its centre scatter at `g = 0`.
+struct GroupResult {
+    group: Group,
+    zero_scatter: [Option<f64>; N_VARIANTS],
+    rows: Vec<Row>,
+}
+
+/// Per-seed centre errors of the markers a variant placed.
 type Errors = Vec<BTreeMap<usize, [f64; 2]>>;
 
-fn measure(
+/// Every variant's errors over the seeds of one render.
+struct Measured {
+    errors: [Errors; N_VARIANTS],
+    fallbacks: usize,
+}
+
+/// The detectors of a group: projective and photometric refinement.
+struct Detectors {
+    projective: Detector,
+    photometric: Detector,
+}
+
+/// Marker index and law-corrected centre (b), `None` without a gradient.
+type LawCentre = (usize, Option<[f64; 2]>);
+
+/// The photometric result and, with the `study` feature, the law-corrected
+/// centre (b) of every accepted photometric centre by marker index (`None`
+/// where the stage has no gradient).
+#[cfg(feature = "study")]
+fn photometric_centres(
     det: &Detector,
-    method: Method,
+    image: &image::GrayImage,
+) -> (ringgrid::DetectionResult, Vec<LawCentre>) {
+    let (res, _, fits) = det
+        .detect_with_photometric_residuals(image)
+        .expect("detect");
+    let law = fits
+        .iter()
+        .filter(|f| res.detected_markers[f.marker_index].center_source == CenterSource::Photometric)
+        .map(|f| {
+            let b = f.blur_gradient_bias;
+            let corrected = b.map(|b| [f.center[0] - b[0], f.center[1] - b[1]]);
+            (f.marker_index, corrected)
+        })
+        .collect();
+    (res, law)
+}
+
+#[cfg(not(feature = "study"))]
+fn photometric_centres(
+    det: &Detector,
+    image: &image::GrayImage,
+) -> (ringgrid::DetectionResult, Vec<LawCentre>) {
+    (det.detect(image).expect("detect"), Vec::new())
+}
+
+fn measure(
+    dets: &Detectors,
     rad: &Radiance,
     spec: &SceneSpec,
     truth: &Truth,
     n_seeds: u64,
-) -> Errors {
-    (0..n_seeds)
-        .map(|seed| {
-            let scene = expose(rad, spec, 7000 + seed);
-            let res = det.detect(&scene.image).expect("detect");
-            let mut out = BTreeMap::new();
-            for m in &res.detected_markers {
-                if m.center_source != method.source() {
-                    continue;
-                }
-                let Some(xy) = m.board_xy_mm else { continue };
-                let Some(i) = truth.cell_of(xy, m.center, &rad.h) else {
-                    continue;
-                };
-                let t = truth.centers[i];
-                out.insert(i, [m.center[0] - t[0], m.center[1] - t[1]]);
+) -> Measured {
+    let mut out = Measured {
+        errors: std::array::from_fn(|_| vec![BTreeMap::new(); n_seeds as usize]),
+        fallbacks: 0,
+    };
+    let placed = |m: &ringgrid::DetectedMarker, source: CenterSource| {
+        if m.center_source != source {
+            return None;
+        }
+        let i = truth.cell_of(m.board_xy_mm?, m.center, &rad.h)?;
+        Some((i, truth.centers[i]))
+    };
+    for seed in 0..n_seeds {
+        let s = seed as usize;
+        let scene = expose(rad, spec, 7000 + seed);
+        let res = dets.projective.detect(&scene.image).expect("detect");
+        for m in &res.detected_markers {
+            if let Some((i, t)) = placed(m, CenterSource::ProjectiveCenter) {
+                out.errors[PROJECTIVE][s].insert(i, [m.center[0] - t[0], m.center[1] - t[1]]);
             }
-            out
-        })
-        .collect()
+        }
+        let (res, law) = photometric_centres(&dets.photometric, &scene.image);
+        let cells: Vec<Option<(usize, [f64; 2])>> = res
+            .detected_markers
+            .iter()
+            .map(|m| placed(m, CenterSource::Photometric))
+            .collect();
+        for (m, cell) in res.detected_markers.iter().zip(&cells) {
+            if let Some((i, t)) = cell {
+                out.errors[PHOTOMETRIC][s].insert(*i, [m.center[0] - t[0], m.center[1] - t[1]]);
+            }
+        }
+        for (k, corrected) in law {
+            let Some((i, t)) = cells[k] else {
+                continue;
+            };
+            let xy = corrected.unwrap_or(res.detected_markers[k].center);
+            out.errors[LAW][s].insert(i, [xy[0] - t[0], xy[1] - t[1]]);
+            out.fallbacks += usize::from(corrected.is_none());
+        }
+    }
+    out
 }
 
 fn mean_se(v: &[f64]) -> (f64, f64) {
@@ -516,24 +599,47 @@ fn bias_of(plus: &Errors, minus: &Errors, zero: &Errors, scored: &[usize]) -> Op
     })
 }
 
-fn run_group(board: &BoardRaster, group: &Group, gradients: &[f64], n_seeds: u64) -> Vec<Row> {
+/// Seed-to-seed standard deviation of a marker's centre (px per axis),
+/// pooled over the scored markers placed in at least two seeds of each
+/// render.
+fn scatter_of(renders: &[&Errors], scored: &[usize]) -> Option<f64> {
+    let (mut ss, mut dof) = (0.0, 0usize);
+    for errors in renders {
+        for &c in scored {
+            let v: Vec<[f64; 2]> = errors.iter().filter_map(|e| e.get(&c).copied()).collect();
+            if v.len() < 2 {
+                continue;
+            }
+            for axis in 0..2 {
+                let m = v.iter().map(|e| e[axis]).sum::<f64>() / v.len() as f64;
+                ss += v.iter().map(|e| (e[axis] - m).powi(2)).sum::<f64>();
+                dof += v.len() - 1;
+            }
+        }
+    }
+    (dof >= 4).then(|| (ss / dof as f64).sqrt())
+}
+
+fn run_group(board: &BoardRaster, group: &Group, gradients: &[f64], n_seeds: u64) -> GroupResult {
     let target = &board.target;
     let size = image_size(group.radius);
     let mut spec =
         SceneSpec::for_target(target, group.radius, group.sigma0, group.tilt, CONTRAST, 1);
     spec.image_size = size;
     let y0 = 0.5 * (f64::from(size[1]) - 1.0);
-    let dets: Vec<Detector> = METHODS
-        .iter()
-        .map(|m| detector(target, group.radius, m.refinement()))
-        .collect();
+    let dets = Detectors {
+        projective: detector(
+            target,
+            group.radius,
+            CircleRefinementMethod::ProjectiveCenter,
+        ),
+        photometric: detector(target, group.radius, CircleRefinementMethod::Photometric),
+    };
     let rad0 = radiance(board, &spec);
     let truth = Truth::new(target, &rad0.h, spec.px_per_mm);
-    let zero: Vec<Errors> = METHODS
-        .iter()
-        .zip(&dets)
-        .map(|(&m, d)| measure(d, m, &rad0, &spec, &truth, n_seeds))
-        .collect();
+    let zero = measure(&dets, &rad0, &spec, &truth, n_seeds);
+    let all_scored = truth.scored(size, 3.0 * group.sigma0, 0.0, f64::INFINITY);
+    let zero_scatter = std::array::from_fn(|k| scatter_of(&[&zero.errors[k]], &all_scored));
     let mut rows = Vec::new();
     for &g in gradients {
         let half = band_half_width(group.sigma0, g, f64::from(size[1]));
@@ -544,28 +650,40 @@ fn run_group(board: &BoardRaster, group: &Group, gradients: &[f64], n_seeds: u64
                 form,
                 g,
                 n_scored: scored.len(),
-                n_zero: [0, 1]
-                    .map(|k| scored.iter().filter(|c| zero[k][0].contains_key(c)).count()),
-                bias: [None, None],
+                n_zero: std::array::from_fn(|k| {
+                    scored
+                        .iter()
+                        .filter(|c| zero.errors[k][0].contains_key(c))
+                        .count()
+                }),
+                bias: [None; N_VARIANTS],
+                scatter: [None; N_VARIANTS],
+                fallbacks: 0,
             };
             if scored.len() >= 2 {
                 let render = |sign: f64| {
                     let mut s = spec.clone();
                     s.psf = cell_psf(group.sigma0, sign * g, y0, half, form);
-                    (radiance(board, &s), s)
+                    let rad = radiance(board, &s);
+                    measure(&dets, &rad, &s, &truth, n_seeds)
                 };
-                let (rp, sp) = render(1.0);
-                let (rm, sm) = render(-1.0);
-                for (k, (&m, d)) in METHODS.iter().zip(&dets).enumerate() {
-                    let plus = measure(d, m, &rp, &sp, &truth, n_seeds);
-                    let minus = measure(d, m, &rm, &sm, &truth, n_seeds);
-                    row.bias[k] = bias_of(&plus, &minus, &zero[k], &scored);
+                let plus = render(1.0);
+                let minus = render(-1.0);
+                for k in 0..N_VARIANTS {
+                    let (p, m) = (&plus.errors[k], &minus.errors[k]);
+                    row.bias[k] = bias_of(p, m, &zero.errors[k], &scored);
+                    row.scatter[k] = scatter_of(&[p, m], &scored);
                 }
+                row.fallbacks = plus.fallbacks + minus.fallbacks;
             }
             rows.push(row);
         }
     }
-    rows
+    GroupResult {
+        group: *group,
+        zero_scatter,
+        rows,
+    }
 }
 
 fn fmt_bias(b: &Option<Bias>, n_zero: usize) -> String {
@@ -576,6 +694,18 @@ fn fmt_bias(b: &Option<Bias>, n_zero: usize) -> String {
             b.n_markers, b.odd[0], b.odd_se[0], b.odd[1], b.odd_se[1], b.direct_y
         ),
     }
+}
+
+fn cell_label(r: &Row) -> String {
+    format!(
+        "{:<10} {:>3.0} {:>4.1} {:>4.0} {:<7} {:>6.3}",
+        r.group.kind.name(),
+        r.group.radius,
+        r.group.sigma0,
+        r.group.tilt,
+        format!("{:?}", r.form),
+        r.g,
+    )
 }
 
 fn print_rows(rows: &[Row]) {
@@ -598,45 +728,212 @@ fn print_rows(rows: &[Row]) {
     );
     for r in rows {
         println!(
-            "{:<10} {:>3.0} {:>4.1} {:>4.0} {:<7} {:>6.3} {:>4} | {} | {} | {:>+8.4}",
-            r.group.kind.name(),
-            r.group.radius,
-            r.group.sigma0,
-            r.group.tilt,
-            format!("{:?}", r.form),
-            r.g,
+            "{} {:>4} | {} | {} | {:>+8.4}",
+            cell_label(r),
             r.n_scored,
-            fmt_bias(&r.bias[0], r.n_zero[0]),
-            fmt_bias(&r.bias[1], r.n_zero[1]),
+            fmt_bias(&r.bias[PROJECTIVE], r.n_zero[PROJECTIVE]),
+            fmt_bias(&r.bias[PHOTOMETRIC], r.n_zero[PHOTOMETRIC]),
             -r.g * r.group.sigma0,
         );
     }
 }
 
-fn write_csv(rows: &[Row], path: &str) {
-    let mut s = String::from(
-        "kind,radius,sigma0,tilt,form,g,method,n,bias_x,se_x,bias_y,se_y,direct_y,direct_se\n",
+/// Per cell: the bias along the gradient of (a) and (b), their centre
+/// scatter and the fallbacks of (b).
+fn print_law(rows: &[Row]) {
+    if !rows.iter().any(|r| r.bias[LAW].is_some()) {
+        return;
+    }
+    println!(
+        "\nlaw correction: bias along the gradient (odd part, px) and seed-to-seed centre sd \
+         (px per axis); (a) one-sigma fit, (b) (a) + 1.24 sigma grad(sigma), the \
+         neighbour-plane gradient"
     );
+    println!(
+        "{:<44} {:>3} | {:>16} {:>8} | {:>6} {:>6} | b fallbacks",
+        "kind R sig0 tilt form g", "n", "a ± se", "b", "sd a", "sd b"
+    );
+    let sd = |s: &Option<f64>| s.unwrap_or(f64::NAN);
     for r in rows {
-        for (k, m) in METHODS.iter().enumerate() {
-            if let Some(b) = &r.bias[k] {
-                s.push_str(&format!(
-                    "{},{},{},{},{:?},{},{},{},{},{},{},{},{},{}\n",
-                    r.group.kind.name(),
-                    r.group.radius,
-                    r.group.sigma0,
-                    r.group.tilt,
-                    r.form,
-                    r.g,
-                    m.name(),
-                    b.n_markers,
-                    b.odd[0],
-                    b.odd_se[0],
-                    b.odd[1],
-                    b.odd_se[1],
-                    b.direct_y,
-                    b.direct_se
-                ));
+        let (Some(a), Some(b)) = (r.bias[PHOTOMETRIC], r.bias[LAW]) else {
+            continue;
+        };
+        println!(
+            "{} {:>3} | {:>+8.4}±{:.4} {:>+8.4} | {:>6.4} {:>6.4} | {}",
+            cell_label(r),
+            a.n_markers,
+            a.odd[1],
+            a.odd_se[1],
+            b.odd[1],
+            sd(&r.scatter[PHOTOMETRIC]),
+            sd(&r.scatter[LAW]),
+            r.fallbacks,
+        );
+    }
+}
+
+/// Pooled comparison of variant `k` against (a) over a set of cells.
+struct Pooled {
+    n_cells: usize,
+    /// RMS over cells of (a)'s bias along the gradient.
+    rms_a: f64,
+    /// `sqrt(sum b_k^2 / sum b_a^2)`: the residual bias as a fraction of
+    /// (a)'s (over- and under-correction alike).
+    residual: f64,
+    /// `sum b_k b_a / sum b_a^2`: the signed fraction of (a)'s bias left.
+    signed: f64,
+    /// `sqrt(sum se_k^2 / sum b_a^2)`: the noise floor of `residual`.
+    noise: f64,
+    /// `sqrt(sum sd_k^2 / sum sd_a^2)`.
+    scatter_ratio: f64,
+    /// Largest `|b_k| / |b_a|` over the cells where (a)'s bias exceeds five
+    /// standard errors, with its cell.
+    worst_residual: (f64, String),
+    /// Largest `sd_k / sd_a` over the cells, with its cell.
+    worst_scatter: (f64, String),
+}
+
+fn pooled(cells: &[&Row], k: usize) -> Option<Pooled> {
+    let pairs: Vec<(&Row, Bias, Bias)> = cells
+        .iter()
+        .filter_map(|r| Some((*r, r.bias[PHOTOMETRIC]?, r.bias[k]?)))
+        .collect();
+    if pairs.is_empty() {
+        return None;
+    }
+    let (mut aa, mut kk, mut ka, mut se2) = (0.0, 0.0, 0.0, 0.0);
+    let mut worst_residual = (0.0, String::new());
+    for (r, a, b) in &pairs {
+        aa += a.odd[1] * a.odd[1];
+        kk += b.odd[1] * b.odd[1];
+        ka += b.odd[1] * a.odd[1];
+        se2 += b.odd_se[1] * b.odd_se[1];
+        if a.odd[1].abs() > 5.0 * a.odd_se[1] {
+            let f = b.odd[1].abs() / a.odd[1].abs();
+            if f > worst_residual.0 {
+                worst_residual = (f, cell_label(r));
+            }
+        }
+    }
+    let (mut sa, mut sk) = (0.0, 0.0);
+    let mut worst_scatter = (0.0, String::new());
+    for r in cells {
+        if let (Some(a), Some(b)) = (r.scatter[PHOTOMETRIC], r.scatter[k]) {
+            sa += a * a;
+            sk += b * b;
+            if b / a > worst_scatter.0 {
+                worst_scatter = (b / a, cell_label(r));
+            }
+        }
+    }
+    Some(Pooled {
+        n_cells: pairs.len(),
+        rms_a: (aa / pairs.len() as f64).sqrt(),
+        residual: (kk / aa).sqrt(),
+        signed: ka / aa,
+        noise: (se2 / aa).sqrt(),
+        scatter_ratio: (sk / sa).sqrt(),
+        worst_residual,
+        worst_scatter,
+    })
+}
+
+/// Pooled comparison of (b) against (a) per form and target kind.
+fn summarize_law(results: &[GroupResult]) {
+    let rows: Vec<&Row> = results.iter().flat_map(|g| &g.rows).collect();
+    if !rows.iter().any(|r| r.bias[LAW].is_some()) {
+        return;
+    }
+    println!(
+        "\nlaw correction summary (bias along the gradient, pooled over cells): residual = \
+         sqrt(sum b^2 / sum b_a^2), signed = sum b b_a / sum b_a^2, noise = sqrt(sum se^2 / \
+         sum b_a^2), sd ratio = sqrt(sum sd^2 / sum sd_a^2); worst = largest |b| / |b_a| \
+         over cells with |b_a| > 5 se, largest sd / sd_a"
+    );
+    let kinds: Vec<Option<Kind>> = std::iter::once(None)
+        .chain(selected_kinds().into_iter().map(Some))
+        .collect();
+    for form in FORMS {
+        for kind in &kinds {
+            let cells: Vec<&Row> = rows
+                .iter()
+                .copied()
+                .filter(|r| r.form == form && kind.is_none_or(|k| r.group.kind == k))
+                .collect();
+            let zero = |k: usize| {
+                let (mut sa, mut sk) = (0.0, 0.0);
+                for g in results
+                    .iter()
+                    .filter(|g| kind.is_none_or(|k| g.group.kind == k))
+                {
+                    if let (Some(a), Some(b)) = (g.zero_scatter[PHOTOMETRIC], g.zero_scatter[k]) {
+                        sa += a * a;
+                        sk += b * b;
+                    }
+                }
+                (sk / sa).sqrt()
+            };
+            let name = kind.map_or("all", Kind::name);
+            let Some(a) = pooled(&cells, PHOTOMETRIC) else {
+                continue;
+            };
+            println!(
+                "{:<7} {:<10}: {} cells, rms bias (a) {:.4} px",
+                format!("{form:?}"),
+                name,
+                a.n_cells,
+                a.rms_a
+            );
+            if let Some(p) = pooled(&cells, LAW) {
+                println!(
+                    "    (b) law residual {:.3} (signed {:+.3}, noise {:.3}), sd ratio {:.3} \
+                     (g = 0: {:.3}); worst residual {:.2} [{}], worst sd {:.2} [{}]",
+                    p.residual,
+                    p.signed,
+                    p.noise,
+                    p.scatter_ratio,
+                    zero(LAW),
+                    p.worst_residual.0,
+                    p.worst_residual.1,
+                    p.worst_scatter.0,
+                    p.worst_scatter.1,
+                );
+            }
+        }
+    }
+}
+
+fn write_csv(results: &[GroupResult], path: &str) {
+    let mut s = String::from(
+        "kind,radius,sigma0,tilt,form,g,method,n,bias_x,se_x,bias_y,se_y,direct_y,direct_se,\
+         scatter,zero_scatter,fallbacks\n",
+    );
+    let opt = |v: Option<f64>| v.map_or(String::new(), |v| v.to_string());
+    for gr in results {
+        for r in &gr.rows {
+            for (k, v) in VARIANTS.iter().enumerate() {
+                if let Some(b) = &r.bias[k] {
+                    s.push_str(&format!(
+                        "{},{},{},{},{:?},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                        r.group.kind.name(),
+                        r.group.radius,
+                        r.group.sigma0,
+                        r.group.tilt,
+                        r.form,
+                        r.g,
+                        v.name(),
+                        b.n_markers,
+                        b.odd[0],
+                        b.odd_se[0],
+                        b.odd[1],
+                        b.odd_se[1],
+                        b.direct_y,
+                        b.direct_se,
+                        opt(r.scatter[k]),
+                        opt(gr.zero_scatter[k]),
+                        if k == LAW { r.fallbacks } else { 0 },
+                    ));
+                }
             }
         }
     }
@@ -708,14 +1005,14 @@ fn fit_linear(cells: &[(&Row, Bias)]) -> Option<(f64, f64, f64, f64)> {
     ))
 }
 
-/// Fit the bias along the gradient per method and form:
+/// Fit the bias along the gradient per variant and form:
 /// (1) `b = c g sigma0`, over all cells and per target kind;
 /// (2) `|b| = c g^m sigma0^a R^k` in log space over the cells with a
 /// significant bias of the sign of (1) (a variable that does not vary is left
 /// out).
 fn fit_laws(rows: &[Row]) {
     println!("\nfitted laws (bias along the gradient, px)");
-    for (k, method) in METHODS.iter().enumerate() {
+    for (k, variant) in VARIANTS.iter().enumerate() {
         for form in FORMS {
             let cells: Vec<(&Row, Bias)> = rows
                 .iter()
@@ -729,7 +1026,7 @@ fn fit_laws(rows: &[Row]) {
             println!(
                 "{:<11} {:<7} all       : b = {c:+.3} g sigma0 over {:>3} cells; explains \
                  {:5.1} % of sum b^2; rms misfit {rms:.4} px; chi2/dof {chi2:.1}",
-                method.name(),
+                variant.name(),
                 format!("{form:?}"),
                 cells.len(),
                 100.0 * share,
@@ -750,7 +1047,7 @@ fn fit_laws(rows: &[Row]) {
                         println!(
                             "{:<11} {:<7} {:<10}: b = {c:+.3} g sigma0 over {:>3} cells{}; explains \
                              {:5.1} %; rms misfit {rms:.4} px; chi2/dof {chi2:.1}",
-                            method.name(),
+                            variant.name(),
                             format!("{form:?}"),
                             kind.name(),
                             sub.len(),
@@ -811,7 +1108,7 @@ fn fit_laws(rows: &[Row]) {
                 println!(
                     "{:<11} {:<7} power law : |b| = {:.3}{law} over {} significant cells; \
                      rms log residual {rms_log:.2} (factor {:.2})",
-                    method.name(),
+                    variant.name(),
                     format!("{form:?}"),
                     p[0].exp(),
                     sig.len(),
@@ -823,7 +1120,9 @@ fn fit_laws(rows: &[Row]) {
 }
 
 /// Q1: centre bias under a blur gradient, per method, target kind, marker
-/// radius, sigma0, gradient, tilt and rendering form.
+/// radius, sigma0, gradient, tilt and rendering form; with the `study`
+/// feature also the photometric centre corrected by the first-order bias law
+/// with the stage's neighbour-plane gradient estimate (ALGO-018).
 #[test]
 #[ignore = "benchmark; run in release with --ignored --nocapture"]
 fn blur_gradient_bias_matrix() {
@@ -856,7 +1155,8 @@ fn blur_gradient_bias_matrix() {
             BoardRaster::with_dpi(target, dpi)
         });
     }
-    let results: Mutex<Vec<Option<Vec<Row>>>> = Mutex::new(vec![None; groups.len()]);
+    let results: Mutex<Vec<Option<GroupResult>>> =
+        Mutex::new(groups.iter().map(|_| None).collect());
     let next = AtomicUsize::new(0);
     let threads = env_or("GRADIENT_THREADS", 10usize).max(1);
     std::thread::scope(|scope| {
@@ -867,22 +1167,25 @@ fn blur_gradient_bias_matrix() {
                     let Some(g) = groups.get(i) else { break };
                     let k = KINDS.iter().position(|k| *k == g.kind).unwrap();
                     let board = &rasters[&(k, g.radius.to_bits())];
-                    let rows = run_group(board, g, &gradients, n_seeds);
-                    results.lock().unwrap()[i] = Some(rows);
+                    let res = run_group(board, g, &gradients, n_seeds);
+                    results.lock().unwrap()[i] = Some(res);
                 }
             });
         }
     });
-    let rows: Vec<Row> = results
+    let results: Vec<GroupResult> = results
         .into_inner()
         .unwrap()
         .into_iter()
-        .flat_map(|r| r.expect("group ran"))
+        .map(|r| r.expect("group ran"))
         .collect();
+    let rows: Vec<Row> = results.iter().flat_map(|g| g.rows.clone()).collect();
     print_rows(&rows);
+    print_law(&rows);
     fit_laws(&rows);
+    summarize_law(&results);
     if let Ok(path) = std::env::var("GRADIENT_CSV") {
-        write_csv(&rows, &path);
+        write_csv(&results, &path);
     }
 }
 

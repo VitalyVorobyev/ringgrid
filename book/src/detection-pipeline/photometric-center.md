@@ -211,6 +211,20 @@ not cover the PSF-model bias in the first table.
   skips it for this configuration (see
   [Detection Quality & Rejection](../detection-quality.md)).
 
+## Blur-gradient bias
+
+When the blur width changes across a marker (a tilted board, a tilted-focus
+camera), the fit, which uses one PSF width per marker, places the centre about
+`1.24 · σ · |∇σ|` px towards the sharper side (`σ` the marker's fitted blur,
+`DetectedMarker::blur.sigma_px`; `∇σ` its gradient across the image, px per
+px). The coefficient varies
+from 0.9 to 1.8 with the target kind. To correct it, move the centre by
+`+1.24 · σ · ∇σ`, towards the larger blur. With `∇σ` from the fitted blur
+of the neighbouring markers (a least-squares plane), this removes about half
+of the bias over the synthetic `blur_gradient_bias_matrix`, and 65–70 % in
+cells away from its steepest gradients. A camera calibration absorbs most of
+the bias anyway (92 % on six tilted-focus cameras, ADR-022).
+
 ## Accuracy
 
 **Synthetic blur benchmark** (`crates/ringgrid/tests/blur_center_accuracy.rs`,

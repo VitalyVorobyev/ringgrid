@@ -49,7 +49,7 @@ else()
         # older release fails just as hard while looking like tampering. CI is
         # unaffected either way: both vcpkg jobs build from the local checkout
         # via RINGGRID_SOURCE_DIR.
-        SHA512 0
+        SHA512 e9c50dbd6ddfb79d444f4edc28d68812ddbd13be0a4e1af50761e7166f0f3151dcf4c33f91381db7914a0a149728e3b30cc91e01fe36da9d717f5ab3706abb18
         HEAD_REF main
     )
 endif()

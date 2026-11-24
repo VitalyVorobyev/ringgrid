@@ -31,11 +31,11 @@ use crate::target::{MarkerCoding, TargetLayout};
 #[cfg(feature = "study")]
 mod residuals;
 #[cfg(feature = "study")]
-pub(crate) use residuals::ResidualSink;
-#[cfg(feature = "study")]
 use residuals::record_residuals;
 #[cfg(feature = "study")]
-pub use residuals::{PhotometricResidualMarker, ResidualAutocorrelation};
+pub use residuals::{PhotometricResidualMarker, PhotometricStudyOptions, ResidualAutocorrelation};
+#[cfg(feature = "study")]
+pub(crate) use residuals::{ResidualSink, StudySink};
 
 /// Where the stage sends each fitted marker's residuals: nowhere without the
 /// `study` feature (the sink can only be `None`).
@@ -146,22 +146,6 @@ fn local_map(
     }
     let m = crate::homography::estimate_homography_dlt(&src, &dst).ok()?;
     Some(crate::homography::matrix3_to_array(&m))
-}
-
-/// Nominal printed radii of the target's markers (board mm), see
-/// [`PrintRadii`]: stroked rings around a code band for coded markers, the
-/// filled annulus between the two radii for plain ones.
-fn nominal_radii(target: &TargetLayout) -> PrintRadii {
-    let ring = target.ring();
-    let inner = f64::from(ring.inner_radius_mm);
-    let outer = f64::from(ring.outer_radius_mm);
-    match target.coding() {
-        MarkerCoding::Coded16(spec) => {
-            let h = 0.5 * f64::from(spec.ring_width_mm);
-            [inner - h, inner + h, outer - h, outer + h]
-        }
-        MarkerCoding::Plain => [inner, outer, outer, outer],
-    }
 }
 
 /// Where markers sit in the source plane of the result homography (board mm
@@ -701,7 +685,13 @@ fn refine(
     let target = &config.target;
     let h = homography?;
     let board = PrintedBoard::new(target, board_frame, markers)?;
-    let nominal = nominal_radii(target);
+    #[cfg(feature = "study")]
+    let fixed = residuals
+        .as_deref()
+        .and_then(|sink| sink.options.fixed_radii_mm());
+    #[cfg(not(feature = "study"))]
+    let fixed: Option<PrintRadii> = None;
+    let nominal = fixed.unwrap_or_else(|| target.coding().ink_radii_mm_f64(&target.ring()));
     let spacing = f64::from(target.min_center_spacing_mm());
     let patch_margin_mm =
         (0.5 * (spacing - 2.0 * nominal[3])).clamp(0.04 * nominal[3], 0.5 * nominal[3]);
@@ -724,7 +714,7 @@ fn refine(
         coded: target.is_coded(),
     };
 
-    let estimated = if config.advanced.photometric.estimate_print_radii {
+    let estimated = if fixed.is_none() && config.advanced.photometric.estimate_print_radii {
         stage.estimate_print_radii(markers, nominal)
     } else {
         None
@@ -777,7 +767,7 @@ fn refine(
     attach_blur_gradient_bias(markers, &accepted, &gradients);
     #[cfg(feature = "study")]
     if let Some(sink) = residuals {
-        residuals::record_blur_gradient_bias(sink, &accepted, &gradients);
+        residuals::record_blur_gradient_bias(&mut sink.rows, &accepted, &gradients);
     }
     for &(i, _) in &accepted {
         markers[i].confidence = marker_confidence(&markers[i]);

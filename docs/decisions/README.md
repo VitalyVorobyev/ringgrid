@@ -13,7 +13,8 @@ keeps the history. Start from [`000-template.md`](000-template.md).
 
 ## Index
 
-Status as checked against the code and the later ADRs on 2026-11-22.
+Status as checked against the code and the later ADRs on 2026-11-22
+(ADR-022 amended 2026-11-24).
 ADR-001…017, 019 and 020 were removed that day as superseded, obsolete or out
 of step with the code.
 

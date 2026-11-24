@@ -10,7 +10,9 @@ use std::path::Path;
 
 use crate::detector::config::{ScaleTiers, derive_proposal_config};
 #[cfg(feature = "study")]
-use crate::detector::photometric_refine::PhotometricResidualMarker;
+use crate::detector::photometric_refine::{
+    PhotometricResidualMarker, PhotometricStudyOptions, StudySink,
+};
 use crate::detector::{DetectConfig, MarkerScalePrior};
 use crate::pipeline;
 use crate::pipeline::DetectionDiagnostics;
@@ -270,11 +272,7 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<PhotometricResiduals, DetectError> {
-        let mut residuals = Vec::new();
-        let (result, diagnostics) = self.finish_with_diagnostics(
-            pipeline::detect_collecting_residuals(image, &self.config, &mut residuals),
-        )?;
-        Ok((result, diagnostics, residuals))
+        self.photometric_study(image, PhotometricStudyOptions::default(), false, true)
     }
 
     /// Adaptive variant of
@@ -285,11 +283,53 @@ impl Detector {
         &self,
         image: &GrayImage,
     ) -> Result<PhotometricResiduals, DetectError> {
-        let mut residuals = Vec::new();
-        let (result, diagnostics) = self.finish_with_diagnostics(
-            pipeline::detect_adaptive_collecting_residuals(image, &self.config, &mut residuals),
-        )?;
-        Ok((result, diagnostics, residuals))
+        self.photometric_study(image, PhotometricStudyOptions::default(), true, true)
+    }
+
+    /// Run photometric estimator trials and return per-fit summaries.
+    /// Set `circle_refinement` to `Photometric` to obtain fit summaries.
+    #[cfg(feature = "study")]
+    #[doc(hidden)]
+    pub fn detect_with_photometric_study(
+        &self,
+        image: &GrayImage,
+        options: PhotometricStudyOptions,
+    ) -> Result<PhotometricResiduals, DetectError> {
+        self.photometric_study(image, options, false, false)
+    }
+
+    /// Adaptive counterpart of [`Self::detect_with_photometric_study`].
+    #[cfg(feature = "study")]
+    #[doc(hidden)]
+    pub fn detect_adaptive_with_photometric_study(
+        &self,
+        image: &GrayImage,
+        options: PhotometricStudyOptions,
+    ) -> Result<PhotometricResiduals, DetectError> {
+        self.photometric_study(image, options, true, false)
+    }
+
+    #[cfg(feature = "study")]
+    fn photometric_study(
+        &self,
+        image: &GrayImage,
+        options: PhotometricStudyOptions,
+        adaptive: bool,
+        pixels: bool,
+    ) -> Result<PhotometricResiduals, DetectError> {
+        let mut sink = StudySink {
+            options,
+            pixels,
+            rows: Vec::new(),
+        };
+        let run = if adaptive {
+            pipeline::detect_adaptive_collecting_residuals
+        } else {
+            pipeline::detect_collecting_residuals
+        };
+        let (result, diagnostics) =
+            self.finish_with_diagnostics(run(image, &self.config, &mut sink))?;
+        Ok((result, diagnostics, sink.rows))
     }
 
     /// Generate pass-1 center proposals in image coordinates.

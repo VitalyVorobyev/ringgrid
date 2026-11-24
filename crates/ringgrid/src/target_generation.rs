@@ -902,6 +902,7 @@ fn codeword_of(codebook: &Codebook, id: usize) -> u16 {
 fn render_geometry(target: &TargetLayout) -> RenderGeometry {
     let ring = target.ring();
     let is_coded = matches!(target.coding(), MarkerCoding::Coded16(_));
+    // Match the renderer's historical f32 drawn extent and subtraction.
     let ring_half_thickness_mm = if is_coded {
         f64::from(target.outer_draw_radius_mm() - ring.outer_radius_mm)
     } else {

@@ -4,11 +4,13 @@
 - **Date:** 2026-11-14 (amended 2026-11-14: every target kind, correlated
   residual covariance, anisotropic PSF; amended 2026-11-17: plain markers keep
   the homography's rotation; amended 2026-11-22: blur as a reported
-  measurement)
+  measurement; amended 2026-11-24: fixed print radii and the ink moment
+  rejected)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 - **Related:** ADR-028 and ADR-029 (the confidence of a photometric centre)
-- **Evidence:** [photometric centre study](../studies/photometric-center.md)
+- **Evidence:** [photometric centre study](../studies/photometric-center.md),
+  [paired centre metrology](../studies/center-metrology.md)
 
 ## Context
 
@@ -94,6 +96,15 @@ Blur*). It replaces the diagnostics field `PhotometricMetrics::blur_sigma_px`.
   [why](../studies/photometric-center.md#why-the-residual-did-not-move)).
 - **A fixed-gradient second pass (ALGO-018)** — 0.46 of the one-σ bias left
   against 0.50 for the law `1.24·σ·∇σ` alone, at 2.1–2.3× the time.
+- **Fixed print radii pooled over training captures (ALGO-021)** — no centre
+  gain over the per-image radii (identical gradient-reversal bias, equal or
+  larger blur drift on sharp real controls), and per-image radii already
+  remove the blur bias of a mis-printed stroke
+  ([study](../studies/center-metrology.md#measurements-and-decision)).
+- **The projectively corrected ink moment (ALGO-020)** — the same
+  gradient-reversal bias as the fit (−0.029 vs −0.028 px), more blur drift on
+  the sharp plate and fewer markers measurable; kept as a `study` comparator
+  ([study](../studies/center-metrology.md#measurements-and-decision)).
 
 ## Consequences
 

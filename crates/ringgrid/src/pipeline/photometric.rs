@@ -57,13 +57,14 @@ pub(super) fn finish(
 #[cfg(feature = "study")]
 fn reindex_residuals(residuals: ResidualSink<'_>, new_index: &[Option<usize>]) {
     if let Some(sink) = residuals {
-        sink.retain_mut(|r| match new_index.get(r.marker_index).copied().flatten() {
-            Some(i) => {
-                r.marker_index = i;
-                true
-            }
-            None => false,
-        });
+        sink.rows
+            .retain_mut(|r| match new_index.get(r.marker_index).copied().flatten() {
+                Some(i) => {
+                    r.marker_index = i;
+                    true
+                }
+                None => false,
+            });
     }
 }
 

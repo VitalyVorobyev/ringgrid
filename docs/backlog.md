@@ -41,13 +41,20 @@ uncertainty are wanted next to the centre.
   [center metrology](studies/center-metrology.md#measurements-and-decision));
   reopen when a calibration consumer needs σ comparable across images.
 
-- `ALGO-022` · P3 · todo — **Exposure dependence of the fitted radii and
-  centres** (split from ALGO-020; Cledat, Rufener & Cucci, Pattern
-  Recognition 2021: saturation with the PSF moves the edges of
-  concentric-circle targets with exposure). Expected: the stroke width
-  follows exposure and the per-image radii absorb it, while the centres stay
-  put. Synthetic half: one `blur_scene` radiance exposed at several gains,
-  with clipping and a non-unit response. Real half: needs an exposure series.
+- `ALGO-022` · P3 · todo — **Exposure dependence on a real exposure
+  series.** The synthetic half is done
+  ([exposure and saturation](studies/center-metrology.md#exposure-and-saturation-algo-022)):
+  below clipping, gain and response leave centres put (≤ 0.0007 px) and the
+  per-image radii absorb the response's stroke-width change; heavily
+  saturated fits are now rejected (saturation gate). Remaining: the same
+  check on a real exposure series (needs data).
+
+- `ALGO-025` · P3 · todo — **Coded centres shift once the paper clips.**
+  With the paper saturated (gain 2–2.5), coded centres move 0.003–0.007 px
+  (> 10 SE) toward the less saturated side; the shift grows with the
+  illumination asymmetry across the marker (0.0003 / 0.0029 / 0.0050 px at
+  0 / ±15 / ±50 % gradient) and survives fixed radii; plain centres stay
+  within 0.0015 px. Small against 0.018 px RMS; diagnose before acting.
 
 - `ALGO-023` · P2 · blocked (tilted rtv3d captures with fractional-centre
   `gen-screen` targets) — **Capture-wide focus-band blur-gradient
@@ -94,6 +101,7 @@ uncertainty are wanted next to the centre.
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| ALGO-022 (synthetic) | 2026-11-24 | algo/study | Exposure series and a saturation gate | `photometric_exposure_series` (gains 0.25–3, γ 1/0.8/1.25): no centre change below clipping; fits more than half masked with centre σ > 0.08 px are rejected (`InsufficientPixels`, projective centre kept): removes all 316 accepted centres > 0.5 px off (up to 2.2 px) for 136 of 131,117 good fits lost; ≥ 80 %-masked RMS 0.103 / 0.213 → 0.055 / 0.048 px (coded / plain). Real exposure series stays open. |
 | ALGO-021 | 2026-11-24 | algo | Unbiased print-radii consensus and a second-order curved edge | The per-image radii were biased low by the aggregation (iteration cap, per-sample precision gate and inverse-variance weights all favoured thick-stroke fits where blur and stroke trade off): now an unweighted robust mean with a standard-error gate and a 4× iteration budget for free-radii fits. The edge model gains its second-order curvature term `Φ(z(1 − ε²/4) + ε/2)`. Thin ring r0 −1 … −2.7 % → within ±0.2 %, σ within ±0.2 %; coded hex centres improve (17 px blur 3: 0.0457 → 0.0375 px); r0 stays unidentifiable above σ ≈ 0.35 r0. See [study](studies/photometric-center.md#print-radii-and-the-curved-edge). |
 | ALGO-020 | 2026-11-24 | algo/study | Moment-centre study estimator — rejected as an estimator | The projectively corrected ink centroid shows the same gradient-reversal bias as the photometric fit (−0.029 vs −0.028 px over 717 paired observations), drifts more under added blur on the sharp IPGS plate (0.022 vs 0.017 px RMS) and declines clipped or spilled patches. Kept as a `study` comparator (`PhotometricStudyOptions::moment_centers`); see [center metrology](studies/center-metrology.md). The exposure half moved to ALGO-022. |
 | ALGO-017 | 2026-11-22 | algo/api | Blur as a stable photometric output | `DetectedMarker::blur`: σ (Gaussian edge width incl. pixel integration), anisotropy and their 3×3 covariance, honest for differences between markers of one image (per-image print-radii offset not included); reported for photometric centres with σ ≤ 0.25 × outer radius; replaces `PhotometricMetrics::blur_sigma_px`. |

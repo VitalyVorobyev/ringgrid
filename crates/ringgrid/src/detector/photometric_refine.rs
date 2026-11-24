@@ -43,6 +43,19 @@ pub(crate) use residuals::{ResidualSink, StudySink};
 #[cfg(not(feature = "study"))]
 pub(crate) type ResidualSink<'a> = Option<&'a mut std::convert::Infallible>;
 
+/// Print radii a study run fixes instead of estimating them (`study`
+/// feature); never any without it.
+#[cfg(feature = "study")]
+fn fixed_radii(sink: &ResidualSink<'_>) -> Option<PrintRadii> {
+    sink.as_deref()
+        .and_then(|sink| sink.options.fixed_radii_mm())
+}
+
+#[cfg(not(feature = "study"))]
+fn fixed_radii(sink: &ResidualSink<'_>) -> Option<PrintRadii> {
+    sink.as_deref().map(|sink| match *sink {})
+}
+
 #[cfg(not(feature = "study"))]
 fn record_residuals(
     sink: &mut std::convert::Infallible,
@@ -95,6 +108,28 @@ const MIN_CONTRAST_SNR: f64 = 3.0;
 /// image-wide median is a model misfit (a glare halo, an occluder, a print
 /// defect); its centre is not trusted.
 const MAX_RESIDUAL_RATIO: f64 = 3.0;
+/// Saturation gate, with [`SATURATED_MAX_CENTER_SIGMA_PX`]. A fit whose
+/// patch is more than this fraction masked as saturated is rejected as
+/// [`PhotometricStatus::InsufficientPixels`] when its centre σ
+/// (`√(tr Σ / 2)`) exceeds that limit. The marker then keeps its previous
+/// (projective) centre.
+///
+/// Evidence: `photometric_exposure_series` (ALGO-022,
+/// `tests/photometric_target_matrix.rs`) exposes one radiance at gains 0.25
+/// to 3 under responses γ 1, 0.8 and 1.25. Without the gate, 316 accepted
+/// centres were more than 0.5 px off (up to 2.2 px), all on patches more than
+/// 80 % masked. On patches more than half masked, the photometric centre
+/// beats the projective centre of the same marker while σ ≤ 0.08 px (RMS
+/// 0.085 vs 0.119 px at σ 0.065–0.08). It ties at σ 0.08–0.1 (0.123 vs
+/// 0.116 px) and loses above that (0.259 vs 0.133 px). The gate removes
+/// every centre beyond 0.5 px and loses 136 of 131,117 accepted fits under
+/// 0.05 px error. A masked-fraction cut alone loses 10,794 at 0.8. Fits with
+/// at most half the patch masked are untouched.
+const SATURATED_PATCH_FRACTION: f64 = 0.5;
+/// Largest centre σ (px per axis) of an accepted fit on a patch more than
+/// [`SATURATED_PATCH_FRACTION`] masked: about where it stops beating the
+/// projective centre (see there).
+const SATURATED_MAX_CENTER_SIGMA_PX: f64 = 0.08;
 /// Board-mm reach of a blurred edge for selecting the ink discs of a patch,
 /// in PSF sigmas at the largest plausible blur.
 const DISC_REACH_SIGMAS: f64 = 6.0;
@@ -557,6 +592,14 @@ fn status_only(status: PhotometricStatus) -> PhotometricMetrics {
     }
 }
 
+/// Whether a fit's patch is too saturated to constrain its centre: more
+/// than [`SATURATED_PATCH_FRACTION`] masked and a centre σ above
+/// [`SATURATED_MAX_CENTER_SIGMA_PX`].
+fn too_saturated(masked_fraction: f64, center_cov: [[f64; 2]; 2]) -> bool {
+    masked_fraction > SATURATED_PATCH_FRACTION
+        && (0.5 * (center_cov[0][0] + center_cov[1][1])).sqrt() > SATURATED_MAX_CENTER_SIGMA_PX
+}
+
 /// Accept or reject one fit and summarize it.
 fn judge(
     fit: &PhotometricFit,
@@ -579,6 +622,8 @@ fn judge(
         PhotometricStatus::Implausible
     } else if fit.residual_sigma > MAX_RESIDUAL_RATIO * typical_residual {
         PhotometricStatus::PoorFit
+    } else if too_saturated(fit.masked_fraction, fit.center_cov) {
+        PhotometricStatus::InsufficientPixels
     } else {
         PhotometricStatus::Accepted
     };
@@ -728,12 +773,7 @@ fn refine(
     let target = &config.target;
     let h = homography?;
     let board = PrintedBoard::new(target, board_frame, markers)?;
-    #[cfg(feature = "study")]
-    let fixed = residuals
-        .as_deref()
-        .and_then(|sink| sink.options.fixed_radii_mm());
-    #[cfg(not(feature = "study"))]
-    let fixed: Option<PrintRadii> = None;
+    let fixed = fixed_radii(&residuals);
     let nominal = fixed.unwrap_or_else(|| target.coding().ink_radii_mm_f64(&target.ring()));
     let spacing = f64::from(target.min_center_spacing_mm());
     let patch_margin_mm =
@@ -854,6 +894,21 @@ mod tests {
         assert_eq!(reported_blur(blur(4.3), 17.0), None);
         // Outer radius 8 px at blur 3 (σ ≈ 0.375 R): not reported.
         assert_eq!(reported_blur(blur(3.0), 8.0), None);
+    }
+
+    #[test]
+    fn only_a_mostly_saturated_imprecise_fit_is_too_saturated() {
+        // Centre σ per axis `s`: covariance `s² I`.
+        let cov = |s: f64| [[s * s, 0.0], [0.0, s * s]];
+        let (f, s) = (SATURATED_PATCH_FRACTION, SATURATED_MAX_CENTER_SIGMA_PX);
+        assert!(too_saturated(f + 0.01, cov(1.01 * s)));
+        // Either condition alone keeps the fit.
+        assert!(!too_saturated(f, cov(10.0 * s)));
+        assert!(!too_saturated(1.0, cov(s)));
+        // σ is the per-axis RMS, √(tr Σ / 2).
+        let elongated = [[2.0 * s * s - 1e-6, 0.0], [0.0, 1e-6]];
+        assert!(!too_saturated(1.0, elongated));
+        assert!(too_saturated(1.0, [[2.1 * s * s, 0.0], [0.0, 0.0]]));
     }
 
     /// A hex patch of fitted blur sigmas on the plane `1.5 + 0.01 x − 0.02 y`.

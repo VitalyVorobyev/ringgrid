@@ -76,8 +76,10 @@ pattern (`ring/photometric_center.rs`, stage in
   markers, `r0` for plain ones (`r3` is the scale reference); priors and
   gates are fractions of `r3`, not fixed millimetres;
 - gates (convergence, shift ≤ half the outer radius, plausible σ and
-  contrast, residual ≤ 3× the image median); a rejected fit keeps the
-  previous center;
+  contrast, residual ≤ 3× the image median, and a patch more than half
+  saturated only with a centre σ ≤ 0.08 px — see the
+  [exposure study](center-metrology.md#exposure-and-saturation-algo-022));
+  a rejected fit keeps the previous center;
 - where the board frame comes from: coded → `xy_mm_of_id`; plain with a
   resolved origin → `cell_xy_mm(grid_coord)`, every printed cell and origin
   dot modelled; plain in the relative canonical frame → the assignment-frame

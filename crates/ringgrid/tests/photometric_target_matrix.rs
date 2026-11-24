@@ -1128,6 +1128,31 @@ fn raster_dpi(target: &TargetLayout, outer_radius_px: f64) -> f32 {
     (7.0 * 25.4 * px_per_mm).clamp(600.0, 1200.0) as f32
 }
 
+/// `f` over `items` on `MATRIX_THREADS` threads (default 8), in order.
+fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let results: Mutex<Vec<Option<R>>> = Mutex::new(items.iter().map(|_| None).collect());
+    let next = AtomicUsize::new(0);
+    let threads = env_or("MATRIX_THREADS", 8usize).max(1);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    let r = f(item);
+                    results.lock().unwrap()[i] = Some(r);
+                }
+            });
+        }
+    });
+    results
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .map(|r| r.expect("item ran"))
+        .collect()
+}
+
 /// Run `cells` in parallel (they share one raster per kind and scale) and
 /// print them in order.
 fn run_cells(cells: &[Cell], n_seeds: u64, size: [u32; 2]) -> Vec<CellResult> {
@@ -1142,29 +1167,11 @@ fn run_cells(cells: &[Cell], n_seeds: u64, size: [u32; 2]) -> Vec<CellResult> {
                 BoardRaster::with_dpi(target, dpi)
             });
     }
-    let results: Mutex<Vec<Option<CellResult>>> = Mutex::new(vec![None; cells.len()]);
-    let next = AtomicUsize::new(0);
-    let threads = env_or("MATRIX_THREADS", 8usize).max(1);
-    std::thread::scope(|scope| {
-        for _ in 0..threads {
-            scope.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(c) = cells.get(i) else { break };
-                    let k = KINDS.iter().position(|k| *k == c.kind).unwrap();
-                    let board = &rasters[&(k, c.outer_radius_px.to_bits())];
-                    let r = run_cell(board, c, n_seeds, size);
-                    results.lock().unwrap()[i] = Some(r);
-                }
-            });
-        }
+    let results = parallel_map(cells, |c| {
+        let k = KINDS.iter().position(|k| *k == c.kind).unwrap();
+        let board = &rasters[&(k, c.outer_radius_px.to_bits())];
+        run_cell(board, c, n_seeds, size)
     });
-    let results: Vec<CellResult> = results
-        .into_inner()
-        .unwrap()
-        .into_iter()
-        .map(|r| r.expect("cell ran"))
-        .collect();
     print_header();
     for (c, r) in cells.iter().zip(&results) {
         print_row(c, r);
@@ -1483,4 +1490,688 @@ fn photometric_blur_exposure() {
             );
         }
     }
+}
+
+/// One exposure of a radiance: a gain on it, then the camera response
+/// `gamma` (on the radiance over 255), noise and 8-bit clipping.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Exposure {
+    gamma: f64,
+    gain: f64,
+}
+
+/// The reference exposure of a series: unit gain, linear response.
+const NOMINAL_EXPOSURE: Exposure = Exposure {
+    gamma: 1.0,
+    gain: 1.0,
+};
+
+/// What one detection of one exposure produced.
+#[derive(Debug, Default)]
+struct ExposureRun {
+    /// The per-image print radii (`None`: nominal radii, no consensus).
+    radii: Option<[f64; 4]>,
+    /// Photometric centres by true cell.
+    fits: BTreeMap<usize, Fit>,
+    /// Projective-centre errors (px) of the same exposure, detected without
+    /// the photometric stage, by true cell.
+    projective: BTreeMap<usize, f64>,
+    /// Markers at a wrong board position.
+    n_wrong: usize,
+    /// Masked (saturated) fraction of the patch of every attempted fit.
+    masked: Vec<f64>,
+    statuses: BTreeMap<String, usize>,
+}
+
+/// One photometric centre of an exposure.
+#[derive(Debug, Clone, Copy)]
+struct Fit {
+    center: [f64; 2],
+    /// Fitted sigma (px), where reported.
+    sigma: Option<f64>,
+    /// Reported centre covariance.
+    cov: [[f64; 2]; 2],
+    /// Fraction of the patch masked as saturated.
+    masked: f64,
+    /// Unmasked pixels in the fit.
+    n_pixels: usize,
+}
+
+/// A photometric centre of the exposure series with its error against the
+/// truth and the projective centre's error on the same marker and image.
+struct ScoredFit<'a> {
+    error: [f64; 2],
+    fit: &'a Fit,
+    projective: Option<f64>,
+}
+
+impl ScoredFit<'_> {
+    fn error_px(&self) -> f64 {
+        self.error[0].hypot(self.error[1])
+    }
+
+    /// Reported centre σ per axis, `√(tr Σ / 2)`.
+    fn reported_sigma(&self) -> f64 {
+        (0.5 * (self.fit.cov[0][0] + self.fit.cov[1][1])).sqrt()
+    }
+}
+
+/// Masked-fraction bins of the exposure-series summaries.
+const MASKED_BINS: [(&str, f64, f64); 7] = [
+    ("none", 0.0, 1e-12),
+    ("(0, 0.1)", 1e-12, 0.1),
+    ("[0.1, 0.3)", 0.1, 0.3),
+    ("[0.3, 0.5)", 0.3, 0.5),
+    ("[0.5, 0.7)", 0.5, 0.7),
+    ("[0.7, 0.8)", 0.7, 0.8),
+    ("[0.8, 1]", 0.8, 1.0 + 1e-12),
+];
+
+fn masked_bin(masked: f64) -> usize {
+    MASKED_BINS
+        .iter()
+        .position(|&(_, lo, hi)| masked >= lo && masked < hi)
+        .expect("masked fraction in [0, 1]")
+}
+
+/// Photometric centres by masked fraction, against the projective centre of
+/// the same marker.
+fn print_masked_bins(fits: &[ScoredFit<'_>]) {
+    for (b, (label, _, _)) in MASKED_BINS.iter().enumerate() {
+        let bin: Vec<&ScoredFit<'_>> = fits
+            .iter()
+            .filter(|f| masked_bin(f.fit.masked) == b)
+            .collect();
+        if bin.is_empty() {
+            continue;
+        }
+        let n = bin.len() as f64;
+        let errs: Vec<f64> = bin.iter().map(|f| f.error_px()).collect();
+        let mut sorted = errs.clone();
+        sorted.sort_by(f64::total_cmp);
+        let reported = (bin
+            .iter()
+            .map(|f| f.fit.cov[0][0] + f.fit.cov[1][1])
+            .sum::<f64>()
+            / n)
+            .sqrt();
+        let covered = bin.iter().filter(|f| within_95(f.error, f.fit.cov)).count() as f64 / n;
+        let paired: Vec<(f64, f64)> = bin
+            .iter()
+            .zip(&errs)
+            .filter_map(|(f, e)| Some((*e, f.projective?)))
+            .collect();
+        let worse = paired.iter().filter(|(e, p)| e > p).count();
+        println!(
+            "  masked {label:<10}: n {:6} rms {:.4} p95 {:.4} max {:.4} >0.5px {:4} reported {:.4} cov95 {:.2} | same markers projective rms {:.4}, photometric worse {:.2}",
+            bin.len(),
+            rms(&errs),
+            sorted[((0.95 * n) as usize).min(bin.len() - 1)],
+            sorted[bin.len() - 1],
+            errs.iter().filter(|e| **e > 0.5).count(),
+            reported,
+            covered,
+            rms(&paired.iter().map(|p| p.1).collect::<Vec<_>>()),
+            worse as f64 / paired.len().max(1) as f64,
+        );
+    }
+}
+
+/// Photometric centres of patches more than half masked, by reported centre
+/// σ: their RMS against the projective centre of the same marker, and how
+/// often the photometric centre is the worse of the two.
+fn print_saturated_by_sigma(fits: &[ScoredFit<'_>]) {
+    let edges = [0.0, 0.02, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, f64::INFINITY];
+    for w in edges.windows(2) {
+        let bin: Vec<(f64, f64)> = fits
+            .iter()
+            .filter(|f| f.fit.masked > 0.5)
+            .filter(|f| (w[0]..w[1]).contains(&f.reported_sigma()))
+            .filter_map(|f| Some((f.error_px(), f.projective?)))
+            .collect();
+        if bin.is_empty() {
+            continue;
+        }
+        println!(
+            "  σ [{:.3}, {:.3}): n {:6} photometric rms {:.4} projective rms {:.4} photometric worse {:.2} | good (< 0.05 px) {:.2}",
+            w[0],
+            w[1],
+            bin.len(),
+            rms(&bin.iter().map(|b| b.0).collect::<Vec<_>>()),
+            rms(&bin.iter().map(|b| b.1).collect::<Vec<_>>()),
+            bin.iter().filter(|b| b.0 > b.1).count() as f64 / bin.len() as f64,
+            bin.iter().filter(|b| b.0 < 0.05).count() as f64 / bin.len() as f64,
+        );
+    }
+}
+
+/// Candidate rejection rules for accepted photometric fits, swept over the
+/// exposure series: per rule, the fits it rejects in each masked bin, the
+/// accepted centres left beyond 0.5 and 0.1 px, their RMS, and the good fits
+/// (error < 0.05 px) it loses.
+fn print_gate_sweep(fits: &[ScoredFit<'_>]) {
+    type Rule = Box<dyn Fn(&ScoredFit<'_>) -> bool>;
+    let mut rules: Vec<(String, Rule)> = vec![("none".into(), Box::new(|_| false))];
+    for t in [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9] {
+        rules.push((format!("masked > {t}"), Box::new(move |f| f.fit.masked > t)));
+    }
+    for s in [0.03, 0.05, 0.08, 0.1] {
+        rules.push((
+            format!("reported σ > {s}"),
+            Box::new(move |f| f.reported_sigma() > s),
+        ));
+    }
+    for (m, sigmas) in [
+        (0.3, &[0.05][..]),
+        (0.5, &[0.03, 0.04, 0.05, 0.065, 0.08][..]),
+    ] {
+        for &s in sigmas {
+            rules.push((
+                format!("masked > {m} & σ > {s}"),
+                Box::new(move |f| f.fit.masked > m && f.reported_sigma() > s),
+            ));
+        }
+    }
+    for n in [150, 250, 400] {
+        rules.push((
+            format!("unmasked px < {n}"),
+            Box::new(move |f| f.fit.n_pixels < n),
+        ));
+    }
+    let labels: Vec<&str> = MASKED_BINS.iter().map(|b| b.0).collect();
+    println!("  rule: rejected per masked bin [{}]", labels.join(", "));
+    for (name, reject) in &rules {
+        let mut per_bin = [0usize; MASKED_BINS.len()];
+        let (mut kept, mut lost_good, mut saturated_bad) = (Vec::new(), 0usize, 0usize);
+        for f in fits {
+            if reject(f) {
+                per_bin[masked_bin(f.fit.masked)] += 1;
+                lost_good += usize::from(f.error_px() < 0.05);
+            } else {
+                kept.push(f.error_px());
+                saturated_bad += usize::from(f.fit.masked > 0.5 && f.error_px() > 0.1);
+            }
+        }
+        println!(
+            "  {name:<24} rejected {:?} | kept {} >0.5px {} >0.1px {} (masked > 0.5: {}) rms {:.4} | good lost {}",
+            per_bin,
+            kept.len(),
+            kept.iter().filter(|e| **e > 0.5).count(),
+            kept.iter().filter(|e| **e > 0.1).count(),
+            saturated_bad,
+            rms(&kept),
+            lost_good,
+        );
+    }
+}
+
+/// The noise-free scene of an exposure-series cell.
+struct SeriesScene {
+    spec: SceneSpec,
+    rad: Radiance,
+    truth: Truth,
+}
+
+/// Detect one exposure of a scene (noise seed `seed`) with the photometric
+/// detector `det` and the projective-centre baseline `projective`, and score
+/// it.
+fn run_exposure(
+    det: &Detector,
+    projective: &Detector,
+    scene: &SeriesScene,
+    exposure: Exposure,
+    seed: u64,
+) -> ExposureRun {
+    let scaled = Radiance {
+        buf: scene.rad.buf.iter().map(|v| exposure.gain * v).collect(),
+        h: scene.rad.h,
+    };
+    let spec = SceneSpec {
+        gamma: exposure.gamma,
+        ..scene.spec.clone()
+    };
+    let image = expose(&scaled, &spec, seed).image;
+    let (res, diag) = det.detect_with_diagnostics(&image).expect("detect");
+    let mut run = ExposureRun {
+        radii: diag.photometric_print_radii_mm,
+        ..ExposureRun::default()
+    };
+    for (m, d) in res.detected_markers.iter().zip(&diag.markers) {
+        let status = d
+            .photometric
+            .as_ref()
+            .map_or_else(|| "missing".into(), |p| format!("{:?}", p.status));
+        *run.statuses.entry(status).or_default() += 1;
+        if let Some(p) = d.photometric.as_ref()
+            && p.status != PhotometricStatus::NoBoardPosition
+        {
+            run.masked.push(p.masked_fraction);
+        }
+        let Ok(idx) = scene.truth.cell_of(m, &scene.rad.h) else {
+            run.n_wrong += 1;
+            continue;
+        };
+        if m.center_source == CenterSource::Photometric
+            && let (Some(cov), Some(p)) = (m.center_cov, d.photometric.as_ref())
+        {
+            let fit = Fit {
+                center: m.center,
+                sigma: m.blur.as_ref().map(|b| b.sigma_px),
+                cov,
+                masked: p.masked_fraction,
+                n_pixels: p.n_pixels,
+            };
+            run.fits.insert(idx, fit);
+        }
+    }
+    let res_p = projective.detect(&image).expect("detect");
+    run.projective = res_p
+        .detected_markers
+        .iter()
+        .filter_map(|m| {
+            let i = scene.truth.cell_of(m, &scene.rad.h).ok()?;
+            let t = scene.truth.centers[i];
+            Some((i, (m.center[0] - t[0]).hypot(m.center[1] - t[1])))
+        })
+        .collect();
+    run
+}
+
+/// Whether `e` lies inside the 95 % ellipse of the covariance `cov`.
+fn within_95(e: [f64; 2], cov: [[f64; 2]; 2]) -> bool {
+    let det = cov[0][0] * cov[1][1] - cov[0][1] * cov[1][0];
+    let d2 =
+        (cov[1][1] * e[0] * e[0] - 2.0 * cov[0][1] * e[0] * e[1] + cov[0][0] * e[1] * e[1]) / det;
+    // χ²(2 dof) 95 % quantile.
+    d2 <= 5.991
+}
+
+/// Mean and standard error of the mean.
+fn mean_se(v: &[f64]) -> (f64, f64) {
+    let n = v.len() as f64;
+    let mean = v.iter().sum::<f64>() / n;
+    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    (mean, (var / n).sqrt())
+}
+
+/// `mean±se`, `mean` alone for one value, `-` for none.
+fn fmt_mean_se(v: &[f64]) -> String {
+    match v.len() {
+        0 => format!("{:>15}", "-"),
+        1 => format!("{:+7.4}        ", v[0]),
+        _ => {
+            let (m, se) = mean_se(v);
+            format!("{m:+7.4}±{se:.4}")
+        }
+    }
+}
+
+/// Ground truth an exposure series is scored against.
+struct SeriesTruth<'a> {
+    truth: &'a Truth,
+    /// Printed radii, board mm.
+    radii: [f64; 4],
+    /// Radii the photometric stage estimates (from the hole edge).
+    n_free: usize,
+    px_per_mm: f64,
+    /// PSF sigma plus pixel box, px.
+    sigma: f64,
+    /// Per cell, the image-frame dark-sector dipole of its code band (coded
+    /// targets; empty otherwise).
+    code_dipole: Vec<[f64; 2]>,
+}
+
+/// Per cell, the image-frame dipole of its code band's dark sectors: the
+/// mean over 16 sector centres of ink darkness times the image direction of
+/// the sector from the marker centre. Empty for plain targets.
+fn code_dipoles(board: &BoardRaster, h: &[[f64; 3]; 3]) -> Vec<[f64; 2]> {
+    let Some((lo, hi)) = board.target.code_band_bounds_mm() else {
+        return Vec::new();
+    };
+    let rho = 0.5 * f64::from(lo + hi);
+    board
+        .target
+        .cells()
+        .iter()
+        .map(|cell| {
+            let c = [f64::from(cell.xy_mm[0]), f64::from(cell.xy_mm[1])];
+            let ci = apply_h(h, c);
+            let mut d = [0.0; 2];
+            for k in 0..16 {
+                let a = (k as f64 + 0.5) * std::f64::consts::PI / 8.0;
+                let p = [c[0] + rho * a.cos(), c[1] + rho * a.sin()];
+                let ink = 1.0 - board.reflectance(p);
+                let q = apply_h(h, p);
+                let (dx, dy) = (q[0] - ci[0], q[1] - ci[1]);
+                let n = dx.hypot(dy);
+                d[0] += ink * dx / n / 16.0;
+                d[1] += ink * dy / n / 16.0;
+            }
+            d
+        })
+        .collect()
+}
+
+/// Print one exposure of a series against the series' nominal exposure
+/// (same noise seeds, same markers).
+fn print_exposure(
+    exposure: Exposure,
+    runs: &[ExposureRun],
+    nominal: &[ExposureRun],
+    t: &SeriesTruth<'_>,
+) {
+    let n_seeds = runs.len() as f64;
+    // Print radii: error against the print (px at the image centre), and
+    // change against the nominal exposure of the same seed.
+    let dr = |r: &ExposureRun, k: usize| r.radii.map(|r| (r[k] - t.radii[k]) * t.px_per_mm);
+    let radii: Vec<String> = (0..t.n_free)
+        .map(|k| {
+            let err: Vec<f64> = runs.iter().filter_map(|r| dr(r, k)).collect();
+            let change: Vec<f64> = runs
+                .iter()
+                .zip(nominal)
+                .filter_map(|(r, n)| Some(dr(r, k)? - dr(n, k)?))
+                .collect();
+            format!("r{k} {} Δ {}", fmt_mean_se(&err), fmt_mean_se(&change))
+        })
+        .collect();
+    let n_consensus = runs.iter().filter(|r| r.radii.is_some()).count();
+    // Centres against the truth, and the reported covariance's coverage.
+    let errors: Vec<([f64; 2], [[f64; 2]; 2])> = runs
+        .iter()
+        .flat_map(|r| {
+            r.fits.iter().map(|(&i, f)| {
+                let p = t.truth.centers[i];
+                ([f.center[0] - p[0], f.center[1] - p[1]], f.cov)
+            })
+        })
+        .collect();
+    let n_err = errors.len().max(1) as f64;
+    let rms_err = rms(&errors
+        .iter()
+        .map(|(e, _)| e[0].hypot(e[1]))
+        .collect::<Vec<_>>());
+    let signed = [0, 1].map(|a| errors.iter().map(|(e, _)| e[a]).sum::<f64>() / n_err);
+    let reported = (errors.iter().map(|(_, c)| c[0][0] + c[1][1]).sum::<f64>() / n_err).sqrt();
+    let covered = errors.iter().filter(|(e, c)| within_95(*e, *c)).count() as f64 / n_err;
+    let projective: Vec<f64> = runs
+        .iter()
+        .flat_map(|r| r.projective.values().copied())
+        .collect();
+    let sigmas: Vec<f64> = runs
+        .iter()
+        .flat_map(|r| r.fits.values().filter_map(|f| f.sigma))
+        .collect();
+    let sigma_bias =
+        (!sigmas.is_empty()).then(|| sigmas.iter().sum::<f64>() / sigmas.len() as f64 - t.sigma);
+    // Paired against the nominal exposure: per seed, the mean change over the
+    // markers fitted in both; then mean ± SE over seeds.
+    let (mut dx, mut dy, mut ds, mut d_all, mut n_common) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0usize);
+    for (r, n) in runs.iter().zip(nominal) {
+        let common: Vec<([f64; 2], Option<f64>)> = r
+            .fits
+            .iter()
+            .filter_map(|(i, f)| {
+                let g = n.fits.get(i)?;
+                let d = [f.center[0] - g.center[0], f.center[1] - g.center[1]];
+                Some((d, f.sigma.zip(g.sigma).map(|(a, b)| a - b)))
+            })
+            .collect();
+        if common.is_empty() {
+            continue;
+        }
+        n_common += common.len();
+        let k = common.len() as f64;
+        dx.push(common.iter().map(|(d, _)| d[0]).sum::<f64>() / k);
+        dy.push(common.iter().map(|(d, _)| d[1]).sum::<f64>() / k);
+        let s: Vec<f64> = common.iter().filter_map(|(_, s)| *s).collect();
+        if !s.is_empty() {
+            ds.push(s.iter().sum::<f64>() / s.len() as f64);
+        }
+        d_all.extend(common.iter().map(|(d, _)| d[0].hypot(d[1])));
+    }
+    // Paired centre change against the code dipole: one slope for both axes.
+    let dipole_fit = (!t.code_dipole.is_empty()).then(|| {
+        let pairs: Vec<([f64; 2], [f64; 2])> = runs
+            .iter()
+            .zip(nominal)
+            .flat_map(|(r, n)| {
+                r.fits.iter().filter_map(|(i, f)| {
+                    let g = n.fits.get(i)?;
+                    Some((
+                        [f.center[0] - g.center[0], f.center[1] - g.center[1]],
+                        t.code_dipole[*i],
+                    ))
+                })
+            })
+            .collect();
+        let m = pairs.len().max(1) as f64;
+        let md = [0, 1].map(|a| pairs.iter().map(|p| p.0[a]).sum::<f64>() / m);
+        let mq = [0, 1].map(|a| pairs.iter().map(|p| p.1[a]).sum::<f64>() / m);
+        let (mut sdq, mut sqq, mut sdd) = (0.0, 0.0, 0.0);
+        for (d, q) in &pairs {
+            for a in 0..2 {
+                sdq += (d[a] - md[a]) * (q[a] - mq[a]);
+                sqq += (q[a] - mq[a]).powi(2);
+                sdd += (d[a] - md[a]).powi(2);
+            }
+        }
+        let k = sdq / sqq;
+        (k, sdq / (sqq * sdd).sqrt(), [k * mq[0], k * mq[1]])
+    });
+    if let Some((k, r, explained)) = dipole_fit.filter(|f| f.1.is_finite()) {
+        println!(
+            "      code dipole: slope {k:+.4} px corr {r:+.2} mean dipole explains Δ {:+.4} {:+.4}",
+            explained[0], explained[1]
+        );
+    }
+    let masked: Vec<f64> = runs.iter().flat_map(|r| r.masked.iter().copied()).collect();
+    let n_phot = runs.iter().map(|r| r.fits.len()).sum::<usize>() as f64 / n_seeds;
+    let n_wrong: usize = runs.iter().map(|r| r.n_wrong).sum();
+    println!(
+        "  γ {:<4} gain {:<4} cons {}/{} {} | σ {} Δ {} | phot {:5.1} wrong {} masked {:.3} | rms {:.4} mean {:+.4} {:+.4} rep {:.4} cov95 {:.2} | proj {:5.1} rms {:.4} | vs nominal n {:5.1} Δx {} Δy {} rmsΔ {:.4}",
+        exposure.gamma,
+        exposure.gain,
+        n_consensus,
+        runs.len(),
+        radii.join(" "),
+        sigma_bias.map_or("    -  ".into(), |b| format!("{b:+.4}")),
+        fmt_mean_se(&ds),
+        n_phot,
+        n_wrong,
+        masked.iter().sum::<f64>() / masked.len().max(1) as f64,
+        rms_err,
+        signed[0],
+        signed[1],
+        reported,
+        covered,
+        projective.len() as f64 / n_seeds,
+        rms(&projective),
+        n_common as f64 / n_seeds,
+        fmt_mean_se(&dx),
+        fmt_mean_se(&dy),
+        rms(&d_all),
+    );
+    if std::env::var("MATRIX_STATUSES").is_ok() {
+        let mut statuses: BTreeMap<&str, usize> = BTreeMap::new();
+        for r in runs {
+            for (s, n) in &r.statuses {
+                *statuses.entry(s).or_default() += n;
+            }
+        }
+        println!("      statuses {statuses:?}");
+    }
+}
+
+/// A comma-separated list of numbers from `key`, else `default`.
+fn env_list(key: &str, default: &[f64]) -> Vec<f64> {
+    std::env::var(key).map_or_else(
+        |_| default.to_vec(),
+        |s| {
+            s.split(',')
+                .map(|v| v.trim().parse().expect("a number"))
+                .collect()
+        },
+    )
+}
+
+/// Exposure and saturation (ALGO-022): do the per-image print radii, the
+/// fitted sigma and the photometric centres follow exposure?
+///
+/// Per cell (coded hex and plain hex with dots, `MATRIX_KINDS` overrides;
+/// outer radius 17 px, contrast 80, blur `MATRIX_BLURS` {1, 2} px, tilt
+/// `MATRIX_TILTS` {0, 30}°) ONE noise-free radiance (paper 150, ink 70 grey
+/// levels at the image centre, illumination gradient `MATRIX_ILLUM_GRADIENT`
+/// 0.3, i.e. ±15 %) is exposed at the gains `MATRIX_EXPOSURES` (default
+/// 0.25 … 3: from 20 grey levels of contrast to paper clipped at 255 with
+/// only the darkest ink unsaturated) under the camera responses
+/// `MATRIX_GAMMAS` (default 1, 0.8, 1.25), with `MATRIX_SEEDS` noise seeds
+/// (default 6; σ 2 grey levels, the same field at every exposure of a seed).
+/// Per exposure it prints: the print radii against the print (px at the
+/// image centre) and their change against the nominal exposure (gain 1,
+/// linear) of the same seed; the fitted sigma against the PSF plus pixel box
+/// and its paired change; the photometric count, wrong labels and mean
+/// masked (saturated) fraction; the centre RMS, mean signed error, reported
+/// σ and 95 %-ellipse coverage against the truth; the projective-centre
+/// count and RMS of the same image; and the paired centre change of the
+/// markers fitted in both exposures (per-seed means, ± SE over seeds). On
+/// coded targets it also regresses the paired change on each marker's
+/// code-band dark-sector dipole. Last, per kind, the photometric centres of
+/// all exposures binned by masked fraction, against the projective centre
+/// of the same marker. `MATRIX_FIXED_RADII` keeps the nominal radii.
+///
+/// ```text
+/// cargo test --release -p ringgrid --test photometric_target_matrix \
+///     photometric_exposure_series -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "study; run in release with --ignored --nocapture"]
+fn photometric_exposure_series() {
+    let n_seeds = env_or("MATRIX_SEEDS", 6u64);
+    let gains = env_list("MATRIX_EXPOSURES", &[0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]);
+    let gammas = env_list("MATRIX_GAMMAS", &[1.0, 0.8, 1.25]);
+    let mut exposures = vec![NOMINAL_EXPOSURE];
+    for &gamma in &gammas {
+        for &gain in &gains {
+            let e = Exposure { gamma, gain };
+            if e != NOMINAL_EXPOSURE {
+                exposures.push(e);
+            }
+        }
+    }
+    let kinds = match std::env::var("MATRIX_KINDS") {
+        Ok(_) => selected_kinds(),
+        Err(_) => vec![Kind::CodedHex, Kind::PlainHexDots],
+    };
+    let (size, outer_radius_px) = ([720, 540], 17.0);
+    let (blurs, tilts) = (
+        env_list("MATRIX_BLURS", &[1.0, 2.0]),
+        env_list("MATRIX_TILTS", &[0.0, 30.0]),
+    );
+    let illum_gradient: f64 = env_or("MATRIX_ILLUM_GRADIENT", 0.3);
+    let mut cells = Vec::new();
+    for &kind in &kinds {
+        for &blur in &blurs {
+            for &tilt in &tilts {
+                cells.push(Cell {
+                    kind,
+                    outer_radius_px,
+                    blur,
+                    contrast: 80.0,
+                    tilt,
+                    effect: Effect::None,
+                });
+            }
+        }
+    }
+    let rasters: Vec<BoardRaster> = kinds
+        .iter()
+        .map(|k| {
+            let target = k.target();
+            let dpi = raster_dpi(&target, outer_radius_px);
+            BoardRaster::with_dpi(target, dpi)
+        })
+        .collect();
+    let board_of = |c: &Cell| &rasters[kinds.iter().position(|k| *k == c.kind).unwrap()];
+    let scenes = parallel_map(&cells, |c| {
+        let board = board_of(c);
+        let spec = SceneSpec {
+            illum_gradient,
+            ..spec_for(c, &board.target, size)
+        };
+        let rad = radiance(board, &spec);
+        let truth = Truth::new(&board.target, &rad.h, size, spec.px_per_mm);
+        SeriesScene { spec, rad, truth }
+    });
+    let jobs: Vec<(usize, Exposure)> = (0..cells.len())
+        .flat_map(|ci| exposures.iter().map(move |&e| (ci, e)))
+        .collect();
+    let runs = parallel_map(&jobs, |&(ci, exposure)| {
+        let target = &board_of(&cells[ci]).target;
+        let det = detector(target, outer_radius_px, CircleRefinementMethod::Photometric);
+        let projective = detector(
+            target,
+            outer_radius_px,
+            CircleRefinementMethod::ProjectiveCenter,
+        );
+        (0..n_seeds)
+            .map(|seed| run_exposure(&det, &projective, &scenes[ci], exposure, 1000 + seed))
+            .collect::<Vec<_>>()
+    });
+    for ((cell, scene), of_cell) in cells.iter().zip(&scenes).zip(runs.chunks(exposures.len())) {
+        let target = &board_of(cell).target;
+        println!(
+            "{} R {} blur {} tilt {} ({} visible)",
+            cell.kind.name(),
+            cell.outer_radius_px,
+            cell.blur,
+            cell.tilt,
+            scene.truth.visible
+        );
+        let truth = SeriesTruth {
+            truth: &scene.truth,
+            radii: true_print_radii(target),
+            n_free: if target.is_coded() { 3 } else { 1 },
+            px_per_mm: scene.spec.px_per_mm,
+            sigma: psf_moments(scene.spec.psf, true)[0],
+            code_dipole: code_dipoles(board_of(cell), &scene.rad.h),
+        };
+        for (exposure, r) in exposures.iter().zip(of_cell) {
+            print_exposure(*exposure, r, &of_cell[0], &truth);
+        }
+    }
+    // Photometric centres of every cell and exposure, per kind: by masked
+    // fraction, and under candidate rejection rules.
+    let scored = |kind: Option<Kind>| -> Vec<ScoredFit<'_>> {
+        cells
+            .iter()
+            .zip(&scenes)
+            .zip(runs.chunks(exposures.len()))
+            .filter(|((c, _), _)| kind.is_none_or(|k| c.kind == k))
+            .flat_map(|((_, scene), of_cell)| {
+                of_cell.iter().flatten().flat_map(|r| {
+                    r.fits.iter().map(|(&i, f)| {
+                        let p = scene.truth.centers[i];
+                        ScoredFit {
+                            error: [f.center[0] - p[0], f.center[1] - p[1]],
+                            fit: f,
+                            projective: r.projective.get(&i).copied(),
+                        }
+                    })
+                })
+            })
+            .collect()
+    };
+    for &kind in &kinds {
+        println!("{} photometric centres by masked fraction:", kind.name());
+        let fits = scored(Some(kind));
+        print_masked_bins(&fits);
+        println!("{} rejection rules:", kind.name());
+        print_gate_sweep(&fits);
+    }
+    println!("all kinds, rejection rules:");
+    print_gate_sweep(&scored(None));
+    println!("all kinds, patches more than half masked, by reported centre σ:");
+    print_saturated_by_sigma(&scored(None));
 }

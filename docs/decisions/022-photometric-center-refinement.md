@@ -5,7 +5,8 @@
   residual covariance, anisotropic PSF; amended 2026-11-17: plain markers keep
   the homography's rotation; amended 2026-11-22: blur as a reported
   measurement; amended 2026-11-24: fixed print radii and the ink moment
-  rejected, unweighted radii consensus, second-order curved edge)
+  rejected, unweighted radii consensus, second-order curved edge, saturation
+  gate)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 - **Related:** ADR-028 and ADR-029 (the confidence of a photometric centre)
@@ -50,8 +51,10 @@ pattern (`ring/photometric_center.rs`, stage in
   by default, as the unweighted mean after a robust outlier cut (precision
   weights favoured thick-stroke fits where blur and stroke width trade off);
   priors and gates are fractions of the outer radius `r3`;
-- gates (convergence, shift, σ, contrast, residual); a rejected fit keeps the
-  previous center;
+- gates (convergence, shift, σ, contrast, residual, and saturation: a patch
+  more than half masked whose centre σ exceeds 0.08 px,
+  [study](../studies/center-metrology.md#exposure-and-saturation-algo-022));
+  a rejected fit keeps the previous center;
 - every marker reports `center_source`; with the method selected a marker
   the stage cannot place reports `no_board_position`, never a silent
   unrefined centre.

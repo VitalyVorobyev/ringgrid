@@ -43,6 +43,19 @@ pub(crate) use residuals::{ResidualSink, StudySink};
 #[cfg(not(feature = "study"))]
 pub(crate) type ResidualSink<'a> = Option<&'a mut std::convert::Infallible>;
 
+/// Print radii a study run fixes instead of estimating them (`study`
+/// feature); never any without it.
+#[cfg(feature = "study")]
+fn fixed_radii(sink: &ResidualSink<'_>) -> Option<PrintRadii> {
+    sink.as_deref()
+        .and_then(|sink| sink.options.fixed_radii_mm())
+}
+
+#[cfg(not(feature = "study"))]
+fn fixed_radii(sink: &ResidualSink<'_>) -> Option<PrintRadii> {
+    sink.as_deref().map(|sink| match *sink {})
+}
+
 #[cfg(not(feature = "study"))]
 fn record_residuals(
     sink: &mut std::convert::Infallible,
@@ -760,12 +773,7 @@ fn refine(
     let target = &config.target;
     let h = homography?;
     let board = PrintedBoard::new(target, board_frame, markers)?;
-    #[cfg(feature = "study")]
-    let fixed = residuals
-        .as_deref()
-        .and_then(|sink| sink.options.fixed_radii_mm());
-    #[cfg(not(feature = "study"))]
-    let fixed: Option<PrintRadii> = None;
+    let fixed = fixed_radii(&residuals);
     let nominal = fixed.unwrap_or_else(|| target.coding().ink_radii_mm_f64(&target.ring()));
     let spacing = f64::from(target.min_center_spacing_mm());
     let patch_margin_mm =

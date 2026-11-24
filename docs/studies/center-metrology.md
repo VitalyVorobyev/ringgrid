@@ -75,7 +75,7 @@ Cledat, Rufener and Cucci (Pattern Recognition, 2021) showed that saturation com
 - a symmetric width change leaves the centre in place;
 - masking saturated pixels and their 8-neighbours (grey level ≥ 250) keeps the fit sound.
 
-The study measures the detector at base revision `fc66128f`, the per-image radii consensus and second-order edge of ALGO-021a. The Results, Controls and Answers below describe that detector, before the saturation gate. [Saturation gate](#saturation-gate) gives the gate added in response and its before/after numbers.
+The study measures the detector at base revision `be1688f4` (#116), the per-image radii consensus and second-order edge of ALGO-021a. The Results, Controls and Answers below describe that detector, before the saturation gate. [Saturation gate](#saturation-gate) gives the gate added in response and its before/after numbers.
 
 ### Reproduce
 
@@ -141,7 +141,7 @@ Before the gate, 64 coded and 252 plain photometric centres in the ≥ 0.8 bin w
 
 An accepted photometric fit is now rejected when more than half its patch is masked as saturated **and** its centre σ, `√(tr Σ / 2)`, exceeds 0.08 px. Its status is `InsufficientPixels`, and the marker keeps its previous (projective) centre. Two constants hold the rule: `SATURATED_PATCH_FRACTION` and `SATURATED_MAX_CENTER_SIGMA_PX` in `detector/photometric_refine.rs`. There is no config knob, no new status, and no schema change.
 
-**Choosing the rule.** The exposure series sweeps candidate rules over the 131,117 accepted centres of the ungated detector. That is commit `ba93e5ad`; its `src` is `fc66128f`, and the sweep ships with the test. The table below pools both kinds. "Rejected" counts fits per masked bin: 0.5–0.7, 0.7–0.8 and ≥ 0.8. Lower bins are 0 unless noted. "Kept > 0.1 px" counts all bins, with the patches more than half masked in parentheses. "Good lost" counts rejected fits that were within 0.05 px of the truth.
+**Choosing the rule.** The exposure series sweeps candidate rules over the 131,117 accepted centres of the ungated detector. That is commit `a62d4223`; its `src` is `be1688f4`, and the sweep ships with the test. The table below pools both kinds. "Rejected" counts fits per masked bin: 0.5–0.7, 0.7–0.8 and ≥ 0.8. Lower bins are 0 unless noted. "Kept > 0.1 px" counts all bins, with the patches more than half masked in parentheses. "Good lost" counts rejected fits that were within 0.05 px of the truth.
 
 | Rule | Rejected | Kept > 0.5 px | Kept > 0.1 px | RMS kept (px) | Good lost |
 |---|---|---:|---|---:|---:|

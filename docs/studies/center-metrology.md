@@ -75,7 +75,7 @@ Cledat, Rufener and Cucci (Pattern Recognition, 2021) showed that saturation com
 - a symmetric width change leaves the centre in place;
 - masking saturated pixels and their 8-neighbours (grey level ≥ 250) keeps the fit sound.
 
-The study measures the detector at base revision `fc66128f`, the per-image radii consensus and second-order edge of ALGO-021a.
+The study measures the detector at base revision `fc66128f`, the per-image radii consensus and second-order edge of ALGO-021a. The Results, Controls and Answers below describe that detector, before the saturation gate. [Saturation gate](#saturation-gate) gives the gate added in response and its before/after numbers.
 
 ### Reproduce
 
@@ -99,8 +99,8 @@ The table summarizes all eight cells; each range runs over the cells. Masked is 
 | γ 1, gain 1 (nominal) | 0 | 48/48 | — | — | — | 0.009–0.020 / 0.07–0.39 |
 | γ 1, gain 1.5 | 0.02–0.05 | 48/48 | ≤ 0.008 | ≤ 0.004 | ≤ 0.0003 | 0.007–0.016 / 0.06–0.35 |
 | γ 1, gain 2 | 0.60–0.74 | coded 24/24, plain 17/24 | coded Δr0 +0.01…+0.10, Δr2 +0.01…+0.12, Δr1 −0.02…+0.01; plain Δr0 +0.26, +0.11 (blur 1), +0.03, −0.30 (blur 2, 3/6 and 2/6 consensus) | −0.065 … +0.025 | coded blur 2: −0.0029 ± 0.0002, +0.0037 ± 0.0003; others ≤ 0.0006 | 0.011–0.029 / 0.05–0.20 |
-| γ 1, gain 2.5 | 0.74–0.83 | coded 24/24, plain 0/24 | coded Δr2 +0.07…+0.36 | −0.052 … +0.032 | ≤ 0.0070 ± 0.0007 | 0.020–0.069 / 0.04–0.15 |
-| γ 1, gain 3 | 0.70–0.90 | 10/48 | erratic | −0.15 … +0.25 | ≤ 0.04 ± 0.02 | blur 1: 0.22–0.38 / 0.08–0.17; blur 2: 0.06–0.09 / 0.09–0.11 (coded blur 2: none detected) |
+| γ 1, gain 2.5 | 0.74–0.83 | coded 24/24, plain 0/24 | coded Δr2 +0.07…+0.36 | −0.052 … +0.032 | ≤ 0.0070 ± 0.0007 | 0.020–0.069 / 0.04–0.15 (gated: 0.020–0.061) |
+| γ 1, gain 3 | 0.70–0.90 | 10/48 | erratic | −0.15 … +0.25 | ≤ 0.04 ± 0.02 | blur 1: 0.22–0.38 / 0.08–0.17 (gated: 0.060–0.097); blur 2: 0.06–0.09 / 0.09–0.11 (coded blur 2: none detected) |
 | γ 0.8, gain 1 | 0 | 48/48 | coded Δr0 +0.06…+0.10, Δr2 +0.08…+0.11, Δr1 −0.02…−0.005; plain Δr0 +0.07 (blur 1), +0.16 (blur 2) | coded −0.004 … −0.013; plain +0.003 … +0.018 | ≤ 0.0007 ± 0.0002 | 0.009–0.021 |
 | γ 1.25, gain 1 | 0 | 48/48 | coded Δr0 −0.08…−0.12, Δr2 −0.10…−0.13, Δr1 +0.002…+0.026; plain Δr0 −0.09 (blur 1), −0.19…−0.21 (blur 2) | coded +0.004 … +0.015; plain −0.006 … −0.024 | ≤ 0.0004 | 0.009–0.021 |
 
@@ -116,7 +116,7 @@ The second table pools every exposure, response and cell. It omits the 0–30 % 
 | 0.7–0.8 | 5,535 · 0.027 · 0.26 | 0.025 · 0.83 | 0.094 · 0.09 | 9,103 · 0.027 · 0.49 | 0.084 · 0.13 |
 | ≥ 0.8 | 9,452 · 0.103 · 1.65 | 0.083 · 0.85 | 0.094 · 0.22 | 6,577 · 0.213 · 2.20 | 0.134 · 0.16 |
 
-In the ≥ 0.8 bin, 64 coded and 252 plain photometric centres are more than 0.5 px from the truth. All are accepted fits.
+Before the gate, 64 coded and 252 plain photometric centres in the ≥ 0.8 bin were more than 0.5 px from the truth. All were accepted fits.
 
 ### Controls
 
@@ -129,12 +129,63 @@ In the ≥ 0.8 bin, 64 coded and 252 plain photometric centres are more than 0.5
 1. **Do the radii follow exposure?** A linear gain below clipping leaves them unchanged, within 0.022 px over gains 0.25–1.5. Clipping changes them. With the paper clipped at gain 2, the dark strokes mostly come out thinner: the hole edge moves out by 0.01–0.26 px, and the coded outer-ring inner edge by up to 0.12 px. The direction is not universal. The plain target at blur 2 gives +0.03 and −0.30 px from unstable consensus, held in only 2–4 of 6 exposures. Past 75 % masked, plain targets lose the consensus and fall back to nominal radii. Coded radii keep a consensus but drift by up to 0.36 px. A non-linear response changes the radii consistently. γ 0.8 thins the strokes and γ 1.25 thickens them, by 0.06–0.21 px, in proportion to blur and at every gain.
 2. **Do the centres move?** Not under gain or response without clipping: the shifts stay ≤ 0.0007 px, with the per-image radii absorbing the response. Once the paper clips, coded centres move beyond noise. The shift is 0.003–0.004 px at gain 2, more than 10 SE, and up to 0.007 px at gain 2.5. Nominal centre RMS there is 0.018 px. The shift scales with the illumination asymmetry across a marker and points toward the less saturated side. Fixing the radii does not change it. Plain centres move by at most 0.0015 ± 0.0004 px up to gain 2.5.
 3. **Is σ biased by exposure?** Not by gain below clipping (|Δσ| ≤ 0.008 px). With per-image radii, the response biases σ by up to ±0.024 px (±1.2 %). With the paper clipped at gain 2, σ changes by −0.065 to +0.025 px, mostly downward; the one positive value is within its 0.028 px SE. The worst case is plain blur 1, at −6 %, alongside a +0.26 px hole-edge shift. Under heavy clipping at gain 3, σ errors reach +0.25 / −0.23 px.
-4. **Does saturation masking hold up?** It holds up to about 80 % of the patch masked. Over that range accepted centres stay at 0.008–0.027 px RMS, with 0.83–0.92 coverage, and no wrong labels occur. The 70–80 % bin already has outliers of 0.26 px (coded) and 0.49 px (plain). Beyond about 80 % masked the fit degrades, but it is still accepted. Gain 3 at blur 1 is the case where the ink itself nears the clip. There photometric RMS is 0.22–0.38 px against 0.08–0.17 px for the projective centres it replaces. Across all exposures, 316 accepted centres in the ≥ 0.8 bin are more than 0.5 px off, with a maximum of 2.2 px. The covariance grows with the error, reaching 0.08–0.18 px with 0.85–0.93 coverage, so a covariance-weighted consumer down-weights these centres. Still, the stage has no masked-fraction gate, and it replaces a better projective centre in 16–22 % of these fits. Under the precision-over-recall rule this is a fail-open defect, recorded here and not fixed.
+4. **Does saturation masking hold up?** It holds up to about 80 % of the patch masked. Over that range accepted centres stay at 0.008–0.027 px RMS, with 0.83–0.92 coverage, and no wrong labels occur. The 70–80 % bin already has outliers of 0.26 px (coded) and 0.49 px (plain). Beyond about 80 % masked the fit degrades, but it is still accepted. Gain 3 at blur 1 is the case where the ink itself nears the clip. There photometric RMS is 0.22–0.38 px against 0.08–0.17 px for the projective centres it replaces. Across all exposures, 316 accepted centres in the ≥ 0.8 bin are more than 0.5 px off, with a maximum of 2.2 px. The covariance grows with the error, reaching 0.08–0.18 px with 0.85–0.93 coverage, so a covariance-weighted consumer down-weights these centres. Still, the stage had no saturation gate, and it replaced a better projective centre in 16–22 % of these fits. Under the precision-over-recall rule this was a fail-open defect. The saturation gate below now closes it: no accepted centre is more than 0.5 px off, and the ≥ 0.8 bin falls to 0.055 / 0.048 px RMS.
 5. **Does a non-unit response bias the radii or centres?** Yes for the radii: by 0.06–0.21 px at γ 0.8 and γ 1.25, as in answer 1. That is a fitted stroke-width change the per-image consensus is meant to absorb. Centres are not biased (≤ 0.0007 px) with per-image radii. With nominal radii, coded centres move by up to 0.0036 px.
 
-**Defects found, not fixed.**
+**Defects found.**
 
-1. Fail-open at heavy saturation. Photometric fits with ≥ 80 % of the patch masked are accepted with up to 2.2 px error, and on sharp markers they are worse than the projective centre they replace. A gate on `masked_fraction`, or a comparison against the projective centre, would be the candidate fix.
-2. A centre shift of 0.003–0.007 px on coded targets once the paper clips. It grows with the illumination asymmetry across the marker and is not absorbed by the radii.
+1. **Fixed.** Fail-open at heavy saturation: photometric fits on patches more than 80 % masked were accepted with up to 2.2 px error. See [Saturation gate](#saturation-gate).
+2. **Open.** A centre shift of 0.003–0.007 px on coded targets once the paper clips. It grows with the illumination asymmetry across the marker and is not absorbed by the radii. The saturation gate leaves it unchanged: at gain 2 the coded blur-2 shift is still (−0.0029 ± 0.0002, +0.0037 ± 0.0003) px.
+
+### Saturation gate
+
+An accepted photometric fit is now rejected when more than half its patch is masked as saturated **and** its centre σ, `√(tr Σ / 2)`, exceeds 0.08 px. Its status is `InsufficientPixels`, and the marker keeps its previous (projective) centre. Two constants hold the rule: `SATURATED_PATCH_FRACTION` and `SATURATED_MAX_CENTER_SIGMA_PX` in `detector/photometric_refine.rs`. There is no config knob, no new status, and no schema change.
+
+**Choosing the rule.** The exposure series sweeps candidate rules over the 131,117 accepted centres of the ungated detector. That is commit `ba93e5ad`; its `src` is `fc66128f`, and the sweep ships with the test. The table below pools both kinds. "Rejected" counts fits per masked bin: 0.5–0.7, 0.7–0.8 and ≥ 0.8. Lower bins are 0 unless noted. "Kept > 0.1 px" counts all bins, with the patches more than half masked in parentheses. "Good lost" counts rejected fits that were within 0.05 px of the truth.
+
+| Rule | Rejected | Kept > 0.5 px | Kept > 0.1 px | RMS kept (px) | Good lost |
+|---|---|---:|---|---:|---:|
+| none | — | 316 | 2,690 (2,087) | 0.0602 | 0 |
+| masked > 0.7 | 0 · 14,631 · 16,029 | 0 | 607 (4) | 0.0256 | 24,842 |
+| masked > 0.8 | 0 · 0 · 16,002 | 0 | 691 (88) | 0.0257 | 10,794 |
+| masked > 0.85 | 0 · 0 · 8,971 | 36 | 1,026 (423) | 0.0321 | 4,956 |
+| unmasked pixels < 250 | 0 · 211 · 10,216 | 142 | 1,260 (657) | 0.0454 | 6,438 |
+| unmasked pixels < 400 | 498 · 6,069 · 15,977 | 0 | 644 (41) | 0.0254 | 16,945 |
+| σ > 0.05 (any patch) | 17 · 81 · 3,384, plus 1,402 unmasked | 0 | 665 (347) | 0.0267 | 1,241 |
+| σ > 0.1 (any patch) | 3 · 1 · 1,329, plus 25 unmasked | 0 | 1,602 (1,006) | 0.0306 | 73 |
+| masked > 0.5 & σ > 0.03 | 422 · 731 · 7,011 | 0 | 652 (49) | 0.0258 | 3,593 |
+| masked > 0.5 & σ > 0.05 | 17 · 81 · 3,384 | 0 | 950 (347) | 0.0278 | 730 |
+| masked > 0.5 & σ > 0.065 | 3 · 21 · 2,285 | 0 | 1,212 (609) | 0.0291 | 294 |
+| **masked > 0.5 & σ > 0.08** | **3 · 4 · 1,721** | **0** | **1,411 (808)** | **0.0298** | **136** |
+
+A masked-fraction cut alone removes the outliers only by also discarding most good saturated fits: 68 % of the ≥ 0.8 bin is within 0.05 px. An absolute pixel count depends on marker scale and does no better. The reported σ separates the bad fits, because the covariance stays roughly honest under saturation (85–93 % coverage). Conditioning on a saturated patch keeps the gate away from noisy fits with no masked pixels. Those are honest: in the darkest exposures photometric RMS is 0.029–0.084 px, against 0.17–0.66 px projective.
+
+The σ limit is where a saturated fit stops improving on the centre it replaces. On patches more than half masked, compared with the projective centre of the same marker:
+
+| Reported σ (px) | n | Photometric RMS (px) | Projective RMS (px) | Photometric worse |
+|---|---:|---:|---:|---:|
+| < 0.02 | 23,863 | 0.020 | 0.105 | 0.07 |
+| 0.02–0.03 | 3,681 | 0.038 | 0.113 | 0.18 |
+| 0.03–0.04 | 1,661 | 0.049 | 0.124 | 0.17 |
+| 0.04–0.05 | 740 | 0.067 | 0.123 | 0.28 |
+| 0.05–0.065 | 503 | 0.082 | 0.115 | 0.29 |
+| 0.065–0.08 | 205 | 0.085 | 0.119 | 0.36 |
+| 0.08–0.1 | 116 | 0.123 | 0.116 | 0.48 |
+| ≥ 0.1 | 162 | 0.259 | 0.133 | 0.68 |
+
+Below 0.08 px the photometric centre is still the better one on average, so rejecting it would worsen the result. From 0.08 px the two are level, and above 0.1 px the photometric centre is clearly worse. The 808 saturated centres with more than 0.1 px error that the gate keeps lie in the bins where the projective alternative is no better.
+
+**After the gate** (same series):
+- **Accepted centres:** 129,389, exactly the set the sweep predicted. None is more than 0.5 px off. The rejections per bin are coded 3 · 3 · 767 and plain 0 · 1 · 954.
+- **≥ 0.8 masked bin:** RMS 0.055 px coded (from 0.103) and 0.048 px plain (from 0.213). The maximum error is 0.41 / 0.46 px (from 1.65 / 2.20), against 0.092 / 0.135 px for the projective centres of the same markers. The photometric centre is now the worse one in 20 % / 6 % of these fits (from 22 % / 16 %).
+- **Gain 3 at blur 1:** photometric RMS 0.060–0.097 px (from 0.22–0.38) against projective 0.084–0.165 px. Coded at tilt 0 is the closest case, 0.086 vs 0.084 px.
+- **Other exposures:** radii consensus, wrong labels (none) and every exposure with at most half of each patch masked are unchanged.
+
+**No change elsewhere.** The gate cannot touch a fit with at most half its patch masked. The following runs are byte-identical before and after the gate, excluding timing lines:
+- `photometric_target_matrix`: the default cells and the full matrix (378 cells, 6 seeds);
+- `blur_center_accuracy`: default tests and `blur_center_benchmark`, whose acceptance scene has a saturated glare blob;
+- `blur_gradient`: default tests and `blur_gradient_bias_matrix`;
+- `gain_invariance`;
+- `precision_audit precision_fast_subset`, with default refinement and with `RINGGRID_PRECISION_REFINE=photometric`.
 
 **Limits.** These are synthetic scenes with a Gaussian PSF. Saturation is a hard clip at 255 with no blooming, smear or charge spill. Noise is additive with fixed σ, with no shot noise and no exposure-dependent noise. The response is a pure power law. The only lighting non-uniformity is a linear left-to-right gradient. The study covers a single marker scale of 17 px. No real exposure series was measured. That remains the real half of ALGO-022.

@@ -65,7 +65,9 @@ pub enum CenterSource {
 pub enum PhotometricStatus {
     /// The fit was accepted and produced the marker's centre.
     Accepted,
-    /// Too few usable (in-image, unsaturated) pixels.
+    /// Too few usable (in-image, unsaturated) pixels: too few to fit, or a
+    /// patch mostly masked as saturated whose centre is too uncertain to
+    /// improve on the edge-fitted one.
     InsufficientPixels,
     /// The local board-to-image map or the normal equations were singular.
     Degenerate,

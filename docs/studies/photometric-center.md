@@ -59,8 +59,9 @@ pattern (`ring/photometric_center.rs`, stage in
 - blurred by a fitted Gaussian PSF of σ with an anisotropy `[a, b]`
   (covariance `σ² [[1+a, b], [b, 1−a]]`, weak prior σ 0.5, |[a,b]| ≤ 0.9):
   every edge is a normal-CDF step of its signed image-space distance, blurred
-  by the PSF's width across that edge, with a first-order curvature
-  correction; code sectors as separable radial × angular steps;
+  by the PSF's width across that edge, with a second-order curvature
+  correction (*Print radii and the curved edge*); code sectors as separable
+  radial × angular steps;
 - affine paper level and affine contrast; markers whose fit residual exceeds
   1.5× the image median are retried with a cubic paper level, adopted only if it lowers the residual σ below 0.85× (glare halos);
 - Levenberg–Marquardt with Huber weights, saturated pixels masked;
@@ -69,9 +70,11 @@ pattern (`ring/photometric_center.rs`, stage in
   autocovariance over pixel lags (see *Covariance under correlated
   residuals*);
 - printed radii estimated per image from free-radii fits of ≤ 16 markers
-  (precision-weighted consensus), on by default: `r0..r2` for coded markers,
-  `r0` for plain ones (`r3` is the scale reference); priors and gates are
-  fractions of `r3` (0.1, 0.02), not fixed millimetres;
+  (the plain mean of the converged fits within 4 robust σ of their median,
+  accepted when its standard error is ≤ 0.008 `r3` and most fits' σ is
+  within the measured blur range), on by default: `r0..r2` for coded
+  markers, `r0` for plain ones (`r3` is the scale reference); priors and
+  gates are fractions of `r3`, not fixed millimetres;
 - gates (convergence, shift ≤ half the outer radius, plausible σ and
   contrast, residual ≤ 3× the image median); a rejected fit keeps the
   previous center;
@@ -386,6 +389,76 @@ the `fy/fx` shift within 2 % of the first-order prediction. So removing
 the bias cannot lower a calibrated residual. It changes the aspect
 ratio, which matters where the aspect ratio or the blur itself is the
 measurement.
+
+### Print radii and the curved edge
+
+ALGO-021(a). The per-image radii were biased low where the blur is
+comparable to the ink stroke (thin ring at 17 px, blur 1.5: r0 4.477 mm
+against 4.60). Dumping every free-radii fit showed the per-marker fits
+unbiased on average (4.601–4.606 mm, all converged with a larger iteration
+budget) and the aggregation biased: there blur and stroke width trade off
+(corr(r0, σ) ≈ +0.97), a fit's radius uncertainty and its convergence time
+grow with the radius it finds, and so the iteration cap (the 63 capped fits
+sat at 4.71–4.77 mm), the per-sample precision gate (rejected 4.62–4.66,
+kept 4.48) and the inverse-variance weights (−0.65 % against +0.21 % for
+the plain mean on the same samples) each favoured thin-stroke fits. The
+consensus is now the plain mean after a robust outlier cut, free-radii fits
+get four times the centre-fit iteration budget, and a consensus is accepted
+on its own standard error rather than on per-sample gates.
+
+Where σ exceeds about 0.3 r0 the per-marker fit itself was biased, by the
+model: the first-order curved edge `Φ(z + ε/2)` (`z = d/σ`, `ε = σ/R`). The
+outside fraction of a blurred disc is `E_τ[Φ(z + ετ²/2 + O(ε³))]` over the
+tangential offset `τ ~ N(0, 1)` (the boundary bends away by `t²/2R`);
+expanding and averaging (`E τ² = 1`, `E τ⁴ = 3`) gives
+`Φ(z) + φ(z)(ε/2 − 3zε²/8) + O(ε³)`, i.e. `Φ(z(1 − ε²/4) + ε/2)`: the edge
+also widens by `1 + ε²/4`. Against the exact profile (Marcum Q) the
+largest single-edge error at ε = 0.1 / 0.2 is 7.1e-4 / 3.4e-3 of the
+contrast for the first order and 7.6e-5 / 7.7e-4 for the second. Fitted
+without noise to the exact blurred annulus (8×8 supersampled, unit test
+`noiseless_free_radii_fit_recovers_the_hole_radius`), the free r0 error is:
+
+| σ / r0 | 0.1 | 0.2 | 0.25 | 0.3 | 0.35 | 0.4 |
+|---|---|---|---|---|---|---|
+| first order | +0.04 % | +0.03 % | −0.15 % | −0.31 % | −1.24 % | −3.15 % |
+| second order | +0.04 % | +0.04 % | −0.11 % | −0.10 % | −0.61 % | −2.05 % |
+
+(+0.04 % is the renderer's floor.) Beyond σ ≈ 0.35 r0 the hole is blurred
+as a whole, its centre never reaches the paper level, and no local
+expansion holds: the third order diverges (+13 % at 0.45) and even a
+25-node quadrature of the exact profile leaves r0 nearly unidentified there.
+The curvature is held at `ε ≤ 1`.
+
+On the photometric target matrix (24 seeds, same scenes), main →
+consensus fix and second-order edge:
+
+| Cell (outer radius px, blur px) | r0 bias | σ bias | Centre RMS, px |
+|---|---|---|---|
+| thin ring 17, 1.5 (6 cells) | −1.0 … −2.7 % → −0.03 … +0.16 % | −1.2 … −3.0 % → −0.1 … +0.2 % | unchanged |
+| plain hex 8, 1.5, contrast 80 | −3.0 / −3.8 / −5.3 % → +0.2 / −0.2 / −0.7 % (0/20/30°) | → +0.2 … +0.6 % | unchanged |
+| plain hex 8, 1.5, contrast 40 | nominal (no consensus) → 15–18 of 24 exposures | +2.8 … +3.9 % → +0.0 … +0.9 % | unchanged |
+| coded hex 17, 3.0, contrast 80, 0° | −1.2 % → −0.5 % | +1.1 % → +0.1 % | 0.0457 → 0.0375 |
+| coded hex 8, 1.5, contrast 80, 0° | −1.9 % → −1.0 % | +0.6 % → −0.3 % | 0.0363 → 0.0335 |
+| coded rect 8, 1.5, contrast 80, 30° | | | 0.0407 → 0.0412 (+1.7 SE) |
+| outer radius 17/33 px, blur ≤ 1.5 | identical | identical | identical |
+
+The consensus fix alone made coded centres worse in the model-limited cells
+(up to +16 %, coded hex 17 px blur 3): the old weighting had partly cancelled
+the first-order model error. With the second-order edge no coded cell is
+worse than before beyond seed noise except the coded rect cell above
+(+0.0005 px), and every coded hex cell improves. Wrong labels are unchanged
+(0) everywhere. Fixing the radii at their true values was also measured and
+rejected: coded hex improves further but coded rect gets worse (+9 … +11 %).
+
+Limits that remain: r0 is not identifiable where the blur reaches the
+stroke width (thin ring at blur 3: −0.7 … −1.0 %) or σ > 0.35 r0 (plain hex
+8 px blur 1.5 at 20–30° tilt: −0.7 … −1.2 %); a 5.6/2.8 mm plain rect
+annulus at 8 px, blur 1.5 keeps a −3 % σ bias even with the true radii (not
+diagnosed). At outer radius 8 px and blur 3 (σ = 0.375 R, outside the range
+blur is reported in) the number of accepted photometric fits moves (plain hex
++105 over the matrix, plain rect −226, −20 %); centre RMS there improves in
+every cell, and rejected fits keep their projective centre. A free-radii fit
+costs 4–9 % more per marker.
 
 ## Photometric confidence (ADR-029)
 

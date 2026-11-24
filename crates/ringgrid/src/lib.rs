@@ -125,7 +125,7 @@ pub mod diagnostics {
 pub mod photometric_residuals {
     pub use crate::api::PhotometricResiduals;
     pub use crate::detector::photometric_refine::{
-        PhotometricResidualMarker, ResidualAutocorrelation,
+        PhotometricResidualMarker, PhotometricStudyOptions, ResidualAutocorrelation,
     };
     pub use crate::ring::photometric_center::PhotometricResidualSample;
 }

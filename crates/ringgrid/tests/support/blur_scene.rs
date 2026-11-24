@@ -626,10 +626,14 @@ fn gaussian_kernel(sigma: f64) -> Vec<f64> {
 
 /// Separable Gaussian blur with edge clamping.
 fn blur(buf: &mut [f64], w: usize, h: usize, sigma: f64) {
-    if sigma <= 0.0 {
+    blur_axes(buf, w, h, sigma, sigma);
+}
+
+fn blur_axes(buf: &mut [f64], w: usize, h: usize, sigma_x: f64, sigma_y: f64) {
+    if sigma_x <= 0.0 || sigma_y <= 0.0 {
         return;
     }
-    let k = gaussian_kernel(sigma);
+    let k = gaussian_kernel(sigma_x);
     let r = (k.len() / 2) as i64;
     let mut tmp = vec![0.0; w * h];
     for y in 0..h {
@@ -642,6 +646,8 @@ fn blur(buf: &mut [f64], w: usize, h: usize, sigma: f64) {
             tmp[y * w + x] = acc;
         }
     }
+    let k = gaussian_kernel(sigma_y);
+    let r = (k.len() / 2) as i64;
     for y in 0..h {
         for x in 0..w {
             let mut acc = 0.0;
@@ -774,10 +780,56 @@ fn varying_blur(
     buf.copy_from_slice(&out);
 }
 
+/// Source-normalized scatter with sigma depending on both image coordinates.
+/// Decompose each source pixel into two bracketing Gaussian kernels. Mixing
+/// linearly in variance preserves the local second moment. Border samples
+/// repeat at the edge, like the constant-width Gaussian.
+pub fn scatter_gaussian_field(
+    buf: &mut [f64],
+    w: usize,
+    h: usize,
+    sigma_at: impl Fn([f64; 2]) -> f64,
+) {
+    const BINS: usize = 24;
+    let variance: Vec<_> = (0..buf.len())
+        .map(|i| sigma_at([(i % w) as f64, (i / w) as f64]).powi(2))
+        .collect();
+    let (low, high) = variance
+        .iter()
+        .fold((f64::INFINITY, 0.0f64), |(lo, hi), &v| {
+            (lo.min(v), hi.max(v))
+        });
+    let step = (high - low) / BINS as f64;
+    if step == 0.0 {
+        blur(buf, w, h, low.sqrt());
+        return;
+    }
+    let fraction: Vec<_> = variance.into_iter().map(|v| (v - low) / step).collect();
+    let mut out = vec![0.0; buf.len()];
+    let mut layer = vec![0.0; buf.len()];
+    for bin in 0..=BINS {
+        let center = bin as f64;
+        for ((p, src), f) in layer.iter_mut().zip(buf.iter()).zip(&fraction) {
+            let weight = (1.0 - (f - center).abs()).max(0.0);
+            *p = src * weight;
+        }
+        blur(&mut layer, w, h, (low + center * step).sqrt());
+        for (dst, v) in out.iter_mut().zip(&layer) {
+            *dst += v;
+        }
+    }
+    buf.copy_from_slice(&out);
+}
+
 /// Apply a PSF to a `w × h` row-major buffer.
 pub fn apply_psf(buf: &mut [f64], w: usize, h: usize, psf: Psf) {
     match psf {
         Psf::Gaussian { sigma } => blur(buf, w, h, sigma),
+        Psf::Anisotropic {
+            sigma_major,
+            sigma_minor,
+            angle_deg: 0.0,
+        } => blur_axes(buf, w, h, sigma_major, sigma_minor),
         Psf::Anisotropic {
             sigma_major,
             sigma_minor,
@@ -833,12 +885,28 @@ pub struct Radiance {
 /// Render the noise-free radiance of `board` under `spec` (geometry,
 /// illumination, glare, PSF).
 pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
-    let (lo, hi) = board.target.marker_bounds_mm().expect("non-empty board");
+    radiance_from_reflectance(&board.target, spec, [0.0; 2], |xy| board.reflectance(xy))
+}
+
+/// Render after translating the projection by `phase_px` in image-pixel units.
+pub fn radiance_from_reflectance(
+    target: &TargetLayout,
+    spec: &SceneSpec,
+    phase_px: [f64; 2],
+    reflectance: impl Fn([f64; 2]) -> f64,
+) -> Radiance {
+    let (lo, hi) = target.marker_bounds_mm().expect("non-empty board");
     let mid = [
         0.5 * f64::from(lo[0] + hi[0]),
         0.5 * f64::from(lo[1] + hi[1]),
     ];
-    let h = scene_homography(spec, mid);
+    let mut h = scene_homography(spec, mid);
+    let denominator = h[2];
+    for (row, phase) in h[..2].iter_mut().zip(phase_px) {
+        for (value, w) in row.iter_mut().zip(denominator) {
+            *value += phase * w;
+        }
+    }
     let h_inv = inverse3(&h);
     let lens = RadialDivision::of(spec);
     let (w, hh) = (spec.image_size[0] as usize, spec.image_size[1] as usize);
@@ -854,7 +922,7 @@ pub fn radiance(board: &BoardRaster, spec: &SceneSpec) -> Radiance {
                     let px = x as f64 + (sx as f64 + 0.5) / n - 0.5;
                     let py = y as f64 + (sy as f64 + 0.5) / n - 0.5;
                     let p = lens.map_or([px, py], |d| d.undistort([px, py]));
-                    acc += board.reflectance(apply_h(&h_inv, p));
+                    acc += reflectance(apply_h(&h_inv, p));
                 }
             }
             buf[y * w + x] = acc / (n * n);

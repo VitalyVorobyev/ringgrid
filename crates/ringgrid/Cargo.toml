@@ -83,3 +83,7 @@ harness = false
 [[bench]]
 name = "detect_fixture"
 harness = false
+
+[[example]]
+name = "metrology_frame"
+required-features = ["cli", "study"]

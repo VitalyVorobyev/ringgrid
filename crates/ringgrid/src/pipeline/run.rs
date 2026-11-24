@@ -6,7 +6,7 @@ use crate::detector::config::{MarkerScalePrior, ScaleTier, ScaleTiers};
 use crate::detector::dedup::{MERGE_SIZE_K_NEIGHBORS, merge_multiscale_markers};
 use crate::detector::marker_build::DetectionSource;
 #[cfg(feature = "study")]
-use crate::detector::photometric_refine::PhotometricResidualMarker;
+use crate::detector::photometric_refine::StudySink;
 use crate::pixelmap::{PixelMapper, estimate_self_undistort};
 use crate::proposal::{
     Proposal, ProposalConfig, ProposalResult, find_ellipse_centers,
@@ -300,7 +300,7 @@ pub fn detect_adaptive_with_hint(
 pub(crate) fn detect_collecting_residuals(
     gray: &GrayImage,
     config: &DetectConfig,
-    residuals: &mut Vec<PhotometricResidualMarker>,
+    residuals: &mut StudySink,
 ) -> PipelineResult {
     let result = with_self_undistort(gray, config);
     super::photometric::finish(gray, config, None, result, Some(residuals))
@@ -312,7 +312,7 @@ pub(crate) fn detect_collecting_residuals(
 pub(crate) fn detect_adaptive_collecting_residuals(
     gray: &GrayImage,
     config: &DetectConfig,
-    residuals: &mut Vec<PhotometricResidualMarker>,
+    residuals: &mut StudySink,
 ) -> PipelineResult {
     let result = adaptive(gray, config, None);
     super::photometric::finish(gray, config, None, result, Some(residuals))

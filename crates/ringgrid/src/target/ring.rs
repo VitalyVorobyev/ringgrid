@@ -3,6 +3,7 @@
 use super::error::TargetValidationError;
 use crate::marker::CodebookProfile;
 use crate::marker::codec::Codebook;
+use std::ops::{Add, Sub};
 
 /// Ring radii shared by every marker on the target, in millimeters.
 ///
@@ -90,29 +91,40 @@ impl MarkerCoding {
         matches!(self, Self::Coded16(_))
     }
 
-    /// Half of the ring stroke width (0 for plain markers).
-    pub(crate) fn ring_half_width_mm(&self) -> f32 {
-        match self {
-            Self::Coded16(spec) => 0.5 * spec.ring_width_mm,
-            Self::Plain => 0.0,
-        }
+    fn ink_radii_mm_f32(&self, ring: &RingGeometry) -> [f32; 4] {
+        let half = match self {
+            Self::Coded16(spec) => Some(0.5 * spec.ring_width_mm),
+            Self::Plain => None,
+        };
+        ink_radii(ring.inner_radius_mm, ring.outer_radius_mm, half)
+    }
+
+    /// Radial ink boundaries for the f64 intensity model. Promote before
+    /// computing the offsets, while drawing APIs keep their f32 arithmetic.
+    pub(crate) fn ink_radii_mm_f64(&self, ring: &RingGeometry) -> [f64; 4] {
+        let half = match self {
+            Self::Coded16(spec) => Some(0.5 * f64::from(spec.ring_width_mm)),
+            Self::Plain => None,
+        };
+        ink_radii(
+            f64::from(ring.inner_radius_mm),
+            f64::from(ring.outer_radius_mm),
+            half,
+        )
     }
 
     /// Outermost drawn radius of a marker: stroked rings overshoot the
     /// centerline radius by half the stroke width; plain annuli do not.
     pub(crate) fn outer_draw_radius_mm(&self, ring: &RingGeometry) -> f32 {
-        ring.outer_radius_mm + self.ring_half_width_mm()
+        self.ink_radii_mm_f32(ring)[3]
     }
 
     /// Code band bounds `(inner_mm, outer_mm)` for coded markers.
     pub(crate) fn code_band_bounds_mm(&self, ring: &RingGeometry) -> Option<(f32, f32)> {
-        match self {
-            Self::Coded16(_) => {
-                let half = self.ring_half_width_mm();
-                Some((ring.inner_radius_mm + half, ring.outer_radius_mm - half))
-            }
-            Self::Plain => None,
-        }
+        self.is_coded().then(|| {
+            let [_, inner, outer, _] = self.ink_radii_mm_f32(ring);
+            (inner, outer)
+        })
     }
 
     pub(crate) fn validate(
@@ -128,9 +140,8 @@ impl MarkerCoding {
                     });
                 }
 
-                let half = self.ring_half_width_mm();
-                let inner_ring_outer_edge_mm = ring.inner_radius_mm + half;
-                let outer_ring_inner_edge_mm = ring.outer_radius_mm - half;
+                let [_, inner_ring_outer_edge_mm, outer_ring_inner_edge_mm, _] =
+                    self.ink_radii_mm_f32(ring);
                 if inner_ring_outer_edge_mm >= outer_ring_inner_edge_mm {
                     return Err(TargetValidationError::NonPositiveCodeBandGap {
                         inner_ring_outer_edge_mm,
@@ -174,5 +185,17 @@ impl MarkerCoding {
             }
             Self::Plain => Ok(()),
         }
+    }
+}
+
+/// From the hole edge to the outer edge of the printed ink. A plain annulus
+/// repeats its outer edge because there is no intervening code band.
+fn ink_radii<T>(inner: T, outer: T, half: Option<T>) -> [T; 4]
+where
+    T: Copy + Add<Output = T> + Sub<Output = T>,
+{
+    match half {
+        Some(half) => [inner - half, inner + half, outer - half, outer + half],
+        None => [inner, outer, outer, outer],
     }
 }

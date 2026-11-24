@@ -1533,6 +1533,176 @@ struct Fit {
     cov: [[f64; 2]; 2],
     /// Fraction of the patch masked as saturated.
     masked: f64,
+    /// Unmasked pixels in the fit.
+    n_pixels: usize,
+}
+
+/// A photometric centre of the exposure series with its error against the
+/// truth and the projective centre's error on the same marker and image.
+struct ScoredFit<'a> {
+    error: [f64; 2],
+    fit: &'a Fit,
+    projective: Option<f64>,
+}
+
+impl ScoredFit<'_> {
+    fn error_px(&self) -> f64 {
+        self.error[0].hypot(self.error[1])
+    }
+
+    /// Reported centre σ per axis, `√(tr Σ / 2)`.
+    fn reported_sigma(&self) -> f64 {
+        (0.5 * (self.fit.cov[0][0] + self.fit.cov[1][1])).sqrt()
+    }
+}
+
+/// Masked-fraction bins of the exposure-series summaries.
+const MASKED_BINS: [(&str, f64, f64); 7] = [
+    ("none", 0.0, 1e-12),
+    ("(0, 0.1)", 1e-12, 0.1),
+    ("[0.1, 0.3)", 0.1, 0.3),
+    ("[0.3, 0.5)", 0.3, 0.5),
+    ("[0.5, 0.7)", 0.5, 0.7),
+    ("[0.7, 0.8)", 0.7, 0.8),
+    ("[0.8, 1]", 0.8, 1.0 + 1e-12),
+];
+
+fn masked_bin(masked: f64) -> usize {
+    MASKED_BINS
+        .iter()
+        .position(|&(_, lo, hi)| masked >= lo && masked < hi)
+        .expect("masked fraction in [0, 1]")
+}
+
+/// Photometric centres by masked fraction, against the projective centre of
+/// the same marker.
+fn print_masked_bins(fits: &[ScoredFit<'_>]) {
+    for (b, (label, _, _)) in MASKED_BINS.iter().enumerate() {
+        let bin: Vec<&ScoredFit<'_>> = fits
+            .iter()
+            .filter(|f| masked_bin(f.fit.masked) == b)
+            .collect();
+        if bin.is_empty() {
+            continue;
+        }
+        let n = bin.len() as f64;
+        let errs: Vec<f64> = bin.iter().map(|f| f.error_px()).collect();
+        let mut sorted = errs.clone();
+        sorted.sort_by(f64::total_cmp);
+        let reported = (bin
+            .iter()
+            .map(|f| f.fit.cov[0][0] + f.fit.cov[1][1])
+            .sum::<f64>()
+            / n)
+            .sqrt();
+        let covered = bin.iter().filter(|f| within_95(f.error, f.fit.cov)).count() as f64 / n;
+        let paired: Vec<(f64, f64)> = bin
+            .iter()
+            .zip(&errs)
+            .filter_map(|(f, e)| Some((*e, f.projective?)))
+            .collect();
+        let worse = paired.iter().filter(|(e, p)| e > p).count();
+        println!(
+            "  masked {label:<10}: n {:6} rms {:.4} p95 {:.4} max {:.4} >0.5px {:4} reported {:.4} cov95 {:.2} | same markers projective rms {:.4}, photometric worse {:.2}",
+            bin.len(),
+            rms(&errs),
+            sorted[((0.95 * n) as usize).min(bin.len() - 1)],
+            sorted[bin.len() - 1],
+            errs.iter().filter(|e| **e > 0.5).count(),
+            reported,
+            covered,
+            rms(&paired.iter().map(|p| p.1).collect::<Vec<_>>()),
+            worse as f64 / paired.len().max(1) as f64,
+        );
+    }
+}
+
+/// Photometric centres of patches more than half masked, by reported centre
+/// σ: their RMS against the projective centre of the same marker, and how
+/// often the photometric centre is the worse of the two.
+fn print_saturated_by_sigma(fits: &[ScoredFit<'_>]) {
+    let edges = [0.0, 0.02, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, f64::INFINITY];
+    for w in edges.windows(2) {
+        let bin: Vec<(f64, f64)> = fits
+            .iter()
+            .filter(|f| f.fit.masked > 0.5)
+            .filter(|f| (w[0]..w[1]).contains(&f.reported_sigma()))
+            .filter_map(|f| Some((f.error_px(), f.projective?)))
+            .collect();
+        if bin.is_empty() {
+            continue;
+        }
+        println!(
+            "  σ [{:.3}, {:.3}): n {:6} photometric rms {:.4} projective rms {:.4} photometric worse {:.2} | good (< 0.05 px) {:.2}",
+            w[0],
+            w[1],
+            bin.len(),
+            rms(&bin.iter().map(|b| b.0).collect::<Vec<_>>()),
+            rms(&bin.iter().map(|b| b.1).collect::<Vec<_>>()),
+            bin.iter().filter(|b| b.0 > b.1).count() as f64 / bin.len() as f64,
+            bin.iter().filter(|b| b.0 < 0.05).count() as f64 / bin.len() as f64,
+        );
+    }
+}
+
+/// Candidate rejection rules for accepted photometric fits, swept over the
+/// exposure series: per rule, the fits it rejects in each masked bin, the
+/// accepted centres left beyond 0.5 and 0.1 px, their RMS, and the good fits
+/// (error < 0.05 px) it loses.
+fn print_gate_sweep(fits: &[ScoredFit<'_>]) {
+    type Rule = Box<dyn Fn(&ScoredFit<'_>) -> bool>;
+    let mut rules: Vec<(String, Rule)> = vec![("none".into(), Box::new(|_| false))];
+    for t in [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9] {
+        rules.push((format!("masked > {t}"), Box::new(move |f| f.fit.masked > t)));
+    }
+    for s in [0.03, 0.05, 0.08, 0.1] {
+        rules.push((
+            format!("reported σ > {s}"),
+            Box::new(move |f| f.reported_sigma() > s),
+        ));
+    }
+    for (m, sigmas) in [
+        (0.3, &[0.05][..]),
+        (0.5, &[0.03, 0.04, 0.05, 0.065, 0.08][..]),
+    ] {
+        for &s in sigmas {
+            rules.push((
+                format!("masked > {m} & σ > {s}"),
+                Box::new(move |f| f.fit.masked > m && f.reported_sigma() > s),
+            ));
+        }
+    }
+    for n in [150, 250, 400] {
+        rules.push((
+            format!("unmasked px < {n}"),
+            Box::new(move |f| f.fit.n_pixels < n),
+        ));
+    }
+    let labels: Vec<&str> = MASKED_BINS.iter().map(|b| b.0).collect();
+    println!("  rule: rejected per masked bin [{}]", labels.join(", "));
+    for (name, reject) in &rules {
+        let mut per_bin = [0usize; MASKED_BINS.len()];
+        let (mut kept, mut lost_good, mut saturated_bad) = (Vec::new(), 0usize, 0usize);
+        for f in fits {
+            if reject(f) {
+                per_bin[masked_bin(f.fit.masked)] += 1;
+                lost_good += usize::from(f.error_px() < 0.05);
+            } else {
+                kept.push(f.error_px());
+                saturated_bad += usize::from(f.fit.masked > 0.5 && f.error_px() > 0.1);
+            }
+        }
+        println!(
+            "  {name:<24} rejected {:?} | kept {} >0.5px {} >0.1px {} (masked > 0.5: {}) rms {:.4} | good lost {}",
+            per_bin,
+            kept.len(),
+            kept.iter().filter(|e| **e > 0.5).count(),
+            kept.iter().filter(|e| **e > 0.1).count(),
+            saturated_bad,
+            rms(&kept),
+            lost_good,
+        );
+    }
 }
 
 /// The noise-free scene of an exposure-series cell.
@@ -1589,6 +1759,7 @@ fn run_exposure(
                 sigma: m.blur.as_ref().map(|b| b.sigma_px),
                 cov,
                 masked: p.masked_fraction,
+                n_pixels: p.n_pixels,
             };
             run.fits.insert(idx, fit);
         }
@@ -1970,73 +2141,37 @@ fn photometric_exposure_series() {
             print_exposure(*exposure, r, &of_cell[0], &truth);
         }
     }
-    // Photometric centres by masked fraction, over every cell and exposure
-    // of a kind.
-    for &kind in &kinds {
-        println!("{} photometric centres by masked fraction:", kind.name());
-        // (error vector, fit, projective error of the same marker and exposure).
-        let fits: Vec<([f64; 2], &Fit, Option<f64>)> = cells
+    // Photometric centres of every cell and exposure, per kind: by masked
+    // fraction, and under candidate rejection rules.
+    let scored = |kind: Option<Kind>| -> Vec<ScoredFit<'_>> {
+        cells
             .iter()
             .zip(&scenes)
             .zip(runs.chunks(exposures.len()))
-            .filter(|((c, _), _)| c.kind == kind)
+            .filter(|((c, _), _)| kind.is_none_or(|k| c.kind == k))
             .flat_map(|((_, scene), of_cell)| {
                 of_cell.iter().flatten().flat_map(|r| {
                     r.fits.iter().map(|(&i, f)| {
                         let p = scene.truth.centers[i];
-                        let e = [f.center[0] - p[0], f.center[1] - p[1]];
-                        (e, f, r.projective.get(&i).copied())
+                        ScoredFit {
+                            error: [f.center[0] - p[0], f.center[1] - p[1]],
+                            fit: f,
+                            projective: r.projective.get(&i).copied(),
+                        }
                     })
                 })
             })
-            .collect();
-        let bins: [(&str, f64, f64); 7] = [
-            ("none", 0.0, 1e-12),
-            ("(0, 0.1)", 1e-12, 0.1),
-            ("[0.1, 0.3)", 0.1, 0.3),
-            ("[0.3, 0.5)", 0.3, 0.5),
-            ("[0.5, 0.7)", 0.5, 0.7),
-            ("[0.7, 0.8)", 0.7, 0.8),
-            ("[0.8, 1]", 0.8, 1.0 + 1e-12),
-        ];
-        for (label, lo, hi) in bins {
-            let bin: Vec<&([f64; 2], &Fit, Option<f64>)> = fits
-                .iter()
-                .filter(|(_, f, _)| f.masked >= lo && f.masked < hi)
-                .collect();
-            if bin.is_empty() {
-                continue;
-            }
-            let n = bin.len() as f64;
-            let errs: Vec<f64> = bin.iter().map(|(e, _, _)| e[0].hypot(e[1])).collect();
-            let mut sorted = errs.clone();
-            sorted.sort_by(f64::total_cmp);
-            let reported = (bin
-                .iter()
-                .map(|(_, f, _)| f.cov[0][0] + f.cov[1][1])
-                .sum::<f64>()
-                / n)
-                .sqrt();
-            let covered = bin.iter().filter(|(e, f, _)| within_95(*e, f.cov)).count() as f64 / n;
-            // Against the projective centre of the same marker.
-            let paired: Vec<(f64, f64)> = bin
-                .iter()
-                .zip(&errs)
-                .filter_map(|((_, _, p), e)| Some((*e, (*p)?)))
-                .collect();
-            let worse = paired.iter().filter(|(e, p)| e > p).count();
-            println!(
-                "  masked {label:<10}: n {:6} rms {:.4} p95 {:.4} max {:.4} >0.5px {:4} reported {:.4} cov95 {:.2} | same markers projective rms {:.4}, photometric worse {:.2}",
-                bin.len(),
-                rms(&errs),
-                sorted[((0.95 * n) as usize).min(bin.len() - 1)],
-                sorted[bin.len() - 1],
-                errs.iter().filter(|e| **e > 0.5).count(),
-                reported,
-                covered,
-                rms(&paired.iter().map(|p| p.1).collect::<Vec<_>>()),
-                worse as f64 / paired.len().max(1) as f64,
-            );
-        }
+            .collect()
+    };
+    for &kind in &kinds {
+        println!("{} photometric centres by masked fraction:", kind.name());
+        let fits = scored(Some(kind));
+        print_masked_bins(&fits);
+        println!("{} rejection rules:", kind.name());
+        print_gate_sweep(&fits);
     }
+    println!("all kinds, rejection rules:");
+    print_gate_sweep(&scored(None));
+    println!("all kinds, patches more than half masked, by reported centre σ:");
+    print_saturated_by_sigma(&scored(None));
 }

@@ -258,6 +258,9 @@ struct CellResult {
     /// Pooled inner radius (mm) the fits used (`MATRIX_POOLED_RADII`), and
     /// the number of exposures it was pooled from.
     pooled_r0: Option<(f64, usize)>,
+    /// Photometric centre RMS per exposure (NaN without photometric
+    /// centres), for the seed-to-seed scatter of `rms_photometric`.
+    rms_by_seed: Vec<f64>,
 }
 
 /// How the fitted-sigma error splits between a per-exposure common mode and
@@ -516,6 +519,7 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
     let mut errors = Vec::new();
     let mut inflations = Vec::new();
     for seed in 0..n_seeds {
+        let first_error = errors.len();
         let scene = expose(&rad, &spec, 1000 + seed);
         let (res, diag, inflations_of) = detect_photometric(&photometric, &scene.image);
         if seed == 0 {
@@ -563,6 +567,12 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             s.traces.push((cov[0][0] + cov[1][1], inflation));
             s.blurs.extend(study.map(|s| BlurSample { seed, ..s.1 }));
         }
+        let seed_errors = &errors[first_error..];
+        out.rms_by_seed.push(if seed_errors.is_empty() {
+            f64::NAN
+        } else {
+            rms(seed_errors)
+        });
     }
     out.n_detected /= n_seeds as f64;
     out.n_located /= n_seeds as f64;
@@ -1044,6 +1054,23 @@ fn print_row(cell: &Cell, r: &CellResult) {
             "    print radii estimated in {} exposures: {}",
             estimated.len(),
             stats.join(", ")
+        );
+    }
+    let seeds: Vec<f64> = r
+        .rms_by_seed
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+    if seeds.len() > 1 {
+        let n = seeds.len() as f64;
+        let mean = seeds.iter().sum::<f64>() / n;
+        let sd = (seeds.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        let list: Vec<String> = r.rms_by_seed.iter().map(|v| format!("{v:.5}")).collect();
+        println!(
+            "    rms by seed: mean {mean:.5} se {:.5} | {}",
+            sd / n.sqrt(),
+            list.join(",")
         );
     }
     if let Some((r0, n)) = r.pooled_r0 {

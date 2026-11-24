@@ -63,9 +63,11 @@ Printed boards do not always match their nominal stroke width, and a code band
 modelled at the wrong radius biases the center. With `estimate_print_radii`
 (default on), a first pass fits the inner radii freely on up to 16 markers —
 the hole and both code-band edges of a coded marker, the inner edge of a plain
-annulus (the outer edge sets the scale) — and the precision-weighted consensus
-is used for all final fits. The estimate is reported in
-`DetectionDiagnostics::photometric_print_radii_mm`.
+annulus (the outer edge sets the scale) — and the mean of the converged fits,
+after a robust outlier cut, is used for all final fits. Too few fits, too
+imprecise a mean, or a blur too wide for the ring (σ above a quarter of the
+outer radius on most markers) keep the nominal radii. The estimate is reported
+in `DetectionDiagnostics::photometric_print_radii_mm`.
 
 ## Outputs
 

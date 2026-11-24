@@ -1,10 +1,11 @@
-//! Small numeric helpers shared by the pipeline finalization filters.
+//! Small numeric helpers shared by the pipeline filters and the photometric
+//! stage.
 
 /// Median of `values`, or `None` when empty.
 ///
 /// Sorts with a NaN-tolerant comparator (`partial_cmp` falling back to `Equal`);
 /// callers that care about NaN should pre-filter non-finite values.
-pub(super) fn median_f64(mut values: Vec<f64>) -> Option<f64> {
+pub(crate) fn median_f64(mut values: Vec<f64>) -> Option<f64> {
     if values.is_empty() {
         return None;
     }

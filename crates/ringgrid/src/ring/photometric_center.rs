@@ -68,6 +68,12 @@ const LIN_CUBIC: [usize; 13] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const CONTRAST: usize = 10;
 /// Beyond this many PSF sigmas an edge's contribution is exactly 0 or 1.
 const EDGE_REACH_SIGMAS: f64 = 6.0;
+/// Largest blur-to-radius ratio `σ / R` at which the curvature terms of a
+/// blurred circular edge ([`step_curved`]) are evaluated. At `σ = R` neither
+/// order is accurate (profile error 0.2–0.3 of the contrast against the exact
+/// blurred disc); beyond it the second-order width `1 − (σ/R)²/4` would
+/// shrink to zero at `σ = 2R`.
+const MAX_EDGE_CURVATURE: f64 = 1.0;
 /// Prior standard deviation of `C - I` (dimensionless). Keeps the rotation of
 /// a coded marker whose code band is blurred away well-posed (a plain marker
 /// does not fit its rotation, see [`CBasis`]); far wider than the error of a
@@ -159,9 +165,6 @@ pub(crate) struct PhotometricFit {
     pub converged: bool,
     /// Fitted radii (equal to the input unless `fit_radii`).
     pub radii: PrintRadii,
-    /// Standard deviations of `r0..r2` when fitted; entries of radii that are
-    /// not free (`r1`, `r2` of a plain marker) are 0.
-    pub radii_std: Option<[f64; 3]>,
     /// The fitted parameter vector, kept so the residual probe can re-evaluate
     /// the model ([`residual_samples`]).
     #[cfg(feature = "study")]
@@ -183,7 +186,7 @@ pub(crate) struct PhotometricFit {
 /// |---|---|
 /// | Gaussian PSF, σ 0.7–3 px, outer radius ≥ 17 px, correct print radii | within ±0.5 % |
 /// | σ_psf 0.5 / 0.6 / 0.7 px | −13 / −4.5 / −1.5 % |
-/// | thin or small plain rings, print radii estimated from the image | −2 … −6 % |
+/// | thin or small plain rings (σ up to 0.19 of the outer radius), print radii estimated from the image | −3.4 … +0.9 % (−2 … −3.4 % on a 5.6 / 2.8 mm plain rect annulus) |
 /// | pixel-snapped binary display target | +1 … +3.5 % (grey-level display up to +7 %) |
 ///
 /// The ordering of `sigma_px` across markers and its differences are
@@ -253,6 +256,8 @@ struct Step {
     slope: f64,
     /// d value / d log(sigma)
     dlog_sigma: f64,
+    /// d value / d radius (image px) at fixed `d`: the curvature terms only.
+    dradius: f64,
 }
 
 #[inline]
@@ -261,32 +266,60 @@ fn step(d: f64, sigma: f64) -> Step {
 }
 
 /// Blurred step across a circular edge of image-space radius `radius_px`,
-/// `d` positive outside the circle. To first order in `sigma / radius` the
-/// blur of a disc moves its half-level contour inward by
-/// `sigma^2 / (2 radius)`, the same for a dark disc and a light hole.
+/// `d` positive outside the circle: `Phi(z (1 - ε²/4) + ε/2)` with
+/// `z = d / sigma` and `ε = sigma / radius_px`, the blurred disc to second
+/// order in ε (the same for a dark disc and a light hole).
+///
+/// Across the edge the disc boundary bends away by `t² / 2R` at tangential
+/// offset `t`, so the outside fraction is `E[Phi(z + ε τ² / 2 + O(ε³))]`
+/// over `τ ~ N(0, 1)`. Expanding `Phi` in the bend and averaging
+/// (`E τ² = 1`, `E τ⁴ = 3`) gives `Phi(z) + φ(z) (ε/2 − 3 z ε² / 8) + O(ε³)`;
+/// the half-level contour moves inward by `σ² / 2R` (first order) and the
+/// edge widens by `1 + ε²/4` (second order). Fitted to the exact blurred
+/// annulus without noise, the free inner radius is within 0.03 % up to
+/// `σ = 0.3 r0` (first order alone: −0.26 %; −3 % at `σ = 0.4 r0` either
+/// way, where the hole is blurred as a whole and no local expansion holds).
 #[inline]
 fn step_curved(d: f64, sigma: f64, radius_px: f64) -> Step {
-    let shift = 0.5 * sigma / radius_px;
-    let z = d / sigma + shift;
-    if z > EDGE_REACH_SIGMAS {
+    // Beyond `MAX_EDGE_CURVATURE` the expansion carries no accuracy; holding
+    // ε there keeps the edge width positive.
+    let curvature = sigma / radius_px;
+    let curved = curvature <= MAX_EDGE_CURVATURE;
+    let eps = curvature.min(MAX_EDGE_CURVATURE);
+    let width = 1.0 - 0.25 * eps * eps;
+    let z = d / sigma;
+    let arg = z * width + 0.5 * eps;
+    if arg > EDGE_REACH_SIGMAS {
         return Step {
             value: 1.0,
             slope: 0.0,
             dlog_sigma: 0.0,
+            dradius: 0.0,
         };
     }
-    if z < -EDGE_REACH_SIGMAS {
+    if arg < -EDGE_REACH_SIGMAS {
         return Step {
             value: 0.0,
             slope: 0.0,
             dlog_sigma: 0.0,
+            dradius: 0.0,
         };
     }
-    let (cdf, pdf) = norm_cdf_pdf(z);
+    let (cdf, pdf) = norm_cdf_pdf(arg);
+    // d arg / d log sigma and d arg / d radius (ε = sigma / radius when not held).
+    let (darg_dls, darg_dr) = if curved {
+        (
+            0.5 * eps - z * (1.0 + 0.25 * eps * eps),
+            0.5 * eps / radius_px * (z * eps - 1.0),
+        )
+    } else {
+        (-z * width, 0.0)
+    };
     Step {
         value: cdf,
-        slope: pdf / sigma,
-        dlog_sigma: pdf * (shift - d / sigma),
+        slope: pdf * width / sigma,
+        dlog_sigma: pdf * darg_dls,
+        dradius: pdf * darg_dr,
     }
 }
 
@@ -571,7 +604,7 @@ impl Model<'_> {
         out.p = s0.value - s3.value;
         let mut radial_slope = s0.slope - s3.slope;
         let mut radial_dls = s0.dlog_sigma - s3.dlog_sigma;
-        out.d_radii[0] = -s0.slope * inv_g;
+        out.d_radii[0] = (s0.dradius - s0.slope) * inv_g;
 
         // Board-mm reach of a blurred edge (gnorm is mm per image px), with
         // slack for the anisotropy of the local map.
@@ -592,8 +625,8 @@ impl Model<'_> {
                     out.grad_y[k] -= band * ang.grad_y[k];
                     out.d_aniso[k] -= band * ang.d_aniso[k];
                 }
-                out.d_radii[1] = s1.slope * inv_g * ang.theta;
-                out.d_radii[2] = -s2.slope * inv_g * ang.theta;
+                out.d_radii[1] = (s1.slope - s1.dradius) * inv_g * ang.theta;
+                out.d_radii[2] = (s2.dradius - s2.slope) * inv_g * ang.theta;
             }
         }
         out.grad_y[0] += radial_slope * rq[0];
@@ -1394,7 +1427,6 @@ pub(crate) fn fit_marker(
         iterations: sol.iterations,
         converged: sol.converged,
         radii: sol.prm.radii,
-        radii_std: uncertainty.radii_std,
         #[cfg(feature = "study")]
         params: sol.prm,
     })
@@ -1630,6 +1662,37 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn step_curved_derivatives_match_finite_differences() {
+        let h = 1e-6;
+        for &(d, sigma, radius) in &[
+            (0.3, 1.5, 4.0),
+            (-1.2, 2.0, 6.0),
+            (0.0, 3.0, 4.0),
+            (2.5, 1.0, 20.0),
+            (-0.4, 0.8, f64::INFINITY),
+        ] {
+            let s = step_curved(d, sigma, radius);
+            let central = |f: &dyn Fn(f64) -> f64| (f(h) - f(-h)) / (2.0 * h);
+            let fd_d = central(&|e| step_curved(d + e, sigma, radius).value);
+            let fd_ls = central(&|e| step_curved(d, sigma * e.exp(), radius).value);
+            assert!((s.slope - fd_d).abs() < 1e-6, "slope {} vs {fd_d}", s.slope);
+            assert!(
+                (s.dlog_sigma - fd_ls).abs() < 1e-6,
+                "dlog_sigma {} vs {fd_ls}",
+                s.dlog_sigma
+            );
+            if radius.is_finite() {
+                let fd_r = central(&|e| step_curved(d, sigma, radius + e).value);
+                assert!(
+                    (s.dradius - fd_r).abs() < 1e-6,
+                    "dradius {} vs {fd_r}",
+                    s.dradius
+                );
+            }
+        }
+    }
+
+    #[test]
     fn norm_cdf_matches_reference_values() {
         for (z, want) in [
             (0.0, 0.5),
@@ -1674,6 +1737,45 @@ pub(super) mod tests {
                 assert!(err < 0.5, "blur {blur}: centre error {err} px");
                 assert!((fit.blur.sigma_px - blur.max(0.3)).abs() < 0.25 * blur + 0.15);
             }
+        }
+    }
+
+    /// A noise-free plain annulus rendered with exact geometry: free-radii
+    /// fits recover its hole radius while the blur stays within 0.3 of it
+    /// (the curved-edge model to second order, [`step_curved`]). Measured:
+    /// within 0.11 % (the first-order edge: −0.31 % at 0.3, −1.2 % at 0.35);
+    /// the render's supersampled coverage and sampled kernel alone leave
+    /// ≈ 0.05 %.
+    #[test]
+    fn noiseless_free_radii_fit_recovers_the_hole_radius() {
+        let nbs = neighbors();
+        let truth = [40.3, 39.6];
+        let map = true_map(0.0, truth);
+        let j = local_jacobian(&map);
+        let px_per_mm = (j[0][0] * j[1][1] - j[0][1] * j[1][0]).abs().sqrt();
+        let r0_px = RADII[0] * px_per_mm;
+        for ratio in [0.1, 0.2, 0.25, 0.3] {
+            // The fitted sigma includes the pixel's area integration.
+            let sigma = ratio * r0_px;
+            let psf = (sigma * sigma - 1.0 / 12.0).sqrt();
+            let gray = render(&map, 80, psf, 0.0, 1, None);
+            let seed = [truth[0] + 0.3, truth[1] - 0.2];
+            let mut pb = problem(&gray, perturbed(&map), seed, &nbs);
+            pb.codeword = None;
+            pb.radii = [RADII[0], RADII[3], RADII[3], RADII[3]];
+            pb.fit_radii = true;
+            pb.max_iterations = 200;
+            let fit = fit_marker(&pb).unwrap();
+            let err = fit.radii[0] / RADII[0] - 1.0;
+            eprintln!(
+                "sigma/r0 {ratio}: r0 {:+.3} %, sigma {:+.3} %, iterations {}, converged {}",
+                100.0 * err,
+                100.0 * (fit.blur.sigma_px / sigma - 1.0),
+                fit.iterations,
+                fit.converged
+            );
+            assert!(fit.converged, "sigma/r0 {ratio}: not converged");
+            assert!(err.abs() <= 1.5e-3, "sigma/r0 {ratio}: r0 error {err}");
         }
     }
 

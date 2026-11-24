@@ -42,7 +42,6 @@ pub(super) struct FitUncertainty {
     #[cfg(any(test, feature = "study"))]
     pub blur_white: [[f64; 3]; 3],
     pub residual_sigma: f64,
-    pub radii_std: Option<[f64; 3]>,
 }
 
 impl FitUncertainty {
@@ -69,14 +68,6 @@ impl FitUncertainty {
             Some(c) if positive_definite(&c.cov.blur(sigma), n_blur) => (&c.cov, &c.white),
             _ => (&posterior, &posterior),
         };
-        let radii_std = (fitting.layout.n_radii > 0).then(|| {
-            let b = fitting.layout.radii_base();
-            let mut std = [0.0; 3];
-            for (k, s) in std.iter_mut().enumerate().take(fitting.layout.n_radii) {
-                *s = cov[(b + k, b + k)].sqrt();
-            }
-            std
-        });
         Ok(Self {
             center: center_cov,
             center_white: center_cov_white,
@@ -85,7 +76,6 @@ impl FitUncertainty {
             #[cfg(any(test, feature = "study"))]
             blur_white: blur_blocks.1.blur(sigma),
             residual_sigma: s2.sqrt(),
-            radii_std,
         })
     }
 }

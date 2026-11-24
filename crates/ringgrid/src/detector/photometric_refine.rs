@@ -20,6 +20,7 @@ use crate::detector::{
 use crate::homography::homography_project_rows;
 use crate::marker::codec::Codebook;
 use crate::pipeline::BoardFrame;
+use crate::pipeline::stats::median_f64;
 use crate::pixelmap::PixelMapper;
 use crate::ring::MAD_TO_SIGMA;
 use crate::ring::photometric_center::{
@@ -54,7 +55,7 @@ fn record_residuals(
     match *sink {}
 }
 
-/// Minimum number of well-determined markers for a print-radii consensus.
+/// Minimum number of converged free-radii fits for a print-radii consensus.
 const MIN_RADII_SAMPLES: usize = 6;
 /// Fits whose residual exceeds this multiple of the image median are retried
 /// with a cubic paper level.
@@ -65,14 +66,26 @@ const CUBIC_RETRY_RATIO: f64 = 1.5;
 const CUBIC_ADOPT_RATIO: f64 = 0.85;
 /// Markers fitted with free radii for the print-radii consensus.
 const MAX_RADII_MARKERS: usize = 16;
-/// Per-marker radius estimates less precise than this fraction of the outer
-/// radius are not used.
-const MAX_RADIUS_STD_REL: f64 = 0.02;
+/// Iteration budget of a free-radii fit, in multiples of the configured
+/// per-marker budget. Where the blur is comparable to the ink stroke, stroke
+/// width and blur trade off along a shallow valley that the fit descends
+/// slowly, and the fits still descending after the centre-fit budget are the
+/// thin-stroke ones: leaving them out biased the consensus low (photometric
+/// target matrix, thin ring at 17 px, blur 1.5: −0.3 … −0.8 %).
+const RADII_FIT_ITERATION_FACTOR: usize = 4;
+/// Largest standard error of a consensus radius (from the scatter of its
+/// samples), as a fraction of the outer radius: the precision six samples
+/// of 2 % each give.
+const MAX_RADIUS_SE_REL: f64 = 0.008;
+/// Radius samples further from their median than this many robust standard
+/// deviations are outliers.
+const RADII_OUTLIER_CUT: f64 = 4.0;
 /// Plausible fitted PSF sigma range (pixels).
 const SIGMA_RANGE_PX: (f64, f64) = (0.2, 15.0);
 /// Largest fitted PSF sigma, as a fraction of the marker's outer radius in
-/// pixels, at which the blur is reported. Above it the ring's own features
-/// blur together and σ is overestimated: on the photometric target matrix
+/// pixels, at which the blur is reported (and print radii are estimated, see
+/// [`radii_consensus`]). Above it the ring's own features blur together and
+/// σ is overestimated: on the photometric target matrix
 /// (24 noise seeds, Gaussian PSF) σ ≈ 0.19 R is within ±0.5 % of the true
 /// width, σ ≈ 0.375 R (outer radius 8 px, blur 3) +18 … +41 %.
 const MAX_BLUR_OUTER_RADIUS_RATIO: f64 = 0.25;
@@ -358,7 +371,12 @@ impl Stage<'_> {
             anisotropic_blur: true,
             patch_margin_mm: self.patch_margin_mm,
             saturation_level: photometric.saturation_level,
-            max_iterations: photometric.max_iterations.max(1),
+            max_iterations: photometric.max_iterations.max(1)
+                * if mode.fit_radii {
+                    RADII_FIT_ITERATION_FACTOR
+                } else {
+                    1
+                },
         }
     }
 
@@ -384,15 +402,25 @@ impl Stage<'_> {
             fit_radii: true,
             cubic_background: false,
         };
-        let fits: Vec<PhotometricFit> = self
+        let samples: Vec<RadiiSample> = self
             .tasks
             .iter()
             .step_by(stride)
-            .filter_map(|t| self.fit(t, markers[t.index].center, nominal, mode).ok())
+            .filter_map(|t| {
+                let fit = self.fit(t, markers[t.index].center, nominal, mode).ok()?;
+                fit.converged.then(|| RadiiSample {
+                    radii: fit.radii,
+                    blur_measured: blur_is_measured(fit.blur.sigma_px, nominal[3] * t.px_per_mm),
+                })
+            })
             .collect();
         let n_free = if self.coded { 3 } else { 1 };
-        let estimated = radii_consensus(&fits, nominal, n_free);
-        tracing::debug!(?estimated, n_fits = fits.len(), "photometric print radii");
+        let estimated = radii_consensus(&samples, nominal, n_free);
+        tracing::debug!(
+            ?estimated,
+            n_samples = samples.len(),
+            "photometric print radii"
+        );
         estimated
     }
 
@@ -444,49 +472,64 @@ impl Stage<'_> {
     }
 }
 
-/// Precision-weighted consensus of per-marker estimates of the first
-/// `n_free` radii with a 4-sigma outlier cut; `None` when too few markers
-/// determine them.
+/// One converged free-radii fit.
+struct RadiiSample {
+    radii: PrintRadii,
+    /// Whether its blur is within the range the model measures it in
+    /// ([`blur_is_measured`]).
+    blur_measured: bool,
+}
+
+/// Consensus of the per-marker estimates of the first `n_free` radii: the
+/// plain mean of the samples within [`RADII_OUTLIER_CUT`] robust standard
+/// deviations of their median.
+///
+/// The samples are neither weighted nor gated by their own covariance: where
+/// the blur is comparable to the stroke, a fit's radius uncertainty grows with
+/// the radius it found (blur and stroke width trade off), so precision
+/// weights and per-sample precision gates both favour thick-stroke fits and
+/// biased the consensus low (photometric target matrix, thin ring at 17 px,
+/// blur 1.5: −1 … −2.7 %). The consensus itself must be precise instead: its
+/// standard error, from the scatter of its samples, within
+/// [`MAX_RADIUS_SE_REL`] of the outer radius.
+///
+/// `None` (keep the nominal radii) with fewer than [`MIN_RADII_SAMPLES`]
+/// samples, when most samples' blur is outside the range the model measures
+/// it in (there the fitted radii absorb the model error: −15 … −18 % at an
+/// outer radius of 8 px and blur 3), when a consensus is not precise enough,
+/// or when the radii come out unordered.
 fn radii_consensus(
-    fits: &[PhotometricFit],
+    samples: &[RadiiSample],
     nominal: PrintRadii,
     n_free: usize,
 ) -> Option<PrintRadii> {
-    let max_std = MAX_RADIUS_STD_REL * nominal[3];
-    let samples: Vec<(PrintRadii, [f64; 3])> = fits
-        .iter()
-        .filter(|f| f.converged)
-        .filter_map(|f| {
-            let std = f.radii_std?;
-            std[..n_free]
-                .iter()
-                .all(|s| s.is_finite() && *s > 0.0 && *s < max_std)
-                .then_some((f.radii, std))
-        })
-        .collect();
-    if samples.len() < MIN_RADII_SAMPLES {
+    let n_measured = samples.iter().filter(|s| s.blur_measured).count();
+    if samples.len() < MIN_RADII_SAMPLES || 2 * n_measured <= samples.len() {
         return None;
     }
+    let max_se = MAX_RADIUS_SE_REL * nominal[3];
     let mut out = nominal;
     for k in 0..n_free {
-        let mean_of = |keep: &dyn Fn(f64, f64) -> bool| {
-            let (mut sw, mut swx, mut n) = (0.0, 0.0, 0usize);
-            for (r, s) in &samples {
-                if keep(r[k], s[k]) {
-                    let w = 1.0 / (s[k] * s[k]);
-                    sw += w;
-                    swx += w * r[k];
-                    n += 1;
-                }
-            }
-            (n >= MIN_RADII_SAMPLES).then(|| swx / sw)
-        };
-        let first = mean_of(&|_, _| true)?;
-        // Spread of the samples around the first mean, robustly.
-        let mut dev: Vec<f64> = samples.iter().map(|(r, _)| (r[k] - first).abs()).collect();
-        dev.sort_by(|a, b| a.total_cmp(b));
-        let spread = MAD_TO_SIGMA * dev[dev.len() / 2];
-        out[k] = mean_of(&|r, s| (r - first).abs() <= 4.0 * s.hypot(spread))?;
+        let values: Vec<f64> = samples.iter().map(|s| s.radii[k]).collect();
+        let centre = median_f64(values.clone())?;
+        let spread =
+            MAD_TO_SIGMA * median_f64(values.iter().map(|r| (r - centre).abs()).collect())?;
+        let kept: Vec<f64> = values
+            .into_iter()
+            .filter(|r| (r - centre).abs() <= RADII_OUTLIER_CUT * spread)
+            .collect();
+        let n = kept.len();
+        if n < MIN_RADII_SAMPLES {
+            return None;
+        }
+        let mean = kept.iter().sum::<f64>() / n as f64;
+        let variance = kept.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+        let standard_error = (variance / n as f64).sqrt();
+        // Also rejects a non-finite mean or spread.
+        if !standard_error.is_finite() || standard_error > max_se {
+            return None;
+        }
+        out[k] = mean;
     }
     // Plain markers keep r1 = r2 = r3, hence the non-strict comparisons.
     let ordered = out[0] > 0.0 && out[0] < out[1] && out[1] <= out[2] && out[2] <= out[3];
@@ -782,10 +825,16 @@ fn refine(
     estimated
 }
 
+/// Whether a fitted blur is within the width the model measures it in
+/// ([`MAX_BLUR_OUTER_RADIUS_RATIO`]).
+fn blur_is_measured(sigma_px: f64, outer_radius_px: f64) -> bool {
+    sigma_px <= MAX_BLUR_OUTER_RADIUS_RATIO * outer_radius_px
+}
+
 /// The blur of an accepted fit as reported, or `None` outside the width it
-/// is measured in ([`MAX_BLUR_OUTER_RADIUS_RATIO`]).
+/// is measured in.
 fn reported_blur(blur: BlurEstimate, outer_radius_px: f64) -> Option<BlurEstimate> {
-    (blur.sigma_px <= MAX_BLUR_OUTER_RADIUS_RATIO * outer_radius_px).then_some(blur)
+    blur_is_measured(blur.sigma_px, outer_radius_px).then_some(blur)
 }
 
 #[cfg(test)]
@@ -902,6 +951,41 @@ mod tests {
                 .map(|g| BLUR_GRADIENT_BIAS_PER_SIGMA * g[0].hypot(g[1]) * sigma);
             assert_eq!(markers[i].center_bias_px, expected, "marker {i}");
         }
+    }
+
+    const PLAIN_NOMINAL: PrintRadii = [2.4, 4.8, 4.8, 4.8];
+
+    fn plain_samples(r0: &[f64]) -> Vec<RadiiSample> {
+        r0.iter()
+            .map(|&r| RadiiSample {
+                radii: [r, 4.8, 4.8, 4.8],
+                blur_measured: true,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn radii_consensus_is_the_plain_mean_after_the_outlier_cut() {
+        let samples = plain_samples(&[2.30, 2.32, 2.34, 2.36, 2.38, 2.40, 2.42, 2.44, 3.4]);
+        let r = radii_consensus(&samples, PLAIN_NOMINAL, 1).expect("consensus");
+        assert!((r[0] - 2.37).abs() < 1e-12, "r0 {}", r[0]);
+        assert_eq!(r[1..], PLAIN_NOMINAL[1..]);
+    }
+
+    #[test]
+    fn radii_consensus_needs_enough_precise_samples_with_measurable_blur() {
+        let five = plain_samples(&[2.38, 2.39, 2.40, 2.41, 2.42]);
+        assert_eq!(radii_consensus(&five, PLAIN_NOMINAL, 1), None);
+        // Standard error 0.06 mm against the 0.008 × 4.8 = 0.038 mm limit.
+        let scattered = plain_samples(&[2.2, 2.6, 2.25, 2.55, 2.3, 2.5, 2.35, 2.45]);
+        assert_eq!(radii_consensus(&scattered, PLAIN_NOMINAL, 1), None);
+        let mut blurred = plain_samples(&[2.38, 2.39, 2.40, 2.41, 2.42, 2.40]);
+        for s in &mut blurred[..3] {
+            s.blur_measured = false;
+        }
+        assert_eq!(radii_consensus(&blurred, PLAIN_NOMINAL, 1), None);
+        blurred[0].blur_measured = true;
+        assert!(radii_consensus(&blurred, PLAIN_NOMINAL, 1).is_some());
     }
 
     #[test]

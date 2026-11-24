@@ -5,7 +5,7 @@
   residual covariance, anisotropic PSF; amended 2026-11-17: plain markers keep
   the homography's rotation; amended 2026-11-22: blur as a reported
   measurement; amended 2026-11-24: fixed print radii and the ink moment
-  rejected)
+  rejected, unweighted radii consensus, second-order curved edge)
 - **Author role:** algorithm-engineer
 - **Supersedes:** none
 - **Related:** ADR-028 and ADR-029 (the confidence of a photometric centre)
@@ -43,8 +43,13 @@ pattern (`ring/photometric_center.rs`, stage in
 - a fitted Gaussian PSF with an anisotropy; affine paper level and contrast,
   with a cubic retry for glare halos; Levenberg–Marquardt with Huber weights,
   saturated pixels masked;
+- every edge a Gaussian-blurred step with the circular edge's curvature to
+  second order in `σ/R`
+  ([study](../studies/photometric-center.md#print-radii-and-the-curved-edge));
 - printed radii estimated per image from free-radii fits of ≤ 16 markers, on
-  by default; priors and gates are fractions of the outer radius `r3`;
+  by default, as the unweighted mean after a robust outlier cut (precision
+  weights favoured thick-stroke fits where blur and stroke width trade off);
+  priors and gates are fractions of the outer radius `r3`;
 - gates (convergence, shift, σ, contrast, residual); a rejected fit keeps the
   previous center;
 - every marker reports `center_source`; with the method selected a marker

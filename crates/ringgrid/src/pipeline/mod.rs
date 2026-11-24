@@ -27,7 +27,7 @@ mod prelude;
 mod result;
 mod run;
 mod scale_probe;
-mod stats;
+pub(crate) mod stats;
 mod time_compat;
 
 pub use result::{

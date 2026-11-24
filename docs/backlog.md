@@ -33,18 +33,13 @@ camera the per-marker blur is also a calibration observation (the plane of
 sharp focus, the tilt direction, the depth of field), so its value and its
 uncertainty are wanted next to the centre.
 
-- `ALGO-021` · P2 · todo — **Print radii consensus is biased low when the
-  blur is comparable to the ring width.** (a) Thin ring: 4.48–4.55 vs
-  4.60 mm; plain hex at 8 px outer radius: 2.27–2.33 vs 2.40 mm. At low
-  contrast the consensus fails outright (6–12 of 24 exposures). Both shift
-  `DetectedMarker::blur` σ by −2…−6 % and add a per-image σ offset that its
-  covariance does not contain. Reproduce on `photometric_target_matrix`,
-  split the bias into per-marker fit vs aggregation, and fix what the data
-  identify. (b) Decided for now: radii stay per-image; pooled or known radii
-  are a `study` input only (`PhotometricStudyOptions::with_fixed_radii`),
-  because they gave no centre gain
-  ([center metrology](studies/center-metrology.md#measurements-and-decision)).
-  Reopen (b) when a calibration consumer needs σ comparable across images.
+- `ALGO-024` · P3 · todo — **σ bias on small plain rect annuli.** A
+  5.6 / 2.8 mm plain rect annulus at outer radius 8 px, blur 1.5 keeps a
+  −3 % σ bias even with the true print radii (photometric target matrix);
+  not diagnosed. Pooled or known print radii as a detector input stay
+  decided against for now (no centre gain,
+  [center metrology](studies/center-metrology.md#measurements-and-decision));
+  reopen when a calibration consumer needs σ comparable across images.
 
 - `ALGO-022` · P3 · todo — **Exposure dependence of the fitted radii and
   centres** (split from ALGO-020; Cledat, Rufener & Cucci, Pattern
@@ -99,6 +94,7 @@ uncertainty are wanted next to the centre.
 
 | ID | Date | Type | Title | Notes |
 |----|------|------|-------|-------|
+| ALGO-021 | 2026-11-24 | algo | Unbiased print-radii consensus and a second-order curved edge | The per-image radii were biased low by the aggregation (iteration cap, per-sample precision gate and inverse-variance weights all favoured thick-stroke fits where blur and stroke trade off): now an unweighted robust mean with a standard-error gate and a 4× iteration budget for free-radii fits. The edge model gains its second-order curvature term `Φ(z(1 − ε²/4) + ε/2)`. Thin ring r0 −1 … −2.7 % → within ±0.2 %, σ within ±0.2 %; coded hex centres improve (17 px blur 3: 0.0457 → 0.0375 px); r0 stays unidentifiable above σ ≈ 0.35 r0. See [study](studies/photometric-center.md#print-radii-and-the-curved-edge). |
 | ALGO-020 | 2026-11-24 | algo/study | Moment-centre study estimator — rejected as an estimator | The projectively corrected ink centroid shows the same gradient-reversal bias as the photometric fit (−0.029 vs −0.028 px over 717 paired observations), drifts more under added blur on the sharp IPGS plate (0.022 vs 0.017 px RMS) and declines clipped or spilled patches. Kept as a `study` comparator (`PhotometricStudyOptions::moment_centers`); see [center metrology](studies/center-metrology.md). The exposure half moved to ALGO-022. |
 | ALGO-017 | 2026-11-22 | algo/api | Blur as a stable photometric output | `DetectedMarker::blur`: σ (Gaussian edge width incl. pixel integration), anisotropy and their 3×3 covariance, honest for differences between markers of one image (per-image print-radii offset not included); reported for photometric centres with σ ≤ 0.25 × outer radius; replaces `PhotometricMetrics::blur_sigma_px`. |
 | ALGO-018 | 2026-11-22 | algo | Fixed-gradient second photometric pass — rejected | Measured against subtracting the law `1.24·σ·∇σ` from the one-σ centre (no refit) on `blur_gradient_bias_matrix` (133 scatter-form cells, 4 seeds): residual bias 0.46 vs 0.50 of the one-σ fit's, neither removes 80 %; the refit costs 2.1–2.3× photometric time per refitted marker and up to 2.6× centre scatter in the worst cell; with the true gradient the refit leaves 0.16 and the law 0.29, so the neighbour-plane gradient estimate, not the model, is the limit; a calibration absorbs 92 % of the bias anyway. Code not kept. |

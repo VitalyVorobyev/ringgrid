@@ -159,9 +159,6 @@ pub(crate) struct PhotometricFit {
     pub converged: bool,
     /// Fitted radii (equal to the input unless `fit_radii`).
     pub radii: PrintRadii,
-    /// Standard deviations of `r0..r2` when fitted; entries of radii that are
-    /// not free (`r1`, `r2` of a plain marker) are 0.
-    pub radii_std: Option<[f64; 3]>,
     /// The fitted parameter vector, kept so the residual probe can re-evaluate
     /// the model ([`residual_samples`]).
     #[cfg(feature = "study")]
@@ -1394,7 +1391,6 @@ pub(crate) fn fit_marker(
         iterations: sol.iterations,
         converged: sol.converged,
         radii: sol.prm.radii,
-        radii_std: uncertainty.radii_std,
         #[cfg(feature = "study")]
         params: sol.prm,
     })

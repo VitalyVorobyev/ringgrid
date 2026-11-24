@@ -33,7 +33,11 @@
 //! `MATRIX_THREADS` sets the parallelism, `MATRIX_FIXED_RADII` turns off the
 //! per-image print-radii estimate (the fits use the nominal radii, exact
 //! here; the estimate's image-wide error is common to all markers of an
-//! exposure and is not in a marker's covariance).
+//! exposure and is not in a marker's covariance), `MATRIX_NOMINAL_INNER`
+//! (mm, plain kinds) detects with that nominal inner radius while the scene
+//! keeps the printed one, so the per-image print-radii estimate must recover
+//! the print rather than the nominal value (radii and blur are still scored
+//! against the print).
 
 mod support;
 
@@ -482,11 +486,21 @@ fn run_cell(board: &BoardRaster, cell: &Cell, n_seeds: u64, size: [u32; 2]) -> C
             config.advanced.photometric.estimate_print_radii = false;
             Detector::with_config(config)
         }
-        None => detector(
-            target,
-            cell.outer_radius_px,
-            CircleRefinementMethod::Photometric,
-        ),
+        // A nominal inner radius off the printed one (`MATRIX_NOMINAL_INNER`).
+        None => match std::env::var("MATRIX_NOMINAL_INNER") {
+            Ok(inner) => detector(
+                &cell
+                    .kind
+                    .target_with_inner(Some(inner.parse().expect("MATRIX_NOMINAL_INNER is mm"))),
+                cell.outer_radius_px,
+                CircleRefinementMethod::Photometric,
+            ),
+            Err(_) => detector(
+                target,
+                cell.outer_radius_px,
+                CircleRefinementMethod::Photometric,
+            ),
+        },
     };
     let projective = detector(
         target,
